@@ -1205,6 +1205,7 @@ def test_output_tool_return_content_str_return():
             usage=RequestUsage(input_tokens=51, output_tokens=4),
             model_name='test',
             timestamp=IsDatetime(),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
@@ -1862,7 +1863,7 @@ def test_output_type_text_output_function_with_retry():
     [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],
 )
 def test_output_type_multiple_text_output(output_type: OutputSpec[str]):
-    with pytest.raises(UserError, match='Only one `str` or `TextOutput` is allowed.'):
+    with pytest.raises(UserError, match=re.escape('Only one `str` or `TextOutput` is allowed.')):
         Agent('test', output_type=output_type)
 
 
@@ -1873,6 +1874,42 @@ def test_output_type_text_output_invalid():
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
         Agent('test', output_type=output_type)
+
+
+def test_output_type_native_output_must_be_only():
+    """Test that NativeOutput must be the only output type."""
+    with pytest.raises(UserError, match=re.escape('`NativeOutput` must be the only output type.')):
+        Agent('test', output_type=[NativeOutput(str), str])
+
+
+def test_output_type_native_output_with_deferred_tool_requests():
+    """Test that NativeOutput cannot contain DeferredToolRequests."""
+    with pytest.raises(UserError, match='`NativeOutput` cannot contain `DeferredToolRequests`'):
+        Agent('test', output_type=NativeOutput([DeferredToolRequests]))
+
+
+def test_output_type_native_output_with_binary_image():
+    """Test that NativeOutput cannot contain BinaryImage."""
+    with pytest.raises(UserError, match='`NativeOutput` cannot contain `BinaryImage`'):
+        Agent('test', output_type=NativeOutput([BinaryImage]))
+
+
+def test_output_type_prompted_output_must_be_only():
+    """Test that PromptedOutput must be the only output type."""
+    with pytest.raises(UserError, match=re.escape('`PromptedOutput` must be the only output type.')):
+        Agent('test', output_type=[PromptedOutput(str), str])
+
+
+def test_output_type_prompted_output_with_deferred_tool_requests():
+    """Test that PromptedOutput cannot contain DeferredToolRequests."""
+    with pytest.raises(UserError, match='`PromptedOutput` cannot contain `DeferredToolRequests`'):
+        Agent('test', output_type=PromptedOutput([DeferredToolRequests]))
+
+
+def test_output_type_prompted_output_with_binary_image():
+    """Test that PromptedOutput cannot contain BinaryImage."""
+    with pytest.raises(UserError, match='`PromptedOutput` cannot contain `BinaryImage`'):
+        Agent('test', output_type=PromptedOutput([BinaryImage]))
 
 
 def test_output_type_async_function():
@@ -3012,6 +3049,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3030,6 +3068,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3054,6 +3093,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3072,6 +3112,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3086,6 +3127,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3128,6 +3170,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3146,6 +3189,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3160,6 +3204,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3201,6 +3246,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3225,6 +3271,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3261,6 +3308,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3279,6 +3327,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3309,6 +3358,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3400,6 +3450,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 usage=RequestUsage(input_tokens=61, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3484,7 +3535,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
     with pytest.raises(
         UserError,
-        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.',
+        match=re.escape('Cannot provide a new user prompt when the message history contains unprocessed tool calls.'),
     ):
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
@@ -3564,6 +3615,7 @@ Summarize this conversation to include all important facts about the user and
                 usage=RequestUsage(input_tokens=73, output_tokens=43),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4856,6 +4908,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=57, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4883,6 +4936,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=58, output_tokens=9),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -6796,6 +6850,7 @@ def test_nested_capture_run_messages() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6826,6 +6881,7 @@ def test_double_capture_run_messages() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6996,6 +7052,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7028,6 +7085,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7044,6 +7102,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7092,6 +7151,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7125,6 +7185,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7141,6 +7202,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7249,6 +7311,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7270,6 +7333,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 usage=RequestUsage(input_tokens=54, output_tokens=11),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7369,7 +7433,7 @@ def test_binary_content_serializable():
                     'details': {},
                 },
                 'model_name': 'test',
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_response_id': None,
                 'provider_url': None,
@@ -7444,7 +7508,7 @@ def test_image_url_serializable_missing_media_type():
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
                 'provider_response_id': None,
@@ -7525,7 +7589,7 @@ def test_image_url_serializable():
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
                 'provider_response_id': None,
@@ -7777,6 +7841,7 @@ def test_instructions_with_message_history():
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7870,6 +7935,7 @@ def test_multi_agent_instructions_with_structured_output():
                 usage=RequestUsage(input_tokens=51, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8225,17 +8291,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Tool output is not supported by this model.')):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=BinaryImage)
 
-    with pytest.raises(UserError, match='Image output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Image output is not supported by this model.')):
         agent.run_sync('Hello')
 
 
@@ -8442,7 +8508,9 @@ def test_many_multimodal_tool_response():
 
     with pytest.raises(
         UserError,
-        match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
+        match=re.escape(
+            "The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly."
+        ),
     ):
         agent.run_sync('Please analyze the data')
 
@@ -8729,6 +8797,7 @@ def test_prepare_output_tools():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8756,6 +8825,7 @@ def test_prepare_output_tools():
                 usage=RequestUsage(input_tokens=52, output_tokens=12),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8869,7 +8939,7 @@ def test_set_mcp_sampling_model():
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent(None, toolsets=[toolset])
 
-    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+    with pytest.raises(UserError, match=re.escape('No sampling model provided and no model set on the agent.')):
         agent.set_mcp_sampling_model()
     assert server1.sampling_model is None
     assert server2.sampling_model is test_model
@@ -9805,7 +9875,7 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the message history does not contain a `ModelResponse`.',
+        match=re.escape('Tool call results were provided, but the message history does not contain a `ModelResponse`.'),
     ):
         await agent.run(
             'Hello again',
@@ -9820,7 +9890,9 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+        match=re.escape(
+            'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+        ),
     ):
         await agent.run(
             'Hello again',
@@ -9834,17 +9906,22 @@ async def test_run_with_deferred_tool_results_errors():
     ]
 
     with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+        UserError,
+        match=re.escape('Cannot provide a new user prompt when the message history contains unprocessed tool calls.'),
     ):
         await agent.run('Hello', message_history=message_history)
 
-    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+    with pytest.raises(
+        UserError, match=re.escape('Tool call results need to be provided for all deferred tool calls.')
+    ):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(),
         )
 
-    with pytest.raises(UserError, match='Tool call results were provided, but the message history is empty.'):
+    with pytest.raises(
+        UserError, match=re.escape('Tool call results were provided, but the message history is empty.')
+    ):
         await agent.run(
             'Hello again',
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
@@ -9867,7 +9944,9 @@ async def test_run_with_deferred_tool_results_errors():
         ),
     ]
 
-    with pytest.raises(UserError, match="Tool call 'run_me' was already executed and its result cannot be overridden."):
+    with pytest.raises(
+        UserError, match=re.escape("Tool call 'run_me' was already executed and its result cannot be overridden.")
+    ):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(
@@ -9876,7 +9955,7 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
     with pytest.raises(
-        UserError, match="Tool call 'run_me_too' was already executed and its result cannot be overridden."
+        UserError, match=re.escape("Tool call 'run_me_too' was already executed and its result cannot be overridden.")
     ):
         await agent.run(
             message_history=message_history,
@@ -10821,7 +10900,9 @@ async def test_central_content_filter_handling():
     model = FunctionModel(function=filtered_response, model_name='test-model')
     agent = Agent(model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
         await agent.run('Trigger filter')
 
 

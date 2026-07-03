@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import copy
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -9,7 +10,9 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
@@ -31,6 +34,20 @@ class _ToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
+
+
+@dataclass
+class _GetToolsResult:
+    """Serializable result of `get_tools_activity`: the resolved toolset's tools and its instructions.
+
+    Instructions are collected in the same activity (and thus the same single resolution and entry of
+    the inner toolset) as the tools. For an MCP-backed dynamic toolset this means the server is entered
+    once per run step instead of once for tools and again for instructions; the second entry would add a
+    redundant `initialize` round-trip whose `notifications/initialized` races teardown.
+    """
+
+    tools: dict[str, _ToolInfo]
+    instructions: str | InstructionPart | Sequence[str | InstructionPart] | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -57,8 +74,11 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
-            """Activity that calls the dynamic function and returns tool definitions."""
+        # Set by `get_tools`, read by `get_instructions`; lives on the per-run `for_run` copy (no run-id key).
+        self._run_instructions: str | InstructionPart | Sequence[str | InstructionPart] | None = None
+
+        async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> _GetToolsResult:
+            """Activity that resolves the dynamic toolset and returns its tools and instructions."""
             ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -67,10 +87,14 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             async with run_toolset:
                 run_toolset = await run_toolset.for_run_step(ctx)
                 tools = await run_toolset.get_tools(ctx)
-                return {
-                    name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
-                    for name, tool in tools.items()
-                }
+                instructions = await run_toolset.get_instructions(ctx)
+                return _GetToolsResult(
+                    tools={
+                        name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
+                        for name, tool in tools.items()
+                    },
+                    instructions=instructions,
+                )
 
         get_tools_activity.__annotations__['deps'] = deps_type
 
@@ -107,13 +131,33 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_tools_activity, self.call_tool_activity]
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if not workflow.in_workflow():  # pragma: no cover
+            return await super().for_run(ctx)
+
+        # Per-run copy isolates `_run_instructions` from the process-shared, module-level instance.
+        # Shallow, so the copy shares the worker-registered activities (`execute_activity` resolves by
+        # name). The base `return self` is about wrapped-toolset lifecycle; this is only state isolation.
+        run_copy = copy.copy(self)
+        run_copy._run_instructions = None
+        return run_copy
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        if not workflow.in_workflow():  # pragma: no cover
+            return await super().get_instructions(ctx)
+
+        # Set by `get_tools`, which the framework runs (via `for_run_step`) earlier in each step.
+        return self._run_instructions
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
-        tool_infos = await workflow.execute_activity(
+        result = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
                 GetToolsParams(serialized_run_context=serialized_run_context),
@@ -121,7 +165,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             ],
             **activity_config,
         )
-        return {name: self._tool_for_tool_info(tool_info) for name, tool_info in tool_infos.items()}
+        self._run_instructions = result.instructions
+        return {name: self._tool_for_tool_info(tool_info) for name, tool_info in result.tools.items()}
 
     async def call_tool(
         self,

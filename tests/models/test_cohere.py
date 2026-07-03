@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -461,7 +462,7 @@ async def test_multimodal(allow_model_requests: None):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
+    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
         await agent.run(
             [
                 'hello',

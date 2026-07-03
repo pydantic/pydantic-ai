@@ -45,7 +45,10 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan
+from pydantic_graph._utils import (
+    AbstractSpan,
+    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+)
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
@@ -397,12 +400,21 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = get_event_loop()
-    while True:
-        try:
-            yield loop.run_until_complete(anext(async_iter))
-        except StopAsyncIteration:
-            break
+    try:
+        while True:
+            try:
+                yield run_until_complete(anext(async_iter))
+            except StopAsyncIteration:
+                break
+    finally:
+        # Close the underlying async iterator so its `async with`/`finally` blocks (which close
+        # model streams and HTTP connections) run even when the consumer breaks out early or is
+        # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
+        # stream is exhausted. The `stream_*` methods always return async generators at runtime even
+        # though they're typed as `AsyncIterator`, so this narrows to the closable case.
+        if isinstance(async_iter, AsyncGenerator):  # pragma: no branch
+            with suppress(BaseException):
+                run_until_complete(async_iter.aclose())
 
 
 def now_utc() -> datetime:
@@ -766,7 +778,7 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
     return rewritten_schemas, all_defs
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -801,7 +813,7 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover
