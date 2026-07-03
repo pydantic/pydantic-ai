@@ -37,7 +37,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.usage import RequestUsage
 
-from ...conftest import IsDatetime, try_import
+from ...conftest import try_import
 
 with try_import() as imports_successful:
     from google.genai.types import GenerateContentResponse, GroundingMetadata, Part, ToolType
@@ -207,14 +207,11 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
     )
 
 
-# On Gemini 3+, File Search runs as a server-side tool and the API returns explicit `tool_call` /
-# `tool_response` parts, but leaves the `tool_response` content empty and delivers the retrieved contexts
-# (including each document's `custom_metadata`, e.g. a `source_url`) in `grounding_metadata` instead. These
-# tests pin that the empty `NativeToolReturnPart` is filled from the grounding metadata. They are unit tests
-# rather than VCR because the cassette matcher is body-insensitive (a changed internal payload could still
-# replay green), and the cross-chunk assembly is asserted at the event level, which a VCR test can't reach.
-# The streaming tests place the grounding on a later chunk than the empty `tool_response`, reproducing the
-# confirmed wire order the fix depends on.
+# On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
+# leaves the response empty, delivering the retrieved contexts (incl. each doc's `custom_metadata`, e.g.
+# `source_url`) in `grounding_metadata`. These pin that the empty `NativeToolReturnPart` is filled from it.
+# Unit, not VCR: the cassette matcher is body-insensitive, and the streaming cross-chunk assembly is asserted
+# at the event level, which VCR can't reach.
 
 _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
     'grounding_chunks': [
@@ -230,15 +227,10 @@ _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
 }
 
 
-def test_file_search_grounding_fills_empty_tool_response():
-    """The empty file_search `tool_response` is filled from `grounding_metadata`, keeping the explicit parts."""
-    response = _process_response_from_parts(
-        parts=[
-            Part.model_validate({'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}),
-            Part.model_validate({'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}}),
-            Part.model_validate({'text': 'Paris is the capital of France.'}),
-        ],
-        grounding_metadata=GroundingMetadata.model_validate(_FILE_SEARCH_GROUNDING_METADATA),
+def _process_response(parts: list[dict[str, Any]], *, grounding: dict[str, Any]) -> ModelResponse:
+    return _process_response_from_parts(
+        parts=[Part.model_validate(p) for p in parts],
+        grounding_metadata=GroundingMetadata.model_validate(grounding),
         model_name='gemini-3.5-flash',
         provider_name='google-gla',
         provider_url='https://generativelanguage.googleapis.com/',
@@ -246,48 +238,39 @@ def test_file_search_grounding_fills_empty_tool_response():
         provider_response_id='response-id',
     )
 
-    assert response.parts == snapshot(
+
+def test_file_search_grounding_fills_empty_tool_response():
+    """The empty file_search `tool_response` is filled from `grounding_metadata`, incl. each doc's source_url."""
+    response = _process_response(
         [
-            NativeToolCallPart(
-                tool_name='file_search',
-                args={},
-                tool_call_id='file_search_call',
-                provider_name='google-gla',
-            ),
-            NativeToolReturnPart(
-                tool_name='file_search',
-                content=[
-                    {
-                        'text': 'Paris is the capital of France.',
-                        'title': 'paris.txt',
-                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-                        'file_search_store': 'fileSearchStores/test-store',
-                    }
-                ],
-                tool_call_id='file_search_call',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-            ),
-            TextPart(content='Paris is the capital of France.'),
+            {'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}},
+            {'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}},
+        ],
+        grounding=_FILE_SEARCH_GROUNDING_METADATA,
+    )
+
+    _, file_search_return = response.parts
+    assert isinstance(file_search_return, NativeToolReturnPart)
+    assert file_search_return.content == snapshot(
+        [
+            {
+                'text': 'Paris is the capital of France.',
+                'title': 'paris.txt',
+                'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                'file_search_store': 'fileSearchStores/test-store',
+            }
         ]
     )
 
 
 def test_file_search_populated_tool_response_not_overwritten():
     """A file_search `tool_response` that already carries content is kept as-is, not clobbered by grounding."""
-    response = _process_response_from_parts(
-        parts=[
-            Part.model_validate({'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}),
-            Part.model_validate(
-                {'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'response': {'kept': 'value'}}}
-            ),
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}},
+            {'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'response': {'kept': 'value'}}},
         ],
-        grounding_metadata=GroundingMetadata.model_validate(_FILE_SEARCH_GROUNDING_METADATA),
-        model_name='gemini-3.5-flash',
-        provider_name='google-gla',
-        provider_url='https://generativelanguage.googleapis.com/',
-        usage=RequestUsage(),
-        provider_response_id='response-id',
+        grounding=_FILE_SEARCH_GROUNDING_METADATA,
     )
 
     _, file_search_return = response.parts
@@ -320,14 +303,12 @@ async def _drive_stream(
     return events, list(streamed.get().parts)
 
 
+def _file_search_returns(parts: list[ModelResponsePart]) -> list[NativeToolReturnPart]:
+    return [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+
+
 def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> list[NativeToolReturnPart]:
-    return [
-        e.part
-        for e in events
-        if isinstance(e, PartStartEvent)
-        and isinstance(e.part, NativeToolReturnPart)
-        and e.part.tool_name == 'file_search'
-    ]
+    return _file_search_returns([e.part for e in events if isinstance(e, PartStartEvent)])
 
 
 @pytest.mark.anyio
@@ -368,7 +349,7 @@ async def test_file_search_multiple_calls_all_filled_streaming():
         ]
     )
 
-    returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+    returns = _file_search_returns(parts)
     assert [r.tool_call_id for r in returns] == ['call_1', 'call_2']
     assert all(r.content is not None for r in returns)
     assert len(_file_search_return_start_parts(events)) == 2
@@ -386,11 +367,9 @@ async def test_file_search_grounding_absent_leaves_empty_content_streaming():
         ]
     )
 
-    file_search_returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
-    assert len(file_search_returns) == 1
-    assert file_search_returns[0].content is None
+    returns = _file_search_returns(parts)
+    assert len(returns) == 1 and returns[0].content is None
     # The deferred `PartStartEvent` is flushed at the end of the stream, empty, exactly once.
     starts = _file_search_return_start_parts(events)
-    assert len(starts) == 1
-    assert starts[0].content is None
+    assert len(starts) == 1 and starts[0].content is None
     assert isinstance(events[-1], PartStartEvent) and events[-1].part is starts[0]
