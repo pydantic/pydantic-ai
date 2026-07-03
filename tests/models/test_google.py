@@ -4761,7 +4761,11 @@ async def test_google_model_file_search_grounding_gemini_3(
 ):
     """On Gemini 3+ file_search returns an explicit but empty `tool_response`; the retrieved contexts (with
     `custom_metadata` such as `source_url`) must be recovered from `grounding_metadata` rather than dropped
-    (#6207). When streaming, the grounding arrives several chunks after the empty `tool_response`."""
+    (#6207). When streaming, the grounding arrives several chunks after the empty `tool_response`.
+
+    A second turn feeds the history back to confirm Gemini accepts the filled `tool_response` we echo (real id +
+    reconstructed `response` body where the model originally sent none), rather than rejecting it on replay.
+    """
     client = google_provider.client
     source_url = 'https://example.com/paris'
     store = None
@@ -4784,6 +4788,9 @@ async def test_google_model_file_search_grounding_gemini_3(
             messages = result.all_messages()
 
         _assert_file_search_contexts(messages, source_url)
+
+        followup = await agent.run('What famous landmark is it known for?', message_history=messages)
+        assert followup.output
     finally:
         await _cleanup_file_search_store(store, client)
 
