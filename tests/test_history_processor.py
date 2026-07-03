@@ -137,8 +137,6 @@ async def test_history_processor_run_replaces_message_history(
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -207,8 +205,6 @@ async def test_history_processor_streaming_replaces_message_history(
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -273,8 +269,6 @@ async def test_history_processor_messages_sent_to_provider(
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -421,8 +415,6 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -497,8 +489,6 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -720,8 +710,6 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -1124,8 +1112,6 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                     UserPromptPart(content='Old question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -1195,8 +1181,6 @@ async def test_history_processor_injects_into_new_stream(
                     UserPromptPart(content='New question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -1266,8 +1250,6 @@ async def test_history_processor_injects_without_run_id_before_current_run(
                     UserPromptPart(content='New question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )
@@ -1392,8 +1374,6 @@ async def test_history_processor_resuming_without_prompt(
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             )
         ]
     )

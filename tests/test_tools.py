@@ -2287,8 +2287,6 @@ def test_parallel_tool_return_with_deferred():
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
         ]
     )

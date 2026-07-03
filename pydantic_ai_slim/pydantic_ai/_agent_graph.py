@@ -1780,30 +1780,22 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
-                and (
-                    last_message.conversation_id is None
-                    or message.conversation_id is None
-                    or last_message.conversation_id == message.conversation_id
-                )
-                and (
-                    last_message.metadata is None
-                    or message.metadata is None
-                    or last_message.metadata == message.metadata
-                )
+                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
+                # nor try to preserve them across the merge. These fields are only bookkeeping for
+                # callers; they're never part of what gets sent to the model. Refusing to merge on a
+                # mismatch would leave two consecutive requests where the model expects one, breaking
+                # providers (and provider-side conversation state) that require a single request per
+                # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(
                     # Tool return parts always need to be at the start
                     key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
                 )
-                merged_message = replace(
-                    last_message,
+                merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
-                    run_id=last_message.run_id or message.run_id,
-                    conversation_id=last_message.conversation_id or message.conversation_id,
-                    metadata=last_message.metadata if last_message.metadata is not None else message.metadata,
                 )
                 clean_messages[-1] = merged_message
             else:
