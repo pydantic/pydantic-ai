@@ -114,6 +114,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_tool_choice', False) is True
     assert anthropic_profile.get('supports_json_schema_output', False) is True
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    # Anthropic on Bedrock accepts a leading assistant turn, so we skip the synthetic user prepend.
+    assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
@@ -194,6 +196,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     meta_model_profile_mock.assert_called_with('llama3-8b-instruct')
     assert meta_profile is not None
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    # Meta Llama rejects a leading assistant turn, so the strict default applies (flag unset).
+    assert meta_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert meta_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
@@ -213,6 +217,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert qwen_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert qwen_profile.get('supports_json_schema_output', False) is True
     assert qwen_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    # Qwen on Bedrock also accepts a leading assistant turn.
+    assert qwen_profile.get('bedrock_supports_leading_assistant_message', False) is True
     assert qwen_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     google_profile = provider.model_profile('google.gemma-3-27b-it')
@@ -252,6 +258,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
     assert amazon_profile.get('bedrock_supports_tool_choice', False) is True
     assert amazon_profile.get('bedrock_supports_prompt_caching', False) is True
+    # Nova rejects a leading assistant turn, so the strict default (synthesize a user prepend) applies.
+    assert amazon_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
