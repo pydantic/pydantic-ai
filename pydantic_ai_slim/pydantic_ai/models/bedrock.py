@@ -1202,8 +1202,6 @@ class BedrockConverseModel(Model[BaseClient]):
                     ]
                     processed_messages[i] = cast(MessageUnionTypeDef, {**msg, 'content': new_content})
 
-
-
         return system_prompt, processed_messages
 
     @staticmethod
