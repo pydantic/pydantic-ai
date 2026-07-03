@@ -205,6 +205,8 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         inp.send_text('hello\n')
         inp.send_text('/markdown\n')
         inp.send_text('/cp\n')
+        # a second agent turn, so `/usage` proves the session accumulator sums across the `run_chat` loop
+        inp.send_text('hello again\n')
         inp.send_text('/usage\n')
         inp.send_text('/usage --json\n')
         inp.send_text('/exit\n')
@@ -221,15 +223,15 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
                 '',
                 'goodbye',
                 'Copied last output to clipboard.',
-                'clai usage (session total)',
+                IsStr(regex=r'goodbye *clai usage \(session total\)'),
                 '',
-                'Turns:      1',
+                'Turns:      2',
                 IsStr(regex=r'Tokens: .*'),
                 IsStr(regex=r'  Input: .*'),
                 IsStr(regex=r'  Output: .*'),
-                'Requests:   1',
+                'Requests:   2',
                 'Tool calls: 0',
-                IsStr(regex=r'\{"turns": 1, .*"requests": 1, "tool_calls": 0\}'),
+                IsStr(regex=r'\{"turns": 2, .*"requests": 2, "tool_calls": 0\}'),
                 'Exiting…',
             ]
         )
@@ -407,6 +409,28 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
     assert session_usage.requests == snapshot(3)
     assert session_usage.tool_calls == snapshot(1)
     assert session_usage.total_tokens == snapshot(170)
+
+
+@pytest.mark.anyio
+async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
+    # A turn that makes a billed request and then raises must still be counted, so a later `/usage`
+    # does not under-report tokens that were actually spent. The merge happens in `ask_agent`'s `finally`.
+    env.set('OPENAI_API_KEY', 'test')
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def boom() -> int:
+        raise RuntimeError('boom')
+
+    session_usage = RunUsage()
+    console = Console(file=StringIO())
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await ask_agent(agent, 'go', False, console, 'default', usage=session_usage)
+
+    # The model request that produced the failing tool call was billed, so it is reflected in the total.
+    assert session_usage.requests == snapshot(1)
+    assert session_usage.total_tokens == snapshot(53)
 
 
 def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):

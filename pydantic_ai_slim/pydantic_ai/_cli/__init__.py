@@ -406,33 +406,41 @@ async def ask_agent(
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
-    if not stream:
-        with status:
-            result = await agent.run(prompt, message_history=messages, deps=deps)
-        content = str(result.output)
-        console.print(Markdown(content, code_theme=code_theme))
+    # Count this turn into a fresh `RunUsage` so `usage_limits` stays per-run, then merge it into the
+    # session total in a `finally` so a turn that fails after a billed request is still counted.
+    turn_usage = _usage.RunUsage()
+    try:
+        if not stream:
+            with status:
+                result = await agent.run(prompt, message_history=messages, deps=deps, usage=turn_usage)
+            content = str(result.output)
+            console.print(Markdown(content, code_theme=code_theme))
+            return result.all_messages()
+
+        with status, ExitStack() as stack:
+            async with agent.iter(
+                prompt,
+                message_history=messages,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=turn_usage,
+            ) as agent_run:
+                live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
+                async for node in agent_run:
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(agent_run.ctx) as handle_stream:
+                            status.stop()  # stopping multiple times is idempotent
+                            stack.enter_context(live)  # entering multiple times is idempotent
+
+                            async for content in handle_stream.stream_output(debounce_by=None):
+                                live.update(Markdown(str(content), code_theme=code_theme))
+
+            assert agent_run.result is not None
+            return agent_run.result.all_messages()
+    finally:
         if usage is not None:
-            usage.incr(result.usage)
-        return result.all_messages()
-
-    with status, ExitStack() as stack:
-        async with agent.iter(
-            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
-        ) as agent_run:
-            live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
-            async for node in agent_run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as handle_stream:
-                        status.stop()  # stopping multiple times is idempotent
-                        stack.enter_context(live)  # entering multiple times is idempotent
-
-                        async for content in handle_stream.stream_output(debounce_by=None):
-                            live.update(Markdown(str(content), code_theme=code_theme))
-
-        assert agent_run.result is not None
-        if usage is not None:
-            usage.incr(agent_run.result.usage)
-        return agent_run.result.all_messages()
+            usage.incr(turn_usage)
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
