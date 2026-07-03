@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from typing import Literal
 
@@ -2144,21 +2144,30 @@ def _metric_attribute_sets(capfire: CaptureLogfire) -> list[dict[str, object]]:
     return attribute_sets
 
 
-async def test_metrics_omit_agent_name_by_default(capfire: CaptureLogfire):
-    """By default, `gen_ai.agent.name` is not stamped on client metric data points."""
+@contextmanager
+def _agent_name_baggage(name: str):
+    """Attach an agent name to OTel baggage for the duration of the block."""
     from opentelemetry import context
     from opentelemetry.baggage import set_baggage
 
     from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
 
+    token = context.attach(set_baggage(AGENT_NAME_BAGGAGE_KEY, name))
+    try:
+        yield
+    finally:
+        context.detach(token)
+
+
+async def test_metrics_omit_agent_name_by_default(capfire: CaptureLogfire):
+    """By default, `gen_ai.agent.name` is not stamped on client metric data points."""
+    from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
+
     model = InstrumentedModel(MyModel(), InstrumentationSettings())
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
 
-    token = context.attach(set_baggage(AGENT_NAME_BAGGAGE_KEY, 'planner'))
-    try:
+    with _agent_name_baggage('planner'):
         await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
-    finally:
-        context.detach(token)
 
     attribute_sets = _metric_attribute_sets(capfire)
     assert attribute_sets  # sanity: metrics were recorded
@@ -2167,19 +2176,13 @@ async def test_metrics_omit_agent_name_by_default(capfire: CaptureLogfire):
 
 async def test_metrics_include_agent_name_when_enabled(capfire: CaptureLogfire):
     """When opted in, `gen_ai.agent.name` from baggage is stamped on client metric data points."""
-    from opentelemetry import context
-    from opentelemetry.baggage import set_baggage
-
     from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
 
     model = InstrumentedModel(MyModel(), InstrumentationSettings(include_agent_name_in_metric_attributes=True))
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
 
-    token = context.attach(set_baggage(AGENT_NAME_BAGGAGE_KEY, 'planner'))
-    try:
+    with _agent_name_baggage('planner'):
         await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
-    finally:
-        context.detach(token)
 
     attribute_sets = _metric_attribute_sets(capfire)
     # Both the token-usage (input/output) and cost data points carry the agent name.
