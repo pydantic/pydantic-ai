@@ -5198,7 +5198,7 @@ async def test_completed_streamed_response_metadata():
     assert streamed_response.provider_name == 'test-provider'
     assert streamed_response.provider_url == 'https://test.example.com'
     assert streamed_response.timestamp == ts
-    assert streamed_response.usage() == RequestUsage(input_tokens=10, output_tokens=20)
+    assert streamed_response.usage == RequestUsage(input_tokens=10, output_tokens=20)
 
     # `model_name` falls back to `''` when the response has none — matches the abstract `str` return type.
     empty = CompletedStreamedResponse(
@@ -5334,7 +5334,7 @@ async def test_replay_streamed_response_metadata(
     from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
 
     stream = _ReplayStreamedResponse(replay_response, model_request_parameters=replay_mrp)
-    assert stream.usage() == RequestUsage(input_tokens=10, output_tokens=20)
+    assert stream.usage == RequestUsage(input_tokens=10, output_tokens=20)
     assert stream.model_name == 'test-model'
     assert stream.provider_name == 'test-provider'
     assert stream.provider_url == 'https://test.example.com'
