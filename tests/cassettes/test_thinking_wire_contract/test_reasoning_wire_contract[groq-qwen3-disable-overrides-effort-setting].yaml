@@ -1,0 +1,73 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: qwen/qwen3-32b
+      n: 1
+      reasoning_effort: none
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '609'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          role: assistant
+      created: 1781546280
+      id: chatcmpl-a0a2facd-d696-4eb7-b6b8-c7cbe19eca0b
+      model: qwen/qwen3-32b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_d58dbe76cd
+      usage:
+        completion_time: 0.008436181
+        completion_tokens: 2
+        prompt_time: 0.001292093
+        prompt_tokens: 25
+        queue_time: 0.264631816
+        total_time: 0.009728274
+        total_tokens: 27
+      usage_breakdown: null
+      x_groq:
+        id: req_01kv66xs6weekbjqtrwjvg3bqc
+        seed: 1559850676
+    status:
+      code: 200
+      message: OK
+version: 1

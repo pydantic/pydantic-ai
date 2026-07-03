@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -31,9 +31,9 @@ from pydantic_ai import (
     ModelSettings,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
@@ -41,7 +41,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:
     from prefect import flow, task
@@ -52,11 +53,14 @@ try:
         PrefectAgent,
         PrefectDurability,
         PrefectFunctionToolset,
-        PrefectMCPServer,
+        PrefectMCPToolset,
         PrefectModel,
         TaskConfig,
     )
-    from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
+    from pydantic_ai.durable_exec.prefect._cache_policies import (
+        PrefectAgentInputs,
+        _replace_run_context,  # pyright: ignore[reportPrivateUsage]
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -67,7 +71,9 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -98,6 +104,14 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
     # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
+    # Root cause + latest context: https://github.com/pydantic/pydantic-ai/issues/3929 — VCR's
+    # httpcore stub wraps the in-process Prefect temp-server's localhost connections despite
+    # `ignore_localhost`, exhausting the pool until `httpcore.PoolTimeout`. Version-independent; a
+    # fix attempt (#3930) was reverted (#3932). The hang is confined to tests that run an agent
+    # flow (`await prefect_agent.run(...)` inside an `@flow`): the `test_cache_policy_*` and
+    # `test_cache_key_run_context_projection_is_exhaustive` unit tests run no flow and pass in
+    # seconds, so this blanket skip could be narrowed to only the flow-running tests (which would
+    # also mean revisiting the `durable_exec/prefect/*` + `tests/test_prefect.py` coverage omit).
     pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
     pytest.mark.filterwarnings('ignore:`PrefectAgent` is deprecated:DeprecationWarning'),
     pytest.mark.filterwarnings(
@@ -135,7 +149,7 @@ def setup_prefect_test_harness() -> Iterator[None]:
 
 
 @contextmanager
-def flow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def flow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Prefect flow fails with the expected error."""
     with pytest.raises(Exception) as exc_info:
         yield
@@ -181,6 +195,15 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+async def runtime_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('runtime_event', event=event)
+
+
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -215,29 +238,33 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-# See note in `tests/test_temporal.py`: `PrefectAgent` reads `agent.event_stream_handler`,
-# which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
-# the handler through capabilities.
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
-    )
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-        ],
-        tools=[get_weather],
-        event_stream_handler=event_stream_handler,
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],
-        name='complex_agent',
-    )
-complex_prefect_agent = PrefectAgent(complex_agent)
+complex_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='country'),
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+    ],
+    tools=[get_weather],
+    capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    name='complex_agent',
+)
+complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
+
+
+async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    del messages, agent_info
+    yield 'Hello'
+    yield ' world'
+
+
+runtime_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='runtime_handler_stream_agent',
+)
+runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -611,6 +638,26 @@ async def test_multiple_agents(allow_model_requests: None) -> None:
     )
 
 
+async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    @flow(name='test_prefect_agent_run_in_flow_with_runtime_event_stream_handler')
+    async def run_agent() -> AgentRunResult[str]:
+        return await runtime_handler_stream_prefect_agent.run(
+            'Say hello', event_stream_handler=runtime_event_stream_handler
+        )
+
+    result = await run_agent()
+    assert result.output == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
+
+
 async def test_agent_requires_name() -> None:
     """Test that PrefectAgent requires a name."""
     agent_without_name = Agent(model)
@@ -649,7 +696,7 @@ async def test_prefect_agent():
 
     # Find the wrapped toolsets (skip the internal output toolset)
     prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
-    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPServer)]
+    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPToolset)]
     external_toolsets = [ts for ts in toolsets if isinstance(ts, ExternalToolset)]
 
     # Verify we have the expected wrapped toolsets
@@ -657,13 +704,10 @@ async def test_prefect_agent():
     assert len(prefect_mcp_toolsets) == 1  # mcp toolset
     assert len(external_toolsets) == 1  # external toolset
 
-    # Verify MCP server is wrapped
+    # Verify MCP toolset is wrapped (complex_agent.toolsets[1] is the `MCPToolset` for mcp).
     mcp_toolset = prefect_mcp_toolsets[0]
     assert mcp_toolset.id == 'mcp'
-    # The wrapped toolset is the MCPServerStdio instance from the complex_agent
-    # complex_agent.toolsets[0] is FunctionToolset for get_country
-    # complex_agent.toolsets[1] is MCPServerStdio for mcp
-    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)
+    assert isinstance(mcp_toolset.wrapped, MCPToolset)
 
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
@@ -714,7 +758,8 @@ async def test_prefect_agent_run_stream(allow_model_requests: None):
 
 async def test_prefect_agent_run_stream_events(allow_model_requests: None):
     """Test that agent.run_stream_events() works."""
-    events = [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+    async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as event_stream:
+        events = [event async for event in event_stream]
     assert events == snapshot(
         [AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.'))]
     )
@@ -778,7 +823,8 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
 
     @flow(name='test_run_stream_events_in_flow')
     async def run_stream_events_workflow():
-        return [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+        async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as event_stream:
+            return [event async for event in event_stream]
 
     with flow_raises(
         UserError,
@@ -854,6 +900,57 @@ async def test_prefect_agent_override_toolsets(allow_model_requests: None) -> No
     assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
+async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
+    def request_external_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(request_external_tool),
+        name='runtime_external_toolset_prefect_agent',
+        output_type=[str, DeferredToolRequests],
+    )
+    prefect_agent = PrefectAgent(agent)
+
+    result = await prefect_agent.run(
+        'Call the runtime external tool.',
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external',
+                        parameters_json_schema={
+                            'type': 'object',
+                            'properties': {'query': {'type': 'string'}},
+                            'required': ['query'],
+                        },
+                    )
+                ],
+                id='external',
+            )
+        ],
+    )
+
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+    )
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -> None:
+    # Prefect wraps both function tools and MCP servers in tasks registered up front, and dynamic toolsets
+    # can't be introspected ahead of time, so none of them can be added per-run.
+    toolset_factories = {
+        'function': lambda: FunctionToolset(),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp'),
+        'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic'),
+    }
+    labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
+
+
 async def test_prefect_agent_override_tools(allow_model_requests: None) -> None:
     """Test that overriding tools works."""
 
@@ -891,13 +988,13 @@ hitl_agent = Agent(
 
 @task(name='create_file')
 @hitl_agent.tool
-def create_file(ctx: RunContext[None], path: str) -> None:
+def create_file(ctx: RunContext, path: str) -> None:
     raise CallDeferred
 
 
 @task(name='delete_file')
 @hitl_agent.tool
-def delete_file(ctx: RunContext[None], path: str) -> bool:
+def delete_file(ctx: RunContext, path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
@@ -1026,8 +1123,8 @@ test_model = TestModel()
 dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
 
 
-@dynamic_agent.toolset  # type: ignore
-def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+@dynamic_agent.toolset
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset:
     if ctx.deps.active == 'weather':
         return weather_toolset
     else:
@@ -1189,6 +1286,52 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+def test_cache_key_run_context_projection_is_exhaustive():
+    """Every `RunContext` field must be consciously categorized for Prefect cache-key hashing.
+
+    A task's cache key is derived from a hashable projection of `RunContext` (see
+    `_replace_run_context`). A field that affects a step's behavior but is omitted from the
+    projection causes cache collisions: two runs differing only in that field share a key and
+    one replays the other's result. This test fails when a `RunContext` field is added until
+    it's either included in the projection or listed in `cache_irrelevant` with a reason — the
+    same drift that left `loaded_capability_ids`/`discovered_tool_names` out of the key.
+    """
+    # Fields that legitimately don't belong in the cache key, each with its reason.
+    cache_irrelevant = {
+        'deps',  # user object; hashed separately as a task input, not via RunContext
+        'agent',  # the agent instance, identified by task source not run state
+        'model',  # live Model instance, not hashable run state
+        'usage',  # accumulates per run; not an input that should fork the cache
+        'tracer',  # tracing plumbing, not run state
+        'tool_manager',  # live ToolManager, not hashable run state
+        'capabilities',  # live capability objects, not hashable run state
+        'pending_messages',  # live run queue, not hashable run state
+        'messages',  # hashed as the separate `messages` task input
+        'prompt',  # hashed as the separate prompt task input
+        'validation_context',  # arbitrary user object, not run state
+        'trace_include_content',  # tracing config, not run state
+        'instrumentation_version',  # tracing config, not run state
+        'partial_output',  # output-validator flag, not a tool-execution input
+        'run_id',  # per-run id; deliberately excluded so keys are stable across runs
+        'conversation_id',  # per-conversation id; same rationale as run_id
+        'metadata',  # free-form run metadata, not a tool-execution input
+        'model_settings',  # hashed via the model request inputs, not RunContext
+        'capability_loaded',  # transient per-hook flag; `None` during tool execution
+    }
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    projected = set(_replace_run_context({'ctx': ctx})['ctx'])
+    all_fields = set(RunContext.__dataclass_fields__)
+
+    overlap = projected & cache_irrelevant
+    assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
+
+    uncategorized = all_fields - (projected | cache_irrelevant)
+    assert not uncategorized, (
+        f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
+        'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
+    )
 
 
 async def test_repeated_run_hits_cache():

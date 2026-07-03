@@ -34,12 +34,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       but does not affect downstream consumers; a handler that raises propagates the
       exception to the rest of the run. Events are delivered synchronously, so a slow
       handler back-pressures the rest of the stream.
-    - An [`EventStreamProcessor`][pydantic_ai.agent.EventStreamProcessor] — an async
+    - An `EventStreamProcessor` — an async
       generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
       The events it yields replace the inner stream for downstream wrappers and consumers,
       so it can modify, drop, or add events.
 
-    When this capability is registered, [`agent.run()`][pydantic_ai.Agent.run] automatically
+    When this capability is registered, `agent.run()` automatically
     enables streaming so the handler fires without requiring an explicit `event_stream_handler`
     argument.
 

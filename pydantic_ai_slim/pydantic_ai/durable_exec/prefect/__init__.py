@@ -2,7 +2,7 @@ from ._agent import PrefectAgent  # pyright: ignore[reportDeprecated]
 from ._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY
 from ._durability import PrefectDurability
 from ._function_toolset import PrefectFunctionToolset
-from ._mcp_server import PrefectMCPServer
+from ._mcp_toolset import PrefectMCPToolset
 from ._model import PrefectModel
 from ._types import TaskConfig
 
@@ -10,7 +10,7 @@ __all__ = [
     'PrefectAgent',
     'PrefectDurability',
     'PrefectModel',
-    'PrefectMCPServer',
+    'PrefectMCPToolset',
     'PrefectFunctionToolset',
     'TaskConfig',
     'DEFAULT_PYDANTIC_AI_CACHE_POLICY',

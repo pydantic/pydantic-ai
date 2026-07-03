@@ -150,6 +150,8 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
+Mid-conversation `SystemPromptPart`s (those in any `ModelRequest` after the first) are sent inline at their original position by providers whose API accepts system messages at arbitrary positions. For providers whose API doesn't, they're instead rendered as `<system>`-tagged `UserPromptPart`s at the same position, preserving the prefix cache and positional intent. Leading `SystemPromptPart`s always hoist to the provider's top-level system parameter.
+
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
@@ -309,6 +311,27 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+### Loading untrusted history
+
+The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
+
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+
+```python {title="sanitize untrusted message history" test="skip" lint="skip"}
+from pydantic_ai import Agent, ModelMessagesTypeAdapter
+from pydantic_ai.messages import sanitize_messages
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+# `request_json` is the body submitted by an untrusted client.
+loaded_history = ModelMessagesTypeAdapter.validate_python(request_json['message_history'])
+message_history = sanitize_messages(loaded_history)
+
+result = agent.run_sync('Tell me a different joke.', message_history=message_history)
+```
+
+Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
@@ -388,6 +411,180 @@ print(result2.all_messages())
 ]
 """
 ```
+
+_(This example is complete, it can be run "as is")_
+
+## Sharing messages between agents
+
+The same `message_history` parameter also works when the next run uses a
+different [`Agent`][pydantic_ai.Agent]. This is useful for
+[programmatic agent hand-off](multi-agent-applications.md#programmatic-agent-hand-off),
+where your application runs one agent, then gives another agent the conversation
+so far as context.
+
+```python {title="sharing_messages_between_agents.py" hl_lines="19"}
+from pydantic_ai import Agent
+
+biography_agent = Agent(
+    'openai:gpt-5.2',
+    instructions='Answer biographical questions concisely.',
+)
+
+science_agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Answer science questions for a general audience.',
+)
+
+biography_result = biography_agent.run_sync('Who was Albert Einstein?')
+print(biography_result.output)
+#> Albert Einstein was a German-born theoretical physicist.
+
+science_result = science_agent.run_sync(
+    'What was his most famous equation?',
+    message_history=biography_result.new_messages(),
+)
+print(science_result.output)
+#> Albert Einstein's most famous equation is (E = mc^2).
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! note "Instructions, system prompts, and tools"
+    When you pass `message_history` to another agent, previous
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages still contain
+    the instructions used by the originating agent, but those instructions are
+    not sent to the model again. The receiving agent uses its own
+    `instructions`; see [Instructions](agent.md#instructions) for how this
+    differs from [system prompts](agent.md#system-prompts) when
+    `message_history` is provided.
+
+    `system_prompt` is different: system prompt parts are part of the message
+    history. If the receiving agent has its own `system_prompt` and you need to
+    ensure it is present when reusing history, see
+    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    `replace_existing=True` when a system prompt from another agent should not
+    remain authoritative.
+
+    Tool call and tool return parts also remain in the history. Prefer sharing
+    history between agents that can understand the same tool context, or pass
+    only the messages that make sense for the receiving agent.
+
+For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
+
+## Injecting messages mid-run
+
+Tools, capability hooks, and external code driving an agent run can inject extra content
+into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
+(when a `RunContext` is in scope, e.g. inside a tool or capability hook) or
+[`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] (from external code driving
+[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]). Use this when something happens during a
+run that the agent should know about — a tool wants to add follow-up context, an external event
+needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
+
+A `priority` controls when the enqueued content is delivered:
+
+- `'asap'` (default): delivered at the earliest opportunity — added to the next [`ModelRequest`][pydantic_ai.messages.ModelRequest], or, if the agent would otherwise terminate before another request, used to redirect the run into one more request. Use when the new context should reach the model as soon as possible; this is what other frameworks often call **steering** an in-flight agent.
+- `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages. Use when the agent shouldn't be interrupted but should pick up the new work — a follow-up task — once it's done with what it's doing.
+
+`enqueue` is variadic — each positional argument is one item, and can be:
+
+- a piece of [`UserContent`][pydantic_ai.messages.UserContent] — a `str` or multi-modal content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]. Adjacent user content is gathered into a single [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so `enqueue('caption', image)` forms one user turn. To pass an existing list, spread it: `enqueue(*items)`;
+- a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart], such as a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart];
+- a complete [`ModelRequest`][pydantic_ai.messages.ModelRequest] or [`ModelResponse`][pydantic_ai.messages.ModelResponse], to control request-level fields like `instructions`/`metadata` or to inject a synthetic prior turn.
+
+Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
+
+### From inside a tool or hook
+
+Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
+`RunContext` in scope:
+
+```python {title="enqueue_from_tool.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import SystemPromptPart
+
+agent = Agent('anthropic:claude-opus-4-7')
+
+
+@agent.tool
+def trigger_alert(ctx: RunContext[None]) -> str:
+    ctx.enqueue('Alert: production is degraded, prioritize triage.')
+    return 'alert raised'
+
+
+@agent.tool
+def enter_incident_mode(ctx: RunContext[None]) -> str:
+    # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
+    ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
+    return 'incident mode enabled'
+```
+
+The `'asap'` message is appended to the agent's message history and is visible to the
+model on the next request, alongside any tool returns from the same step. A
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way; on
+providers that hoist system prompts (e.g. Anthropic, Google) a non-leading one is sent as a
+`<system>`-tagged user-role message, so it keeps its mid-conversation position rather than being
+lifted to the top.
+
+### From external code driving `agent.iter()`
+
+Use [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] when you're driving a run
+from outside (e.g. forwarding events from a webhook, chat platform, or job queue):
+
+```python {title="enqueue_from_agent_run.py"}
+from pydantic_ai import Agent
+from pydantic_graph import End
+
+agent = Agent('anthropic:claude-opus-4-7')
+
+
+async def main():
+    async with agent.iter('Summarize the latest deploy report') as agent_run:
+        # An external system pushes a follow-up while the agent is working.
+        # When the agent would otherwise finish, the message redirects it
+        # into a fresh model request so it can incorporate the new context.
+        agent_run.enqueue(
+            'A new error was just reported — include it in the summary.',
+            priority='when_idle',
+        )
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+```
+
+The example drives the run with [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] +
+[`AgentRun.next()`][pydantic_ai.run.AgentRun.next] because `'when_idle'` messages are only
+drained when the agent would otherwise reach an `End` — that drain happens in `after_node_run`,
+which doesn't fire inside a bare `async for node in agent_run:` loop. `'asap'` messages are
+drained in `before_model_request` (which fires either way) and also at the same end-of-run point
+if anything arrived during the final step. Reaching the end of a bare `async for` loop with
+undrained pending messages raises [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError],
+since those messages would otherwise be silently lost.
+
+!!! info "Limitations"
+    - End-of-run redirects need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
+      explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
+      aren't drained inside a bare `async for node in agent_run:` loop (which raises
+      [`UndrainedPendingMessagesError`][pydantic_ai.exceptions.UndrainedPendingMessagesError]
+      if it ends with undrained messages). Messages delivered into a
+      `before_model_request` work in either case.
+    - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
+      activities and don't share state with the workflow, so `ctx.enqueue` from a
+      tool doesn't currently propagate back to the run. Enqueue from the workflow
+      context (e.g. via `AgentRun.enqueue`) instead.
+    - Each end-of-run redirect opens a new model request. If something keeps
+      enqueueing on every step (e.g. a tool that always enqueues, or a
+      system-prompt callback that re-enqueues on each reinjection), the run will
+      loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
+      run as a safety net.
+    - `enqueue` is designed to be called from the same event loop that drives the
+      agent run. Inside the run that's automatic: async tools, sync tools (which
+      Pydantic AI auto-wraps in a thread executor), and capability hooks all
+      enqueue safely because the drain only iterates between graph nodes, never
+      concurrently with a tool body. If you're forwarding events from a *different*
+      thread or loop (e.g. a webhook handler), marshal the call onto the agent's
+      loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
+      drain isn't atomic against concurrent cross-thread appends.
 
 ## Processing Message History
 
@@ -493,7 +690,7 @@ from pydantic_ai.capabilities import ProcessHistory
 
 
 def context_aware_processor(
-    ctx: RunContext[None],
+    ctx: RunContext,
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     # Access current usage

@@ -6,7 +6,7 @@ from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
 from .deferred_loading import DeferredLoadingToolset
-from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
+from .external import ExternalToolset
 from .filtered import FilteredToolset
 from .function import FunctionToolset
 from .include_return_schemas import IncludeReturnSchemasToolset
@@ -25,7 +25,6 @@ __all__ = (
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
-    'DeferredToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',

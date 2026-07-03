@@ -32,11 +32,10 @@ from rich.progress import Progress
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
-from pydantic_evals._utils import get_event_loop
+from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
-from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -227,8 +226,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ```
     """
 
-    name: str | None = None
-    """Name of the dataset. Required in future versions."""
+    name: str
+    """Name of the dataset."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -239,7 +238,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def __init__(
         self,
         *,
-        name: str | None = None,
+        name: str,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
         report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
@@ -247,18 +246,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Name for the dataset. Omitting this is deprecated and will raise an error in a future version.
+            name: Name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
-        if name is None:
-            warnings.warn(
-                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-
         case_names = set[str]()
         for case in cases:
             if case.name is None:
@@ -286,20 +278,23 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         else:
             return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
 
-    # TODO in v2: Make everything not required keyword-only
     async def evaluate(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -329,6 +324,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if repeat < 1:
             raise ValueError(f'repeat must be >= 1, got {repeat}')
+        if max_concurrency is not None and max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
@@ -420,16 +417,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def evaluate_sync(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -456,7 +457,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(
+        return run_until_complete(
             self.evaluate(
                 task,
                 name=name,
@@ -543,7 +544,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
-        else:  # pragma: no cover
+        else:
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
@@ -736,8 +737,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        # Use default_name if no name was provided in the serialized data
         name = dataset_model.name if dataset_model.name is not None else default_name
+        if name is None:
+            raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')
         result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
@@ -772,8 +774,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):  # pragma: no cover
-                schema_ref = str(_get_relative_path_reference(schema_path, path))
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(_get_relative_path_reference(schema_path, path.parent))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
@@ -911,7 +913,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
@@ -933,11 +935,11 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
     # This is useful for creating a relative path reference from a source file to a target file.
     # For example, if source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
     # would be '../../d/e.py'.
-    if not target.is_absolute():
-        target = target.resolve()
+    if not target.is_absolute():  # pragma: no branch
+        target = target.resolve()  # pragma: no cover
     try:
         return Path(f'{_prefix}{Path(target).relative_to(source)}')
-    except ValueError:
+    except ValueError:  # pragma: no cover
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
@@ -984,7 +986,7 @@ async def _run_task(
 
     if retry:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
-        from pydantic_ai.retries import retry as tenacity_retry
+        from pydantic_ai.retries import retry as tenacity_retry  # pyright: ignore[reportPrivateImportUsage]
 
         _run_once = tenacity_retry(**retry)(_run_once)
 
@@ -1085,7 +1087,11 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
-    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+    lifecycle: (
+        type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | None
+    ) = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
