@@ -121,7 +121,7 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import NativeOutput, OutputController, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -276,6 +276,7 @@ __all__ = (
     'Tool',
     'ToolDefinition',
     'RunContext',
+    'OutputController',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',

@@ -363,6 +363,151 @@ async def run_output_with_hooks(
     return cast(OutputDataT, result)
 
 
+def _find_tool_def(toolset: OutputToolset[Any], name: str) -> ToolDefinition | None:
+    return next((tool_def for tool_def in toolset._tool_defs if tool_def.name == name), None)  # pyright: ignore[reportPrivateUsage]
+
+
+def _select_tool_output_processor(
+    toolset: OutputToolset[Any],
+    candidate: Any,
+    *,
+    run_context: RunContext[AgentDepsT],
+    output_tool_name: str | None,
+) -> tuple[str, ObjectOutputProcessor[Any]]:
+    if output_tool_name is not None:
+        try:
+            return output_tool_name, toolset.processors[output_tool_name]
+        except KeyError as e:
+            raise ValueError(f'unknown output tool: {output_tool_name!r}') from e
+
+    if len(toolset.processors) == 1:
+        name, processor = next(iter(toolset.processors.items()))
+        return name, processor
+
+    matches: list[tuple[str, ObjectOutputProcessor[Any]]] = []
+    for name, processor in toolset.processors.items():
+        try:
+            processor.hook_validate_candidate(candidate, run_context=run_context)
+        except (ValidationError, ValueError, TypeError):
+            continue
+        else:
+            matches.append((name, processor))
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError('candidate matches multiple output tools; pass `output_tool_name`')
+    raise ValueError('candidate does not match any output tool')
+
+
+async def run_output_candidate_with_hooks(
+    candidate: Any,
+    *,
+    run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT],
+    schema: OutputSchema[Any],
+    output_tool_name: str | None = None,
+    allow_partial: bool = False,
+    wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+) -> OutputDataT:
+    """Process a semantic Python candidate through the output pipeline.
+
+    This is the capability-facing counterpart to `run_output_with_hooks`: provider
+    output is already a Python value, but it still needs schema validation, output
+    hooks, output functions, and output validators.
+    """
+    if candidate is None and schema.allows_none:
+        return cast(
+            OutputDataT,
+            await run_none_process_hooks(
+                capability=capability,
+                run_context=run_context,
+                schema=schema,
+                wrap_validation_errors=wrap_validation_errors,
+                output_validators=output_validators,
+            ),
+        )
+
+    if isinstance(candidate, _messages.BinaryImage) and schema.allows_image:
+        return cast(
+            OutputDataT,
+            await run_image_process_hooks(
+                candidate,
+                capability=capability,
+                run_context=run_context,
+                schema=schema,
+                wrap_validation_errors=wrap_validation_errors,
+                output_validators=output_validators,
+            ),
+        )
+
+    processor: BaseOutputProcessor[Any]
+    output_context: OutputContext
+
+    if isinstance(candidate, str) and output_tool_name is None and schema.text_processor is not None:
+        processor = schema.text_processor
+        output_context = processor.get_output_context(schema)
+    elif schema.toolset is not None:
+        name, processor = _select_tool_output_processor(
+            schema.toolset, candidate, run_context=run_context, output_tool_name=output_tool_name
+        )
+        output_context = processor.get_output_context(
+            schema,
+            mode='tool',
+            tool_def=_find_tool_def(schema.toolset, name),
+        )
+    elif isinstance(schema.text_processor, BaseObjectOutputProcessor):
+        processor = schema.text_processor
+        output_context = processor.get_output_context(schema)
+    else:
+        raise ValueError('candidate does not match the output schema')
+
+    state: Any = None
+
+    async def do_validate(output: Any) -> Any:
+        nonlocal state
+        semantic, state = processor.hook_validate_candidate(
+            output, run_context=run_context, allow_partial=allow_partial
+        )
+        return semantic
+
+    async def base_do_process(output: Any) -> Any:
+        return await processor.hook_execute(
+            output, state, run_context=run_context, wrap_validation_errors=wrap_validation_errors
+        )
+
+    async def do_process(output: Any) -> Any:
+        result = await base_do_process(output)
+        for validator in output_validators:
+            result = await validator.validate(result, run_context)
+        return result
+
+    if isinstance(processor, BaseObjectOutputProcessor):
+        validated = await run_output_validate_hooks(
+            capability,
+            run_context=run_context,
+            output_context=output_context,
+            output=cast(str | dict[str, Any], candidate),
+            do_validate=do_validate,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
+    else:
+        validated = await do_validate(candidate)
+
+    result = await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=validated,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
+
+    return cast(OutputDataT, result)
+
+
 async def execute_output_function(
     function_schema: _function_schema.FunctionSchema,
     *,
@@ -805,6 +950,20 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         validated = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
         return validated, None
 
+    def hook_validate_candidate(
+        self,
+        candidate: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        """Validate a semantic candidate value and return `(semantic_value, state)`.
+
+        Unlike `hook_validate`, which receives the provider-facing raw shape, this receives
+        the Python value a capability wants to commit as output.
+        """
+        return self.hook_validate(candidate, run_context=run_context, allow_partial=allow_partial)
+
     async def hook_execute(
         self,
         semantic: Any,
@@ -1005,6 +1164,18 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         if (k := self.hook_unwrap_key) is None:
             return validated, None
         return validated[k], None
+
+    def hook_validate_candidate(
+        self,
+        candidate: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        data = candidate
+        if (k := self.hook_unwrap_key) is not None:
+            data = {k: candidate}
+        return self.hook_validate(data, run_context=run_context, allow_partial=allow_partial)
 
     async def hook_execute(
         self,
@@ -1225,6 +1396,51 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             data, allow_partial=allow_partial, validation_context=run_context.validation_context
         )
         return union_validated.data, union_validated.kind
+
+    def hook_validate_candidate(
+        self,
+        candidate: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        if isinstance(candidate, dict) and 'result' in candidate:
+            try:
+                return self.hook_validate(
+                    cast(dict[str, Any], candidate), run_context=run_context, allow_partial=allow_partial
+                )
+            except (ValidationError, ValueError, TypeError):
+                pass
+
+        if match := self._resolve_inner_for_value(candidate):
+            inner = self._processors[match.kind]
+            semantic, _state = inner.hook_validate_candidate(
+                candidate, run_context=run_context, allow_partial=allow_partial
+            )
+            return semantic, match.kind
+
+        matches: list[tuple[str, Any]] = []
+        for kind, inner in self._processors.items():
+            try:
+                semantic, _state = inner.hook_validate_candidate(
+                    candidate, run_context=run_context, allow_partial=allow_partial
+                )
+            except (ValidationError, ValueError, TypeError):
+                continue
+            else:
+                matches.append((kind, semantic))
+
+        if len(matches) == 1:
+            kind, semantic = matches[0]
+            return semantic, kind
+        if len(matches) > 1:
+            raise ValueError('candidate matches multiple output types')
+
+        return self.hook_validate(
+            cast(str | dict[str, Any] | None, candidate),
+            run_context=run_context,
+            allow_partial=allow_partial,
+        )
 
     async def hook_execute(
         self,

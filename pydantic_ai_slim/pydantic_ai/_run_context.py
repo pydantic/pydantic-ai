@@ -17,9 +17,11 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
 
 if TYPE_CHECKING:
+    from ._output import OutputSchema, OutputValidator
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
+    from .output import OutputController
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -137,6 +139,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """All capabilities registered for the current run, including deferred ones."""
 
+    _output_schema: OutputSchema[Any] | None = field(default=None, repr=False)
+    """Private output schema used by `output` during an agent run."""
+    _output_validators: Sequence[OutputValidator[RunContextAgentDepsT, Any]] = field(default_factory=tuple, repr=False)
+    """Private output validators used by `output` during an agent run."""
+    _root_capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
+    """Private root capability used by `output` during an agent run."""
+    _output_retry: int | None = field(default=None, repr=False)
+    """Private run output retry count used by `output` during an agent run."""
+    _max_output_retries: int | None = field(default=None, repr=False)
+    """Private max output retries used by `output` during an agent run."""
+
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
@@ -236,6 +249,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    @property
+    def output(self) -> OutputController[Any]:
+        """Helper for processing and committing candidate final outputs from capabilities."""
+        from .output import OutputController
+
+        return OutputController(
+            ctx=self,
+            _output_schema=self._output_schema,
+            _output_validators=self._output_validators,
+            _root_capability=self._root_capability,
+            _output_retry=self._output_retry,
+            _max_output_retries=self._max_output_retries,
+        )
 
     def enqueue(
         self,

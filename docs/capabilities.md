@@ -1276,6 +1276,40 @@ class MaxModelRequests(AbstractCapability[Any]):
 
 See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) for more about the agent graph and its node types.
 
+#### Committing a candidate final output
+
+Some capabilities run tools that can already produce the agent's final output as a Python value. For example, a code-execution capability might call several tools inside a sandbox and return a structured object containing exact IDs from those tool results. Asking the model for another response just to copy that object into an output tool adds latency and can corrupt opaque values.
+
+Use [`RunContext.output`][pydantic_ai.tools.RunContext.output] from [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run] to validate and process that candidate through the current [output](output.md) schema. Pass the hook's `result` argument back to [`try_commit_candidate`][pydantic_ai.output.OutputController.try_commit_candidate] so pending tool returns from the current step are recorded in message history before the run ends:
+
+```python {title="commit_candidate_output.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class CommitLatestToolResult(AbstractCapability[Any]):
+    candidate: Any | None = None
+
+    async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+        self.candidate = kwargs['result']
+        return kwargs['result']
+
+    async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+        if self.candidate is None:
+            return result
+
+        candidate = self.candidate
+        self.candidate = None
+        committed = await ctx.output.try_commit_candidate(candidate, result=result)
+        return committed or result
+```
+
+[`try_commit_candidate`][pydantic_ai.output.OutputController.try_commit_candidate] returns `None` when the candidate does not match the output schema or is rejected by an output hook, output function, or output validator, so the graph can continue normally. Use [`commit_candidate`][pydantic_ai.output.OutputController.commit_candidate] when rejection should raise instead. If the configured output schema has multiple output tools and the candidate is ambiguous, pass `output_tool_name=...` to choose the output tool processor.
+
 #### Model request hooks
 
 | Hook | Signature | Purpose |

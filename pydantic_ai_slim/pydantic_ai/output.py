@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
-from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
@@ -15,6 +15,11 @@ from ._run_context import RunContext
 from .messages import ToolCallPart
 from .tools import ObjectJsonSchema, ToolDefinition
 
+if TYPE_CHECKING:
+    from pydantic_graph import End
+
+    from .result import FinalResult
+
 __all__ = (
     # classes
     'ToolOutput',
@@ -24,6 +29,7 @@ __all__ = (
     'StructuredDict',
     'OutputObjectDefinition',
     'OutputContext',
+    'OutputController',
     # types
     'OutputDataT',
     'OutputMode',
@@ -312,6 +318,139 @@ class OutputContext:
     """Whether the schema accepts image output."""
     allows_deferred_tools: bool = False
     """Whether the schema accepts deferred tool requests as output."""
+
+
+@dataclass(repr=False, kw_only=True)
+class OutputController(Generic[T]):
+    """Helper for processing and committing candidate final outputs from capabilities.
+
+    Access this through [`RunContext.output`][pydantic_ai.tools.RunContext.output].
+    """
+
+    ctx: RunContext[Any]
+    _output_schema: Any | None = None
+    _output_validators: Sequence[Any] = ()
+    _root_capability: Any | None = None
+    _output_retry: int | None = None
+    _max_output_retries: int | None = None
+
+    async def process_candidate(
+        self,
+        candidate: Any,
+        *,
+        output_tool_name: str | None = None,
+    ) -> T:
+        """Validate and process a Python value as final output.
+
+        This runs the same output schema validation, output hooks, output functions,
+        and output validators used by normal model output. `output_tool_name` can be
+        provided when the current output schema exposes multiple output tools and the
+        candidate is otherwise ambiguous.
+        """
+        from dataclasses import replace
+
+        from . import _output
+
+        output_schema = self._output_schema
+        root_capability = self._root_capability
+        if output_schema is None or root_capability is None:
+            raise exceptions.UserError('`RunContext.output` is only available during an agent run.')
+
+        output_ctx = self.ctx
+        if self._output_retry is not None and self._max_output_retries is not None:
+            output_ctx = replace(
+                self.ctx,
+                retry=self._output_retry,
+                max_retries=self._max_output_retries,
+            )
+
+        return cast(
+            T,
+            await _output.run_output_candidate_with_hooks(
+                candidate,
+                run_context=output_ctx,
+                capability=root_capability,
+                schema=output_schema,
+                output_tool_name=output_tool_name,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            ),
+        )
+
+    def end(
+        self,
+        output: T,
+        *,
+        result: Any | None = None,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> End[FinalResult[T]]:
+        """Create an `End` node for an already-processed final output.
+
+        When `result` is a continuation `ModelRequestNode` produced after tool execution,
+        its pending tool returns are appended to message history before the run ends.
+        """
+        from pydantic_graph import End
+
+        from .result import FinalResult
+
+        self._append_pending_tool_returns(result)
+        return End(FinalResult(output, tool_name=tool_name, tool_call_id=tool_call_id))
+
+    async def commit_candidate(
+        self,
+        candidate: Any,
+        *,
+        result: Any | None = None,
+        output_tool_name: str | None = None,
+    ) -> End[FinalResult[T]]:
+        """Process `candidate` and return an `End` node for the processed output."""
+        output = await self.process_candidate(candidate, output_tool_name=output_tool_name)
+        return self.end(output, result=result)
+
+    async def try_commit_candidate(
+        self,
+        candidate: Any,
+        *,
+        result: Any | None = None,
+        output_tool_name: str | None = None,
+    ) -> End[FinalResult[T]] | None:
+        """Commit a candidate final output if it is valid for the current schema.
+
+        Returns `None` when the candidate is rejected by schema validation, output hooks,
+        output functions, or output validators. This lets an `after_node_run` capability
+        continue the graph normally without consuming the agent's output retry budget.
+        """
+        from .exceptions import ModelRetry
+
+        try:
+            return await self.commit_candidate(candidate, result=result, output_tool_name=output_tool_name)
+        except (ValidationError, ModelRetry, ValueError, TypeError):
+            return None
+
+    def _append_pending_tool_returns(self, result: Any | None) -> None:
+        from ._utils import now_utc
+        from .agent import ModelRequestNode
+        from .messages import ModelRequest, ToolReturnPart
+
+        if not isinstance(result, ModelRequestNode):
+            return
+
+        request = result.request
+        if not any(isinstance(part, ToolReturnPart) for part in request.parts):
+            return
+        if any(message is request for message in self.ctx.messages):
+            return
+
+        self.ctx.messages.append(
+            ModelRequest(
+                parts=request.parts,
+                run_id=request.run_id or self.ctx.run_id,
+                conversation_id=request.conversation_id or self.ctx.conversation_id,
+                timestamp=request.timestamp or now_utc(),
+                instructions=request.instructions,
+            )
+        )
 
 
 @dataclass

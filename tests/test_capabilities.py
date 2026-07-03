@@ -13616,6 +13616,181 @@ async def test_after_node_run_node_to_end():
     assert model_call_count == 1
 
 
+async def test_run_context_output_try_commit_candidate_preserves_tool_return():
+    """A capability can end from a tool result while preserving the tool return in history."""
+    candidate: Any = None
+    has_candidate = False
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    @dataclass
+    class CommitToolResult(AbstractCapability[Any]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> Any:
+            nonlocal candidate, has_candidate
+            if call.tool_name == 'run_code':
+                candidate = result
+                has_candidate = True
+            return result
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal candidate, has_candidate
+            if not has_candidate:
+                return result
+
+            has_candidate = False
+            committed = await ctx.output.try_commit_candidate(candidate, result=result)
+            return committed or result
+
+    agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[CommitToolResult()])
+
+    @agent.tool_plain
+    def run_code() -> dict[str, int]:
+        return {'value': 42}
+
+    result = await agent.run('hello')
+
+    assert result.output == MyOutput(value=42)
+    assert model_call_count == 1
+
+    tool_returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == {'value': 42}
+    assert not any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'final_result'
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_run_context_output_candidate_runs_output_function_and_validator():
+    """Candidate final output follows the normal output function and validator pipeline."""
+    candidate: Any = None
+    has_candidate = False
+
+    def build_output(value: int) -> MyOutput:
+        return MyOutput(value=value + 1)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    @dataclass
+    class CommitToolResult(AbstractCapability[Any]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> Any:
+            nonlocal candidate, has_candidate
+            candidate = result
+            has_candidate = True
+            return result
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal candidate, has_candidate
+            if not has_candidate:
+                return result
+
+            has_candidate = False
+            committed = await ctx.output.try_commit_candidate(candidate, result=result)
+            return committed or result
+
+    agent = Agent(FunctionModel(model_fn), output_type=build_output, capabilities=[CommitToolResult()])
+
+    @agent.tool_plain
+    def run_code() -> int:
+        return 20
+
+    seen_by_validator: list[MyOutput] = []
+
+    @agent.output_validator
+    def double(output: MyOutput) -> MyOutput:
+        seen_by_validator.append(output)
+        return MyOutput(value=output.value * 2)
+
+    result = await agent.run('hello')
+
+    assert seen_by_validator == [MyOutput(value=21)]
+    assert result.output == MyOutput(value=42)
+
+
+async def test_run_context_output_try_commit_candidate_invalid_continues_normally():
+    """Invalid candidates are ignored so the graph can ask the model for normal output."""
+    candidate: Any = None
+    has_candidate = False
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        if model_call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=output_tool.name, args={'value': 5}, tool_call_id='final-1')]
+        )
+
+    @dataclass
+    class CommitToolResult(AbstractCapability[Any]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> Any:
+            nonlocal candidate, has_candidate
+            if call.tool_name == 'run_code':
+                candidate = result
+                has_candidate = True
+            return result
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal candidate, has_candidate
+            if not has_candidate:
+                return result
+
+            has_candidate = False
+            committed = await ctx.output.try_commit_candidate(candidate, result=result)
+            return committed or result
+
+    agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[CommitToolResult()])
+
+    @agent.tool_plain
+    def run_code() -> dict[str, str]:
+        return {'value': 'not an int'}
+
+    result = await agent.run('hello')
+
+    assert result.output == MyOutput(value=5)
+    assert model_call_count == 2
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+
+
 # ===== Pending Message Queue Tests =====
 
 
