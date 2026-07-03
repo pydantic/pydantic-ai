@@ -10,6 +10,7 @@ import os
 import re
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -84,27 +85,18 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
 
-# `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`, and the
-# legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
-# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
-# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
-# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warning here
+# rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
+# emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
 # at module import time (e.g. `simple_dbos_agent = DBOSAgent(...)`).
 warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=DeprecationWarning)
-warnings.filterwarnings(
-    'ignore',
-    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
-    category=DeprecationWarning,
-)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:DeprecationWarning'),
-    pytest.mark.filterwarnings(
-        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
-    ),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -2103,7 +2095,7 @@ async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
     """DBOSDurability routes streaming requests through DBOS steps when event_stream_handler is set."""
     events_received: list[Any] = []
 
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[Any]) -> None:
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[Any]) -> None:
         async for event in stream:
             events_received.append(event)
 
@@ -2150,7 +2142,7 @@ async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos:
 
     events_received: list[AgentStreamEvent] = []
 
-    async def collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events_received.append(event)
 
@@ -2191,7 +2183,7 @@ async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DB
 
     events_received: list[AgentStreamEvent] = []
 
-    async def runtime_collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def runtime_collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events_received.append(event)
 
@@ -2221,10 +2213,12 @@ async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DB
 
 
 async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
-    """DBOSDurability discovers MCPServerStdio and creates DBOS wrappers."""
-    from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
+    """DBOSDurability discovers MCPToolset and creates DBOS wrappers."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
-    mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='my_mcp')
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='my_mcp', init_timeout=20
+    )
     agent = Agent(
         _durability_fn_model,
         name='durability_mcp',
@@ -2236,33 +2230,16 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
 
     # The capability should have stored a DBOS wrapper keyed by the toolset id
     assert 'my_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPServer)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_dbos_durability_fastmcp_toolset_wrapping(dbos: DBOS) -> None:
-    """DBOSDurability discovers FastMCPToolset and creates DBOS wrappers."""
-    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
-
-    fastmcp_toolset = FastMCPToolset('https://example.com/mcp', id='my_fastmcp')
-    agent = Agent(
-        _durability_fn_model,
-        name='durability_fastmcp',
-        toolsets=[fastmcp_toolset],
-        capabilities=[DBOSDurability()],
-    )
-    bound = DBOSDurability.from_agent(agent)
-    assert bound is not None
-
-    # The capability should have stored a DBOS wrapper keyed by the toolset id
-    assert 'my_fastmcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(bound._dbos_toolsets_by_id['my_fastmcp'], DBOSFastMCPToolset)  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
     """DBOSDurability.get_wrapper_toolset replaces MCP toolsets by id."""
-    from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
-    mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='swap_mcp')
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='swap_mcp', init_timeout=20
+    )
     agent = Agent(
         _durability_fn_model,
         name='durability_swap',
@@ -2277,4 +2254,4 @@ async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
     # get_wrapper_toolset should replace the original MCP toolset with the DBOS wrapper
     replaced = bound.get_wrapper_toolset(mcp_toolset)
     assert replaced is not None
-    assert isinstance(replaced, DBOSMCPServer)
+    assert isinstance(replaced, DBOSMCPToolset)

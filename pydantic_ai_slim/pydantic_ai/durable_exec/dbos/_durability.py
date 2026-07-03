@@ -236,31 +236,14 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
 
         def dbosify(ts: AbstractToolset[Any]) -> AbstractToolset[Any]:
             try:
-                from pydantic_ai.mcp import MCPServer
+                from pydantic_ai.mcp import MCPToolset
 
-                from ._mcp_server import DBOSMCPServer
+                from ._mcp_toolset import DBOSMCPToolset
             except ImportError:
                 pass
             else:
-                if isinstance(ts, MCPServer):
-                    wrapped = DBOSMCPServer(
-                        wrapped=ts,
-                        step_name_prefix=self.name,
-                        step_config=self._mcp_step_config,
-                    )
-                    if ts.id is not None:  # pragma: no branch
-                        self._dbos_toolsets_by_id[ts.id] = wrapped
-                    return wrapped
-
-            try:
-                from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
-
-                from ._fastmcp_toolset import DBOSFastMCPToolset
-            except ImportError:
-                pass
-            else:
-                if isinstance(ts, FastMCPToolset):  # pyright: ignore[reportDeprecated]
-                    wrapped = DBOSFastMCPToolset(
+                if isinstance(ts, MCPToolset):
+                    wrapped = DBOSMCPToolset(
                         wrapped=ts,
                         step_name_prefix=self.name,
                         step_config=self._mcp_step_config,

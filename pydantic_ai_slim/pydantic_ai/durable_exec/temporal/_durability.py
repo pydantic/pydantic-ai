@@ -95,7 +95,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         provider_factory: Callable[[str], Provider[Any]] | None = None,
-        deps_type: type[AgentDepsT] = type(None),
+        deps_type: type[AgentDepsT] = object,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,

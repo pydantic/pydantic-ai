@@ -611,7 +611,7 @@ async def open_model_stream(
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
-) -> AsyncIterator[models.StreamedResponse]:
+) -> AsyncGenerator[models.StreamedResponse]:
     """Open the innermost streaming model request.
 
     Used internally by `pydantic_ai.durable_exec._utils.open_model_stream` so the

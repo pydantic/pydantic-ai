@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -161,27 +162,18 @@ with workflow.unsafe.imports_passed_through():
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsInt, IsStr
 
-# `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`, and
-# the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
-# These tests exercise the wrapper-agent path on purpose; suppress the warnings here
-# rather than globally in `pyproject.toml`. The `pytestmark` entries below cover warnings
-# emitted *inside* test functions; the `filterwarnings` calls below cover warnings emitted
+# `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
+# These tests exercise the wrapper-agent path on purpose; suppress the warning here
+# rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
+# emitted *inside* test functions; the `filterwarnings` call below covers warnings emitted
 # at module import time (e.g. module-level construction of `TemporalAgent`).
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=DeprecationWarning)
-warnings.filterwarnings(
-    'ignore',
-    message=r'`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated',
-    category=DeprecationWarning,
-)
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
     pytest.mark.filterwarnings('ignore:`TemporalAgent` is deprecated:DeprecationWarning'),
-    pytest.mark.filterwarnings(
-        'ignore:`(MCPServerStdio|MCPServerSSE|MCPServerStreamableHTTP|FastMCPToolset)` is deprecated:DeprecationWarning'
-    ),
 ]
 
 
@@ -3438,6 +3430,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'tracer',  # live tracer, not serializable
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
+        'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
         'pending_messages',  # live run queue, meaningless outside the running agent
         'messages',  # not currently exposed inside activities
         'prompt',  # not currently exposed inside activities
@@ -5373,7 +5366,7 @@ _stream_events_collected: list[AgentStreamEvent] = []
 
 
 async def _durability_event_stream_handler(
-    ctx: RunContext[None],
+    ctx: RunContext[object],
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
     async for event in stream:
@@ -5426,7 +5419,7 @@ _process_events_collected: list[AgentStreamEvent] = []
 
 
 async def _process_event_stream_handler(
-    ctx: RunContext[None],
+    ctx: RunContext[object],
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
     async for event in stream:
@@ -5458,7 +5451,7 @@ def test_durability_tool_metadata_disables_activity():
     async def slow_tool() -> str:
         return 'slow'  # pragma: no cover - registered with toolset; test only verifies wrapping
 
-    toolset = FunctionToolset[None](id='meta_toolset')
+    toolset = FunctionToolset[object](id='meta_toolset')
     toolset.add_function(slow_tool, metadata={'temporal': False})
 
     agent = Agent(
@@ -5557,35 +5550,35 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
 
 # --- Complex agent: full Logfire span tree ---
 
+# Mirrors the legacy `complex_agent`: the handler is passed to the capability (the
+# capability-path equivalent of `TemporalAgent(event_stream_handler=...)`) so the
+# resulting Logfire span tree matches the one produced by the wrapper-agent variant.
 complex_durability_for_logfire = TemporalDurability[Deps](
     deps_type=Deps,
+    event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
         'durability_complex_country': ActivityConfig(start_to_close_timeout=timedelta(seconds=120)),
     },
 )
-# Mirrors the legacy `complex_agent`: still passes `event_stream_handler=` directly so the
-# resulting Logfire span tree matches the one produced by the wrapper-agent variant. Switching
-# to `capabilities=[ProcessEventStream(...)]` is a v2 follow-up.
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
-    )
-    complex_durable_logfire_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='durability_complex_country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='durability_complex_mcp'),
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='durability_complex_external'),
-        ],
-        tools=[get_weather],
-        event_stream_handler=event_stream_handler,
-        name='durability_complex_agent_logfire',
-        capabilities=[complex_durability_for_logfire],
-    )
+complex_durable_logfire_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='durability_complex_country'),
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            id='durability_complex_mcp',
+            init_timeout=20,
+        ),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='durability_complex_external'),
+    ],
+    tools=[get_weather],
+    name='durability_complex_agent_logfire',
+    capabilities=[complex_durability_for_logfire],
+)
 
 
 @workflow.defn
@@ -5687,7 +5680,8 @@ async def test_durability_complex_agent_logfire_span_tree(
                             content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
                             children=[
                                 BasicSpan(
-                                    content='RunActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools'
+                                    content='RunActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__get_tools',
+                                    children=[BasicSpan(content='tools/list')],
                                 )
                             ],
                         ),
@@ -5725,13 +5719,6 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=1'),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
-                        ),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
-                        ),
                         BasicSpan(
                             content='running tool: get_country',
                             children=[
@@ -5746,23 +5733,18 @@ async def test_durability_complex_agent_logfire_span_tree(
                             ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
-                        ),
-                        BasicSpan(
                             content='running tool: get_product_name',
                             children=[
                                 BasicSpan(
                                     content='StartActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='RunActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__call_tool'
+                                            content='RunActivity:agent__durability_complex_agent_logfire__mcp_server__durability_complex_mcp__call_tool',
+                                            children=[BasicSpan(content='tools/call get_product_name')],
                                         )
                                     ],
                                 )
                             ],
-                        ),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -5804,10 +5786,6 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=2'),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
-                        ),
                         BasicSpan(
                             content='running tool: get_weather',
                             children=[
@@ -5820,9 +5798,6 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     ],
                                 )
                             ],
-                        ),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -5968,13 +5943,6 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     ],
                                 )
                             ],
-                        ),
-                        BasicSpan(content='ctx.run_step=3'),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
-                        ),
-                        BasicSpan(
-                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                         ),
                     ],
                 ),
@@ -6365,10 +6333,8 @@ _durability_mcp_dynamic_toolset_agent = Agent(
 
 
 @_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
-def _durability_my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
-    return MCPServerStreamableHTTP(
-        'https://mcp.deepwiki.com/mcp'
-    )  # pragma: no cover - exercised only by the skipped test below
+def _durability_my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPToolset[object]:
+    return MCPToolset('https://mcp.deepwiki.com/mcp')  # pragma: no cover - exercised only by the skipped test below
 
 
 @workflow.defn
@@ -6407,32 +6373,32 @@ async def test_durability_mcp_dynamic_toolset_in_workflow(allow_model_requests: 
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
-# --- FastMCP toolset ---
+# --- MCPToolset over HTTP ---
 
-_durability_fastmcp_agent = Agent(
+_durability_mcptoolset_agent = Agent(
     model,
-    name='durability_fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='durability_deepwiki')],
+    name='durability_mcptoolset_agent',
+    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='durability_deepwiki')],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 
 @workflow.defn
-class DurabilityFastMCPAgentWorkflow:
+class DurabilityMCPToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_fastmcp_agent.run(prompt)  # pragma: no cover - skipped test
+        result = await _durability_mcptoolset_agent.run(prompt)  # pragma: no cover - skipped test
         return result.output  # pragma: no cover - skipped test
 
 
 @pytest.mark.skip(
     reason=(
-        'Pending: replays of this FastMCP toolset workflow trip the Temporal sandbox with '
+        'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
         '`Module certifi was imported after initial workflow load`. Issue tracked.'
     )
 )
-async def test_durability_fastmcp_toolset_in_workflow(allow_model_requests: None, client: Client):
-    """Capability-path equivalent of `test_fastmcp_toolset`.
+async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_mcptoolset_in_temporal_workflow`.
 
     Needs a fresh VCR cassette (different test name from the wrapper test);
     record in CI / locally with `--record-mode=once`.
@@ -6440,13 +6406,13 @@ async def test_durability_fastmcp_toolset_in_workflow(allow_model_requests: None
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[DurabilityFastMCPAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_fastmcp_agent)],
+        workflows=[DurabilityMCPToolsetAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_mcptoolset_agent)],
     ):
         output = await client.execute_workflow(
-            DurabilityFastMCPAgentWorkflow.run,
+            DurabilityMCPToolsetAgentWorkflow.run,
             args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
-            id=DurabilityFastMCPAgentWorkflow.__name__,
+            id=DurabilityMCPToolsetAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot()
@@ -6608,7 +6574,7 @@ _durability_multimodal_agent = Agent(
 
 
 @_durability_multimodal_agent.tool
-def _durability_get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+def _durability_get_multimodal_content(ctx: RunContext[object]) -> list[str | MultiModalContent]:
     """Return a list with text, BinaryContent, and DocumentUrl."""
     return [
         'test',
@@ -6661,10 +6627,12 @@ async def test_durability_passing_image_to_run(client: Client):
                 for content in part.content_items():
                     if isinstance(content, (BinaryContent, DocumentUrl)):
                         media_types.append((type(content).__name__, content.media_type))
+    # The image `BinaryContent` round-trips as `BinaryImage`: narrowing is applied during
+    # validation on the way back across the activity boundary.
     assert media_types == [
-        ('BinaryContent', 'image/png'),
+        ('BinaryImage', 'image/png'),
         ('DocumentUrl', 'application/pdf'),
-        ('BinaryContent', 'image/png'),
+        ('BinaryImage', 'image/png'),
         ('DocumentUrl', 'application/pdf'),
     ]
 
@@ -6682,7 +6650,7 @@ _durability_uploaded_file_agent = Agent(
     ),
     name='durability_uploaded_file_agent',
     output_type=UploadedFile,
-    capabilities=[TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG)],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 

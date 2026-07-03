@@ -439,7 +439,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._root_capability.apply(static_capabilities.append)
         _validate_capability_ids(static_capabilities)
 
-
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -523,7 +522,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Initialize capability-contributed fields before for_agent (which may access agent.toolsets)
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
-        self._cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
+        self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
