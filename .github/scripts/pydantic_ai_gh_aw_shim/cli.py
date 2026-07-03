@@ -42,6 +42,7 @@ import pathlib
 import sys
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias, cast
@@ -50,26 +51,19 @@ import httpx
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic import ValidationError
+from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.capabilities import NativeTool, ProcessEventStream
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    ModelResponsePart,
-    NativeToolCallPart,
-    NativeToolSearchCallPart,
     RetryPromptPart,
     ToolCallEvent,
     ToolCallPart,
     ToolResultEvent,
-    ToolReturnPart,
-    ToolSearchCallPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -78,6 +72,15 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', HarnessExperimentalWarning)
+    from pydantic_ai_harness.experimental.compaction import (
+        ClearToolResults,
+        DeduplicateFileReads,
+        SummarizingCompaction,
+        TieredCompaction,
+    )
 
 from . import (
     CLAUDE_CODE_TOOL_NAMES,
@@ -89,7 +92,6 @@ from .shared import logger, reset_context_state
 
 # Type aliases for the public surface — the shim runs `None`-deps agents
 # throughout, so every `RunContext` is concretely `RunContext[object]`.
-MessagePart: TypeAlias = ModelRequestPart | ModelResponsePart
 ToolPredicate: TypeAlias = Callable[[RunContext[object], ToolDefinition], bool | Awaitable[bool]]
 TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str]]
 
@@ -131,7 +133,6 @@ _LLM_MAX_RETRIES = 4
 # per-request timeout so a burst of slow requests can't accumulate forever.
 RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
-COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -170,17 +171,17 @@ SUBAGENT_INSTRUCTIONS = (
 )
 
 
-# History compaction (pydantic-ai `ProcessHistory` capability). Two stages
-# inside one callback: a cheap dedup+truncate trim, then an LLM summary as
-# fallback. `Agent(instructions=...)` is re-applied on every request, so
-# the workflow prompt is never in the message list and never compacted.
+# History compaction. `TieredCompaction` keeps the conversation within the model's
+# window by escalating cheap-to-expensive: dedupe superseded file reads, clear old
+# tool results, then -- only if still over `COMPACTION_TARGET_TOKENS` -- summarise
+# the older messages behind the recent tail. `Agent(instructions=...)` is re-applied
+# on every request, so the workflow prompt never enters the message list and is never
+# compacted.
 
-# ~100k tokens at 4 chars/token = half of a 200k window.
-COMPACTION_TRIGGER_CHARS = 400_000
+# ~100k tokens (half of a 200k window) at ~4 chars/token.
+COMPACTION_TARGET_TOKENS = 100_000
+# Messages kept verbatim as the recent tail; older ones feed the summariser.
 COMPACTION_KEEP_RECENT = 10
-TOOL_RESULT_HEAD_TAIL_CHARS = 4_000
-TOOL_RESULT_TRIM_THRESHOLD = 10_000
-COMPACTION_TRANSCRIPT_MAX_CHARS = 80_000
 
 COMPACTION_SUMMARY_INSTRUCTIONS = (
     'Summarise the agent transcript below for resumption in a fresh '
@@ -203,224 +204,51 @@ COMPACTION_SUMMARY_INSTRUCTIONS = (
     '## Next step\n'
     'The single most likely next action.\n\n'
     'Preserve specifics (paths, identifiers, exact strings) over prose. '
-    'Respond with text only — do not call any tools.'
+    'Respond with text only — do not call any tools.\n\n'
+    '<messages>\n{messages}\n</messages>'
 )
 
 
-def _part_text(part: MessagePart) -> str:
-    """Best-effort text rendering of any pydantic-ai message part."""
-    if isinstance(part, (ToolCallPart, NativeToolCallPart, ToolSearchCallPart, NativeToolSearchCallPart)):
-        return f'{part.tool_name}({part.args_as_dict()!r})'
-    return str(part.content)
+def _read_file_key(call: ToolCallPart) -> str | None:
+    """Identity of a `Read` call for `DeduplicateFileReads`: path plus the read slice.
+
+    A later `Read` of the same `(file_path, offset, limit)` supersedes the earlier
+    one, so the earlier result is blanked. Non-`Read` calls return `None` (skipped).
+    """
+    if call.tool_name != 'Read':
+        return None
+    args = call.args_as_dict()
+    if not isinstance(args, dict):
+        return None
+    path = args.get('file_path')
+    if not isinstance(path, str):
+        return None
+    return f'{path}|{args.get("offset")!r}|{args.get("limit")!r}'
 
 
-def _render_messages_for_summary(messages: list[ModelMessage]) -> str:
-    """Render a slice of pydantic-ai messages into a compact transcript."""
-    out: list[str] = []
-    for m in messages:
-        kind = 'user' if isinstance(m, ModelRequest) else 'assistant'
-        for part in m.parts:
-            out.append(f'[{kind}/{type(part).__name__}] {_part_text(part)[:1500]}')
-    return '\n'.join(out)
+def _history_compaction() -> TieredCompaction[object]:
+    """The run's history-compaction capability.
 
-
-def _history_size_chars(messages: list[ModelMessage]) -> int:
-    """Char-count proxy for token cost — used as the compaction trigger."""
-    return sum(len(_part_text(part)) for m in messages for part in m.parts)
-
-
-def _head_tail(text: str, side: int) -> str:
-    """Keep the first and last `side` chars, mark the elided middle."""
-    skipped = len(text) - side * 2
-    return f'{text[:side]}\n…[trimmed {skipped} chars]…\n{text[-side:]}'
-
-
-def _superseded_read_calls(messages: list[ModelMessage]) -> tuple[set[str], dict[str, str]]:
-    """For each `Read` call, key on (path, offset, limit); older calls with the same key are superseded."""
-    label_by_call_id: dict[str, str] = {}
-    latest_for_args: dict[tuple[str, object, object], str] = {}
-    superseded: set[str] = set()
-    for m in messages:
-        for p in m.parts:
-            if not (isinstance(p, ToolCallPart) and p.tool_name == 'Read'):
-                continue
-            args = p.args_as_dict()
-            if not isinstance(args, dict):
-                continue
-            path = args.get('file_path')
-            if not isinstance(path, str):
-                continue
-            offset, limit = args.get('offset'), args.get('limit')
-            label = path if offset is None and limit is None else f'{path}[offset={offset!r}, limit={limit!r}]'
-            label_by_call_id[p.tool_call_id] = label
-            key = (path, offset, limit)
-            prior = latest_for_args.get(key)
-            if prior is not None:
-                superseded.add(prior)
-            latest_for_args[key] = p.tool_call_id
-    return superseded, label_by_call_id
-
-
-def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Dedupe re-reads of the same file slice and head/tail-truncate oversized older tool returns."""
-    if len(messages) <= COMPACTION_KEEP_RECENT:
-        return messages
-    superseded, label_by_call_id = _superseded_read_calls(messages)
-
-    tail_start = len(messages) - COMPACTION_KEEP_RECENT
-    out: list[ModelMessage] = []
-    dedup_count = truncate_count = bytes_saved = 0
-
-    def _rewrite(part: ModelRequestPart | ModelResponsePart) -> ModelRequestPart | ModelResponsePart:
-        nonlocal dedup_count, truncate_count, bytes_saved
-        if not isinstance(part, ToolReturnPart):
-            return part
-        if part.tool_call_id in superseded:
-            new_content = f'[superseded read: {label_by_call_id[part.tool_call_id]} — see later read with same args]'
-            bytes_saved += len(str(part.content)) - len(new_content)
-            dedup_count += 1
-            return dataclasses.replace(part, content=new_content)
-        content = str(part.content)
-        if len(content) > TOOL_RESULT_TRIM_THRESHOLD:
-            new_content = _head_tail(content, TOOL_RESULT_HEAD_TAIL_CHARS)
-            bytes_saved += len(content) - len(new_content)
-            truncate_count += 1
-            return dataclasses.replace(part, content=new_content)
-        return part
-
-    for idx, m in enumerate(messages):
-        if idx >= tail_start:
-            out.append(m)
-            continue
-        new_parts = [_rewrite(p) for p in m.parts]
-        out.append(dataclasses.replace(m, parts=new_parts) if new_parts != list(m.parts) else m)
-
-    if dedup_count or truncate_count:
-        logger.info(
-            'trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
-            dedup_count,
-            truncate_count,
-            bytes_saved,
-        )
-        emit(
-            {
-                'type': 'system',
-                'subtype': 'compaction_trim',
-                'deduped_reads': dedup_count,
-                'truncated_results': truncate_count,
-                'chars_saved': bytes_saved,
-            }
-        )
-        return out
-    return messages
-
-
-_SYNTHETIC_SUMMARY_TAG = '[compacted history]'
-
-
-def _is_synthetic_summary(message: ModelMessage) -> bool:
-    """A `ModelRequest` we synthesised in a prior `_compact_history` round."""
-    if not isinstance(message, ModelRequest):
-        return False
-    parts = message.parts
-    return (
-        len(parts) == 1
-        and isinstance(parts[0], UserPromptPart)
-        and str(parts[0].content).startswith(_SYNTHETIC_SUMMARY_TAG)
-    )
-
-
-async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
-    if len(messages) <= COMPACTION_KEEP_RECENT:
-        return messages
-    trimmed = _trim_tool_results(messages)
-    size = _history_size_chars(trimmed)
-    if size < COMPACTION_TRIGGER_CHARS:
-        return trimmed
-    middle = trimmed[:-COMPACTION_KEEP_RECENT]
-    tail = trimmed[-COMPACTION_KEEP_RECENT:]
-    transcript = _render_messages_for_summary(middle)
-    logger.info(
-        'compaction summary firing: %d chars / %d messages -> summarising %d middle, keeping last %d',
-        size,
-        len(trimmed),
-        len(middle),
-        COMPACTION_KEEP_RECENT,
-    )
-    emit(
-        {
-            'type': 'system',
-            'subtype': 'compaction_summary_start',
-            'history_chars': size,
-            'history_messages': len(trimmed),
-            'middle_messages': len(middle),
-            'keep_recent': COMPACTION_KEEP_RECENT,
-        }
-    )
-    # Preserve any earlier-round synthetic at the head of the middle so a
-    # fallback (`return [prior_synthetic, *tail]`) doesn't silently forget
-    # the entire run's compacted history.
-    prior_synthetic = middle[0] if middle and _is_synthetic_summary(middle[0]) else None
-
-    # Fresh `RunUsage` so `request_limit=2` bounds the summariser, not
-    # (parent + summariser). Merge the totals back regardless of outcome.
-    sub_usage = RunUsage()
-    try:
-        r = await asyncio.wait_for(
-            Agent(ctx.model, instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
-                f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
-                usage_limits=UsageLimits(request_limit=2),
-                usage=sub_usage,
+    Replaces the shim's former hand-rolled two-stage compaction with the harness's
+    escalation default: the cheap zero-LLM tiers (dedupe superseded reads, clear old
+    tool results) run first, and an LLM summary is paid for only when the history is
+    still over `COMPACTION_TARGET_TOKENS`. The summariser inherits the run's model
+    and keeps the last `COMPACTION_KEEP_RECENT` messages verbatim.
+    """
+    # Each tier's own `max_*` trigger is bypassed inside `TieredCompaction` (the
+    # orchestrator drives `compact` directly), so it only needs to be valid.
+    return TieredCompaction[object](
+        tiers=[
+            DeduplicateFileReads[object](file_key=_read_file_key),
+            ClearToolResults[object](max_tokens=1, keep_pairs=COMPACTION_KEEP_RECENT // 2),
+            SummarizingCompaction[object](
+                max_messages=1,
+                keep_messages=COMPACTION_KEEP_RECENT,
+                summary_prompt=COMPACTION_SUMMARY_INSTRUCTIONS,
             ),
-            timeout=COMPACTION_TIMEOUT_SECS,
-        )
-        summary = str(r.output or '').strip() or '(empty summary)'
-    except Exception as exc:
-        # Well-handled fallback: the run continues on the trimmed history, so the
-        # stack is kept available (`exc_info`) without escalating the log level.
-        # A bare `TimeoutError` stringifies to '' — fall back to the type name so
-        # the emitted `error` is never empty.
-        ctx.usage.incr(sub_usage)
-        detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
-        logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
-        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
-        return [prior_synthetic, *tail] if prior_synthetic else tail
-    ctx.usage.incr(sub_usage)
-    # If the summariser produces output larger than the middle it's replacing,
-    # the next compaction round would trip on the same too-large synthetic
-    # and never converge — fall back to the prior synthetic + tail.
-    middle_size = _history_size_chars(middle)
-    if len(summary) >= middle_size:
-        logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
-        emit(
-            {
-                'type': 'system',
-                'subtype': 'compaction_summary_discarded',
-                'summary_chars': len(summary),
-                'middle_chars': middle_size,
-            }
-        )
-        return [prior_synthetic, *tail] if prior_synthetic else tail
-    logger.info(
-        'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
-        len(middle),
-        middle_size,
-        len(summary),
+        ],
+        target_tokens=COMPACTION_TARGET_TOKENS,
     )
-    emit(
-        {
-            'type': 'system',
-            'subtype': 'compaction_summary_done',
-            'middle_messages': len(middle),
-            'middle_chars': middle_size,
-            'summary_chars': len(summary),
-            'input_tokens': sub_usage.input_tokens,
-            'output_tokens': sub_usage.output_tokens,
-        }
-    )
-    synthetic = ModelRequest(parts=[UserPromptPart(content=f'{_SYNTHETIC_SUMMARY_TAG}\n{summary}')])
-    return [synthetic, *tail]
 
 
 @dataclass(slots=True)
@@ -850,7 +678,7 @@ async def run(
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[
             *_anthropic_native_capabilities(),
-            ProcessHistory(_compact_history),
+            _history_compaction(),
             ProcessEventStream(_stream_events),
         ],
     )

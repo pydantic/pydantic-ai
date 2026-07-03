@@ -778,338 +778,49 @@ def test_read_file_prepends_context(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
 
 # --------------------------------------------------------------------------- #
-# history compaction (ProcessHistory capability)
+# history compaction (harness TieredCompaction capability)
 # --------------------------------------------------------------------------- #
 def test_compaction_thresholds_are_sane():
-    # ~100k tokens at 4 chars/tok = half a 200k-token window. The trigger
-    # is hardcoded (no per-knob multiplication) — fewer dials.
-    assert shim.COMPACTION_TRIGGER_CHARS == 400_000
+    # ~100k tokens (half a 200k-token window) at ~4 chars/token; keep a small recent tail.
+    assert shim.COMPACTION_TARGET_TOKENS == 100_000
     assert shim.COMPACTION_KEEP_RECENT >= 4
-    assert shim.TOOL_RESULT_TRIM_THRESHOLD > shim.TOOL_RESULT_HEAD_TAIL_CHARS * 2
+    # SummarizingCompaction requires the transcript placeholder in its prompt.
+    assert '{messages}' in shim.COMPACTION_SUMMARY_INSTRUCTIONS
 
 
-def test_history_size_chars_sums_all_part_content():
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    msgs: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='hello')]),  # 5
-        ModelRequest(parts=[UserPromptPart(content='x' * 20)]),  # 20
-    ]
-    assert shim._history_size_chars(msgs) == 25  # pyright: ignore[reportPrivateUsage]
-
-
-def test_compact_history_no_op_below_char_budget(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    # Many tiny messages — total chars stays well below the default 80k budget.
-    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(100)]
-
-    class _Ctx:
-        model = None
-
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    assert out is msgs  # size-based: count alone never triggers
-
-
-def test_compact_history_summarises_with_fresh_usage_then_merges():
-    """Summariser uses a fresh `RunUsage` (so request_limit doesn't trip on the
-    parent's running total) and the parent usage absorbs its cost after."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-    from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai.usage import RunUsage
-
-    big = 'x' * 50_000
-    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
-
-    def _respond(_messages: list[ModelMessage], _info: object) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('SHORT SUMMARY')])
-
-    async def _stream(_messages: list[ModelMessage], _info: object):
-        yield 'SHORT SUMMARY'
-
-    # Parent has already done 50 requests; the old shared-usage bug would
-    # trip `UsageLimits(request_limit=2)` immediately. With the fix it runs.
-    parent_usage = RunUsage(requests=50)
-
-    class _Ctx:
-        model = FunctionModel(_respond, stream_function=_stream)
-        usage = parent_usage
-
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
-    assert parent_usage.requests > 50  # summariser's cost merged into parent
-    summary_part = out[0].parts[0]
-    assert isinstance(summary_part, UserPromptPart)
-    assert 'SHORT SUMMARY' in str(summary_part.content)
-
-
-def test_trim_dedupes_superseded_reads_and_truncates_large_results():
-    """The cheap pre-pass should rewrite older tool results without invoking
-    the LLM: superseded `Read` returns become a one-line marker, oversized
-    returns are head/tail-truncated, and the last KEEP_RECENT messages are
-    left untouched."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
+def test_history_compaction_is_a_cheap_to_expensive_tiered_stack():
+    from pydantic_ai_harness.experimental.compaction import (
+        ClearToolResults,
+        DeduplicateFileReads,
+        SummarizingCompaction,
+        TieredCompaction,
     )
 
-    big = 'X' * 20_000
-    # Three Read calls for the same file: only the last is current; the first
-    # two should be marked superseded.
-    msgs: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'a.py'}, tool_call_id='r1')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='r1')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'a.py'}, tool_call_id='r2')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='r2')]),
-        # An unrelated big Bash result that should get head/tail trimmed.
-        ModelResponse(parts=[ToolCallPart(tool_name='Bash', args={'command': 'ls -la'}, tool_call_id='b1')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Bash', content=big, tool_call_id='b1')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'a.py'}, tool_call_id='r3')]),
-    ]
-    # Pad to exceed KEEP_RECENT so the older entries are eligible for trimming.
-    for i in range(shim.COMPACTION_KEEP_RECENT):
-        msgs.append(ModelRequest(parts=[UserPromptPart(content=f'tail{i}')]))
-
-    out = shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-    assert len(out) == len(msgs)
-
-    # r1 (superseded by r2 and r3) → marker.
-    r1_return = out[2].parts[0]
-    assert isinstance(r1_return, ToolReturnPart)
-    assert 'superseded read' in str(r1_return.content) and 'a.py' in str(r1_return.content)
-
-    # r2 (superseded by r3) → also marker.
-    r2_return = out[4].parts[0]
-    assert isinstance(r2_return, ToolReturnPart)
-    assert 'superseded read' in str(r2_return.content)
-
-    # Bash result → head/tail truncated, not dedup-marked.
-    bash_return = out[6].parts[0]
-    assert isinstance(bash_return, ToolReturnPart)
-    bash_content = str(bash_return.content)
-    assert 'trimmed' in bash_content
-    assert len(bash_content) < len(big)
-
-    # Tail (last KEEP_RECENT) untouched and is the same object identity.
-    for i in range(shim.COMPACTION_KEEP_RECENT):
-        assert out[-(i + 1)] is msgs[-(i + 1)]
+    tc = shim._history_compaction()  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(tc, TieredCompaction)
+    assert tc.target_tokens == shim.COMPACTION_TARGET_TOKENS
+    # Zero-LLM tiers first (dedupe reads, clear old tool results); LLM summary last.
+    assert [type(t) for t in tc.tiers] == [DeduplicateFileReads, ClearToolResults, SummarizingCompaction]
+    summarizer = tc.tiers[-1]
+    assert isinstance(summarizer, SummarizingCompaction)
+    assert summarizer.keep_messages == shim.COMPACTION_KEEP_RECENT
+    assert summarizer.model is None  # inherits the run's model
+    assert summarizer.summary_prompt == shim.COMPACTION_SUMMARY_INSTRUCTIONS
 
 
-def test_trim_preserves_distinct_read_slices_of_same_file():
-    """A `Read` with `offset=N, limit=M` returns different content than a
-    `Read` of the same file with no slice (or a different slice). The
-    dedup key is the full `(file_path, offset, limit)` tuple, so distinct
-    slices stay distinct — only an exact-args re-read is superseded."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
+def test_read_file_key_identifies_read_slices():
+    from pydantic_ai.messages import ToolCallPart
 
-    big = 'Y' * 20_000
-    msgs: list[ModelMessage] = [
-        # Slice 1 of foo.py — distinct content.
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='Read', args={'file_path': 'foo.py', 'offset': 1, 'limit': 100}, tool_call_id='s1'
-                )
-            ]
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='s1')]),
-        # Different slice — must NOT be deduped against s1.
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='Read', args={'file_path': 'foo.py', 'offset': 500, 'limit': 100}, tool_call_id='s2'
-                )
-            ]
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='s2')]),
-        # Same args as s1 — supersedes it.
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='Read', args={'file_path': 'foo.py', 'offset': 1, 'limit': 100}, tool_call_id='s3'
-                )
-            ]
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='s3')]),
-    ]
-    for i in range(shim.COMPACTION_KEEP_RECENT):
-        msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
-
-    out = shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-
-    # s1 (superseded by s3 — same args) → marker that mentions the slice args.
-    s1_return = out[1].parts[0]
-    assert isinstance(s1_return, ToolReturnPart)
-    s1_content = str(s1_return.content)
-    assert 'superseded read' in s1_content and 'foo.py' in s1_content and 'offset=1' in s1_content
-
-    # s2 (different slice) is oversized so it gets head/tail-truncated but
-    # NOT marked superseded — its content is genuinely distinct.
-    s2_return = out[3].parts[0]
-    assert isinstance(s2_return, ToolReturnPart)
-    s2_content = str(s2_return.content)
-    assert 'superseded' not in s2_content
-    assert 'trimmed' in s2_content
-
-
-def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptureFixture):
-    """Trim logs once when it substitutes; silent on a no-op pass."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
-    tiny_msgs: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(shim.COMPACTION_KEEP_RECENT + 5)
-    ]
-    with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
-        shim._trim_tool_results(tiny_msgs)  # pyright: ignore[reportPrivateUsage]
-    assert not any('trim: deduped' in m for m in caplog.messages)
-    caplog.clear()
-
-    big = 'Z' * 20_000
-    msgs: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'x.py'}, tool_call_id='r1')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='r1')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'x.py'}, tool_call_id='r2')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='r2')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Bash', args={'command': 'ls'}, tool_call_id='b1')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Bash', content=big, tool_call_id='b1')]),
-    ]
-    for i in range(shim.COMPACTION_KEEP_RECENT):
-        msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
-    with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
-        shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-    log_line = next((m for m in caplog.messages if 'trim: deduped' in m), None)
-    assert log_line is not None
-    assert 'deduped 1' in log_line and 'truncated 2' in log_line and 'saved' in log_line
-
-
-def test_compact_history_uses_trim_alone_when_sufficient(monkeypatch: pytest.MonkeyPatch):
-    """Trim alone is enough — the LLM summariser must not fire."""
-    import asyncio
-
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        ToolCallPart,
-        ToolReturnPart,
-        UserPromptPart,
-    )
-
-    # 13 messages: a couple of huge superseded reads, then KEEP_RECENT trivial
-    # tail messages. The dedup pass should crush the size.
-    big = 'Y' * 60_000
-    msgs: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'big.py'}, tool_call_id='c1')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='Read', content=big, tool_call_id='c1')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='Read', args={'file_path': 'big.py'}, tool_call_id='c2')]),
-    ]
-    for i in range(shim.COMPACTION_KEEP_RECENT):
-        msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
-
-    def _fail_agent_ctor(*_a: object, **_kw: object) -> None:
-        raise AssertionError('summariser should not be invoked when trim is enough')
-
-    monkeypatch.setattr(shim, 'Agent', _fail_agent_ctor)
-
-    class _Ctx:
-        model = None
-
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    assert len(out) == len(msgs)
-    # The first read result is now a marker, not the original payload.
-    first_return = out[1].parts[0]
-    assert isinstance(first_return, ToolReturnPart)
-    assert 'superseded read' in str(first_return.content)
-
-
-def test_compact_history_falls_back_to_truncation_on_failure(monkeypatch: pytest.MonkeyPatch):
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
-    # Same size-driven setup as the previous test — 13 big msgs > trigger.
-    big = 'x' * 50_000
-    msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(13)]
-
-    class _FailingAgent:
-        def __init__(self, *a: object, **k: object) -> None:
-            pass
-
-        async def run(self, *a: object, **k: object) -> None:
-            raise RuntimeError('boom')
-
-    monkeypatch.setattr(shim, 'Agent', _FailingAgent)
-
-    from pydantic_ai.usage import RunUsage
-
-    class _Ctx:
-        model = TestModel()
-        usage = RunUsage()
-
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    # On failure: keep just the tail (no head, no synthetic summary).
-    assert len(out) == shim.COMPACTION_KEEP_RECENT
-
-
-def test_compact_history_preserves_prior_synthetic_on_fallback(monkeypatch: pytest.MonkeyPatch):
-    """A second compaction round whose summary fails (or doesn't fit) must
-    keep the earlier round's `[compacted history]` block. Dropping it would
-    silently forget the entire run's prior work."""
-    import asyncio
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models.test import TestModel
-
-    big = 'x' * 50_000
-    prior_synthetic = ModelRequest(parts=[UserPromptPart(content='[compacted history]\nearlier summary')])
-    msgs: list[ModelMessage] = [
-        prior_synthetic,
-        *(ModelRequest(parts=[UserPromptPart(content=f'm{i} {big}')]) for i in range(12)),
-    ]
-
-    class _FailingAgent:
-        def __init__(self, *a: object, **k: object) -> None:
-            pass
-
-        async def run(self, *a: object, **k: object) -> None:
-            raise RuntimeError('boom')
-
-    monkeypatch.setattr(shim, 'Agent', _FailingAgent)
-
-    from pydantic_ai.usage import RunUsage
-
-    class _Ctx:
-        model = TestModel()
-        usage = RunUsage()
-
-    out = asyncio.run(shim._compact_history(cast(RunContext[None], _Ctx()), msgs))  # pyright: ignore[reportPrivateUsage]
-    # First element is the preserved prior synthetic; rest is the tail.
-    assert len(out) == 1 + shim.COMPACTION_KEEP_RECENT
-    assert out[0] is prior_synthetic
+    key = shim._read_file_key  # pyright: ignore[reportPrivateUsage]
+    a = ToolCallPart(tool_name='Read', args={'file_path': 'x.py'}, tool_call_id='1')
+    b = ToolCallPart(tool_name='Read', args={'file_path': 'x.py'}, tool_call_id='2')
+    c = ToolCallPart(tool_name='Read', args={'file_path': 'x.py', 'offset': 5}, tool_call_id='3')
+    # Same (path, offset, limit) -> same key: a later read supersedes the earlier one.
+    assert key(a) is not None and key(a) == key(b)
+    # A different slice of the same file is a distinct key (not deduped).
+    assert key(a) != key(c)
+    # Non-`Read` calls (and unusable args) are skipped.
+    assert key(ToolCallPart(tool_name='Bash', args={'command': 'ls'}, tool_call_id='4')) is None
 
 
 def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.MonkeyPatch):
