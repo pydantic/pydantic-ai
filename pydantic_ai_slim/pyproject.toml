@@ -75,8 +75,9 @@ anthropic = ["anthropic>=0.108.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]
+# `mistralai>=2.0.5` is required for the `reasoning_effort` parameter on `chat.complete_async`.
 # `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
-mistral = ["mistralai>=2.0.0,!=2.4.6"]
+mistral = ["mistralai>=2.0.5,!=2.4.6"]
 bedrock = ["boto3>=1.42.63"]
 zai = ["openai>=2.29.0"]
 huggingface = [
