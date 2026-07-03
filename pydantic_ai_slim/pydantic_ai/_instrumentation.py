@@ -5,6 +5,7 @@ import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
@@ -68,6 +69,17 @@ TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 26214
 TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
+
+time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
+"""Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
+`Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
+in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
+request and only that handler ever sets the variable, so a value can't outlive its request;
+non-streaming requests read the `None` default.
+
+This is a context variable rather than a field on `ModelRequestContext` because that object is
+public and holds only the *inputs* to `Model.request[_stream]`.
+"""
 
 
 class CostCalculationFailedWarning(Warning):

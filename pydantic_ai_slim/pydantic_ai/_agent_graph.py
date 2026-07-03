@@ -17,7 +17,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
@@ -693,12 +693,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     try:
                         await stream_done.wait()
                     finally:
-                        # Stamp TTFT in a `finally` so it also lands when the consumer raises
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
                         # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
                         # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
-                        req_ctx.time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
             response = sr.get()
             _handler_response = response
             return response
