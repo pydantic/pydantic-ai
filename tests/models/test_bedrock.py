@@ -5103,16 +5103,13 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     assert 'You are helpful.' not in text_blocks
 
 
-async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: BedrockProvider):
-    """Pin the exact mapped message sequence for the #6081 fix.
+def _tool_result_then_document_history() -> list[ModelMessage]:
+    """A completed tool call whose result is the last message, then a user turn with a document.
 
-    Unit test (not VCR): our cassette matcher isn't sensitive to the request body, so a
-    regression in this message shaping could still match the companion VCR recording and pass
-    green. Asserting the mapped sequence directly is what catches that.
+    Merged naively this yields one user message co-locating a `toolResult` with a `document` block,
+    which several models reject. See #6081.
     """
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-
-    messages: list[ModelMessage] = [
+    return [
         ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
@@ -5127,68 +5124,119 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
             ]
         ),
     ]
+
+
+async def test_bedrock_anthropic_tool_result_and_document_alternate(bedrock_provider: BedrockProvider):
+    """Anthropic rejects a document co-located with a `toolResult`, so the turns are split (#6081).
+
+    Unit test (not VCR): our cassette matcher isn't sensitive to the request body, so a regression in
+    this message shaping could still match a recording and pass green. Asserting the mapped sequence
+    directly is what catches that.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    prepared = model.prepare_messages(_tool_result_then_document_history())
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The `toolResult` and `document` turns are separated by a synthetic assistant turn rather than merged.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'what accounts are in this?'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/file.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_nova_tool_result_and_document_merge(bedrock_provider: BedrockProvider):
+    """Nova has no co-location constraint, so the turns are merged (no synthetic assistant turn).
+
+    Guards against over-applying the #6081 split to models that accept a `toolResult` alongside a document.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    prepared = model.prepare_messages(_tool_result_then_document_history())
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}},
+                    {'text': 'what accounts are in this?'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/file.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_llama_tool_result_isolated_from_text(bedrock_provider: BedrockProvider):
+    """Llama requires a `toolResult` to be alone in its turn, so even a following text turn is split off."""
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
+        ModelRequest(parts=[UserPromptPart(content='what accounts are in this?')]),
+    ]
     prepared = model.prepare_messages(messages)
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    # They should not be merged into a single user message.
-    # Instead, they should alternate: user (toolResult) -> assistant (dummy text) -> user (document/prompt)
-    assert bedrock_messages == [
-        {
-            'role': 'user',
-            'content': [{'text': 'show me my expenses'}],
-        },
-        {
-            'role': 'assistant',
-            'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}],
-        },
-        {
-            'role': 'user',
-            'content': [
-                {
-                    'toolResult': {
-                        'toolUseId': 't1',
-                        'content': [{'text': 'ok'}],
-                        'status': 'success',
-                    }
-                }
-            ],
-        },
-        {
-            'role': 'assistant',
-            'content': [{'text': '.'}],
-        },
-        {
-            'role': 'user',
-            'content': [
-                {'text': 'what accounts are in this?'},
-                {
-                    'document': {
-                        'name': 'Document 1',
-                        'format': 'csv',
-                        'source': {
-                            's3Location': {
-                                'uri': 's3://bucket/file.csv',
-                            }
-                        },
-                    }
-                },
-            ],
-        },
-    ]
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {'role': 'user', 'content': [{'text': 'what accounts are in this?'}]},
+        ]
+    )
 
 
 @pytest.mark.vcr()
-async def test_bedrock_tool_result_followed_by_attachment_accepted(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
+async def test_bedrock_anthropic_tool_result_followed_by_document_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
 ):
-    """A tool-result turn followed by a user turn with an attachment must be accepted by Bedrock.
+    """Anthropic must accept a tool-result turn followed by a document turn once reshaped (#6081).
 
-    Regression for #6081: previously these merged into one user message co-locating a
-    `toolResult` with a `document` block, which Anthropic on Bedrock Converse rejects with a
-    `ValidationException`. VCR (not unit) because only a real Converse request proves the
-    reshaped history is actually accepted; the companion unit test pins the mapped shape.
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted. Uses a
+    `text/plain` document, not a PDF: Anthropic accepts a PDF co-located with a `toolResult` even without
+    the fix, so a PDF here would pass green whether or not the split happened. A text document reproduces
+    the original `ValidationException`, so this recording genuinely exercises the fix.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(model)
@@ -5198,7 +5246,7 @@ async def test_bedrock_tool_result_followed_by_attachment_accepted(
         return 'ok'  # pragma: no cover
 
     result = await agent.run(
-        ['What is in this document?', document_content],
+        ['What is in this document?', text_document_content],
         message_history=[
             ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
             ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
@@ -5206,6 +5254,62 @@ async def test_bedrock_tool_result_followed_by_attachment_accepted(
         ],
     )
 
-    assert result.output == snapshot(
-        'This document is a simple PDF file with the title "Dummy PDF file" at the top. The rest of the page appears to be blank. It\'s essentially a placeholder or test PDF document with minimal content - just containing that single heading and nothing else.'
+    assert result.output == snapshot("""\
+The document is titled "Document 1.txt" and contains only the text:
+
+**"Dummy TXT file"**
+
+It appears to be a placeholder or test file with no substantial content.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_bedrock_nova_tool_result_followed_by_document_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
+):
+    """Nova accepts the merged `toolResult` + document turn without any split (permissive co-location)."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        ['What is in this document?', text_document_content],
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
     )
+
+    assert result.output == snapshot("""\
+<thinking> The tool 'get_expenses' has returned a success status, but the actual expenses data is not provided. The response mentions a "Dummy TXT file", which suggests that the expenses data might be in a text file. However, I do not have direct access to file contents or the ability to read files. I need to inform the user that I cannot retrieve the expenses data without further information or tools. </thinking>
+
+I'm sorry, but I can't directly access or read the contents of files. The tool 'get_expenses' has indicated a success status, but it did not provide the actual expenses data. If the expenses are stored in a "Dummy TXT file", I would need a tool that can read file contents to retrieve the data. Unfortunately, I do not have such a tool available. Please provide the expenses data directly or let me know if there's another way I can assist you.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_bedrock_llama_tool_result_followed_by_text_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Llama rejects any content sharing a `toolResult` turn; the reshaped history must be accepted (#6081)."""
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        'Thanks. Now just say the word DONE.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot('DONE')

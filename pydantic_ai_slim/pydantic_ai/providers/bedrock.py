@@ -141,6 +141,19 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Default: `False`."""
     bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
     """Default: `frozenset({'image'})`."""
+    bedrock_tool_result_colocatable_content: frozenset[str]
+    """Content-block kinds (`text`, `image`, `document`, `video`) that this model accepts in the same
+    user message as a `toolResult` block.
+
+    pydantic-ai merges consecutive user turns into one Bedrock message, which can place a `toolResult`
+    alongside a following turn's text/attachment. Some models reject that: Anthropic rejects documents
+    and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
+    `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
+    the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
+    consecutive same-role turns, so a bare split doesn't suffice). See #6081.
+
+    Default: all kinds (no restriction); the model receives merged turns unchanged.
+    """
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
@@ -218,6 +231,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+            # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
+            # accepts text and images alongside it. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -267,6 +283,18 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Meta Llama model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(meta_model_profile(model_name)),
+        BedrockModelProfile(
+            # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
+        ),
+    )
+
+
 def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
@@ -278,6 +306,9 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
         ),
     )
 
@@ -388,7 +419,7 @@ class BedrockProvider(Provider[BaseClient]):
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(

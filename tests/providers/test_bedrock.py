@@ -116,6 +116,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Anthropic rejects documents/video co-located with a `toolResult`, but accepts text and images.
+    assert anthropic_profile.get('bedrock_tool_result_colocatable_content') == frozenset({'text', 'image'})
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
@@ -180,6 +182,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert mistral_profile.get('supports_json_schema_output', False) is False
     assert mistral_profile.get('bedrock_supports_strict_tool_definition', False) is False
     assert mistral_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Mistral requires a `toolResult` to be alone in its turn.
+    assert mistral_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
 
     mistral_profile = provider.model_profile('mistral.mistral-large-3-675b-instruct')
     mistral_model_profile_mock.assert_called_with('mistral-large-3-675b-instruct')
@@ -195,6 +199,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert meta_profile is not None
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
     assert meta_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Llama requires a `toolResult` to be alone in its turn.
+    assert meta_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
@@ -253,6 +259,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.get('bedrock_supports_tool_choice', False) is True
     assert amazon_profile.get('bedrock_supports_prompt_caching', False) is True
     assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Nova has no `toolResult` co-location constraint, so it keeps the permissive default (unset).
+    assert amazon_profile.get('bedrock_tool_result_colocatable_content') is None
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-2-lite')
