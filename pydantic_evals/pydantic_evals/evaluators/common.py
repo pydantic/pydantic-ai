@@ -22,6 +22,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
 )
@@ -207,6 +208,18 @@ def _update_combined_output(
         combined_output[name] = value
 
 
+def _serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace a `model` argument's `Model` instance with its `model_id` string, so specs round-trip cleanly."""
+    # always serialize the model as a string when present; use its name if it's a KnownModelName
+    if (model := arguments.get('model')) and isinstance(model, models.Model):
+        arguments['model'] = model.model_id
+
+    # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
+    # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
+    # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
+    return arguments
+
+
 @dataclass(repr=False)
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
@@ -267,15 +280,61 @@ class LLMJudge(Evaluator[object, object, object]):
         return output
 
     def build_serialization_arguments(self):
-        result = super().build_serialization_arguments()
-        # always serialize the model as a string when present; use its name if it's a KnownModelName
-        if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = model.model_id
+        return _serialize_model_as_string(super().build_serialization_arguments())
 
-        # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
-        # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
-        # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
-        return result
+
+@dataclass(repr=False)
+class GEval(Evaluator[object, object, object]):
+    """G-Eval-style chain-of-thought evaluator (Liu et al., 2023).
+
+    The judge is shown the evaluation `criteria` and a list of explicit `evaluation_steps`,
+    produces a short reasoning trace, and emits an integer score within `score_range` (inclusive),
+    returned as an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason]. Because the
+    criteria and steps are user-supplied, `GEval` puts no structural requirements on `ctx.inputs`
+    or `ctx.output`.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    !!! note "Simplified G-Eval"
+        The paper computes a probability-weighted expectation over score tokens using log-probs.
+        We ask the model for a direct integer score instead, trading some correlation with human
+        judgment for provider-agnostic simplicity.
+    """
+
+    criteria: str
+    evaluation_steps: list[str]
+    score_range: tuple[int, int] = (1, 5)
+    include_input: bool = False
+    model: models.Model | models.KnownModelName | str | None = None
+    model_settings: ModelSettings | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        if self.score_range[0] >= self.score_range[1]:
+            raise ValueError(f'`score_range` must satisfy min < max, got {self.score_range!r}')
+        if not self.evaluation_steps:
+            raise ValueError('`evaluation_steps` must contain at least one step')
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        from .llm_as_a_judge import judge_g_eval
+
+        g_eval_output = await judge_g_eval(
+            ctx.output,
+            self.criteria,
+            self.evaluation_steps,
+            self.score_range,
+            inputs=ctx.inputs if self.include_input else None,
+            model=self.model,
+            model_settings=self.model_settings,
+        )
+        return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def build_serialization_arguments(self):
+        return _serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)
@@ -303,6 +362,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
+    GEval,
 )
 
 

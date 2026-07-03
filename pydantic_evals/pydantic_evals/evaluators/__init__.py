@@ -2,6 +2,7 @@ from .common import (
     Contains,
     Equals,
     EqualsExpected,
+    GEval,
     HasMatchingSpan,
     IsInstance,
     LLMJudge,
@@ -26,6 +27,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
     # context
