@@ -160,13 +160,35 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      # Warm the HF cache out-of-band (retried, non-fatal) so the offline pytest
+      # run below never revalidates the sentence-transformers test model against
+      # HF Hub. On a sustained HF outage the cache stays cold and the ST tests
+      # skip (see `stsb_bert_tiny_model`) instead of erroring the whole job.
+      - name: pre-download sentence-transformers test model
+        if: matrix.install.name == 'all-extras'
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --all-extras python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
+
       # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
       # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
       # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
       # on ubuntu-latest (already 4). See PR benchmark.
+      # HF_HUB_OFFLINE keeps the run hermetic: with the cache warmed above,
+      # sentence-transformers loads from disk and never revalidates against the Hub.
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -222,10 +244,28 @@ jobs:
         env:
           UV_FROZEN: "0"
 
+      # Warm the HF cache out-of-band (see the `test` job) so the offline pytest
+      # run below never revalidates the sentence-transformers test model.
+      - name: pre-download sentence-transformers test model
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --no-sync python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
+
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
+      # HF_HUB_OFFLINE keeps the run hermetic (see the `test` job).
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
