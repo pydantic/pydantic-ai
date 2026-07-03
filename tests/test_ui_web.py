@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
@@ -67,7 +68,7 @@ def test_agent_to_web_with_model_instances():
 async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that model instances are preserved and used in dispatch, not reconstructed from string."""
     model_instance = TestModel(custom_output_text='Custom output')
-    agent: Agent[None, str] = Agent()
+    agent = Agent()
     app = create_web_app(agent, models=[model_instance])
 
     # Mock dispatch_request to capture the model parameter
@@ -190,7 +191,50 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-def test_chat_app_index_endpoint():
+def _stub_cdn_fetch(monkeypatch: pytest.MonkeyPatch, content: bytes) -> list[int]:
+    """Stub `httpx.AsyncClient` to return `content` on every fetch, returning a `[count]` list.
+
+    Used by the cache tests to drive `_get_ui_html`'s CDN/url branch without a real network
+    request. The returned single-element list is incremented on each fetch so a test can assert
+    how many times the cache missed.
+    """
+    fetch_count = [0]
+
+    class MockResponse:
+        def __init__(self) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            fetch_count[0] += 1
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    return fetch_count
+
+
+@pytest.fixture
+def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+
+    The index route caches the default UI HTML under the shared user cache dir; without
+    per-test isolation, tests that serve `/` race on the same file across xdist workers
+    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    _stub_cdn_fetch(monkeypatch, b'<html>Test UI</html>')
+
+
+def test_chat_app_index_endpoint(isolated_ui_cache: None):
     """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -210,24 +254,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Test UI</html>'
-
-    class MockResponse:
-        content = test_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    _stub_cdn_fetch(monkeypatch, test_content)
 
     result = await _get_ui_html()
 
@@ -251,7 +278,131 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_chat_app_index_caching():
+def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory.
+
+    The index-route tests monkeypatch `_get_cache_dir` for isolation, so this is the only
+    test that exercises its real body.
+    """
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+
+    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
+    assert cache_dir.is_dir()
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'')
+    test_content = b'<html>Recovered UI</html>'
+    fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
+
+    result = await _get_ui_html()
+
+    assert result == test_content
+    assert cache_file.read_bytes() == test_content
+    assert fetch_count[0] == 1
+
+
+def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A failed `os.replace` unlinks the temp file and leaves the destination intact.
+
+    The cleanup path only fires when the rename fails, which `_get_ui_html` can't trigger on demand,
+    so the private helper is driven directly with a forced `os.replace` failure.
+    """
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'old content')
+    temp_paths: list[Path] = []
+
+    def fail_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        temp_paths.append(Path(src))
+        assert Path(dst) == cache_file
+        assert Path(src).exists()
+        raise OSError('replace failed')
+
+    monkeypatch.setattr(app_module.os, 'replace', fail_replace)
+
+    with pytest.raises(OSError, match='replace failed'):
+        app_module._write_cached_file(cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_file.read_bytes() == b'old content'
+    assert temp_paths
+    assert not temp_paths[0].exists()
+
+
+def test_write_cached_file_closes_temp_handle_before_replace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The temp file handle is closed before `os.replace`, so the rename can't fail on Windows.
+
+    Windows refuses to replace a file that still has an open handle, so an `os.replace` fired while
+    the `NamedTemporaryFile` handle is open would break the atomic write there. Capturing the temp
+    file object and asserting it is already closed when `os.replace` runs pins the close-before-replace
+    ordering on every platform (POSIX allows renaming an open file, so it would otherwise hide the bug).
+    """
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    temp_files: list[IO[bytes]] = []
+    real_named_temporary_file = app_module.tempfile.NamedTemporaryFile
+
+    def capturing_named_temporary_file(*, dir: Path, prefix: str, delete: bool) -> IO[bytes]:
+        tmp_file = real_named_temporary_file(dir=dir, prefix=prefix, delete=delete)
+        temp_files.append(tmp_file)
+        return tmp_file
+
+    monkeypatch.setattr(app_module.tempfile, 'NamedTemporaryFile', capturing_named_temporary_file)
+
+    closed_at_replace: list[bool] = []
+    real_replace = app_module.os.replace
+
+    def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        closed_at_replace.append(temp_files[0].closed)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+
+    content = b'<html>UI</html>'
+    app_module._write_cached_file(cache_file, content)  # pyright: ignore[reportPrivateUsage]
+
+    assert closed_at_replace == [True]
+    assert cache_file.read_bytes() == content
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The destination cache file only ever materializes complete, via an atomic `os.replace`.
+
+    A direct `write_bytes` to the destination truncates it before writing the content, so a
+    concurrent reader can catch it existing-but-empty. Interposing on `os.replace` lets us assert
+    deterministically (no timing/threads) that the destination materializes only through the atomic
+    rename, and that the rename source already holds the complete content.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    full_content = b'<html>complete UI document</html>'
+    _stub_cdn_fetch(monkeypatch, full_content)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    real_replace = app_module.os.replace
+    replaced_targets: list[Path] = []
+
+    def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        assert Path(src).read_bytes() == full_content
+        assert not cache_file.exists()
+        replaced_targets.append(Path(dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+
+    result = await _get_ui_html()
+
+    assert result == full_content
+    assert cache_file.read_bytes() == full_content
+    assert replaced_targets == [cache_file]
+
+
+def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -316,7 +467,7 @@ def test_model_profile():
 
 @pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
 def test_supported_native_tools(profile_name: str):
-    """Test profile.supported_native_tools returns proper tool types."""
+    """Test `profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)` returns proper tool types."""
     if profile_name == 'base':
         profile: ModelProfile = ModelProfile()
     elif profile_name == 'openai':
@@ -326,7 +477,7 @@ def test_supported_native_tools(profile_name: str):
     else:
         profile = GroqModelProfile()
 
-    result = profile.supported_native_tools
+    result = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractNativeTool) for t in result)
 
@@ -477,34 +628,14 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Cached Custom UI</html>'
-    fetch_count = 0
-
-    class MockResponse:
-        content = test_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            nonlocal fetch_count
-            fetch_count += 1
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
 
     custom_url = 'https://my-internal-cdn.example.com/ui/cached.html'
 
     # First call should fetch from URL
     result1 = await _get_ui_html(html_source=custom_url)
     assert result1 == test_content
-    assert fetch_count == 1
+    assert fetch_count[0] == 1
 
     # Verify cache file was created
     url_hash = hashlib.sha256(custom_url.encode()).hexdigest()[:16]
@@ -515,7 +646,7 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     # Second call should use cache, not fetch again
     result2 = await _get_ui_html(html_source=custom_url)
     assert result2 == test_content
-    assert fetch_count == 1  # Still 1, not 2
+    assert fetch_count[0] == 1  # Still 1, not 2
 
 
 def test_agent_to_web_with_html_source():

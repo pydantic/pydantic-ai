@@ -10,6 +10,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
@@ -62,7 +63,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

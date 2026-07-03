@@ -94,6 +94,7 @@ from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 model = AnthropicModel('claude-sonnet-4-5')
 settings = AnthropicModelSettings(
     temperature=0.2,
+    top_k=40,
     service_tier='auto',
 )
 agent = Agent(model, model_settings=settings)
@@ -138,6 +139,9 @@ agent = Agent(model)
 
 !!! note "Tool search on the legacy `AsyncAnthropicBedrock` client"
     The legacy `InvokeModel` API doesn't support the `bm25` [tool search](../tools-advanced.md#tool-search) variant, so [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] defaults to `'regex'` on the `AsyncAnthropicBedrock` client (instead of `'bm25'`), and passing `ToolSearch(strategy='bm25')` raises a `UserError`.
+
+!!! note "Token counting on the legacy `AsyncAnthropicBedrock` client"
+    The Anthropic SDK blocks its high-level token-counting method on Bedrock, so `count_tokens()` (and `count_tokens_before_request`) instead call Bedrock's own `/model/{model}/count-tokens` endpoint. That endpoint only accepts **base** foundation-model IDs (e.g. `anthropic.claude-sonnet-4-20250514-v1:0`); cross-region inference profile IDs (`us.`/`eu.`/`global.` prefixes) and end-of-life model versions are rejected by Bedrock.
 
 ### Google Cloud
 
@@ -184,7 +188,7 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.
 
-Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-opus-4-7` and `claude-opus-4-8` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
+Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-opus-4-7`, `claude-opus-4-8`, and `claude-sonnet-5` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
 
 ```python {title="anthropic_task_budget.py"}
 from pydantic_ai import Agent

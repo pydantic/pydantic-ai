@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import itertools
+import json
 import warnings
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
 
-from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
-DEFAULT_INSTRUMENTATION_VERSION = 2
+DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
 
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
@@ -90,6 +90,19 @@ def serialize_any(value: Any) -> str:
             return f'Unable to serialize: {e}'
 
 
+def safe_to_json(value: object) -> bytes:
+    """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
+
+    `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
+    which would crash an otherwise-successful run from within instrumentation. The stdlib fallback
+    escapes them, matching the lenient behavior callers had before adopting `to_json`.
+    """
+    try:
+        return to_json(value)
+    except PydanticSerializationError:
+        return json.dumps(value, separators=(',', ':')).encode()
+
+
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
     attributes: dict[str, AttributeValue] = {
         GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
@@ -113,17 +126,7 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
-
-
-def event_to_dict(event: LogRecord) -> dict[str, Any]:
-    if not event.body:
-        body = {}  # pragma: no cover
-    elif isinstance(event.body, Mapping):
-        body = event.body
-    else:
-        body = {'body': event.body}
-    return {**body, **(event.attributes or {})}
+    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -215,7 +218,7 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:
@@ -270,7 +273,7 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, system, span, prepared_parameters)
+                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
@@ -393,12 +396,12 @@ class InstrumentationNames:
         """Create instrumentation configuration for a specific version.
 
         Args:
-            version: The instrumentation version (1, 2, or 3+)
+            version: The instrumentation version (2 or 3+)
 
         Returns:
             InstrumentationConfig instance with version-appropriate settings
         """
-        if version <= 2:
+        if version == 2:
             return cls(
                 agent_run_span_name='agent run',
                 agent_name_attr='agent_name',

@@ -311,6 +311,27 @@ result2 = agent.run_sync(  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
+### Loading untrusted history
+
+The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
+
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+
+```python {title="sanitize untrusted message history" test="skip" lint="skip"}
+from pydantic_ai import Agent, ModelMessagesTypeAdapter
+from pydantic_ai.messages import sanitize_messages
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+# `request_json` is the body submitted by an untrusted client.
+loaded_history = ModelMessagesTypeAdapter.validate_python(request_json['message_history'])
+message_history = sanitize_messages(loaded_history)
+
+result = agent.run_sync('Tell me a different joke.', message_history=message_history)
+```
+
+Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+
 ## Other ways of using messages
 
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
@@ -391,6 +412,8 @@ print(result2.all_messages())
 """
 ```
 
+_(This example is complete, it can be run "as is")_
+
 ### Converting Logfire OTEL Messages
 
 If you store OTEL message attributes from Logfire (for example `pydantic_ai.all_messages` on agent spans or
@@ -436,6 +459,63 @@ print(openai_messages)
 
 Note: the OTEL → `ModelMessage` conversion is lossy — timestamps, `instructions`, provider details, and content
 excluded by `include_content=False` are not preserved.
+
+## Sharing messages between agents
+
+The same `message_history` parameter also works when the next run uses a
+different [`Agent`][pydantic_ai.Agent]. This is useful for
+[programmatic agent hand-off](multi-agent-applications.md#programmatic-agent-hand-off),
+where your application runs one agent, then gives another agent the conversation
+so far as context.
+
+```python {title="sharing_messages_between_agents.py" hl_lines="19"}
+from pydantic_ai import Agent
+
+biography_agent = Agent(
+    'openai:gpt-5.2',
+    instructions='Answer biographical questions concisely.',
+)
+
+science_agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Answer science questions for a general audience.',
+)
+
+biography_result = biography_agent.run_sync('Who was Albert Einstein?')
+print(biography_result.output)
+#> Albert Einstein was a German-born theoretical physicist.
+
+science_result = science_agent.run_sync(
+    'What was his most famous equation?',
+    message_history=biography_result.new_messages(),
+)
+print(science_result.output)
+#> Albert Einstein's most famous equation is (E = mc^2).
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! note "Instructions, system prompts, and tools"
+    When you pass `message_history` to another agent, previous
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages still contain
+    the instructions used by the originating agent, but those instructions are
+    not sent to the model again. The receiving agent uses its own
+    `instructions`; see [Instructions](agent.md#instructions) for how this
+    differs from [system prompts](agent.md#system-prompts) when
+    `message_history` is provided.
+
+    `system_prompt` is different: system prompt parts are part of the message
+    history. If the receiving agent has its own `system_prompt` and you need to
+    ensure it is present when reusing history, see
+    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    `replace_existing=True` when a system prompt from another agent should not
+    remain authoritative.
+
+    Tool call and tool return parts also remain in the history. Prefer sharing
+    history between agents that can understand the same tool context, or pass
+    only the messages that make sense for the receiving agent.
+
+For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
 
 ## Injecting messages mid-run
 
@@ -656,7 +736,7 @@ from pydantic_ai.capabilities import ProcessHistory
 
 
 def context_aware_processor(
-    ctx: RunContext[None],
+    ctx: RunContext,
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     # Access current usage

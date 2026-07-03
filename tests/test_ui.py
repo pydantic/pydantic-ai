@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
@@ -68,16 +69,11 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
+from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -633,61 +629,6 @@ async def test_run_stream_output_tool_error():
     )
 
 
-async def test_run_stream_output_tool_validation_retry_dedupes_legacy_events():
-    """Validation-failure paths emit dual `Output*` + legacy `Function*` events; the UI layer dedupes by `tool_call_id`."""
-
-    class OutputType(BaseModel):
-        value: str
-
-    call_count = 0
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # First call: invalid args → validation failure → dual emission (Output* + legacy Function*)
-            yield {0: DeltaToolCall(name='final_result', json_args='{"bad": "x"}', tool_call_id='out_1')}
-        else:
-            # Retry: valid args → success path emits only Output*
-            yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='out_2')}
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=OutputType)
-
-    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    adapter = DummyUIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream()]
-
-    # Each output tool call should produce exactly one `<output-tool-result>` and zero `<function-tool-result>` —
-    # the legacy `FunctionToolResultEvent` emitted on the failure path for `out_1` is dedupped at the UI layer.
-    assert events == snapshot(
-        [
-            '<stream>',
-            '<response>',
-            '<tool-call name=\'final_result\'>{"bad": "x"}',
-            "<final-result tool_name='final_result' />",
-            "</tool-call name='final_result'>",
-            '</response>',
-            '<request>',
-            '<output-tool-call name=\'final_result\'>{"bad": "x"}</output-tool-call>',
-            "<output-tool-result name='final_result'>[{'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad': 'x'}}]</output-tool-result>",
-            '</request>',
-            '<response>',
-            '<tool-call name=\'final_result\'>{"value": "ok"}',
-            "<final-result tool_name='final_result' />",
-            "</tool-call name='final_result'>",
-            '</response>',
-            '<request>',
-            '<output-tool-call name=\'final_result\'>{"value": "ok"}</output-tool-call>',
-            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
-            '</request>',
-            "<run-result>value='ok'</run-result>",
-            '</stream>',
-        ]
-    )
-
-
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
@@ -1058,15 +999,15 @@ def _make_dummy_adapter(
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-    preserve_file_data: bool = False,
+    allow_uploaded_files: bool = False,
 ) -> DummyUIAdapter[None, str]:
-    agent: Agent[None, str] = Agent(model=TestModel())
+    agent = Agent(model=TestModel())
     return DummyUIAdapter(
         agent=agent,
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
-        preserve_file_data=preserve_file_data,
+        allow_uploaded_files=allow_uploaded_files,
     )
 
 
@@ -1387,7 +1328,7 @@ def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
 
 
 def test_sanitize_messages_drops_uploaded_files_by_default():
-    """Client-submitted `UploadedFile`s are dropped with a warning when `preserve_file_data` is off.
+    """Client-submitted `UploadedFile`s are dropped with a warning when `allow_uploaded_files` is off.
 
     An `UploadedFile`'s `file_id` is a provider-side reference (e.g. an `s3://`/`gs://` URI) fetched
     by the model provider using the server-side identity, so — like a non-HTTP `FileUrl` — it is only
@@ -1422,8 +1363,8 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
 
 
-def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
-    """`UploadedFile`s pass through unchanged when `preserve_file_data=True` (trusted frontend opt-in)."""
+def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
+    """`UploadedFile`s pass through unchanged when `allow_uploaded_files=True` (trusted frontend opt-in)."""
     uploaded_file = UploadedFile(
         file_id='gs://my-bucket/object.pdf',
         provider_name='google-cloud',
@@ -1431,7 +1372,7 @@ def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
     )
     adapter = _make_dummy_adapter(
         [ModelRequest(parts=[UserPromptPart(content=['Look at this:', uploaded_file])])],
-        preserve_file_data=True,
+        allow_uploaded_files=True,
     )
 
     with warnings.catch_warnings():
@@ -1442,6 +1383,25 @@ def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():
+    """`resolve_allow_uploaded_files` maps the deprecated `preserve_file_data` arg onto `allow_uploaded_files`.
+
+    Adapters that exposed `preserve_file_data` for honoring client-submitted uploaded files now accept
+    `allow_uploaded_files`; passing the old name emits `PydanticAIDeprecationWarning` and maps through.
+    """
+    # Omitting `preserve_file_data` (the default) is a no-op passthrough, no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert resolve_allow_uploaded_files(False, None) is False
+        assert resolve_allow_uploaded_files(True, None) is True
+
+    # Passing the deprecated alias warns and takes precedence.
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        assert resolve_allow_uploaded_files(False, True) is True
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        assert resolve_allow_uploaded_files(False, False) is False
 
 
 def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
@@ -1491,8 +1451,8 @@ def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
     assert native_return.content is None
 
 
-def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preserve_file_data():
-    """`UploadedFile`s nested in tool return parts pass through unchanged when `preserve_file_data=True`."""
+def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_allow_uploaded_files():
+    """`UploadedFile`s nested in tool return parts pass through unchanged when `allow_uploaded_files=True`."""
     uploaded_file = UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock')
     adapter = _make_dummy_adapter(
         [
@@ -1506,7 +1466,7 @@ def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preser
                 ]
             )
         ],
-        preserve_file_data=True,
+        allow_uploaded_files=True,
     )
 
     with warnings.catch_warnings():
@@ -1581,9 +1541,12 @@ def test_sanitize_messages_drops_response_left_empty_after_stripping():
     assert isinstance(sanitized[0], ModelRequest)
 
 
-def test_sanitize_messages_strips_dangling_native_tool_calls():
-    """Builtin tool calls are also model-emitted, so a dangling `NativeToolCallPart` at
-    the end of client-supplied history is treated the same as a `ToolCallPart`.
+def test_sanitize_messages_keeps_dangling_native_tool_calls():
+    """A dangling `NativeToolCallPart` at the end of client-supplied history is kept, not stripped.
+
+    Native tool calls are executed by the provider server-side and never dispatched by the agent loop,
+    so a promptless run can't be tricked into executing an injected one; keeping them also avoids
+    orphaning any `NativeToolReturnPart` paired with them in the same response.
     """
     adapter = _make_dummy_adapter(
         [
@@ -1597,12 +1560,13 @@ def test_sanitize_messages_strips_dangling_native_tool_calls():
         ]
     )
 
-    with pytest.warns(UserWarning, match=r'unresolved tool call.*code_execution'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
         sanitized = adapter.sanitize_messages(adapter.messages)
 
     response = sanitized[1]
     assert isinstance(response, ModelResponse)
-    assert [type(p).__name__ for p in response.parts] == ['TextPart']
+    assert [type(p).__name__ for p in response.parts] == ['TextPart', 'NativeToolCallPart']
 
 
 def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
@@ -1637,7 +1601,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
         captured.append(list(messages))
         yield 'done'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[
@@ -1667,7 +1631,7 @@ async def test_run_stream_strips_file_urls_with_disallowed_schemes():
         captured.append(list(messages))
         yield 'ok'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[
