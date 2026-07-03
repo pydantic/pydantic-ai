@@ -82,20 +82,20 @@ def test_strict_abc_meta():
     from pydantic_evals.evaluators.report_evaluator import ReportEvaluator
 
     # Subclasses that don't implement inherited abstract methods are rejected at definition time
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
     # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
@@ -141,10 +141,10 @@ async def test_evaluator_sync():
     """Test synchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -175,10 +175,10 @@ async def test_evaluator_async():
     """Test asynchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -309,10 +309,10 @@ async def test_run_evaluator():
     """Test run_evaluator function."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},

@@ -101,6 +101,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'zai',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
@@ -434,9 +435,13 @@ class Model(ABC, Generic[InterfaceClient]):
         2. `with_native` matches a supported native tool → keep on wire; the adapter
            applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
            `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
-           → drop from wire (the corpus member is currently undiscovered, so the model has
-           no way to call it on this provider).
+        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
+           paired with its native tool on this provider, so its fate turns on discovery:
+           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+           model has no way to call it); otherwise it's already discovered and stays on wire
+           as a plain function tool, but sheds `with_native` — with no native tool present, an
+           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
+           emit it unpaired and the provider would reject the request.
         4. Otherwise → keep.
 
         On top of the four-rule filter, two narrower drops apply, kept independent:
@@ -492,9 +497,17 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
-            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
-            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
-                continue
+            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
+            # native tool on this provider; its fate turns on whether it's been discovered yet.
+            if t.with_native and t.with_native not in supported_ids:
+                # Still undiscovered → drop: the model has no way to call it on this provider.
+                if t.defer_loading:
+                    continue
+                # Already discovered → keep it callable as a plain function tool, but shed
+                # `with_native`: with no native tool on the wire, an adapter that derives a native
+                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
+                # provider would reject the request.
+                t = replace(t, with_native=None)
             # Rules 2 + 4: keep.
             function_tools.append(t)
 
@@ -1029,7 +1042,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1043,6 +1056,10 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
+    elif model_kind == 'zai':
+        from .zai import ZaiModel
+
+        return ZaiModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
@@ -1204,7 +1221,7 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
@@ -1218,7 +1235,9 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+def _customize_output_object(
+    transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
+) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(

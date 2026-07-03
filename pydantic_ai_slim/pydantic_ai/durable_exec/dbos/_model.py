@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -28,11 +28,14 @@ class DBOSModel(WrapperModel):
         *,
         step_name_prefix: str,
         step_config: StepConfig,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
+        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None],
     ):
         super().__init__(model)
         self.step_config = step_config
-        self.event_stream_handler = event_stream_handler
+        # Resolve the effective event stream handler lazily inside the step so that a per-run
+        # handler (set on a `ContextVar` by `DBOSAgent`) is picked up without rebuilding the model
+        # and re-registering its DBOS steps.
+        self._get_event_stream_handler = get_event_stream_handler
         self._step_name_prefix = step_name_prefix
 
         # Wrap the request in a DBOS step.
@@ -60,14 +63,15 @@ class DBOSModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
+            event_stream_handler = self._get_event_stream_handler()
             async with super(DBOSModel, self).request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
-                if self.event_stream_handler is not None:
+                if event_stream_handler is not None:
                     assert run_context is not None, (
                         'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await self.event_stream_handler(run_context, streamed_response)
+                    await event_stream_handler(run_context, streamed_response)
 
                 async for _ in streamed_response:
                     pass

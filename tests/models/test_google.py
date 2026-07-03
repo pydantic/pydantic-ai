@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import random
+import re
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -589,7 +590,7 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match='labels parameter is not supported in Gemini API.'):
+    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
         await agent.run('What is the capital of France?')
 
 
@@ -936,7 +937,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(
         ContentFilterError,
-        match="Content filter triggered. Finish reason: 'SAFETY'",
+        match=re.escape("Content filter triggered. Finish reason: 'SAFETY'"),
     ) as exc_info:
         await agent.run('Tell me a joke about a Brazilians.')
 
@@ -2421,7 +2422,9 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
     result = await agent.run('Hello!', model_settings={'timeout': 10})
     assert result.output == snapshot('Hello there! How can I help you today?\n')
 
-    with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
+    with pytest.raises(
+        UserError, match=re.escape('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+    ):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
 
 
@@ -3397,7 +3400,7 @@ async def test_google_image_generation_with_tool_output(allow_model_requests: No
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=Animal)
 
-    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Tool output is not supported by this model.')):
         await agent.run('Generate an image of an axolotl.')
 
 
@@ -3409,7 +3412,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=NativeOutput(Animal))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         await agent.run('Generate an image of an axolotl.')
 
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
@@ -3507,7 +3510,7 @@ async def test_google_image_generation_with_prompted_output(
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=PromptedOutput(Animal))
 
-    with pytest.raises(UserError, match='JSON output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('JSON output is not supported by this model.')):
         await agent.run('Generate an image of an axolotl.')
 
 
@@ -3519,7 +3522,7 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
     async def get_animal() -> str:
         return 'axolotl'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Tools are not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Tools are not supported by this model.')):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
 
 
@@ -3606,7 +3609,9 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
     with pytest.raises(
         UserError,
-        match="`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead.",
+        match=re.escape(
+            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
+        ),
     ):
         await agent.run('Generate an image of an axolotl.')
 
@@ -4781,7 +4786,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None):
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     agent = Agent(model)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with GoogleModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with GoogleModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -6242,7 +6247,7 @@ async def test_google_prompt_feedback_non_streaming(
     agent = Agent(model=model)
 
     with pytest.raises(
-        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+        ContentFilterError, match=re.escape("Content filter triggered. Block reason: 'PROHIBITED_CONTENT'")
     ) as exc_info:
         await agent.run('prohibited content')
 
@@ -6298,7 +6303,7 @@ async def test_google_prompt_feedback_streaming(
     agent = Agent(model=model)
 
     with pytest.raises(
-        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+        ContentFilterError, match=re.escape("Content filter triggered. Block reason: 'PROHIBITED_CONTENT'")
     ) as exc_info:
         async with agent.run_stream('prohibited content'):
             pass

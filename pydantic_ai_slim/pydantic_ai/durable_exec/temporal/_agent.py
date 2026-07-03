@@ -41,6 +41,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
@@ -271,7 +272,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(
-        self, *, model: models.Model | models.KnownModelName | str | None = None, force: bool = False
+        self,
+        *,
+        model: models.Model | models.KnownModelName | str | None = None,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        force: bool = False,
     ) -> Generator[None]:
         """Context manager for workflow-specific overrides.
 
@@ -282,11 +287,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             yield
             return
 
+        # Per-run toolsets are merged with the constructor-time temporalized toolsets. Only non-executing
+        # toolsets like `ExternalToolset` are allowed at runtime (enforced in `iter`); executing toolsets
+        # need their activities registered with the worker before the workflow runs.
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
         # Override model and set the model for workflow execution.
         # Register workflow.sleep so agent graph delays survive workflow replays.
         with (
-            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            super().override(model=self._temporal_model, toolsets=merged_toolsets, tools=[]),
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
             _agent_graph.set_agent_graph_sleep(workflow.sleep),
@@ -426,7 +435,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides(model=model):
+        with self._temporal_overrides(model=model, additional_toolsets=toolsets):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
@@ -1063,10 +1072,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
             assert model is None, 'Temporal overrides must set the model before `agent.iter()` is invoked'
 
-            if toolsets is not None:
-                raise UserError(
-                    'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-                )
+            # Non-executing toolsets like `ExternalToolset` can be added per-run; executing ones need
+            # their activities registered with the worker before the workflow runs.
+            reject_unsupported_runtime_toolsets(
+                toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
+            )
 
             resolved_model = None
         else:

@@ -839,7 +839,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return _utils.get_event_loop().run_until_complete(self._streamed_run_result.get_output())
+        return _utils.run_until_complete(self._streamed_run_result.get_output())
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -877,7 +877,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return _utils.get_event_loop().run_until_complete(
+        return _utils.run_until_complete(
             self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial)
         )
 

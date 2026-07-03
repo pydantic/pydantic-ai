@@ -47,6 +47,7 @@ async def test_model_request():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 
@@ -66,6 +67,7 @@ async def test_model_request_tool_call():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=2),
+            provider_name='test',
         )
     )
 
@@ -78,6 +80,7 @@ def test_model_request_sync():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 

@@ -91,7 +91,7 @@ def serialize_any(value: Any) -> str:
             return f'Unable to serialize: {e}'
 
 
-def safe_to_json(value: Any) -> bytes:
+def safe_to_json(value: object) -> bytes:
     """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
 
     `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
@@ -127,7 +127,7 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -219,7 +219,7 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:
