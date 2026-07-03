@@ -2995,47 +2995,13 @@ class DeferredToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@deprecated(
-    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.'
-)
-@dataclass(repr=False)
-class BuiltinToolCallEvent:
-    """An event indicating the start to a call to a built-in tool."""
-
-    part: NativeToolCallPart
-    """The built-in tool call to make."""
-
-    _: KW_ONLY
-
-    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
-    """Event type identifier, used as a discriminator."""
-
-
-@deprecated(
-    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.'
-)
-@dataclass(repr=False)
-class BuiltinToolResultEvent:
-    """An event indicating the result of a built-in tool call."""
-
-    result: NativeToolReturnPart
-    """The result of the call to the built-in tool."""
-
-    _: KW_ONLY
-
-    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
-    """Event type identifier, used as a discriminator."""
-
-
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolCallEvent
-    | DeferredToolResultEvent
-    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
-    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    | DeferredToolResultEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""

@@ -784,12 +784,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             metadata=self.deferred_metadata,
         )
 
+        # Emit one `DeferredToolCallEvent` per deferred call, carrying the full batch so stream
+        # consumers can observe the interaction without coupling to the resolution handler. These
+        # calls already passed validation (a call can only defer after its args validate), so
+        # `args_valid` is always `True`.
+        for call in [*deferred_tool_requests.calls, *deferred_tool_requests.approvals]:
+            yield _messages.DeferredToolCallEvent(call, args_valid=True, requests=deferred_tool_requests)
+
         # Let capability handlers resolve deferred calls inline (one shot).
         # Results are fed back through the existing tool-execution pipeline so that
         # approvals, denials, retries, and ToolReturn unwrapping all behave identically
         # to the UserPromptNode resume path.
         handler_results = await self.tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
+            yield _messages.DeferredToolResultEvent(handler_results)
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call

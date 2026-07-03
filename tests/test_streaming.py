@@ -3983,7 +3983,7 @@ async def test_deferred_tool_iter():
 async def test_deferred_tool_call_and_result_events():
     """DeferredToolCallEvent is emitted per deferred call; DeferredToolResultEvent is emitted once when resolved."""
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(approve_all=True)
 
     agent = Agent(
