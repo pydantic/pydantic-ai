@@ -6,6 +6,7 @@ import gc
 import json
 import re
 import sys
+import threading
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -340,6 +341,54 @@ def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.Mo
     assert not bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(RuntimeError):  # the portal has stopped, so it rejects further calls
         original_call(asyncio.sleep, 0)
+
+
+def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C mid-stream tears down the still-open model stream instead of leaking it (#5975).
+
+    The pre-portal implementation pumped each item via a separate `loop.run_until_complete(anext(...))`
+    on the caller's loop, so a `KeyboardInterrupt` unwound the caller while leaving the run's tasks
+    pending and its model connection open on that loop until GC. Here the model stream is still open
+    (mid-stream) when the interrupt lands; teardown must close it, which we observe via its `finally`.
+    """
+    stream_closed = threading.Event()
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'The '  # a final-result event here lets `run_stream_sync` return with the stream still open
+            while True:  # keep the model stream (and its notional connection) open and producing
+                yield 'cat '
+                await asyncio.sleep(0.01)
+        finally:
+            stream_closed.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    result = agent.run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
+    assert not stream_closed.is_set()  # the model stream is open and producing
+
+    # Simulate the interrupt landing while the caller is blocked on the portal: the first `portal.call`
+    # (the `get_output` below) raises, later ones (the teardown) behave normally.
+    original_call = portal.call
+    calls = 0
+
+    def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt
+        return original_call(*args, **kwargs)
+
+    monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+    with pytest.raises(KeyboardInterrupt):
+        with result:
+            result.get_output()
+
+    # The interrupt teardown ran the still-open model stream's `finally` on the portal thread, so the
+    # connection was closed rather than left pending on the loop until GC — the leak #5975 reported.
+    assert stream_closed.wait(timeout=5)
 
 
 def test_run_stream_sync_early_break_tears_down_pump():
