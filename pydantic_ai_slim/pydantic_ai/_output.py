@@ -373,6 +373,7 @@ def _select_tool_output_processor(
     *,
     run_context: RunContext[AgentDepsT],
     output_tool_name: str | None,
+    allow_partial: bool,
 ) -> tuple[str, ObjectOutputProcessor[Any]]:
     if output_tool_name is not None:
         try:
@@ -387,7 +388,7 @@ def _select_tool_output_processor(
     matches: list[tuple[str, ObjectOutputProcessor[Any]]] = []
     for name, processor in toolset.processors.items():
         try:
-            processor.hook_validate_candidate(candidate, run_context=run_context)
+            processor.hook_validate_candidate(candidate, run_context=run_context, allow_partial=allow_partial)
         except (ValidationError, ValueError, TypeError):
             continue
         else:
@@ -450,7 +451,11 @@ async def run_output_candidate_with_hooks(
         output_context = processor.get_output_context(schema)
     elif schema.toolset is not None:
         name, processor = _select_tool_output_processor(
-            schema.toolset, candidate, run_context=run_context, output_tool_name=output_tool_name
+            schema.toolset,
+            candidate,
+            run_context=run_context,
+            output_tool_name=output_tool_name,
+            allow_partial=allow_partial,
         )
         output_context = processor.get_output_context(
             schema,
@@ -1414,10 +1419,14 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         if match := self._resolve_inner_for_value(candidate):
             inner = self._processors[match.kind]
-            semantic, _state = inner.hook_validate_candidate(
-                candidate, run_context=run_context, allow_partial=allow_partial
-            )
-            return semantic, match.kind
+            try:
+                semantic, _state = inner.hook_validate_candidate(
+                    candidate, run_context=run_context, allow_partial=allow_partial
+                )
+            except (ValidationError, ValueError, TypeError):
+                pass
+            else:
+                return semantic, match.kind
 
         matches: list[tuple[str, Any]] = []
         for kind, inner in self._processors.items():

@@ -18,6 +18,8 @@ from .tools import ObjectJsonSchema, ToolDefinition
 if TYPE_CHECKING:
     from pydantic_graph import End
 
+    from ._output import OutputSchema, OutputValidator
+    from .capabilities.abstract import AbstractCapability
     from .result import FinalResult
 
 __all__ = (
@@ -328,9 +330,9 @@ class OutputController(Generic[T]):
     """
 
     ctx: RunContext[Any]
-    _output_schema: Any | None = None
-    _output_validators: Sequence[Any] = ()
-    _root_capability: Any | None = None
+    _output_schema: OutputSchema[Any] | None = None
+    _output_validators: Sequence[OutputValidator[Any, Any]] = ()
+    _root_capability: AbstractCapability[Any] | None = None
     _output_retry: int | None = None
     _max_output_retries: int | None = None
 
