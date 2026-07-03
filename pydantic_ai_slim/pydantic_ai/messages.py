@@ -1171,7 +1171,9 @@ else:
     )
 
 
-tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeAdapter(ToolReturnContent)
+tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeAdapter(
+    ToolReturnContent, config=pydantic.ConfigDict(defer_build=True)
+)
 """TypeAdapter for `ToolReturnContent` — used by UI adapters to rehydrate multimodal items
 (`BinaryContent`, `ImageUrl`, etc.) from raw JSON/dict payloads carried in wire-protocol fields
 typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
