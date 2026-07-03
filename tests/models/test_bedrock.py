@@ -1291,10 +1291,7 @@ def _bedrock_tool_result_media_kinds(cassette: Cassette) -> set[str]:
     """
     kinds: set[str] = set()
     for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        raw = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if not raw:
-            continue
-        data: dict[str, Any] = json.loads(raw)  # pyright: ignore[reportUnknownArgumentType]
+        data: dict[str, Any] = json.loads(request.body)  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
         messages: list[dict[str, Any]] = data.get('messages', [])
         for message in messages:
             content: list[dict[str, Any]] = message.get('content', [])
@@ -1348,10 +1345,7 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
     # The file rode inside the `toolResult`, and no sibling-split placeholder was emitted.
     assert file_kind in _bedrock_tool_result_media_kinds(vcr)
     for request in vcr.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        body = cast(Any, request.body)  # pyright: ignore[reportUnknownMemberType]
-        if body:
-            text = body.decode('utf-8', 'ignore') if isinstance(body, bytes) else str(body)
-            assert 'See file' not in text
+        assert 'See file' not in json.dumps(json.loads(request.body))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
