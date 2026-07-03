@@ -29,7 +29,6 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._event_stream import describe_file
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -41,6 +40,7 @@ from ._utils import (
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
+    dump_tool_return_content,
     parse_ag_ui_version,
     tool_kind_encrypted_value,
 )
@@ -333,12 +333,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
-    """Return tool output string with file descriptions if present."""
-    output = part.model_response_str()
-    if file_descriptions := [describe_file(f) for f in part.files]:
-        if output:
-            return output + '\n' + '\n'.join(file_descriptions)
-        else:
-            return '\n'.join(file_descriptions)
-    else:
-        return output
+    """Serialize a tool return's full content for a `ToolCallResultEvent`.
+
+    Uses the same serialization as history `dump_messages` (see
+    [`dump_tool_return_content`][pydantic_ai.ui.ag_ui._utils.dump_tool_return_content]), so files a tool
+    returns ride inline in the streamed `ToolCallResultEvent.content` and survive the round-trip: a frontend
+    that echoes the content back on the next request gets `BinaryContent`/`ImageUrl`/... rehydrated on load,
+    so the file can be sent to the model again rather than collapsing to a text placeholder.
+    """
+    return dump_tool_return_content(part.content)

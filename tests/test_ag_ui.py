@@ -3337,6 +3337,39 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
 
 
+async def test_builtin_tool_return_non_string_scalar_content_passthrough() -> None:
+    """A non-string, non-mapping/sequence `content` (a scalar) passes through untouched.
+
+    Only mappings/sequences can nest multimodal items, so the discriminator is skipped for a scalar and
+    the value is returned as-is rather than coerced.
+    """
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content=42,
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+                    function=FunctionCall(name='web_fetch', arguments='{"url": "https://example.com"}'),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, NativeToolReturnPart)
+    assert return_part.content == 42
+
+
 async def test_user_message_empty_content_list_skipped() -> None:
     """A UserMessage with an empty content list produces no UserPromptPart."""
     messages: list[Message] = [
@@ -4012,6 +4045,195 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
 
 
 @pytest.mark.parametrize(
+    'case_id',
+    [
+        'plain-string',
+        'structured-dict',
+        'structured-list',
+        'single-image',
+        'text-then-audio',
+        'image-and-video',
+        'document-url',
+        'dict-with-nested-image',
+    ],
+)
+def test_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
+) -> None:
+    """Multimodal and structured `ToolReturnPart.content` ride inline in `ToolMessage.content` and round-trip with no flag.
+
+    `ag_ui.core.ToolMessage.content` is a plain `str`, but it already carries JSON for structured returns,
+    so the full content — files serialized as base64/URL dicts included — is written inline and rehydrated
+    on load via the `ToolReturnContent` discriminator. No sidecar `ActivityMessage` and no `preserve_file_data`
+    flag are involved: inline content round-trips verbatim through any frontend, whereas a custom sidecar
+    only round-trips if the frontend echoes it back. A file nested in a mapping (unreachable by
+    `BaseToolReturnPart.files`) round-trips too.
+    """
+    contents: dict[str, Any] = {
+        'plain-string': 'just some text',
+        'structured-dict': {'temperature': 21, 'unit': 'C'},
+        'structured-list': [1, 2, 3],
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'dict-with-nested-image': {'caption': 'see image', 'attachment': tiny_image},
+    }
+    content = contents[case_id]
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    # No flag: tool-return files always ride inline in the tool message, never a sidecar.
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert isinstance(tool_msgs[0].content, str)
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_dump_tool_return_none_content_becomes_empty_string() -> None:
+    """A `None` tool-return content dumps to an empty string, since AG-UI `ToolMessage.content` is text-only.
+
+    On reload the empty string is not valid JSON, so it stays `''` rather than round-tripping back to `None`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='noop', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content=None)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content == ''
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
+    )
+
+
+@pytest.mark.parametrize('content', ['123', 'true', 'null'])
+def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
+    """A string return that happens to be a valid JSON *scalar* must not change type on the round-trip.
+
+    `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
+    through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
+    discriminator on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
+    A container-shaped string (`'[1, 2]'`) is wire-indistinguishable from a real list return, so it does rehydrate —
+    that ambiguity is inherent to the text-only wire and only the scalar coercion is recoverable.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_value', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
+    """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args='{"q": "test"}',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', tiny_image],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            NativeToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
+    """A builtin tool's JSON `ToolMessage.content` rehydrates to structured content (inline, no sidecar)."""
+    prefixed_id = 'pyd_ai_builtin|anthropic|call_1'
+    raw = [
+        AssistantMessage(
+            id='msg-1',
+            tool_calls=[
+                ToolCall(
+                    id=prefixed_id,
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"q": "test"}'),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg-2',
+            content='[{"a": 1}, {"b": 2}]',
+            tool_call_id=prefixed_id,
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(raw)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            NativeToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=[{'a': 1}, {'b': 2}],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize(
     'version,expected_reasoning',
     [
         pytest.param('0.1.10', snapshot([]), id='v010-drops-thinking'),
@@ -4043,7 +4265,12 @@ def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: 
 
 
 async def test_tool_return_with_files():
-    """Test that tool returns with files include file descriptions in the output."""
+    """A tool return carrying files streams its full content inline in `ToolCallResultEvent.content`.
+
+    Files are serialized (base64 for `BinaryContent`, URL for `ImageUrl`) using the same dump as history
+    serialization, not collapsed to a `[File: ...]` placeholder, so a streaming frontend can echo the
+    content back and have the files rehydrated and re-sent to the model on the next step.
+    """
 
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
@@ -4078,7 +4305,7 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_1',
-                'content': 'Image analysis result\n[File: image/png]',
+                'content': '["Image analysis result",{"data":"aW1n","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"978ea7"}]',
                 'role': 'tool',
             },
             {
@@ -4086,9 +4313,56 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_2',
-                'content': '[File: https://example.com/image.jpg]',
+                'content': '{"url":"https://example.com/image.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"39cfc4"}',
                 'role': 'tool',
             },
+        ]
+    )
+
+
+async def test_stream_tool_return_files_roundtrip_to_history() -> None:
+    """The content a tool return streams can be replayed as history and rehydrates to the original file.
+
+    This is the round-trip that matters for a streaming frontend: the file a tool produced during the run
+    is streamed inline in `ToolCallResultEvent.content`, and when the frontend echoes that content back on
+    the next request it is recovered as a `BinaryImage` — so it can be sent to the model again (preserving
+    prompt-cache prefixes) instead of degrading to a text placeholder.
+    """
+    image = BinaryImage(data=b'img', media_type='image/png')
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='get_image', content=['here it is', image], tool_call_id='call_1')
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    result_content = next(e['content'] for e in events if e.get('type') == 'TOOL_CALL_RESULT')
+
+    # Replay the streamed content back as client-submitted history, paired with its tool call.
+    reloaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg_2',
+                tool_calls=[
+                    ToolCall(id='call_1', type='function', function=FunctionCall(name='get_image', arguments='{}')),
+                ],
+            ),
+            ToolMessage(id='msg_3', content=result_content, tool_call_id='call_1'),
+        ]
+    )
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_image', content=['here it is', image], tool_call_id='call_1', timestamp=IsDatetime()
+            )
         ]
     )
 
