@@ -69,8 +69,13 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         # `json_schema_transformer` is a fallback (the upstream model profile wins if it set one). The other
         # overrides win on top: vLLM's /v1/chat/completions endpoint supports response_format with json_schema
         # natively, but strict mode is not supported (issue #4116). `openai_chat_supports_multiple_system_messages`
-        # is forced off because some chat templates served by vLLM (recent Qwen, Mistral, Gemma) reject more than
-        # one leading system message; merging them is lossless for templates that do allow multiple. See #5812.
+        # is forced off because some chat templates served by vLLM reject more than one leading system message;
+        # merging them is lossless for templates that do allow multiple. See #5812.
+        #
+        # `openai_chat_thinking_field='reasoning'` matches vLLM, which renamed `reasoning_content` to `reasoning`
+        # to follow OpenAI's gpt-oss guidance (vllm-project/vllm#27752). Older vLLM servers only emit
+        # `reasoning_content`, but reading falls back to it (see `OpenAIChatModel._process_thinking`), and
+        # this only sets the field used when sending reasoning back on multi-turn requests.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
