@@ -55,6 +55,7 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
+from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -457,6 +458,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
@@ -1289,13 +1291,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
+        # Native tools contributed per-run by `capabilities=[NativeTool(...)]` (and spec-resolved
+        # capabilities) form their own layer. Cross-layer last-wins against agent-level tools is
+        # intentional, but two conflicting tools sharing an id *within* this layer are ambiguous.
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        for cap in extra_capabilities:
+            extra_native_tools.extend(cap.get_native_tools())
+        if extra_native_tools:
+            _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
         # `capabilities=[NativeTool(...)]`) on top.
         if some_native_tools := self._override_native_tools.get():
-            extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
-            for cap in extra_capabilities:
-                extra_native_tools.extend(cap.get_native_tools())
+            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
             cap_native_tools = [*some_native_tools.value, *extra_native_tools]
 
         # Build model settings resolver using per-run capability
@@ -2772,6 +2781,31 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
         explicit_ids.add(cap.id)
     return explicit_ids
+
+
+def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:
+    """Reject native tools that share a `unique_id` but carry conflicting definitions.
+
+    Native tools are keyed by `unique_id` when request parameters are deduplicated (see
+    `Model.prepare_request`). That dedup is intentionally last-wins *across* layers, so a run-level
+    native tool can override an agent-level default with the same id. *Within* a single layer,
+    though, two different tools sharing an id are ambiguous: the silent last-wins would bind a
+    stable id (e.g. an `MCPServerTool` id) to an unexpected definition such as a different server
+    URL or authorization token. Fail fast here instead. Identical duplicates are allowed and
+    collapsed later.
+
+    `NativeToolFunc` callables are skipped: they have no stable `unique_id` to key on.
+    """
+    seen: dict[str, AbstractNativeTool] = {}
+    for tool in native_tools:
+        if not isinstance(tool, AbstractNativeTool):
+            continue
+        existing = seen.setdefault(tool.unique_id, tool)
+        if existing is not tool and existing != tool:
+            raise exceptions.UserError(
+                f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
+                'Native tool ids must be unique within a capability layer.'
+            )
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
