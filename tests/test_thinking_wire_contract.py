@@ -9,7 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 import pytest
 from vcr.cassette import Cassette
@@ -142,25 +142,24 @@ CASES = [
 _MISSING = object()
 
 
-def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
+def _is_json_object(value: object) -> TypeGuard[dict[str, Any]]:
+    # A `TypeGuard` (not a bare `isinstance`) so pyright narrows `value` to a typed dict for the `[key]` access below.
     return isinstance(value, dict)
 
 
-def _body_path(body: dict[str, object], path: str) -> object:
-    value: object = body
+def _body_path(body: dict[str, Any], path: str) -> Any:
+    """Resolve a dotted path in a decoded JSON body, returning `_MISSING` if any segment is absent.
+
+    `present`/`absent` keys may be nested (e.g. Google's `generationConfig.thinkingConfig.thinking_budget`),
+    so a flat `body.get(key)` isn't enough. Returns a sentinel rather than `None` so a real `None`/`0` on the
+    wire is distinguishable from an absent key.
+    """
+    value: Any = body
     for key in path.split('.'):
-        if not _is_json_object(value):
+        if not _is_json_object(value) or key not in value:
             return _MISSING
-        value = value.get(key, _MISSING)
-        if value is _MISSING:
-            return _MISSING
+        value = value[key]
     return value
-
-
-def test_body_path_returns_missing_when_path_enters_scalar():
-    """Pin `_body_path`'s scalar-descent guard directly: no real case descends a dotted path into a
-    non-object, so this defensive branch is unreachable through the VCR cases above and can't be a VCR test."""
-    assert _body_path({'outer': 'not-object'}, 'outer.inner') is _MISSING
 
 
 def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
