@@ -418,7 +418,7 @@ class MistralModel(Model[Mistral]):
 
         return ModelResponse(
             parts=parts,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, response.model),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -710,7 +710,7 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data)
+                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -845,15 +845,29 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
+def _map_usage(
+    response: MistralChatCompletionResponse | MistralCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
-    if response.usage:
-        return RequestUsage(
-            input_tokens=response.usage.prompt_tokens or 0,
-            output_tokens=response.usage.completion_tokens or 0,
-        )
-    else:
+    if response.usage is None:
         return RequestUsage()
+    usage_data = response.usage.model_dump(exclude_none=True)
+    details: dict[str, int] = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    return RequestUsage.extract(
+        dict(model=model, usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='mistral',
+        details=details or None,
+    )
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:

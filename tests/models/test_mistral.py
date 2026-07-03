@@ -34,7 +34,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -387,6 +387,28 @@ async def test_three_completions(allow_model_requests: None):
     )
 
 
+async def test_usage_with_cached_tokens(allow_model_requests: None):
+    # Mistral reports prompt-cache hits nested under `prompt_tokens_details.cached_tokens`,
+    # which genai-prices maps to the first-class `cache_read_tokens` field.
+    # https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching
+    usage = MistralUsageInfo.model_validate(
+        {
+            'prompt_tokens': 1013,
+            'completion_tokens': 30,
+            'total_tokens': 1043,
+            'prompt_tokens_details': {'cached_tokens': 1008},
+        }
+    )
+    completion = completion_message(MistralAssistantMessage(content='world'), usage=usage)
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+
+    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+
+
 #####################
 ## Completion Stream
 #####################
@@ -412,6 +434,44 @@ async def test_stream_text(allow_model_requests: None):
         assert result.is_complete
         assert result.usage.input_tokens == 5
         assert result.usage.output_tokens == 5
+
+
+async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
+    stream = [
+        MistralCompletionEvent(
+            data=MistralCompletionChunk(
+                id='x',
+                choices=[
+                    MistralCompletionResponseStreamChoice(
+                        index=0,
+                        delta=MistralDeltaMessage(content='world', role='assistant'),
+                        finish_reason='stop',
+                    )
+                ],
+                created=1704067200,
+                model='mistral-large-latest',
+                object='chat.completion.chunk',
+                usage=MistralUsageInfo.model_validate(
+                    {
+                        'prompt_tokens': 1013,
+                        'completion_tokens': 30,
+                        'total_tokens': 1043,
+                        'prompt_tokens_details': {'cached_tokens': 1008},
+                    }
+                ),
+            )
+        ),
+    ]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(debounce_by=None):
+            pass
+
+    # `prompt_tokens_details.cached_tokens` is surfaced as first-class `cache_read_tokens`.
+    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):

@@ -143,7 +143,7 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 
 
 @pytest.mark.xdist_group(name='doc_tests')
-@pytest.mark.parametrize('example', find_filter_examples())
+@pytest.mark.parametrize('example', list(find_filter_examples()))
 def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
