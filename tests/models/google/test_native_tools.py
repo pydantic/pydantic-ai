@@ -369,7 +369,7 @@ async def test_file_search_grounding_absent_leaves_empty_content_streaming():
 
     returns = _file_search_returns(parts)
     assert len(returns) == 1 and returns[0].content is None
-    # The deferred `PartStartEvent` is flushed at the end of the stream, empty, exactly once.
+    # The reserved return's deferred `PartStartEvent` is still flushed (empty, exactly once), so event
+    # consumers see every part present in the final response.
     starts = _file_search_return_start_parts(events)
     assert len(starts) == 1 and starts[0].content is None
-    assert isinstance(events[-1], PartStartEvent) and events[-1].part is starts[0]

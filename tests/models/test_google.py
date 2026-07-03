@@ -4737,14 +4737,10 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
     On Gemini 3+ the explicit `tool_response` is empty and the contexts (with `custom_metadata`) live only in
     `grounding_metadata`; without the fix `content` is `None` and this fails.
     """
-    returns = [
-        part
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, NativeToolReturnPart) and part.tool_name == 'file_search'
-    ]
-    assert len(returns) == 1
+    parts = [part for message in messages if isinstance(message, ModelResponse) for part in message.parts]
+    calls = [p for p in parts if isinstance(p, NativeToolCallPart) and p.tool_name == 'file_search']
+    returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+    assert len(calls) == 1 and len(returns) == 1
     assert returns[0].content == [
         {
             'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.\n',
@@ -4752,6 +4748,10 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
             'custom_metadata': [{'key': 'source_url', 'string_value': source_url}],
         }
     ]
+    # The return echoes the model's real `tool_call_id`, not a `pyd_ai_`-synthesised one, so
+    # `_can_echo_server_side_tool_part` replays it on the follow-up turn rather than dropping the turn.
+    assert returns[0].tool_call_id == calls[0].tool_call_id
+    assert not calls[0].tool_call_id.startswith('pyd_ai_')
 
 
 @pytest.mark.vcr()
