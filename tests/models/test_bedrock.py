@@ -5170,6 +5170,8 @@ async def test_bedrock_nova_tool_result_and_document_merge(bedrock_provider: Bed
     """Nova has no co-location constraint, so the turns are merged (no synthetic assistant turn).
 
     Guards against over-applying the #6081 split to models that accept a `toolResult` alongside a document.
+    Unit test (not VCR): it pins the mapped request-payload shape, which our cassette matcher isn't
+    sensitive to, so a regression could still match a recording and pass green.
     """
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     prepared = model.prepare_messages(_tool_result_then_document_history())
@@ -5200,7 +5202,11 @@ async def test_bedrock_nova_tool_result_and_document_merge(bedrock_provider: Bed
 
 
 async def test_bedrock_llama_tool_result_isolated_from_text(bedrock_provider: BedrockProvider):
-    """Llama requires a `toolResult` to be alone in its turn, so even a following text turn is split off."""
+    """Llama requires a `toolResult` to be alone in its turn, so even a following text turn is split off.
+
+    Unit test (not VCR): it pins the mapped request-payload shape, which our cassette matcher isn't
+    sensitive to, so a regression could still match a recording and pass green.
+    """
     model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
