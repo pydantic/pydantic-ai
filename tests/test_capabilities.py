@@ -13649,6 +13649,27 @@ class _CommitRunCodeResultAsOutput(AbstractCapability[Any]):
         return committed or result
 
 
+async def test_run_context_output_candidate_helper_returns_result_without_candidate():
+    """The shared test helper leaves graph results unchanged until it captures a `run_code` result.
+
+    This is not a VCR test because it covers local test capability control flow.
+    """
+    cap = _CommitRunCodeResultAsOutput()
+    result = object()
+
+    assert (
+        await cap.after_tool_execute(
+            _build_run_context(),
+            call=ToolCallPart(tool_name='other_tool', args='{}'),
+            tool_def=ToolDefinition(name='other_tool'),
+            args={},
+            result=result,
+        )
+        is result
+    )
+    assert await cap.after_node_run(_build_run_context(), node=object(), result=result) is result
+
+
 async def test_run_context_output_unavailable_outside_agent_run():
     """`RunContext.output` raises clearly when no run output schema is installed.
 
