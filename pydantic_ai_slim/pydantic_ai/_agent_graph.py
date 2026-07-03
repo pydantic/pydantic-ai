@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._cost import best_effort_cost
+from pydantic_ai._cost import best_effort_cost, calculate_price_for_usage
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_execution import process_tool_calls
@@ -1024,6 +1024,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
+            # We cannot cost of output tokens though so this is a best-effort calculation
+            usage.cost = calculate_price_for_usage(
+                usage,
+                model_name=model.model_name,
+                provider_api_url=model.base_url,
+                provider_name=model.system,
+            ).total_price
 
         ctx.deps.usage_limits.check_before_request(usage)
 
@@ -1091,6 +1098,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.cost += best_effort_cost(response)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.deps.usage_limits.check_cost(ctx.state.usage)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(

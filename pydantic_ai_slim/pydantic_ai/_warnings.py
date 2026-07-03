@@ -12,3 +12,7 @@ class PydanticAIDeprecationWarning(UserWarning):
 
 class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
+
+
+class CostNotFoundWarning(Warning):
+    """Warning raised when cost is not found."""

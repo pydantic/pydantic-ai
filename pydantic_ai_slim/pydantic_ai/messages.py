@@ -16,9 +16,11 @@ from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
-from genai_prices import calc_price, types as genai_types
+from genai_prices import types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
+
+from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -2325,22 +2327,11 @@ class ModelResponse:
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
-        assert self.model_name, 'Model name is required to calculate price'
-        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
-        if self.provider_url:
-            try:
-                return calc_price(
-                    self.usage,
-                    self.model_name,
-                    provider_api_url=self.provider_url,
-                    genai_request_timestamp=self.timestamp,
-                )
-            except LookupError:
-                pass
-        return calc_price(
+        return calculate_price_for_usage(
             self.usage,
-            self.model_name,
-            provider_id=self.provider_name,
+            model_name=self.model_name,
+            provider_api_url=self.provider_url,
+            provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
         )
 

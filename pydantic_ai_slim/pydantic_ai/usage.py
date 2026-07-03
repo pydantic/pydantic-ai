@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from copy import copy
 from dataclasses import dataclass, fields
 from decimal import Decimal
@@ -10,6 +11,7 @@ from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 
 from . import _utils
+from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -264,6 +266,8 @@ class UsageLimits:
     Each of the limits can be set to `None` to disable that limit.
     """
 
+    cost_limit: Decimal | None = Decimal(0)
+    """The maximum cost allowed in USD."""
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
@@ -318,6 +322,18 @@ class UsageLimits:
             raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
             )
+
+    def check_cost(self, usage: RunUsage) -> None:
+        """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
+        if self.cost_limit is not None and usage.cost == Decimal(0):
+            warnings.warn(
+                CostNotFoundWarning(
+                    'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
+                    'This usually means genai-prices has no pricing data for the model or provider in use.'
+                )
+            )
+        if self.cost_limit is not None and usage.cost > self.cost_limit:
+            raise UsageLimitExceeded(f'Exceeded the cost_limit of {self.cost_limit} ({usage.cost=})')
 
     def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""

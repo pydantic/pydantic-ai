@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import warnings
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
+
+from genai_prices import calc_price
+
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._warnings import CostCalculationFailedWarning
 
@@ -39,6 +44,35 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
             stacklevel=2,
         )
         return None
+
+
+def calculate_price_for_usage(
+    usage: RequestUsage | RunUsage,
+    *,
+    model_name: str | None = None,
+    provider_api_url: str | None = None,
+    provider_name: str | None = None,
+    genai_request_timestamp: datetime | None = None,
+) -> PriceCalculation:
+    assert model_name, 'Model name is required to calculate price'
+
+    if provider_api_url:
+        try:
+            return calc_price(
+                usage,
+                model_name,
+                provider_api_url=provider_api_url,
+                genai_request_timestamp=genai_request_timestamp,
+            )
+        except LookupError:
+            pass
+
+    return calc_price(
+        usage,
+        model_name,
+        provider_id=provider_name,
+        genai_request_timestamp=genai_request_timestamp,
+    )
 
 
 def best_effort_cost(response: ModelResponse) -> Decimal:
