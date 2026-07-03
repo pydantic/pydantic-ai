@@ -818,10 +818,10 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
     )
 
 
-async def test_anthropic_code_execution_files_append_to_last_user_message(allow_model_requests: None):
-    """Pins the internal `_map_message` placement: uploads attach to the last user message, and none are added when history has no user message.
+async def test_anthropic_code_execution_files_append_to_first_user_message(allow_model_requests: None):
+    """Pins the internal `_map_message` placement: uploads attach to the *first* user message (keeping the cacheable prefix byte-identical as history grows), not a later one, and none are added when history has no user message.
 
-    Not a VCR test: the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
+    Not a VCR test: the first-vs-later placement and the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
     """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
@@ -836,6 +836,7 @@ async def test_anthropic_code_execution_files_append_to_last_user_message(allow_
         [
             ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
             ModelResponse(parts=[TextPart(content='Previous response')]),
+            ModelRequest(parts=[UserPromptPart(content='And now summarize it.')]),
         ],
         parameters,
         AnthropicModelSettings(),
@@ -851,6 +852,7 @@ async def test_anthropic_code_execution_files_append_to_last_user_message(allow_
                 ],
             },
             {'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'And now summarize it.', 'type': 'text'}]},
         ]
     )
 

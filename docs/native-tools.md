@@ -351,7 +351,7 @@ async def main():
     # Upload a file via the Anthropic Files API
     client = anthropic.AsyncAnthropic()
     with open('data.csv', 'rb') as f:
-        file = await client.beta.files.upload(file=('data.csv', f.read(), 'text/csv'))
+        file = await client.beta.files.upload(file=('data.csv', f.read(), 'text/csv'), betas=['files-api-2025-04-14'])
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
