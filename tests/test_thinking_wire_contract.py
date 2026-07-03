@@ -9,7 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Literal, TypeGuard
 
 import pytest
 from vcr.cassette import Cassette
@@ -163,7 +163,7 @@ def test_body_path_returns_missing_when_path_enters_scalar():
 
 def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
     if case.provider == 'groq':
-        return GroqModel(case.model_name, provider=cast(Any, GroqProvider(api_key=groq_api_key)))
+        return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
     if case.provider == 'cerebras':
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
     if case.provider == 'google':
