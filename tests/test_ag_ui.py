@@ -5193,6 +5193,35 @@ def test_multimodal_roundtrip_preserves_file_url_force_download(
     assert loaded_content.force_download == content.force_download
 
 
+def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> None:
+    """`FileUrl.force_download` is dropped when dumping to AG-UI versions before `0.1.15`.
+
+    Legacy `BinaryInputContent` (emitted for `ag_ui_version < '0.1.15'`) has no `metadata`
+    carrier, so there is nowhere to stash `force_download` and it silently resets to `False`
+    on reload — the security-conservative default, matching the other legacy-version drops.
+    """
+    content = ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.14')
+    user_msg = ag_ui_msgs[0]
+    assert isinstance(user_msg, UserMessage)
+    assert isinstance(user_msg.content, list)
+    dumped_content = user_msg.content[0]
+    assert isinstance(dumped_content, BinaryInputContent)
+    assert not hasattr(dumped_content, 'metadata')
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    loaded_content = user_part.content[0]
+    assert isinstance(loaded_content, ImageUrl)
+    assert loaded_content.force_download is False
+
+
 def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
     """A file with no `vendor_metadata` round-trips to `None` (no spurious `metadata`)."""
     messages: list[ModelMessage] = [
