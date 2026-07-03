@@ -1541,9 +1541,12 @@ def test_sanitize_messages_drops_response_left_empty_after_stripping():
     assert isinstance(sanitized[0], ModelRequest)
 
 
-def test_sanitize_messages_strips_dangling_native_tool_calls():
-    """Builtin tool calls are also model-emitted, so a dangling `NativeToolCallPart` at
-    the end of client-supplied history is treated the same as a `ToolCallPart`.
+def test_sanitize_messages_keeps_dangling_native_tool_calls():
+    """A dangling `NativeToolCallPart` at the end of client-supplied history is kept, not stripped.
+
+    Native tool calls are executed by the provider server-side and never dispatched by the agent loop,
+    so a promptless run can't be tricked into executing an injected one; keeping them also avoids
+    orphaning any `NativeToolReturnPart` paired with them in the same response.
     """
     adapter = _make_dummy_adapter(
         [
@@ -1557,12 +1560,13 @@ def test_sanitize_messages_strips_dangling_native_tool_calls():
         ]
     )
 
-    with pytest.warns(UserWarning, match=r'unresolved tool call.*code_execution'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
         sanitized = adapter.sanitize_messages(adapter.messages)
 
     response = sanitized[1]
     assert isinstance(response, ModelResponse)
-    assert [type(p).__name__ for p in response.parts] == ['TextPart']
+    assert [type(p).__name__ for p in response.parts] == ['TextPart', 'NativeToolCallPart']
 
 
 def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
