@@ -10789,7 +10789,7 @@ def test_agent_override_native_tools_preserves_dynamic_capability_tools():
     model = TestModel()
     agent = Agent(model=model)
 
-    def dynamic_cap(ctx: RunContext[None]) -> NativeTool[None]:
+    def dynamic_cap(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='dyn', url='https://mcp.example.com/dyn'))
 
     with (
@@ -10808,14 +10808,33 @@ def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
     """Native tools contributed by `for_run()` are validated within the run-capabilities layer."""
     agent = Agent(model=TestModel())
 
-    def cap_a(ctx: RunContext[None]) -> NativeTool[None]:
+    def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
 
-    def cap_b(ctx: RunContext[None]) -> NativeTool[None]:
+    def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
         return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
 
     with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
         agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+
+
+def test_agent_resolves_run_capabilities_for_run_once():
+    """Per-run capabilities are resolved exactly once, honoring the `for_run` once-per-run contract."""
+    calls: list[int] = []
+
+    @dataclass
+    class CountingCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            calls.append(1)
+            return replace(self)  # per-run isolation: a fresh instance each call
+
+    # Agent-level (base layer) and run-level (extra layer) both resolve their capability once.
+    Agent(model=TestModel(), capabilities=[CountingCapability()]).run_sync('Hello')
+    assert calls == [1]
+
+    calls.clear()
+    Agent(model=TestModel()).run_sync('Hello', capabilities=[CountingCapability()])
+    assert calls == [1]
 
 
 def test_agent_rejects_conflicting_override_spec_native_tool_ids():
