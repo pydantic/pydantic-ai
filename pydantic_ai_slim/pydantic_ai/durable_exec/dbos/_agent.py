@@ -38,6 +38,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import DBOSModel
 from ._utils import StepConfig
 
@@ -150,7 +151,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with self._dbos_overrides():
+            with self._dbos_overrides(toolsets):
                 return await super(WrapperAgent, self).run(
                     user_prompt,
                     output_type=output_type,
@@ -197,7 +198,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with self._dbos_overrides():
+            with self._dbos_overrides(toolsets):
                 return super(DBOSAgent, self).run_sync(
                     user_prompt,
                     output_type=output_type,
@@ -263,12 +264,23 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         with self._dbos_overrides():
             return super().toolsets
 
+    def _reject_unsupported_runtime_toolsets(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None) -> None:
+        # DBOS runs function tools inline, so `FunctionToolset` is allowed at runtime, but MCP servers need
+        # their I/O wrapped in steps registered up front, and dynamic toolsets can't be introspected ahead
+        # of time. Checked before entering the workflow, which serializes its arguments.
+        reject_unsupported_runtime_toolsets(toolsets, unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS')
+
     @contextmanager
-    def _dbos_overrides(self) -> Generator[None]:
+    def _dbos_overrides(
+        self, additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+    ) -> Generator[None]:
         # Override with DBOSModel and DBOSMCPToolset in the toolsets.
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
+        # Per-run toolsets are merged with the constructor-time durable toolsets; unsupported ones are
+        # rejected up front by `_reject_unsupported_runtime_toolsets` (before the workflow serializes them).
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         with (
-            super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+            super().override(model=self._model, toolsets=merged_toolsets, tools=[]),
             self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
         ):
             yield
@@ -392,6 +404,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
+        self._reject_unsupported_runtime_toolsets(toolsets)
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
             output_type=output_type,
@@ -531,6 +544,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
+        self._reject_unsupported_runtime_toolsets(toolsets)
         return self.dbos_wrapped_run_sync_workflow(
             user_prompt,
             output_type=output_type,
@@ -1001,7 +1015,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
 
-        with self._dbos_overrides():
+        self._reject_unsupported_runtime_toolsets(toolsets)
+        with self._dbos_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
@@ -1017,7 +1032,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 metadata=metadata,
                 retries=retries,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,
                 capabilities=capabilities,
                 spec=spec,
             ) as run:
