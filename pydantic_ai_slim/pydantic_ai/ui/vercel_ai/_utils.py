@@ -69,8 +69,8 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
 
     Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
     and rehydrated on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating.
-    (The streaming path `_tool_return_with_files` replaces files with text placeholders instead, since
-    event streams can't carry multimodal tool output (#3826).)
+    The same function serializes both the `dump_messages` history path and the live event stream
+    (`tool-output-available`), so files survive either round-trip.
     """
     return tool_return_ta.dump_python(part.content, mode='json')
 

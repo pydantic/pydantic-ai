@@ -373,12 +373,6 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
-### Multimodal tool returns
-
-A tool return containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or any of the other [multimodal content types](../input.md#image-audio-video-document-input), including files nested inside a list or dict — round-trips through the AG-UI adapter, both in the live event stream and when you persist and replay history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] / [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages]. No flag is needed.
-
-This means a file an agent's tool produces is available again on the next step: the frontend replays it as part of the conversation history, and it's sent back to the model as the original file rather than a text description of it.
-
 ### Trust model
 
 AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls.

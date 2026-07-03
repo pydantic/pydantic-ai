@@ -840,8 +840,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
           inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
-          discriminator. This applies to history serialization here; during a live streamed run, multimodal
-          tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
+          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:

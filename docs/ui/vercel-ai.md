@@ -124,10 +124,6 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
-### Multimodal tool returns
-
-A tool return containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or any of the other [multimodal content types](../input.md#image-audio-video-document-input), including files nested inside a list or dict — round-trips through the Vercel AI adapter, both in the live stream and across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] boundary. The data-stream tool `output` field carries structured content directly, so the file is serialized inline (base64 for binary data) and rehydrated on load — meaning a file an agent's tool produces is sent back to the model as the original file on the next step, not a text description of it. No flag is needed.
-
 ### Files from client-side tools
 
 Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a [`BinaryContent`][pydantic_ai.messages.BinaryContent] shape in its output — `{ kind: 'binary', mediaType: 'image/png', data: <bytes> }` — and Pydantic AI reconstructs it into a `BinaryContent` (image media types become [`BinaryImage`][pydantic_ai.messages.BinaryImage]) before the run continues.
