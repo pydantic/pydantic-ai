@@ -154,8 +154,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:

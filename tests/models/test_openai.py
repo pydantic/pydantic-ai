@@ -588,6 +588,38 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
+    """`run_stream_sync` must stream and complete against a real, recorded streaming model.
+
+    End-to-end coverage for the portal-based implementation (#3716, refs #3714, #5975): the whole
+    run -- including a tool call, so the agent graph crosses node boundaries -- executes on a single
+    dedicated event-loop thread, and text streams incrementally before `get_output()` returns the
+    final result. This path can't be exercised with `TestModel` or a mock client (no real async
+    stream), so it's a VCR test.
+
+    Note: the pre-portal implementation pumped the stream via repeated
+    `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
+    `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
+    straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a
+    live model); the OTel dangling-span symptom of the same root cause is covered by
+    `tests/test_logfire.py::test_run_stream_sync`.
+    """
+    model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_capital(country: str) -> str:
+        return 'London'
+
+    with agent.run_stream_sync('What is the capital of the UK? Use the tool, then answer.') as result:
+        chunks = [c for c in result.stream_text(debounce_by=None)]
+        output = result.get_output()
+
+    assert chunks
+    assert chunks[-1] == output
+    assert output == snapshot('The capital of the UK is London.')
+
+
 async def test_stream_text_finish_reason(allow_model_requests: None):
     first_chunk = text_chunk('hello ')
     # Test that we get the model name from a later chunk if it is not set on the first one, like on Azure OpenAI with content filter enabled.

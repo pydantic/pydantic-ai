@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from .. import _utils
 from .._run_context import RunContext
 from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
@@ -312,7 +313,17 @@ class _ContinuationStreamedResponse(StreamedResponse):
         connection) open until garbage collection.
         """
         if self._segment_iterator is not None:
-            await self._segment_iterator.aclose()
+            try:
+                await self._segment_iterator.aclose()
+            except RuntimeError as exc:
+                # A debounced consumer (`group_by_temporal`) can have a prefetch task parked mid-`__anext__`
+                # inside the stitching generator, so `aclose()` raises `RuntimeError: aclose(): asynchronous
+                # generator is already running`. That's exactly the case where a prefetch task exists, and its
+                # own cancellation (when the consumer's debounce is torn down) unwinds the generator and runs
+                # each segment's `request_stream(...)` teardown — so letting this pass still closes the
+                # connection. Mirrors the model adapters' `close_stream()` handling of the same error.
+                if not _utils.is_async_generator_already_running(exc):
+                    raise
 
     @property
     def model_name(self) -> str:
