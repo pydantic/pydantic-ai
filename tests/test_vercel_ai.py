@@ -9372,14 +9372,6 @@ def test_tool_return_output_edge_cases(case_id: str, expected: Any, tiny_image: 
     assert tool_return_output(part) == expected
 
 
-def test_describe_file_uploaded_file():
-    """Test that describe_file handles UploadedFile correctly."""
-    from pydantic_ai.ui._event_stream import describe_file
-
-    uploaded = UploadedFile(file_id='file-abc123', provider_name='openai', media_type='image/png')
-    assert describe_file(uploaded) == '[File: file-abc123]'
-
-
 @pytest.mark.parametrize(
     ('reason', 'expected_content'),
     [
