@@ -24,9 +24,14 @@ MoonshotAIModelName = Literal[
     'moonshot-v1-8k-vision-preview',
     'moonshot-v1-32k-vision-preview',
     'moonshot-v1-128k-vision-preview',
+    'moonshot-v1-auto',
     'kimi-latest',
     'kimi-thinking-preview',
     'kimi-k2-0711-preview',
+    'kimi-k2.5',
+    'kimi-k2.6',
+    'kimi-k2.7-code',
+    'kimi-k2.7-code-highspeed',
 ]
 
 

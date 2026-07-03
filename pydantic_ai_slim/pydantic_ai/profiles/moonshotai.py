@@ -5,13 +5,12 @@ from . import ModelProfile
 
 def moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MoonshotAI model."""
-    # Kimi reasoning models (`kimi-thinking-preview`, `kimi-k2-thinking`) accept request-side
-    # thinking parameters and emit `reasoning_content`; the instruct/base models
-    # (`moonshot-v1-*`, `kimi-k2-*-instruct`, `kimi-k2-0711-preview`, `kimi-latest`, ...) do not.
-    # Matching the `-thinking` marker keeps future `*-thinking` Kimi models covered without a code
-    # change and mirrors the per-model `supports_thinking` gating used by the Z.AI and OpenRouter
-    # profiles. Without this flag the unified `thinking` setting is silently dropped on the wire.
+    # Kimi reasoning models (kimi-k2.5/k2.6/k2.7-code, …) accept reasoning_effort and emit
+    # reasoning_content; the moonshot-v1/instruct models don't. Moonshot rejects
+    # reasoning_effort='none', so thinking_always_enabled makes thinking=False omit it.
+    is_reasoning = model_name.lower().startswith(('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7', 'kimi-thinking'))
     return ModelProfile(
         ignore_streamed_leading_whitespace=True,
-        supports_thinking='thinking' in model_name.lower(),
+        supports_thinking=is_reasoning,
+        thinking_always_enabled=is_reasoning,
     )
