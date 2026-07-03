@@ -405,6 +405,14 @@ def get_weather(location: str, celsius: bool) -> str:
     return f"It is 20{'°C' if celsius else '°F'} in {location}."
 ```
 
+## Injecting Follow-up Messages from a Tool
+
+A tool can push extra messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful when a tool wants
+to add follow-up context, redirect the agent's plan, or surface an event the model
+should react to. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run)
+for the full pattern.
+
 ## See Also
 
 For more tool features and integrations, see:
@@ -413,5 +421,5 @@ For more tool features and integrations, see:
 - [Toolsets](toolsets.md) - Managing collections of tools
 - [Native Tools](native-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
-- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, ACI.dev and other tool libraries
+- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, and other tool libraries
 - [Deferred Tools](deferred-tools.md) - Tools requiring approval or external execution

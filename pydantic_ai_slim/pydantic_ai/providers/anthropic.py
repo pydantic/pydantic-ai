@@ -10,6 +10,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
@@ -19,10 +20,10 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 try:
     from anthropic import (
         AsyncAnthropic,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -62,7 +63,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        result = AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        result = merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
         if bedrock_provider == 'anthropic':
             # `anthropic_model_profile` enables `supports_tool_examples` for the direct Anthropic API, where
             # `input_examples` is a standard tool field. Via Bedrock it's still beta-gated behind the

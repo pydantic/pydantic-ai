@@ -30,8 +30,6 @@
 
 ::: pydantic_ai.providers.fireworks.FireworksProvider
 
-::: pydantic_ai.providers.grok.GrokProvider
-
 ::: pydantic_ai.providers.together.TogetherProvider
 
 ::: pydantic_ai.providers.heroku.HerokuProvider
@@ -57,3 +55,5 @@
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.zai.ZaiProvider

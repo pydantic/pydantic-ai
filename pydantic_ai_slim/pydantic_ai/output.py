@@ -7,13 +7,13 @@ from typing import Any, Generic, Literal
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
+from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -123,6 +123,13 @@ class ToolOutput(Generic[OutputDataT]):
     """Whether to use strict mode for the tool."""
     examples: list[Any] | None
     """Example inputs demonstrating correct tool usage."""
+    sequential: bool
+    """Whether this output tool must run as a barrier, not overlapping with other tool calls.
+
+    Only meaningful under `end_strategy='exhaustive'`, where tools otherwise run in parallel: a
+    `sequential=True` output tool runs alone, so function tools the model emitted before it complete
+    first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
+    """
 
     def __init__(
         self,
@@ -133,6 +140,7 @@ class ToolOutput(Generic[OutputDataT]):
         max_retries: int | None = None,
         strict: bool | None = None,
         examples: list[Any] | None = None,
+        sequential: bool = False,
     ):
         self.output = type_
         self.name = name
@@ -140,6 +148,7 @@ class ToolOutput(Generic[OutputDataT]):
         self.max_retries = max_retries
         self.strict = strict
         self.examples = examples
+        self.sequential = sequential
 
 
 @dataclass(init=False)
@@ -330,6 +339,11 @@ class TextOutput(Generic[OutputDataT]):
     print(result.output)
     #> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
     ```
+
+    !!! note
+        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does not apply the
+        wrapped function. Use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream
+        the value it produces.
     """
 
     output_function: TextOutputFunc[OutputDataT]
@@ -426,16 +440,3 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
-
-
-@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
-class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
-    @property
-    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
-    def tool_calls(self) -> list[ToolCallPart]:
-        return self.calls
-
-    @property
-    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
-    def tool_defs(self) -> dict[str, ToolDefinition]:
-        return {}

@@ -4,6 +4,7 @@
     options:
       members:
         - KnownModelName
+        - known_model_names
         - ModelRequestParameters
         - Model
         - AbstractToolDefinition

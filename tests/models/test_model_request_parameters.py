@@ -81,6 +81,7 @@ def test_model_request_parameters_are_serializable():
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'native_tools': [
@@ -160,6 +161,7 @@ def test_model_request_parameters_are_serializable():
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'prompted_output_template': None,

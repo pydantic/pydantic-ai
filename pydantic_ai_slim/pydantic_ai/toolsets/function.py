@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
@@ -8,6 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -94,14 +94,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide tools from the model until discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
@@ -128,13 +129,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
         if instructions is not None:
-            if isinstance(instructions, str) or callable(instructions):
-                instructions = [instructions]
-            for instruction in instructions:
-                if isinstance(instruction, str):
-                    self._instructions.append(instruction)
-                else:
-                    self._instructions.append(SystemPromptRunner(instruction))
+            self._instructions.extend(prepare_instructions(instructions))
 
         self.tools = {}
         for tool in tools:
@@ -249,7 +244,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -270,15 +266,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            # TODO(v2): Remove this deprecation fallback
-            #  and let takes_ctx=True propagate, which will raise a runtime error
-            #  in function_schema if the function doesn't accept RunContext.
-
-            # Is the func actually taking RunContext or is it a plain function in disguise?
-
-            tool = self.add_function(
+            self.add_function(
                 func=func_,
-                takes_ctx=None,
+                takes_ctx=True,
                 name=name,
                 description=description,
                 retries=retries,
@@ -295,13 +285,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
-            if not tool.function_schema.takes_ctx:
-                warnings.warn(
-                    'Passing a function without `RunContext` to `FunctionToolset.tool()` is deprecated, use `tool_plain()` instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
@@ -409,7 +392,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -539,7 +523,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.

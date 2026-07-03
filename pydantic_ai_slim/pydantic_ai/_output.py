@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
-from pydantic import Json, TypeAdapter, ValidationError
+from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -18,7 +18,6 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
-    DeferredToolRequests,
     NativeOutput,
     OutputContext,
     OutputDataT,
@@ -33,6 +32,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import (
+    DeferredToolRequests,
     GenerateToolJsonSchema,
     ObjectJsonSchema,
     ToolDefinition,
@@ -491,16 +491,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`NativeOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
                 )
 
@@ -518,16 +518,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`PromptedOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
                 )
 
@@ -1073,14 +1073,12 @@ class _UnionValidatedOutput:
     data: Any
 
 
-@dataclass
-class UnionOutputResult:
+class UnionOutputResult(BaseModel):
     kind: str
     data: ObjectJsonSchema
 
 
-@dataclass
-class UnionOutputModel:
+class UnionOutputModel(BaseModel):
     result: UnionOutputResult
 
 
@@ -1097,8 +1095,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
-
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
         for output in outputs:
@@ -1121,6 +1117,17 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 json_schema['description'] = object_def.description
 
             json_schemas.append(json_schema)
+
+        # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
+        # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
+        # provider) instead of slipping through to the `_processors` lookup in `validate()`.
+        constrained_result = create_model(
+            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
+        )
+        union_model = create_model(
+            UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
+        )
+        self._union_processor = ObjectOutputProcessor(output=union_model)
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
 
@@ -1191,7 +1198,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str = result.kind
         inner_data: dict[str, Any] = result.data
 
-        # Pydantic validation ensures kind is always valid, so KeyError can't happen.
+        # `_union_processor` validates `kind` against the registered keys, so the lookup is safe.
         inner = self._processors[kind]
         inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
@@ -1444,6 +1451,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             description = None
             strict = None
             examples = None
+            sequential = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
@@ -1451,6 +1459,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = output.strict
                 examples = output.examples
                 tool_max_retries = output.max_retries
+                sequential = output.sequential
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1500,6 +1509,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 examples=examples,
                 kind='output',
+                sequential=sequential,
             )
             processors[name] = processor
             tool_defs.append(tool_def)
