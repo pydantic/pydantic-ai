@@ -10784,6 +10784,40 @@ def test_agent_rejects_conflicting_override_native_tool_ids():
         agent.run_sync('Hello')
 
 
+def test_agent_override_native_tools_preserves_dynamic_capability_tools():
+    """A `capabilities=[fn]` whose `for_run()` yields native tools is preserved under `override(native_tools=...)`."""
+    model = TestModel()
+    agent = Agent(model=model)
+
+    def dynamic_cap(ctx: RunContext[None]) -> NativeTool[None]:
+        return NativeTool(MCPServerTool(id='dyn', url='https://mcp.example.com/dyn'))
+
+    with (
+        agent.override(native_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello', capabilities=[dynamic_cap])
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='dyn', url='https://mcp.example.com/dyn')]
+    )
+
+
+def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
+    """Native tools contributed by `for_run()` are validated within the run-capabilities layer."""
+    agent = Agent(model=TestModel())
+
+    def cap_a(ctx: RunContext[None]) -> NativeTool[None]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
+
+    def cap_b(ctx: RunContext[None]) -> NativeTool[None]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover

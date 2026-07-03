@@ -50,7 +50,7 @@ from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
-from ..capabilities._dynamic import wrap_capability_funcs
+from ..capabilities._dynamic import DynamicCapability, wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
@@ -1246,6 +1246,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
+        if extra_capabilities:
+            # Resolve the per-run capabilities up front and reuse the resolved instances. A
+            # `DynamicCapability` (from `capabilities=[fn]`) only contributes its native tools
+            # after `for_run`, so the override layer below and native-tool id validation must read
+            # from the resolved form. Resolving once here (rather than a second time inside the
+            # override branch) keeps capability factories invoked once per run: the resolved
+            # capabilities returned here are idempotent under the `effective_capability.for_run`
+            # below, except a factory returning `None`, which resolves back to its no-op wrapper —
+            # drop those so `for_run` doesn't invoke the factory a second time.
+            resolved_extras = await _utils.gather(*(cap.for_run(initial_ctx) for cap in extra_capabilities))
+            extra_capabilities = [
+                cap
+                for original, cap in zip(extra_capabilities, resolved_extras)
+                if not (cap is original and isinstance(cap, DynamicCapability))
+            ]
         if extra_capabilities:
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
