@@ -1282,6 +1282,78 @@ async def test_bedrock_multiple_documents_in_history(
     )
 
 
+def _bedrock_tool_result_media_kinds(cassette: Cassette) -> set[str]:
+    """Collect the media-block kinds (`image`, `document`, `video`) that rode *inside* a `toolResult`'s
+    content across every recorded request in `cassette`.
+
+    A kind present here means the adapter delivered the file inside the `toolResult` rather than
+    sibling-splitting it (a placeholder `text` in the `toolResult` plus a separate file block).
+    """
+    kinds: set[str] = set()
+    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        raw = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if not raw:
+            continue
+        data: dict[str, Any] = json.loads(raw)  # pyright: ignore[reportUnknownArgumentType]
+        messages: list[dict[str, Any]] = data.get('messages', [])
+        for message in messages:
+            content: list[dict[str, Any]] = message.get('content', [])
+            for block in content:
+                tool_result: dict[str, Any] | None = block.get('toolResult')
+                if not tool_result:
+                    continue
+                inner_blocks: list[dict[str, Any]] = tool_result.get('content', [])
+                for inner in inner_blocks:
+                    kinds.update(k for k in ('image', 'document', 'video') if k in inner)
+    return kinds
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    ('model_name', 'file_kind'),
+    [
+        pytest.param('us.meta.llama4-maverick-17b-instruct-v1:0', 'document', id='meta_document'),
+        pytest.param('us.meta.llama4-maverick-17b-instruct-v1:0', 'image', id='meta_image'),
+        pytest.param('us.mistral.pixtral-large-2502-v1:0', 'document', id='mistral_document'),
+    ],
+)
+async def test_bedrock_media_kind_delivered_in_tool_result(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    document_content: BinaryContent,
+    image_content: BinaryContent,
+    model_name: str,
+    file_kind: str,
+    vcr: Cassette,
+):
+    """A supported media kind returned from a tool is delivered *inside* the `toolResult`, not sibling-split.
+
+    Pins the corrected `bedrock_supported_media_kinds_in_tool_returns` values verified live against Bedrock:
+    Meta Llama accepts both images and documents inside a `toolResult`, and Mistral (pixtral) accepts
+    documents there. When a kind is in the family's supported set the adapter must place the file block
+    inside `toolResult.content` rather than emitting a `See file` placeholder plus a sibling block.
+    """
+    m = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(m)
+
+    file = image_content if file_kind == 'image' else document_content
+
+    @agent.tool_plain
+    def get_file() -> BinaryContent:
+        return file
+
+    result = await agent.run('Call the `get_file` tool, then briefly describe what you received.')
+    assert result.output
+
+    # The file rode inside the `toolResult`, and no sibling-split placeholder was emitted.
+    assert file_kind in _bedrock_tool_result_media_kinds(vcr)
+    for request in vcr.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        body = cast(Any, request.body)  # pyright: ignore[reportUnknownMemberType]
+        if body:
+            text = body.decode('utf-8', 'ignore') if isinstance(body, bytes) else str(body)
+            assert 'See file' not in text
+
+
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
     agent = Agent(m)

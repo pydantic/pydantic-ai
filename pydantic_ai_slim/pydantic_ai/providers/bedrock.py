@@ -243,6 +243,10 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
         # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        # Nova is intentionally left at the default `bedrock_supported_media_kinds_in_tool_returns`
+        # (`frozenset({'image'})`): inside a `toolResult` it accepts images and text-based documents
+        # (csv/txt) but rejects binary documents (pdf/docx). That constraint is document-format-dependent,
+        # which this kind-based flag can't express, so a format-aware fix is out of scope here.
         profile = merge_profile(
             profile,
             BedrockModelProfile(
@@ -267,6 +271,18 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Meta Llama model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(meta_model_profile(model_name)),
+        BedrockModelProfile(
+            # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
+            # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        ),
+    )
+
+
 def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
@@ -278,6 +294,10 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
+            # images there — even though it accepts images in a plain user message — and has no video
+            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'document'}),
         ),
     )
 
@@ -299,6 +319,10 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
             supports_json_object_output=False,
+            # Qwen (qwen3-vl) on Bedrock rejects every media kind inside a `toolResult`'s content — it
+            # has no document support and rejects images there too. Verified live against
+            # `us.qwen.qwen3-vl-235b-a22b-instruct-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
         ),
     )
 
@@ -388,7 +412,7 @@ class BedrockProvider(Provider[BaseClient]):
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
