@@ -452,11 +452,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
                     else:
+                        outcome: Literal['success', 'failed', 'denied'] = (
+                            'failed' if tool_msg.error is not None else 'success'
+                        )
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
                                 content=tool_msg.content,
                                 tool_call_id=tool_call_id,
+                                outcome=outcome,
                             )
                         )
 
@@ -581,11 +585,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                tool_error = part.model_response_str() if part.outcome in ('failed', 'denied') else None
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
+                        error=tool_error,
                     )
                 )
             elif isinstance(part, RetryPromptPart):

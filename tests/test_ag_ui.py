@@ -1580,6 +1580,62 @@ def test_dump_load_roundtrip_thinking() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_tool_return_failed_outcome() -> None:
+    """Failed tool returns should preserve outcome via ToolMessage.error."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='execution failed',
+                    outcome='failed',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    dumped_tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert dumped_tool_msg.error == 'execution failed'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_tool_return_denied_outcome() -> None:
+    """Denied tool returns should round-trip with a failed outcome (AG-UI has no denied discriminator)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='denied by user',
+                    outcome='denied',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    dumped_tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert dumped_tool_msg.error == 'denied by user'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    return_part = reloaded[2].parts[0]
+    assert isinstance(return_part, ToolReturnPart)
+    assert return_part.outcome == 'failed'
+
+
 def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
@@ -1828,6 +1884,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     assert isinstance(retry_part, ToolReturnPart)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
+    assert retry_part.outcome == 'failed'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
