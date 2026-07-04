@@ -291,37 +291,53 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         `before_node_run` separately (before streaming).
         """
         cap = self.ctx.deps.root_capability
+        node_result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]] | None = None
         try:
             try:
-                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+                node_result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
             except exceptions.StopRun:
                 raise  # Control flow, not an error — handled below, bypassing `on_node_run_error`.
             except Exception as e:
-                result = await cap.on_node_run_error(run_context, node=node, error=e)
+                node_result = await cap.on_node_run_error(run_context, node=node, error=e)
                 # on_node_run_error recovered by returning a result.
                 # The graph runner is in ErrorMarker state; update it to match.
-                self._sync_graph_state(result)
-            pre_hook_result = result
-            result = await cap.after_node_run(run_context, node=node, result=result)
+                self._sync_graph_state(node_result)
+            pre_hook_result = node_result
+            node_result = await cap.after_node_run(run_context, node=node, result=pre_hook_result)
 
             # If after_node_run changed the result, sync the graph runner state so
             # agent_run.result correctly reflects whether the run is finished.
-            if result is not pre_hook_result:
-                self._sync_graph_state(result)
+            if node_result is not pre_hook_result:
+                self._sync_graph_state(node_result)
 
-            return result
+            return node_result
         except exceptions.StopRun as e:
             # A node hook (`wrap_node_run` or `after_node_run`) asked to end the run with a given
-            # output. Validate it (running the agent's output validators) and finish. The graph
-            # runner may be in ErrorMarker state (if raised from `wrap_node_run`), so sync it.
+            # output. If it ends in place of a pending `ModelRequestNode` (e.g. after tool calls
+            # whose returns haven't been recorded yet), preserve those tool returns so message
+            # history has no dangling tool calls. Then validate the output (running the agent's
+            # output validators) and finish. The graph runner may be in ErrorMarker state (if
+            # raised from `wrap_node_run`), so sync it.
+            self._preserve_pending_tool_returns(node_result)
             output_data = await _output.run_stop_run_output(
                 e.output,
                 run_context=run_context,
                 output_validators=self.ctx.deps.output_validators,
             )
-            result = End(FinalResult(output_data))
-            self._sync_graph_state(result)
-            return result
+            end = End(FinalResult(output_data))
+            self._sync_graph_state(end)
+            return end
+
+    def _preserve_pending_tool_returns(
+        self, node_result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]] | None
+    ) -> None:
+        """Record tool returns from a pending `ModelRequestNode` that a `StopRun` is ending in place of."""
+        if not isinstance(node_result, _agent_graph.ModelRequestNode):
+            return
+        tool_responses: list[_messages.ModelRequestPart] = [
+            part for part in node_result.request.parts if not isinstance(part, _messages.UserPromptPart)
+        ]
+        _agent_graph.append_tool_responses(self.ctx.state, tool_responses)
 
     async def _run_node_with_hooks(
         self,
