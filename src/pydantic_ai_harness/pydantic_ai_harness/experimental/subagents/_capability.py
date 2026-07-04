@@ -130,6 +130,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool_name: str = 'delegate_task'
     """Name of the delegate tool exposed to the model."""
 
+    tool_retries: int | None = 2
+    """Retries for the delegate tool -- how many extra attempts it gets after a
+    sub-agent error before the parent run aborts. A sub-agent failure (e.g. it
+    exhausts its own output retries) surfaces to the parent as a tool retry it
+    can react to by re-delegating with a corrected task. The retry counter
+    resets after any successful delegation, so this bounds consecutive failures,
+    not total ones. Defaults to `2` (pydantic-ai's per-tool default is `1`) so a
+    repeated flaky sub-agent does not abort the parent run on its first repeat;
+    set `None` to inherit the parent agent's default tool retries instead."""
+
     _by_name: dict[str, SubAgent[AgentDepsT]] = field(
         default_factory=dict[str, 'SubAgent[AgentDepsT]'], init=False, repr=False, compare=False
     )
@@ -262,6 +272,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             shared_capabilities=self.shared_capabilities,
             event_stream_handler=self.event_stream_handler,
             tool_name=self.tool_name,
+            tool_retries=self.tool_retries,
             call_counts=self._call_counts,
         )
 

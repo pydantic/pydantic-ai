@@ -167,6 +167,24 @@ class TestToolset:
         assert isinstance(toolset, SubAgentToolset)
         assert 'run_agent' in toolset.tools
 
+    def test_tool_retries_default_is_resilient(self) -> None:
+        agent = Agent(TestModel(), name='x')
+        toolset = SubAgents(agents=[SubAgent(agent)]).get_toolset()
+        assert isinstance(toolset, SubAgentToolset)
+        assert toolset.tools['delegate_task'].max_retries == 2
+
+    def test_tool_retries_none_inherits_agent_default(self) -> None:
+        agent = Agent(TestModel(), name='x')
+        toolset = SubAgents(agents=[SubAgent(agent)], tool_retries=None).get_toolset()
+        assert isinstance(toolset, SubAgentToolset)
+        assert toolset.tools['delegate_task'].max_retries is None
+
+    def test_tool_retries_configures_delegate_tool(self) -> None:
+        agent = Agent(TestModel(), name='x')
+        toolset = SubAgents(agents=[SubAgent(agent)], tool_retries=3).get_toolset()
+        assert isinstance(toolset, SubAgentToolset)
+        assert toolset.tools['delegate_task'].max_retries == 3
+
 
 class TestDelegation:
     async def test_delegates_and_returns_output(self) -> None:
@@ -289,6 +307,7 @@ class TestDelegation:
             shared_capabilities=[],
             event_stream_handler=None,
             tool_name='delegate_task',
+            tool_retries=1,
             call_counts={},
         )
         parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
