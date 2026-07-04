@@ -898,6 +898,12 @@ Toolsets for task planning and progress tracking help agents organize complex wo
 
 * [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
+### Memory
+
+Toolsets that give agents durable, cross-run memory:
+
+* [`pydantic-ai-perseus-vault`](https://pypi.org/project/pydantic-ai-perseus-vault/) - `PerseusVaultToolset` subclasses [`MCPToolset`][pydantic_ai.mcp.MCPToolset] to give an agent persistent, local-first memory backed by [Perseus Vault](https://github.com/Perseus-Computing-LLC/perseus-vault) (a single-binary MCP memory server). Exposes `perseus_vault_remember`/`perseus_vault_recall` and related tools with full-text + semantic search over a local SQLite database, with optional AES-256-GCM encryption at rest.
+
 ### File Operations
 
 Toolsets for file operations help agents read, write, and edit files:
