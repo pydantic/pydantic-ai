@@ -7,9 +7,10 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
     ModelMessage,
@@ -119,6 +120,11 @@ class PendingMessage:
     messages: list[ModelMessage]
     """The message(s) to inject, in order. Always ends in a
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
+
+    enqueue_id: str = field(default_factory=lambda: str(uuid7()))
+    """Unique identifier for this enqueue call, surfaced on the
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
+    are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
     priority: PendingMessagePriority = 'asap'
     """When to deliver these messages:

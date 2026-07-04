@@ -16,8 +16,9 @@ from typing import Any, cast
 import anyio
 import pytest
 from opentelemetry.trace import NoOpTracer
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from pydantic_ai import _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
@@ -37,6 +38,7 @@ from pydantic_ai.capabilities import (
     PrefixTools,
     PrepareTools,
     ProcessEventStream,
+    ProcessHistory,
     ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
@@ -66,13 +68,16 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
+    EnqueuedMessagesEvent,
     FilePart,
     ImageUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponseStreamEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -97,7 +102,8 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.run import AgentRunResult
+from pydantic_ai.result import AgentStream
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -13710,6 +13716,269 @@ async def test_enqueue_asap_message_from_tool():
     )
 
 
+async def test_enqueue_asap_delivery_event_from_tool():
+    """An `EnqueuedMessagesEvent` is emitted when an `'asap'` message is delivered, before the next model response."""
+    events: list[AgentStreamEvent] = []
+    enqueue_id: str | None = None
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='inject_msg', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[Any]) -> str:
+        nonlocal enqueue_id
+        enqueue_id = ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert enqueue_id is not None
+    delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    # The delivery event precedes the model response that can depend on the delivered message.
+    delivery_index = events.index(delivery_events[0])
+    done_index = next(
+        i
+        for i, event in enumerate(events)
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart) and event.part.content == 'done'
+    )
+    assert delivery_index < done_index
+
+
+async def test_enqueue_when_idle_delivery_event_during_iter_streaming():
+    """A `'when_idle'` delivery surfaces as an `EnqueuedMessagesEvent` during `agent.iter` streaming."""
+    call_count = 0
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal call_count
+        call_count += 1
+        yield f'response {call_count}'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+    events: list[AgentStreamEvent] = []
+
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('External follow-up', priority='when_idle')
+        # Drive with `next()` (not bare `async for`) so `when_idle` messages drain, while
+        # streaming each model-request node to observe its events.
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+            node = await agent_run.next(node)
+
+    assert enqueue_id is not None
+    assert agent_run.result is not None
+    delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert delivery_events == [
+        EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(agent_run.result.all_messages()[2],))
+    ]
+    delivery_index = events.index(delivery_events[0])
+    response_2_index = next(
+        i
+        for i, event in enumerate(events)
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart) and event.part.content == 'response 2'
+    )
+    assert delivery_index < response_2_index
+
+
+async def test_multiple_enqueue_delivery_events_keep_order():
+    """Multiple `enqueue` calls each emit one `EnqueuedMessagesEvent`, in enqueue order, via `run_stream_events`."""
+    enqueue_ids: list[str] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='inject_msgs', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def inject_msgs(ctx: RunContext[Any]) -> str:
+        first = ctx.enqueue('First injected message')
+        second = ctx.enqueue('Second injected message')
+        assert first is not None and second is not None
+        enqueue_ids.extend([first, second])
+        return 'ok'
+
+    delivery_events: list[EnqueuedMessagesEvent] = []
+    result: AgentRunResult[Any] | None = None
+    async with agent.run_stream_events('Hello') as stream:
+        async for event in stream:
+            if isinstance(event, EnqueuedMessagesEvent):
+                delivery_events.append(event)
+            elif isinstance(event, AgentRunResultEvent):
+                result = event.result
+
+    assert result is not None
+    messages = result.all_messages()
+    assert delivery_events == [
+        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], messages=(messages[3],)),
+        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], messages=(messages[4],)),
+    ]
+
+
+async def test_enqueue_delivery_event_survives_history_processor_rebuild():
+    """The delivery event still matches final history when a history processor rebuilds message objects."""
+    events: list[AgentStreamEvent] = []
+    enqueue_id: str | None = None
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='inject_msg', json_args='{}')}
+
+    def rebuild_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+        # Round-trip through JSON so every message is a fresh, equal-but-not-identical object.
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[ProcessHistory(rebuild_messages)])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[Any]) -> str:
+        nonlocal enqueue_id
+        enqueue_id = ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert enqueue_id is not None
+    delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+
+
+async def test_empty_enqueue_emits_no_delivery_event():
+    """An empty `enqueue()` call delivers nothing and emits no `EnqueuedMessagesEvent`."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='noop_enqueue', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def noop_enqueue(ctx: RunContext[Any]) -> str:
+        assert ctx.enqueue() is None
+        return 'ok'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert [event for event in events if isinstance(event, EnqueuedMessagesEvent)] == []
+
+
+def test_enqueued_messages_event_serialization_roundtrip():
+    """`EnqueuedMessagesEvent` round-trips through the `AgentStreamEvent` union (e.g. for durable execution)."""
+    event = EnqueuedMessagesEvent(
+        enqueue_id='enq-1',
+        messages=(ModelRequest(parts=[UserPromptPart(content='hi')]),),
+    )
+    adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+    dumped = adapter.dump_python(event)
+    assert dumped['event_kind'] == 'enqueued_messages'
+    assert adapter.validate_python(dumped) == event
+
+
+async def test_with_event_stream_buffer_drains_around_node_stream():
+    """`_with_event_stream_buffer` yields buffered events before, between, and after node events."""
+    buffer: list[AgentStreamEvent] = []
+    during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
+    after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
+    model_event = PartStartEvent(index=0, part=TextPart(content='done'))
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        buffer.append(during)
+        yield model_event
+        buffer.append(after)
+
+    drained = [event async for event in _agent_graph._with_event_stream_buffer(stream(), buffer)]  # pyright: ignore[reportPrivateUsage]
+    assert drained == [during, model_event, after]
+
+
+async def test_agent_stream_events_iter_drains_buffer_around_model_events():
+    """`AgentStream._events_iter` drains buffered run events before, between, and after base events."""
+    initial = EnqueuedMessagesEvent(enqueue_id='initial', messages=())
+    during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
+    after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
+    model_event = PartStartEvent(index=0, part=TextPart(content='done'))
+    buffer: list[AgentStreamEvent] = [initial]
+
+    async def base_iter() -> AsyncIterator[ModelResponseStreamEvent]:
+        buffer.append(during)
+        yield model_event
+        buffer.append(after)
+
+    stream = cast(AgentStream[Any, str], object.__new__(AgentStream))
+    stream._event_stream_buffer_getter = lambda: buffer  # pyright: ignore[reportPrivateUsage]
+    stream._anext_lock = anyio.Lock()  # pyright: ignore[reportPrivateUsage]
+
+    drained = [event async for event in stream._events_iter(base_iter())]  # pyright: ignore[reportPrivateUsage]
+    assert drained == [initial, during, model_event, after]
+
+
+async def test_agent_stream_events_iter_without_buffer_getter():
+    """`AgentStream._events_iter` yields only base model events when no buffer getter is configured."""
+    model_event = PartStartEvent(index=0, part=TextPart(content='done'))
+
+    async def base_iter() -> AsyncIterator[ModelResponseStreamEvent]:
+        yield model_event
+
+    stream = cast(AgentStream[Any, str], object.__new__(AgentStream))
+    stream._event_stream_buffer_getter = None  # pyright: ignore[reportPrivateUsage]
+    stream._anext_lock = anyio.Lock()  # pyright: ignore[reportPrivateUsage]
+
+    drained = [event async for event in stream._events_iter(base_iter())]  # pyright: ignore[reportPrivateUsage]
+    assert drained == [model_event]
+
+
+class _FixedEventsAgentStream(AgentStream[Any, str]):
+    """An `AgentStream` whose event stream is a fixed list, for testing the event filters."""
+
+    def __init__(self, events: list[AgentStreamEvent]) -> None:
+        self._events = events
+
+    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
+        return self._iter_events()
+
+    async def _iter_events(self) -> AsyncIterator[AgentStreamEvent]:
+        for event in self._events:
+            yield event
+
+
+async def test_agent_stream_model_response_events_skips_buffered_events():
+    """`AgentStream._model_response_events` filters buffered run events out of the model response stream."""
+    buffered = EnqueuedMessagesEvent(enqueue_id='buffered', messages=())
+    model_event = PartStartEvent(index=0, part=TextPart(content='done'))
+    stream = _FixedEventsAgentStream([buffered, model_event])
+
+    drained = [event async for event in stream._model_response_events()]  # pyright: ignore[reportPrivateUsage]
+    assert drained == [model_event]
+
+
 async def test_enqueue_when_idle_message_prevents_end():
     """`'when_idle'` messages prevent the agent from ending and are drained into a new ModelRequest."""
     call_count = 0
@@ -14123,13 +14392,13 @@ async def test_enqueue_with_no_args_is_a_noop():
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    def from_tool(ctx: RunContext[object]) -> str:
-        ctx.enqueue()  # no-op, no exception
+    def from_tool(ctx: RunContext[Any]) -> str:
+        assert ctx.enqueue() is None  # no-op, no exception, no id
         assert ctx.pending_messages == []
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        agent_run.enqueue()  # no-op, no exception
+        assert agent_run.enqueue() is None  # no-op, no exception, no id
         assert agent_run.pending_messages == []
         async for _ in agent_run:
             pass

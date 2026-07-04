@@ -35,6 +35,14 @@ Before editing, identify which contracts can change:
 - When changing tool/output execution, check ordering, retry semantics, deferred calls, output finalization, streaming events, and durable wrappers together.
 - When removing deprecated APIs, distinguish public surface cleanup from persisted-data compatibility. Old constructors/imports may be removed in a major version; old serialized histories may still need to deserialize.
 
+## Run Event Stream Internals
+
+`GraphAgentState.event_stream_buffer` is the internal, run-scoped queue for framework events emitted outside the direct model/tool event generators. It's shared by reference into every `RunContext` this run as the private `_event_stream_buffer` field; framework code appends via `RunContext._emit_event(event)`. This is internal plumbing, not public API — there is deliberately no public `emit_event` surface yet (a follow-up custom-events PR will design one, accounting for durable runtimes like Temporal where tools run in activities with a deserialized `RunContext`).
+
+Node streams own draining the buffer into `wrap_run_event_stream` / `event_stream_handler` around each dependent event. `ModelRequestNode` delegates this to `AgentStream` (via `_event_stream_buffer_getter`) so the public `AgentStream` API is preserved; `CallToolsNode` wraps its handle-response event iterator with the same buffer-draining behavior (`_with_event_stream_buffer`).
+
+Feature code emits typed `AgentStreamEvent`s into the buffer once the public event semantics are true. Pending messages follow this pattern: `PendingMessageDrainCapability` emits an `EnqueuedMessagesEvent` at the moment it delivers each enqueued message into history, describing the messages as delivered (indices are deliberately not carried, since `_clean_message_history` can merge adjacent requests across runs and stale them).
+
 ## Test Shape
 
 - Use public agent/model/toolset behavior for most tests. Prefer snapshots for message history, event streams, provider request payloads, and protocol shapes.

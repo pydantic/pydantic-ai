@@ -70,7 +70,7 @@ Good uses:
 
 Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
 
-`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`).
+`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). Both `enqueue` methods return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. The event stream yields an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter run history, so a client can observe when its steering message took effect.
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -80,8 +80,8 @@ agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 @agent.tool
 def trigger_alert(ctx: RunContext[None]) -> str:
-    ctx.enqueue('Alert: production is degraded, prioritize triage.')
-    return 'alert raised'
+    enqueue_id = ctx.enqueue('Alert: production is degraded, prioritize triage.')
+    return f'alert raised: {enqueue_id}'
 ```
 
 A `priority` controls delivery:

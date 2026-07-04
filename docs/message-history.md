@@ -494,6 +494,8 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
+Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event describes what was delivered; if a history processor later rewrites history, the event is not updated.
+
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
@@ -508,8 +510,8 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 @agent.tool
 def trigger_alert(ctx: RunContext[None]) -> str:
-    ctx.enqueue('Alert: production is degraded, prioritize triage.')
-    return 'alert raised'
+    enqueue_id = ctx.enqueue('Alert: production is degraded, prioritize triage.')
+    return f'alert raised: {enqueue_id}'
 
 
 @agent.tool
