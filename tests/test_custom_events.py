@@ -10,7 +10,6 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._run_context import RunContext as RunContextClass
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -227,7 +226,7 @@ async def test_surfaced_via_run_stream():
 
 def test_emit_without_buffer_raises():
     """A `RunContext` not backed by a running agent has nowhere to emit to."""
-    ctx = RunContextClass[Any](deps=None, model=FunctionModel(stream_function=_tool_then_text), usage=None)  # type: ignore[arg-type]
+    ctx = RunContext[Any](deps=None, model=FunctionModel(stream_function=_tool_then_text), usage=None)  # type: ignore[arg-type]
     with pytest.raises(UserError, match='`emit_event` is only available during an agent run'):
         ctx.emit_event(CustomEvent(name='progress'))
 
