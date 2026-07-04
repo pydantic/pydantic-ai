@@ -139,11 +139,10 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Default: `False`."""
     bedrock_supports_tool_caching: bool
     """Default: `False`."""
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[Literal['image', 'document', 'video']]
     """Default: `frozenset({'image'})`."""
-    bedrock_tool_result_colocatable_content: frozenset[str]
-    """Content-block kinds (`text`, `image`, `document`, `video`) that this model accepts in the same
-    user message as a `toolResult` block.
+    bedrock_tool_result_colocatable_content: frozenset[Literal['text', 'image', 'document', 'video']]
+    """Content-block kinds that this model accepts in the same user message as a `toolResult` block.
 
     pydantic-ai merges consecutive user turns into one Bedrock message, which can place a `toolResult`
     alongside a following turn's text/attachment. Some models reject that: Anthropic rejects documents

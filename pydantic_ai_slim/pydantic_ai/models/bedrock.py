@@ -151,7 +151,9 @@ def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) 
 
 # Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
 # permissive default for `bedrock_tool_result_colocatable_content` (no model restriction).
-_ALL_TOOL_RESULT_COLOCATABLE_CONTENT = frozenset({'text', 'image', 'document', 'video'})
+_ALL_TOOL_RESULT_COLOCATABLE_CONTENT: frozenset[Literal['text', 'image', 'document', 'video']] = frozenset(
+    {'text', 'image', 'document', 'video'}
+)
 
 
 LatestBedrockModelNames = Literal[
