@@ -40,6 +40,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryPromptPart,
     RunContext,
+    StopRun,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -12282,6 +12283,144 @@ async def test_image_output_validators_run_stream():
             ),
         ]
     )
+
+
+# endregion
+
+
+# region StopRun
+
+
+async def test_stop_run_from_tool_preserves_tool_returns():
+    """`StopRun` raised from a tool ends the run with the given output, preserving prior tool returns.
+
+    Uses `FunctionModel` (not VCR): this pins internal control-flow and message-history behavior —
+    that the completed sibling tool's `ToolReturnPart` is recorded in a clean (non-`'interrupted'`)
+    `ModelRequest` and the run ends without a further model request — which a cassette can't catch.
+    """
+
+    def two_calls(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('record', {'v': 1}), ToolCallPart('finish', {})])
+
+    agent = Agent(FunctionModel(two_calls), output_type=str)
+
+    @agent.tool_plain
+    def record(v: int) -> str:
+        return f'recorded {v}'
+
+    # `sequential=True` makes `record` complete and its return get recorded before `finish` runs,
+    # so the preservation assertion is deterministic rather than racing parallel execution.
+    @agent.tool_plain(sequential=True)
+    def finish() -> str:
+        raise StopRun('final output')
+
+    result = await agent.run('go')
+    assert result.output == 'final output'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='record', args={'v': 1}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='finish', args={}, tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='function:two_calls:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='record',
+                        content='recorded 1',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_stop_run_structured_output():
+    """A valid instance passed to `StopRun` validates and commits for a structured `output_type`.
+
+    Uses `FunctionModel` (not VCR): the behavior under test is the internal output-commit path for a
+    tool-raised value, independent of any real model response a cassette would record.
+    """
+
+    class Result(BaseModel):
+        answer: int
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=Result)
+
+    @agent.tool_plain
+    def stop() -> Result:
+        raise StopRun(Result(answer=42))
+
+    result = await agent.run('go')
+    assert result.output == Result(answer=42)
+
+
+async def test_stop_run_runs_output_validators():
+    """Output validators run on a `StopRun` output, transforming it just like a model-produced output.
+
+    Uses `FunctionModel` (not VCR): it pins that the validator pipeline runs on the tool-provided
+    value, an internal behavior a recorded model response wouldn't exercise.
+    """
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=str)
+
+    @agent.output_validator
+    def shout(value: str) -> str:
+        return value.upper()
+
+    @agent.tool_plain
+    def stop() -> str:
+        raise StopRun('hello')
+
+    result = await agent.run('go')
+    assert result.output == 'HELLO'
+
+
+async def test_stop_run_validation_error_propagates():
+    """An output validator rejecting a `StopRun` output propagates the error instead of continuing.
+
+    Uses `FunctionModel` (not VCR): it pins that a rejected `StopRun` output surfaces to the
+    developer rather than silently resuming the run — internal control flow a cassette can't verify.
+    """
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=str)
+
+    @agent.output_validator
+    def reject(value: str) -> str:
+        raise ValueError('rejected')
+
+    @agent.tool_plain
+    def stop() -> str:
+        raise StopRun('hello')
+
+    with pytest.raises(ValueError, match='rejected'):
+        await agent.run('go')
 
 
 # endregion

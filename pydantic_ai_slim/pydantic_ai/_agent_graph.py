@@ -1354,6 +1354,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_final_result=output_final_result,
             ):
                 yield event
+        except exceptions.StopRun as e:
+            # A tool function or tool-execute hook asked to end the run with a given output.
+            # Record the tool returns collected so far as a clean (non-interrupted) request and
+            # finish with the validated output — no further model request. `output_final_result`
+            # is ignored: it can't be populated once `process_tool_calls` was interrupted.
+            run_context = _build_output_run_context(ctx)
+            output_data = await _output.run_stop_run_output(
+                e.output,
+                run_context=run_context,
+                output_validators=ctx.deps.output_validators,
+            )
+            self._next_node = self._handle_final_result(
+                ctx, result.FinalResult(cast(NodeRunEndT, output_data)), output_parts
+            )
+            return
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt

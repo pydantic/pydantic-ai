@@ -12,6 +12,7 @@ from pydantic_graph.step import NodeStep
 
 from . import (
     _agent_graph,
+    _output,
     _utils,
     exceptions,
     messages as _messages,
@@ -20,11 +21,11 @@ from . import (
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
+from .result import FinalResult
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
-    from .result import FinalResult
 
 
 @dataclasses.dataclass(repr=False)
@@ -291,21 +292,36 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         cap = self.ctx.deps.root_capability
         try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
-        except Exception as e:
-            result = await cap.on_node_run_error(run_context, node=node, error=e)
-            # on_node_run_error recovered by returning a result.
-            # The graph runner is in ErrorMarker state; update it to match.
-            self._sync_graph_state(result)
-        pre_hook_result = result
-        result = await cap.after_node_run(run_context, node=node, result=result)
+            try:
+                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            except exceptions.StopRun:
+                raise  # Control flow, not an error — handled below, bypassing `on_node_run_error`.
+            except Exception as e:
+                result = await cap.on_node_run_error(run_context, node=node, error=e)
+                # on_node_run_error recovered by returning a result.
+                # The graph runner is in ErrorMarker state; update it to match.
+                self._sync_graph_state(result)
+            pre_hook_result = result
+            result = await cap.after_node_run(run_context, node=node, result=result)
 
-        # If after_node_run changed the result, sync the graph runner state so
-        # agent_run.result correctly reflects whether the run is finished.
-        if result is not pre_hook_result:
-            self._sync_graph_state(result)
+            # If after_node_run changed the result, sync the graph runner state so
+            # agent_run.result correctly reflects whether the run is finished.
+            if result is not pre_hook_result:
+                self._sync_graph_state(result)
 
-        return result
+            return result
+        except exceptions.StopRun as e:
+            # A node hook (`wrap_node_run` or `after_node_run`) asked to end the run with a given
+            # output. Validate it (running the agent's output validators) and finish. The graph
+            # runner may be in ErrorMarker state (if raised from `wrap_node_run`), so sync it.
+            output_data = await _output.run_stop_run_output(
+                e.output,
+                run_context=run_context,
+                output_validators=self.ctx.deps.output_validators,
+            )
+            result = End(FinalResult(output_data))
+            self._sync_graph_state(result)
+            return result
 
     async def _run_node_with_hooks(
         self,

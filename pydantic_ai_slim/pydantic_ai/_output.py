@@ -303,6 +303,26 @@ async def run_image_process_hooks(
     )
 
 
+async def run_stop_run_output(
+    output: Any,
+    *,
+    run_context: RunContext[AgentDepsT],
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+) -> Any:
+    """Validate an already-constructed output value from `StopRun` and run output validators.
+
+    Unlike the text/structured/image output paths there is nothing to parse: the value is
+    already the agent's output type, so it is passed through the same output validators
+    (`@agent.output_validator`) that a model-produced output would run through, then returned.
+
+    An output validator raising `ModelRetry` propagates as an error rather than triggering a
+    model retry: the run is being stopped, so there is no further model request to retry against.
+    """
+    for validator in output_validators:
+        output = await validator.validate(output, run_context)
+    return output
+
+
 async def run_output_with_hooks(
     processor: BaseOutputProcessor[OutputDataT],
     *,

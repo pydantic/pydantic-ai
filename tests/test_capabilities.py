@@ -59,6 +59,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    StopRun,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -21022,6 +21023,38 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
         DynamicCapability(capability_func=factory, defer_loading=True)
+
+
+# endregion
+
+
+# region StopRun from node hooks
+
+
+async def test_stop_run_from_after_node_run_hook():
+    """`StopRun` raised from an `after_node_run` hook ends the run with the validated output.
+
+    Uses `FunctionModel` (not VCR): it pins the internal hook control-flow — that a hook-raised
+    `StopRun` bypasses `on_node_run_error`, runs output validators, and ends the run — which no
+    recorded model response would exercise.
+    """
+
+    def say_hi(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hi')])
+
+    @dataclass
+    class StopAfterNodeCapability(AbstractCapability[Any]):
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            raise StopRun('stopped by hook')
+
+    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[StopAfterNodeCapability()])
+
+    @agent.output_validator
+    def shout(value: str) -> str:
+        return value.upper()
+
+    result = await agent.run('go')
+    assert result.output == 'STOPPED BY HOOK'
 
 
 # endregion

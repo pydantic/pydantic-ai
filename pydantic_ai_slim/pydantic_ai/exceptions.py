@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'ModelRetry',
+    'StopRun',
     'CallDeferred',
     'ApprovalRequired',
     'SkipModelRequest',
@@ -75,6 +76,26 @@ class ModelRetry(Exception):
                 return_schema=schema,
             ),
         )
+
+
+class StopRun(Exception):
+    """Exception to raise from a tool function or capability hook to immediately end the agent run.
+
+    The provided `output` is run through the agent's output validators (the same ones a
+    model-produced output would run through) and becomes the run's final output without another
+    model request. Any tool call results produced so far in the current step are preserved in the
+    message history.
+
+    Note: `output` is used as-is after the validators run; it is not re-validated or coerced against
+    the agent's output type, so it is your responsibility to pass a value of the correct type.
+    """
+
+    output: Any
+    """The value to use as the run's final output, after the output validators run."""
+
+    def __init__(self, output: Any):
+        self.output = output
+        super().__init__()
 
 
 class CallDeferred(Exception):
