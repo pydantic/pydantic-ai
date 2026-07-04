@@ -118,6 +118,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
     assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Anthropic accepts images and documents inside a `toolResult`; no video support.
+    assert anthropic_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'image', 'document'})
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
@@ -182,6 +184,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert mistral_profile.get('supports_json_schema_output', False) is False
     assert mistral_profile.get('bedrock_supports_strict_tool_definition', False) is False
     assert mistral_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Mistral accepts documents inside a `toolResult` but rejects images there; no video support.
+    assert mistral_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'document'})
 
     mistral_profile = provider.model_profile('mistral.mistral-large-3-675b-instruct')
     mistral_model_profile_mock.assert_called_with('mistral-large-3-675b-instruct')
@@ -199,6 +203,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     # Meta Llama rejects a leading assistant turn, so the strict default applies (flag unset).
     assert meta_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert meta_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Meta Llama accepts images and documents inside a `toolResult`; no video support.
+    assert meta_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'image', 'document'})
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
@@ -220,6 +226,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     # Qwen on Bedrock also accepts a leading assistant turn.
     assert qwen_profile.get('bedrock_supports_leading_assistant_message', False) is True
     assert qwen_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Qwen rejects every media kind inside a `toolResult`.
+    assert qwen_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset()
 
     google_profile = provider.model_profile('google.gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
@@ -261,6 +269,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     # Nova rejects a leading assistant turn, so the strict default (synthesize a user prepend) applies.
     assert amazon_profile.get('bedrock_supports_leading_assistant_message', False) is False
     assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Nova stays at the default (unset) media kinds: its constraint is document-format-dependent
+    # (accepts csv/txt but not pdf/docx inside a `toolResult`), which this kind-based flag can't express.
+    assert amazon_profile.get('bedrock_supported_media_kinds_in_tool_returns') is None
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-2-lite')
