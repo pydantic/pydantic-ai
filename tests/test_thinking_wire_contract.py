@@ -37,6 +37,14 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
+# Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
+# map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
+_PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
+    'groq': pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
+    'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
+    'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
+}
+
 
 @dataclass(frozen=True)
 class WireCase:
@@ -55,7 +63,11 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
-    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+    @property
+    def marks(self) -> tuple[pytest.MarkDecorator, ...]:
+        """Skip mark gating this case on its provider's SDK — derived from `provider`, the single source of truth."""
+        return (_PROVIDER_SKIP_MARKS[self.provider],)
 
 
 CASES = [
@@ -66,7 +78,6 @@ CASES = [
         thinking=False,
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-qwen3-disable-merges-user-extra-body',
@@ -77,7 +88,6 @@ CASES = [
         # The user's own `extra_body` must survive the merge that injects `reasoning_effort='none'`.
         present={'reasoning_effort': 'none', 'service_tier': 'on_demand'},
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='cerebras-zai-clear-thinking',
@@ -90,7 +100,6 @@ CASES = [
         # doesn't strip replayed reasoning — no user setting needed.
         present={'reasoning_effort': 'none', 'clear_thinking': False},
         absent=('disable_reasoning',),
-        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
     ),
     WireCase(
         id='groq-qwen3-effort-setting',
@@ -102,7 +111,6 @@ CASES = [
         present={'reasoning_effort': 'default', 'service_tier': 'on_demand'},
         # `thinking` is unset, so `_translate_thinking` returns NOT_GIVEN and `reasoning_format` stays off the wire.
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-qwen3-disable-overrides-effort-setting',
@@ -115,7 +123,6 @@ CASES = [
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
         expect_warning='`groq_reasoning_effort` will be ignored',
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     # gpt-oss on Groq: unified `thinking` levels drive the graded `reasoning_effort` (low/medium/high).
     WireCase(
@@ -124,7 +131,6 @@ CASES = [
         model_name='openai/gpt-oss-120b',
         thinking='high',
         present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-medium',
@@ -132,7 +138,6 @@ CASES = [
         model_name='openai/gpt-oss-120b',
         thinking='medium',
         present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-minimal-folds-to-low',
@@ -141,7 +146,6 @@ CASES = [
         thinking='minimal',
         # gpt-oss has no `minimal`, so it folds to the nearest accepted value, `low`.
         present={'reasoning_effort': 'low', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-xhigh-folds-to-high',
@@ -150,7 +154,6 @@ CASES = [
         thinking='xhigh',
         # gpt-oss has no `xhigh`, so it folds to the nearest accepted value, `high`.
         present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-true-maps-to-medium',
@@ -159,7 +162,6 @@ CASES = [
         thinking=True,
         # Bare enable maps to the neutral `medium`, mirroring other providers' default.
         present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-false-noop',
@@ -169,7 +171,6 @@ CASES = [
         # gpt-oss always reasons and can't disable via effort (none/default → 400), so `thinking=False`
         # is silently ignored: no `reasoning_effort` and (since it's stripped as always-on) no `reasoning_format`.
         absent=('reasoning_effort', 'reasoning_format'),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-explicit-effort-overrides-thinking',
@@ -179,7 +180,6 @@ CASES = [
         groq_reasoning_effort='high',
         # Explicit `groq_reasoning_effort` wins over the unified `thinking` mapping (`low` → `low`).
         present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-gpt-oss-thinking-merges-user-extra-body',
@@ -189,7 +189,6 @@ CASES = [
         extra_body={'service_tier': 'on_demand'},
         # The user's own `extra_body` must survive the merge that injects the mapped `reasoning_effort`.
         present={'reasoning_effort': 'high', 'reasoning_format': 'parsed', 'service_tier': 'on_demand'},
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-qwen3-enable-level-sends-no-effort',
@@ -200,7 +199,6 @@ CASES = [
         # `reasoning_effort` — reasoning is still enabled via `reasoning_format='parsed'`.
         present={'reasoning_format': 'parsed'},
         absent=('reasoning_effort',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='cerebras-gpt-oss-always-on',
@@ -211,7 +209,6 @@ CASES = [
         # rejects `reasoning_effort='none'` for gpt-oss too), so `thinking=False` must be silently
         # ignored: no disable signal of any kind on the wire, request accepted.
         absent=('disable_reasoning', 'reasoning_effort'),
-        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
     ),
     WireCase(
         id='google-gemini-25-disable',
@@ -219,7 +216,6 @@ CASES = [
         model_name='gemini-2.5-flash',
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
-        marks=(pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),),
     ),
 ]
 
