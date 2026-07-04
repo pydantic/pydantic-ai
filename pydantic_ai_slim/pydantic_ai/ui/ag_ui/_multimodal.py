@@ -28,14 +28,15 @@ _URL_TYPE_MAP: dict[type, type] = {
     DocumentUrl: DocumentInputContent,
 }
 
-# `vendor_metadata` is carried under a dedicated key inside the input content's generic
-# `metadata` field, mirroring the `vendor_metadata` key the `UploadedFile` round-trip already
-# uses, so we only ever read back our own value and ignore unrelated client metadata.
+# `vendor_metadata` and (for URL types) `force_download` are carried under dedicated keys inside
+# the input content's generic `metadata` field, mirroring the `vendor_metadata` key the
+# `UploadedFile` round-trip already uses, so we only ever read back our own values and ignore
+# unrelated client metadata.
 _VENDOR_METADATA_KEY = 'vendor_metadata'
 _FORCE_DOWNLOAD_KEY = 'force_download'
 
 
-def _dump_vendor_metadata(
+def dump_metadata(
     item: ImageUrl | AudioUrl | VideoUrl | DocumentUrl | BinaryContent,
 ) -> dict[str, object] | None:
     metadata: dict[str, object] = {}
@@ -51,7 +52,7 @@ def media_url_to_multimodal(
 ) -> ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent:
     """Convert a media URL to typed multimodal AG-UI input content."""
     source = InputContentUrlSource(type='url', value=item.url, mime_type=item.media_type or '')
-    return _URL_TYPE_MAP[type(item)](source=source, metadata=_dump_vendor_metadata(item))
+    return _URL_TYPE_MAP[type(item)](source=source, metadata=dump_metadata(item))
 
 
 _MEDIA_PREFIX_TO_CONTENT: dict[str, type] = {
@@ -67,7 +68,7 @@ def binary_to_multimodal(
     """Convert BinaryContent to typed multimodal AG-UI input content based on media type prefix."""
     source = InputContentDataSource(type='data', value=item.base64, mime_type=item.media_type)
     content_cls = _MEDIA_PREFIX_TO_CONTENT.get(item.media_type.split('/', 1)[0], DocumentInputContent)
-    return content_cls(source=source, metadata=_dump_vendor_metadata(item))
+    return content_cls(source=source, metadata=dump_metadata(item))
 
 
 def multimodal_input_to_content(
