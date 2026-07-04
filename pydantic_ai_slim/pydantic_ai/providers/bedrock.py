@@ -139,8 +139,34 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Default: `False`."""
     bedrock_supports_tool_caching: bool
     """Default: `False`."""
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str]
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[Literal['image', 'document', 'video']]
     """Default: `frozenset({'image'})`."""
+    bedrock_tool_result_colocatable_content: frozenset[Literal['text', 'image', 'document', 'video']]
+    """Content-block kinds that this model accepts in the same user message as a `toolResult` block.
+
+    pydantic-ai merges consecutive user turns into one Bedrock message, which can place a `toolResult`
+    alongside a following turn's text/attachment. Some models reject that: Anthropic rejects documents
+    and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
+    `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
+    the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
+    consecutive same-role turns, so a bare split doesn't suffice). See #6081.
+
+    Default: all kinds (no restriction); the model receives merged turns unchanged.
+    """
+    bedrock_supports_leading_assistant_message: bool
+    """Whether this model accepts a conversation that starts with an assistant message.
+
+    Bedrock's Converse API requires that a conversation start with a user message for most model
+    families (Amazon Nova, Meta Llama, Mistral, Cohere, AI21, Writer, ...), which reject a leading
+    assistant turn with `"A conversation must start with a user message..."`. Anthropic and Qwen
+    models accept a leading assistant turn, so for them we don't need to synthesize a placeholder
+    user message when `message_history` starts with a `ModelResponse`.
+
+    Verified against Bedrock `us-east-1` on 2026-07-03.
+
+    Default: `False` (strict — synthesize a leading user message when history starts with an
+    assistant turn).
+    """
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
@@ -218,6 +244,10 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+            # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
+            # accepts text and images alongside it. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
+            bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -243,6 +273,10 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
         # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        # Nova is intentionally left at the default `bedrock_supported_media_kinds_in_tool_returns`
+        # (`frozenset({'image'})`): inside a `toolResult` it accepts images and text-based documents
+        # (csv/txt) but rejects binary documents (pdf/docx). That constraint is document-format-dependent,
+        # which this kind-based flag can't express, so a format-aware fix is out of scope here.
         profile = merge_profile(
             profile,
             BedrockModelProfile(
@@ -267,6 +301,25 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Meta Llama model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(meta_model_profile(model_name)),
+        BedrockModelProfile(
+            # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
+            # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
+            # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
+            # This applies family-wide, but the flag only matters when a tool return actually carries that
+            # media kind: text-only members (e.g. Llama 3) don't receive documents/images in practice, and
+            # if one ever did, the pre-existing sibling-split fallback failed for them too (they can't read
+            # it either way), so reflecting the multimodal variant's capability here is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        ),
+    )
+
+
 def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
@@ -278,6 +331,16 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See #6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
+            # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
+            # images there — even though it accepts images in a plain user message — and has no video
+            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`. Applies family-wide, but
+            # the flag only matters when a tool return actually carries a document: text-only members (e.g.
+            # `mistral-large-2407`) don't receive documents in practice, and if one ever did, the
+            # pre-existing sibling-split fallback failed for them too, so this is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'document'}),
         ),
     )
 
@@ -291,6 +354,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
+            bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,
@@ -299,6 +363,10 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
             supports_json_object_output=False,
+            # Qwen (qwen3-vl) on Bedrock rejects every media kind inside a `toolResult`'s content — it
+            # has no document support and rejects images there too. Verified live against
+            # `us.qwen.qwen3-vl-235b-a22b-instruct-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
         ),
     )
 
@@ -388,7 +456,7 @@ class BedrockProvider(Provider[BaseClient]):
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _strip_builtin_tools(meta_model_profile(model_name)),
+            'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(

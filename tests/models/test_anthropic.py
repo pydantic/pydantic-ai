@@ -4440,6 +4440,59 @@ def test_usage(
     assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
+def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
+    """With compaction, `details['input_tokens']` (raw, pre-compaction) diverges from the first-class
+    `input_tokens` (raw + compaction totals), yet both name the same conceptual quantity. The colliding
+    `input_tokens`/`output_tokens` detail keys must not be emitted under `gen_ai.usage.details.*`, or a
+    Langfuse-style consumer summing them double-counts. `compaction_*` keys don't collide and are kept.
+    """
+    message = anth_msg(
+        BetaUsage(
+            input_tokens=23,
+            output_tokens=1,
+            iterations=[
+                BetaCompactionIterationUsage(
+                    type='compaction',
+                    input_tokens=180,
+                    output_tokens=3,
+                    cache_creation_input_tokens=4,
+                    cache_read_input_tokens=5,
+                ),
+                BetaMessageIterationUsage(
+                    type='message',
+                    model='claude-sonnet-4-5',
+                    input_tokens=23,
+                    output_tokens=1,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                ),
+            ],
+        )
+    )
+    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    assert mapped.input_tokens == 212
+    assert mapped.details['input_tokens'] == 23  # still accessible on `details`
+    attributes = mapped.opentelemetry_attributes()
+    assert 'gen_ai.usage.details.input_tokens' not in attributes
+    assert 'gen_ai.usage.details.output_tokens' not in attributes
+    assert attributes == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 212,
+            'gen_ai.usage.output_tokens': 4,
+            'gen_ai.usage.cache_creation.input_tokens': 4,
+            'gen_ai.usage.cache_read.input_tokens': 5,
+            'gen_ai.usage.details.compaction_iterations': 1,
+            'gen_ai.usage.details.message_iterations': 1,
+            'gen_ai.usage.details.compaction_input_tokens': 180,
+            'gen_ai.usage.details.compaction_output_tokens': 3,
+            'gen_ai.usage.details.compaction_cache_creation_input_tokens': 4,
+            'gen_ai.usage.details.compaction_cache_read_input_tokens': 5,
+            'gen_ai.usage.details.cache_write_tokens': 4,
+            'gen_ai.usage.details.cache_read_tokens': 5,
+        }
+    )
+
+
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
     initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
@@ -10306,7 +10359,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',
@@ -10388,7 +10441,7 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',

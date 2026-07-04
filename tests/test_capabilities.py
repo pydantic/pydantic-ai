@@ -914,6 +914,10 @@ def test_model_json_schema_with_capabilities():
                         'mistral:mistral-moderation-latest',
                         'mistral:mistral-small-latest',
                         'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-k2.5',
+                        'moonshotai:kimi-k2.6',
+                        'moonshotai:kimi-k2.7-code',
+                        'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -922,6 +926,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:moonshot-v1-32k-vision-preview',
                         'moonshotai:moonshot-v1-8k',
                         'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-auto',
                         'openai-chat:computer-use-preview',
                         'openai-chat:computer-use-preview-2025-03-11',
                         'openai-chat:gpt-3.5-turbo',
@@ -2066,6 +2071,22 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_from_file_empty_yaml_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got NoneType'):
+        AgentSpec.from_file(spec_path)
+
+
+def test_from_file_json_array_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('[{"model": "test"}]', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got list'):
+        AgentSpec.from_file(spec_path)
+
+
 def test_agent_from_file_yaml(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
@@ -3193,14 +3214,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {
-                                    'name': 'lookup_refund_policy',
-                                    'description': 'Look up the refund policy for an order.',
-                                }
-                            ]
-                        },
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
                         tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
@@ -3215,7 +3229,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=88, output_tokens=16),
+                usage=RequestUsage(input_tokens=79, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3242,7 +3256,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=94, output_tokens=23),
+                usage=RequestUsage(input_tokens=85, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

@@ -67,3 +67,24 @@ def test_moonshotai_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
     assert model.profile.get('openai_supports_tool_choice_required', True) is False
     assert model.profile.get('supports_json_object_output', False) is True
+
+
+def test_moonshotai_model_profile_thinking():
+    provider = MoonshotAIProvider(api_key='api-key')
+
+    # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
+    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed'):
+        profile = provider.model_profile(reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        assert profile.get('thinking_always_enabled') is True
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
+        assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+
+    # Instruct/base models don't reason, so thinking stays off.
+    for non_reasoning_model in ('moonshot-v1-8k', 'moonshot-v1-auto', 'kimi-k2-0711-preview', 'kimi-latest'):
+        profile = provider.model_profile(non_reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'

@@ -149,6 +149,13 @@ def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) 
     return {'document': {'name': name, 'format': format, 'source': source}}
 
 
+# Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
+# permissive default for `bedrock_tool_result_colocatable_content` (no model restriction).
+_ALL_TOOL_RESULT_COLOCATABLE_CONTENT: frozenset[Literal['text', 'image', 'document', 'video']] = frozenset(
+    {'text', 'image', 'document', 'video'}
+)
+
+
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
@@ -1116,7 +1123,14 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 assert_never(message)
 
-        # Merge together sequential user messages.
+        # Merge together sequential user messages. Some models reject a user message that co-locates a
+        # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
+        # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
+        # profile marks the combined content as not co-locatable, split the turns instead of merging.
+        # See #6081 and `bedrock_tool_result_colocatable_content`.
+        colocatable_content = profile.get(
+            'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
+        )
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1125,11 +1139,24 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Add the new user content onto the existing user message.
-                last_content = list(last_message['content'])
-                last_content.extend(current_message['content'])
-                last_message['content'] = last_content
-                continue
+                merged_content = [*last_message['content'], *current_message['content']]
+                has_tool_result = any('toolResult' in block for block in merged_content)
+                has_non_colocatable = any(
+                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    for block in merged_content
+                )
+                if has_tool_result and has_non_colocatable:
+                    # The `toolResult` can't share this model's turn with the other content. Bedrock
+                    # re-merges consecutive same-role turns, so a bare split isn't enough; separate the
+                    # two user turns with a synthetic assistant turn. Several models reject whitespace-only
+                    # text, so use a period.
+                    processed_messages.append({'role': 'assistant', 'content': [{'text': '.'}]})
+                else:
+                    # Add the new user content onto the existing user message.
+                    last_content = list(last_message['content'])
+                    last_content.extend(current_message['content'])
+                    last_message['content'] = last_content
+                    continue
 
             # Add the entire message to the list of messages.
             processed_messages.append(current_message)
@@ -1165,12 +1192,17 @@ class BedrockConverseModel(Model[BaseClient]):
                         last_user_content, self._get_cache_point(cache_messages)
                     )
 
-        # Bedrock requires conversations to start with a user message.
-        # This can happen when there are no messages at all (only system prompt/instructions),
-        # or when message_history starts with an assistant response (e.g. from a previous
-        # system-prompt-only run). Prepend a synthetic user message in either case.
-        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
-        if not processed_messages or processed_messages[0]['role'] != 'user':
+        # Bedrock's Converse API requires at least one message, so an empty conversation (only a
+        # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
+        # families also reject a conversation that starts with an assistant turn (e.g. a
+        # `message_history` that begins with a `ModelResponse`) with "A conversation must start with
+        # a user message...", so we synthesize a leading user turn for them too. Anthropic and Qwen
+        # accept a leading assistant turn, so we leave their history untouched.
+        # Note: several models reject whitespace-only text, so we use a period.
+        if not processed_messages or (
+            processed_messages[0]['role'] != 'user'
+            and not profile.get('bedrock_supports_leading_assistant_message', False)
+        ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
