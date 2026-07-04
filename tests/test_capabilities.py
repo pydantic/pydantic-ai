@@ -21121,7 +21121,7 @@ async def test_stop_run_from_wrap_node_run_hook():
 
         async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
             self.errors_seen += 1  # pragma: no cover  # StopRun must bypass this hook
-            raise error
+            raise error  # pragma: no cover
 
     cap = StopInWrapCapability()
     agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[cap])
