@@ -1782,7 +1782,81 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
     )
 
     assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert loaded[1].parts[0].outcome == 'failed'
     assert parse_loaded_capabilities(loaded) == set()
+
+
+def test_dump_tool_return_failed_sets_tool_message_error() -> None:
+    """Failed `ToolReturnPart`s encode their error state in `ToolMessage.error` on dump."""
+    req = ModelRequest(
+        parts=[ToolReturnPart(tool_name='foo', content='err', tool_call_id='call-1', outcome='failed')]
+    )
+    dumped = AGUIAdapter._dump_request_parts(req)
+    assert dumped[0].error == 'err'
+
+
+def test_load_tool_message_error_sets_outcome_failed() -> None:
+    """`ToolMessage.error` reloads as `ToolReturnPart(outcome='failed')`, not success."""
+    am = AssistantMessage(
+        id='a1',
+        tool_calls=[
+            ToolCall(id='call-1', type='function', function=FunctionCall(name='foo', arguments='{}'))
+        ],
+    )
+    tm = ToolMessage(id='m1', content='err', tool_call_id='call-1', error='err')
+    loaded = AGUIAdapter.load_messages([am, tm])
+    assert loaded[-1].parts[-1].outcome == 'failed'
+
+
+def test_dump_load_roundtrip_failed_tool_return() -> None:
+    """`ToolReturnPart.outcome='failed'` survives dump -> load."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='Something went wrong',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    tool_return = reloaded[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == 'Something went wrong'
+
+
+def test_dump_load_roundtrip_retry_prompt_with_tool_preserves_failed_outcome() -> None:
+    """`RetryPromptPart` round-trips through `ToolMessage.error` with `outcome='failed'`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_1',
+                    content='Invalid args',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, ToolReturnPart)
+    assert retry_part.outcome == 'failed'
 
 
 @pytest.mark.parametrize(
