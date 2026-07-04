@@ -21040,7 +21040,9 @@ async def test_stop_run_from_after_node_run_hook():
     """
 
     def say_hi(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('hi')])
+        return ModelResponse(
+            parts=[TextPart('hi')]
+        )  # pragma: no cover  # StopRun ends the run before any model request
 
     @dataclass
     class StopAfterNodeCapability(AbstractCapability[Any]):
@@ -21094,6 +21096,29 @@ async def test_stop_run_from_after_node_run_preserves_tool_returns():
     ]
     assert len(tool_returns) == 1
     assert tool_returns[0].content == 'the data'
+
+
+async def test_stop_run_from_wrap_node_run_hook():
+    """`StopRun` raised from a `wrap_node_run` hook (before the node runs) ends the run.
+
+    Uses `FunctionModel` (not VCR): it pins internal control flow — that a `StopRun` from
+    `wrap_node_run` bypasses `on_node_run_error` and ends the run before any node result exists —
+    which no recorded model response would exercise.
+    """
+
+    def say_hi(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('hi')]
+        )  # pragma: no cover  # StopRun ends the run before any model request
+
+    @dataclass
+    class StopInWrapCapability(AbstractCapability[Any]):
+        async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            raise StopRun('stopped in wrap')
+
+    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[StopInWrapCapability()])
+    result = await agent.run('go')
+    assert result.output == 'stopped in wrap'
 
 
 # endregion
