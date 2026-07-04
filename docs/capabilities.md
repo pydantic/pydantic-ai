@@ -1278,7 +1278,7 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 
 ##### Ending the run with a given output
 
-Building an [`End`][pydantic_graph.End] with a [`FinalResult`][pydantic_ai.result.FinalResult] gives you full control over the raw node result, but when you simply want to end the run with an output you already have in hand, raise [`StopRun(output)`][pydantic_ai.exceptions.StopRun] instead. It works from any node hook, and also from a [tool function](tools.md) or [tool execution hook](#tool-hooks):
+Building an [`End`][pydantic_graph.End] with a [`FinalResult`][pydantic_ai.result.FinalResult] gives you full control over the raw node result, but when you simply want to end the run with an output you already have in hand, raise [`StopRun(output)`][pydantic_ai.exceptions.StopRun] instead. It works from `wrap_node_run`, `after_node_run`, or `on_node_run_error`, and also from a [tool function](tools.md) or [tool execution hook](#tool-hooks). (Raise it from `wrap_node_run` rather than `before_node_run`, which does not handle it.)
 
 ```python {title="stop_run_example.py"}
 from __future__ import annotations
@@ -1306,7 +1306,7 @@ print(result.output)
 #> stopped early
 ```
 
-The `output` is run through the agent's [output validators](output.md#output-validator-functions) (the same ones a model-produced output would run through) and becomes the run's final output, with no further model request. It is used as-is after the validators run, so pass a value of the correct [output type](output.md). Any tool results produced so far in the current step are preserved in the [message history](message-history.md). If a validator rejects the value, the error propagates to you rather than silently continuing the run.
+The `output` is run through the agent's [output validators](output.md#output-validator-functions) (the same ones a model-produced output would run through) and becomes the run's final output, with no further model request. It is used as-is after the validators run, so pass a value of the correct [output type](output.md). Any tool results produced so far in the current step are preserved in the [message history](message-history.md). If a validator rejects the value — including by raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which for a model-produced output would normally trigger a retry — the error propagates to you rather than silently continuing the run, since there is no further model request to retry against.
 
 #### Model request hooks
 

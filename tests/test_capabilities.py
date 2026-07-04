@@ -18,6 +18,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai import CallToolsNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
@@ -21075,7 +21076,7 @@ async def test_stop_run_from_after_node_run_preserves_tool_returns():
     @dataclass
     class StopAfterToolCall(AbstractCapability[Any]):
         async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-            if type(node).__name__ == 'CallToolsNode':
+            if isinstance(node, CallToolsNode):
                 raise StopRun('done')
             return result
 
@@ -21113,12 +21114,20 @@ async def test_stop_run_from_wrap_node_run_hook():
 
     @dataclass
     class StopInWrapCapability(AbstractCapability[Any]):
+        errors_seen: int = 0
+
         async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
             raise StopRun('stopped in wrap')
 
-    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[StopInWrapCapability()])
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            self.errors_seen += 1  # pragma: no cover  # StopRun must bypass this hook
+            raise error
+
+    cap = StopInWrapCapability()
+    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[cap])
     result = await agent.run('go')
     assert result.output == 'stopped in wrap'
+    assert cap.errors_seen == 0  # StopRun from wrap_node_run bypasses on_node_run_error
 
 
 # endregion

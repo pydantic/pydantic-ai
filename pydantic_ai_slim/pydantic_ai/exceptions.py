@@ -79,7 +79,11 @@ class ModelRetry(Exception):
 
 
 class StopRun(Exception):
-    """Exception to raise from a tool function or capability hook to immediately end the agent run.
+    """Exception to raise to immediately end the agent run with a given output.
+
+    It can be raised from a tool function, a tool-execute hook (`wrap_tool_execute`,
+    `after_tool_execute`), or a node hook (`wrap_node_run`, `after_node_run`, `on_node_run_error`).
+    It is *not* handled when raised from `before_node_run` — raise it from `wrap_node_run` instead.
 
     The provided `output` is run through the agent's output validators (the same ones a
     model-produced output would run through) and becomes the run's final output without another
@@ -95,7 +99,7 @@ class StopRun(Exception):
 
     def __init__(self, output: Any):
         self.output = output
-        super().__init__()
+        super().__init__(output)
 
 
 class CallDeferred(Exception):
