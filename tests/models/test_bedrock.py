@@ -4076,10 +4076,9 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
         BedrockModelSettings(bedrock_cache_messages=True),
     )
     # Should not crash, no cache point added since no real user message.
-    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    # No synthetic user message is prepended: Anthropic models accept a leading assistant turn.
     assert bedrock_messages == snapshot(
         [
-            {'role': 'user', 'content': [{'text': '.'}]},
             {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
         ]
     )
@@ -5319,3 +5318,110 @@ async def test_bedrock_llama_tool_result_followed_by_text_accepted(
     )
 
     assert result.output == snapshot('DONE')
+
+
+async def test_bedrock_leading_assistant_message_not_prepended_for_anthropic(bedrock_provider: BedrockProvider):
+    """Anthropic on Bedrock accepts a leading assistant turn, so history starting with a `ModelResponse` is left untouched.
+
+    This is a unit test because it asserts the shape of the mapped Converse payload: our Bedrock
+    cassette matcher isn't sensitive to the request body, so a VCR test would stay green whether or
+    not the synthetic user turn is prepended. Asserting the mapped messages directly is what pins it.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[UserPromptPart(content='say goodbye')]),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'text': 'hello'}]},
+            {'role': 'user', 'content': [{'text': 'say goodbye'}]},
+        ]
+    )
+
+
+async def test_bedrock_leading_assistant_message_prepended_for_nova(bedrock_provider: BedrockProvider):
+    """Nova on Bedrock rejects a leading assistant turn, so a synthetic user turn is prepended.
+
+    This is a unit test for the same reason as `test_bedrock_leading_assistant_message_not_prepended_for_anthropic`:
+    the mapped payload shape is what distinguishes the two families, and the cassette matcher wouldn't catch it.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[UserPromptPart(content='say goodbye')]),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {'role': 'assistant', 'content': [{'text': 'hello'}]},
+            {'role': 'user', 'content': [{'text': 'say goodbye'}]},
+        ]
+    )
+
+
+async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: BedrockProvider):
+    """Even Anthropic needs a synthetic user turn when there are no messages, since Converse requires at least one.
+
+    This is a unit test because the empty-conversation case (system prompt/instructions only) can't be
+    distinguished from a normal run through the cassette matcher; asserting the mapped payload pins that
+    the synthetic turn is still inserted regardless of `bedrock_supports_leading_assistant_message`.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='Generate a short greeting.')])]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
+
+
+async def test_bedrock_anthropic_message_history_starting_with_response(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """An Anthropic run whose `message_history` starts with a `ModelResponse` is accepted end-to-end.
+
+    Bedrock accepts a leading assistant turn for Anthropic, so no synthetic user message is
+    synthesized and the real API takes the history as-is.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    message_history: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Hello there!')])]
+    result = await agent.run('Now say goodbye.', message_history=message_history)
+    assert result.output == snapshot('Goodbye!')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Hello there!')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

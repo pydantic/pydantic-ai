@@ -153,6 +153,20 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     Default: all kinds (no restriction); the model receives merged turns unchanged.
     """
+    bedrock_supports_leading_assistant_message: bool
+    """Whether this model accepts a conversation that starts with an assistant message.
+
+    Bedrock's Converse API requires that a conversation start with a user message for most model
+    families (Amazon Nova, Meta Llama, Mistral, Cohere, AI21, Writer, ...), which reject a leading
+    assistant turn with `"A conversation must start with a user message..."`. Anthropic and Qwen
+    models accept a leading assistant turn, so for them we don't need to synthesize a placeholder
+    user message when `message_history` starts with a `ModelResponse`.
+
+    Verified against Bedrock `us-east-1` on 2026-07-03.
+
+    Default: `False` (strict — synthesize a leading user message when history starts with an
+    assistant turn).
+    """
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
@@ -233,6 +247,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See #6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
+            bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -321,6 +336,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
+            bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,

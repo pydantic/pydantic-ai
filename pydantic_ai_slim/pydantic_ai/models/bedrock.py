@@ -1192,12 +1192,17 @@ class BedrockConverseModel(Model[BaseClient]):
                         last_user_content, self._get_cache_point(cache_messages)
                     )
 
-        # Bedrock requires conversations to start with a user message.
-        # This can happen when there are no messages at all (only system prompt/instructions),
-        # or when message_history starts with an assistant response (e.g. from a previous
-        # system-prompt-only run). Prepend a synthetic user message in either case.
-        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
-        if not processed_messages or processed_messages[0]['role'] != 'user':
+        # Bedrock's Converse API requires at least one message, so an empty conversation (only a
+        # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
+        # families also reject a conversation that starts with an assistant turn (e.g. a
+        # `message_history` that begins with a `ModelResponse`) with "A conversation must start with
+        # a user message...", so we synthesize a leading user turn for them too. Anthropic and Qwen
+        # accept a leading assistant turn, so we leave their history untouched.
+        # Note: several models reject whitespace-only text, so we use a period.
+        if not processed_messages or (
+            processed_messages[0]['role'] != 'user'
+            and not profile.get('bedrock_supports_leading_assistant_message', False)
+        ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
