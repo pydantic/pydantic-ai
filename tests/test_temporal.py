@@ -3399,6 +3399,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit_event` raises there)
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
