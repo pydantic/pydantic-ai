@@ -22,6 +22,7 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
+from .._cost import cost_from_provider_details
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
@@ -227,7 +228,9 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        if price_calculation:
+        if (provider_cost := cost_from_provider_details(response)) is not None:
+            self.cost_histogram.record(float(provider_cost), attributes)
+        elif price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
 

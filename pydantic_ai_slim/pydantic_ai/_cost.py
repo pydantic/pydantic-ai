@@ -53,12 +53,9 @@ def cost_from_provider_details(response: ModelResponse) -> Decimal | None:
             return Decimal(str(cost))
 
         # For gateway
-        if (
-            (usage := provider_details.get('usage'))
-            and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')) is not None
-            and (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None
-        ):
-            return Decimal(str(cost_estimate))
+        if (usage := provider_details.get('usage')) and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')):
+            if (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None:
+                return Decimal(str(cost_estimate))
     return None
 
 
