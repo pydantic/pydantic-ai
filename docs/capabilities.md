@@ -1281,6 +1281,8 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 Building an [`End`][pydantic_graph.End] with a [`FinalResult`][pydantic_ai.result.FinalResult] gives you full control over the raw node result, but when you simply want to end the run with an output you already have in hand, raise [`StopRun(output)`][pydantic_ai.exceptions.StopRun] instead. It works from any node hook, and also from a [tool function](tools.md) or [tool execution hook](#tool-hooks):
 
 ```python {title="stop_run_example.py"}
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
