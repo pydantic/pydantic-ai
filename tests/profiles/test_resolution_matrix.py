@@ -525,6 +525,7 @@ def test_bedrock_mistral_large():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
         }
     )
 
@@ -581,6 +582,7 @@ def test_bedrock_meta_llama3():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image', 'document'}),
         }
     )
 
@@ -622,6 +624,7 @@ def test_bedrock_qwen_qwq():
             'bedrock_thinking_variant': 'qwen',
             'thinking_always_enabled': True,
             'bedrock_supports_strict_tool_definition': False,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
         }
     )
 

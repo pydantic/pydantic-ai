@@ -273,6 +273,10 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
         # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        # Nova is intentionally left at the default `bedrock_supported_media_kinds_in_tool_returns`
+        # (`frozenset({'image'})`): inside a `toolResult` it accepts images and text-based documents
+        # (csv/txt) but rejects binary documents (pdf/docx). That constraint is document-format-dependent,
+        # which this kind-based flag can't express, so a format-aware fix is out of scope here.
         profile = merge_profile(
             profile,
             BedrockModelProfile(
@@ -305,6 +309,13 @@ def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
             # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
             # any co-located text or attachment block. See #6081.
             bedrock_tool_result_colocatable_content=frozenset(),
+            # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
+            # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
+            # This applies family-wide, but the flag only matters when a tool return actually carries that
+            # media kind: text-only members (e.g. Llama 3) don't receive documents/images in practice, and
+            # if one ever did, the pre-existing sibling-split fallback failed for them too (they can't read
+            # it either way), so reflecting the multimodal variant's capability here is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         ),
     )
 
@@ -323,6 +334,13 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
             # any co-located text or attachment block. See #6081.
             bedrock_tool_result_colocatable_content=frozenset(),
+            # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
+            # images there — even though it accepts images in a plain user message — and has no video
+            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`. Applies family-wide, but
+            # the flag only matters when a tool return actually carries a document: text-only members (e.g.
+            # `mistral-large-2407`) don't receive documents in practice, and if one ever did, the
+            # pre-existing sibling-split fallback failed for them too, so this is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'document'}),
         ),
     )
 
@@ -345,6 +363,10 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
             supports_json_object_output=False,
+            # Qwen (qwen3-vl) on Bedrock rejects every media kind inside a `toolResult`'s content — it
+            # has no document support and rejects images there too. Verified live against
+            # `us.qwen.qwen3-vl-235b-a22b-instruct-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
         ),
     )
 
