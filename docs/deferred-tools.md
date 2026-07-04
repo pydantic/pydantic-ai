@@ -68,10 +68,10 @@ def delete_file(path: str) -> str:
 
 
 @agent.tool
-def update_file(ctx: RunContext, path: str) -> str:
+def update_file(ctx: RunContext, path: str, content: str) -> str:
     if path == '.env' and not ctx.tool_call_approved:
         raise ApprovalRequired
-    return f'File {path!r} updated'
+    return f'File {path!r} updated: {content!r}'
 
 
 @agent.tool_plain
@@ -467,14 +467,37 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Observing deferred tool events in a stream
+## Observing deferred tool calls in a stream
 
-When consuming an agent run via [`agent.iter()`][pydantic_ai.agent.Agent.iter] or [`node.stream()`][pydantic_ai.agent.ModelRequestNode.stream], two additional [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s are emitted for every deferred tool interaction:
+Like any other tool call, a deferred tool call emits a [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] into the [event stream](agent.md#streaming-events-and-final-output) — but that event alone doesn't tell a stream consumer that the call is paused waiting for interaction, or what kind of interaction is expected. Two additional [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s carry that context:
 
-- [`DeferredToolCallEvent`][pydantic_ai.messages.DeferredToolCallEvent] — fired once per deferred call (external or approval-required), carrying the [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and the full [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] batch it belongs to.
-- [`DeferredToolResultEvent`][pydantic_ai.messages.DeferredToolResultEvent] — fired once per batch after the handler (or caller) has resolved the calls, carrying the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults].
+- [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] — emitted once per batch of deferred calls, carrying the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]. It's emitted before any [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler runs, so a consumer can for example notify a frontend that input is needed while the handler waits for it. If no handler resolves all of the requests, the run ends with the pending requests as its `DeferredToolRequests` output.
+- [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] — emitted when a handler resolves (some of) the requests, carrying the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. The resolved calls then execute through the regular pipeline, emitting a [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] each. No event is emitted when results are instead provided to a new run via `deferred_tool_results`, as in that case the caller already knows them.
 
-These events let stream consumers observe deferred tool lifecycles (for logging, UI updates, etc.) without needing to couple to the deferred handler itself.
+This keeps resolution and presentation decoupled: a handler can contain pure resolution logic (e.g. waiting for a signal in a [durable execution](durable_execution/overview.md) workflow), while a stream consumer owns all communication with the frontend, without maintaining its own mapping of which tools are interactive.
+
+Continuing the [handler example](#resolving-deferred-calls-with-a-handler) from above:
+
+```python {title="deferred_tool_events.py" requires="deferred_tool_handler.py"}
+from pydantic_ai import DeferredToolRequestsEvent, DeferredToolResultsEvent
+
+from deferred_tool_handler import agent
+
+
+async def main():
+    async with agent.run_stream_events(
+        'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`'
+    ) as events:
+        async for event in events:
+            if isinstance(event, DeferredToolRequestsEvent):
+                print(f'Approvals needed: {[call.tool_name for call in event.requests.approvals]}')
+                #> Approvals needed: ['update_file', 'delete_file']
+            elif isinstance(event, DeferredToolResultsEvent):
+                print(f'Resolved: {list(event.results.approvals)}')
+                #> Resolved: ['update_file_dotenv', 'delete_file']
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## See Also
 

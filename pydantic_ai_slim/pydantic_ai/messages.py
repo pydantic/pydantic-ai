@@ -3404,26 +3404,50 @@ from ._deferred import (  # noqa: E402
 
 
 @dataclass(repr=False)
-class DeferredToolCallEvent(ToolCallEvent):
-    """An event indicating that a tool call has been deferred for external resolution or approval."""
+class DeferredToolRequestsEvent:
+    """An event indicating that tool calls require approval or external execution before the run can continue.
 
-    requests: DeferredToolRequests = field(kw_only=True)
-    """The full batch of deferred requests, including all calls and approvals in this resolution group."""
+    Each deferred call also emits its own [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent];
+    this event additionally carries the batched [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]
+    so stream consumers can tell which calls are paused waiting for interaction, e.g. to notify a frontend.
 
-    event_kind: Literal['deferred_tool_call'] = 'deferred_tool_call'
-    """Event type identifier, used as a discriminator."""
+    It is emitted before any [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+    handler runs. If no handler resolves all of the requests, the run ends with the pending requests as its
+    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
 
-@dataclass(repr=False)
-class DeferredToolResultEvent:
-    """An event indicating that deferred tool calls have been resolved by a handler."""
-
-    results: DeferredToolResults
-    """The resolved results for the deferred tool calls."""
+    requests: DeferredToolRequests
+    """The batch of tool calls that require external execution or approval."""
 
     _: KW_ONLY
 
-    event_kind: Literal['deferred_tool_result'] = 'deferred_tool_result'
+    event_kind: Literal['deferred_tool_requests'] = 'deferred_tool_requests'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DeferredToolResultsEvent:
+    """An event indicating that deferred tool calls were resolved by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.
+
+    The resolved calls are then executed through the regular tool-execution pipeline, emitting a
+    [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] for each result.
+
+    This event is not emitted when results are instead provided to a new run via `deferred_tool_results`,
+    as in that case the caller already knows them.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    results: DeferredToolResults
+    """The results for the deferred tool calls, keyed by tool call ID."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_results'] = 'deferred_tool_results'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -3434,8 +3458,8 @@ HandleResponseEvent = Annotated[
     | FunctionToolResultEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
-    | DeferredToolCallEvent
-    | DeferredToolResultEvent,
+    | DeferredToolRequestsEvent
+    | DeferredToolResultsEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""

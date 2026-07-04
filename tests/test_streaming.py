@@ -23,9 +23,9 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
-    DeferredToolCallEvent,
     DeferredToolRequests,
-    DeferredToolResultEvent,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -4128,25 +4128,7 @@ async def test_deferred_tool_iter():
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
-            DeferredToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
-                args_valid=True,
-                requests=DeferredToolRequests(
-                    calls=[
-                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
-                    ],
-                    approvals=[
-                        ToolCallPart(
-                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
-                        )
-                    ],
-                ),
-            ),
-            DeferredToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
-                ),
-                args_valid=True,
+            DeferredToolRequestsEvent(
                 requests=DeferredToolRequests(
                     calls=[
                         ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
@@ -4162,8 +4144,8 @@ async def test_deferred_tool_iter():
     )
 
 
-async def test_deferred_tool_call_and_result_events():
-    """DeferredToolCallEvent is emitted per deferred call; DeferredToolResultEvent is emitted once when resolved."""
+async def test_deferred_tool_requests_and_results_events():
+    """`DeferredToolRequestsEvent` is emitted once per deferred batch; `DeferredToolResultsEvent` once when a handler resolves it."""
 
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(approve_all=True)
@@ -4187,27 +4169,26 @@ async def test_deferred_tool_call_and_result_events():
                         events.append(event)
 
     event_kinds = [e.event_kind for e in events]
-    # FunctionToolCallEvent fires first (validation), then DeferredToolCallEvent, then
-    # DeferredToolResultEvent (once for the batch), then FunctionToolResultEvent (re-execution)
+    # `FunctionToolCallEvent` fires first (validation), then `DeferredToolRequestsEvent` for the batch,
+    # then `DeferredToolResultsEvent` once the handler resolves it, then `FunctionToolResultEvent`
+    # as the approved call executes.
     assert event_kinds == snapshot(
         [
             'function_tool_call',
-            'deferred_tool_call',
-            'deferred_tool_result',
+            'deferred_tool_requests',
+            'deferred_tool_results',
             'function_tool_result',
         ]
     )
 
-    deferred_call_evt = next(e for e in events if e.event_kind == 'deferred_tool_call')
-    assert isinstance(deferred_call_evt, DeferredToolCallEvent)
-    assert deferred_call_evt.part.tool_name == 'my_tool'
-    assert deferred_call_evt.args_valid is True
-    assert len(deferred_call_evt.requests.approvals) == 1
-    assert deferred_call_evt.requests.approvals[0].tool_name == 'my_tool'
+    requests_event = next(e for e in events if e.event_kind == 'deferred_tool_requests')
+    assert isinstance(requests_event, DeferredToolRequestsEvent)
+    assert len(requests_event.requests.approvals) == 1
+    assert requests_event.requests.approvals[0].tool_name == 'my_tool'
 
-    deferred_result_evt = next(e for e in events if e.event_kind == 'deferred_tool_result')
-    assert isinstance(deferred_result_evt, DeferredToolResultEvent)
-    assert len(deferred_result_evt.results.approvals) == 1
+    results_event = next(e for e in events if e.event_kind == 'deferred_tool_results')
+    assert isinstance(results_event, DeferredToolResultsEvent)
+    assert len(results_event.results.approvals) == 1
 
 
 async def test_tool_raises_call_deferred_approval_required_iter():
@@ -4264,25 +4245,7 @@ async def test_tool_raises_call_deferred_approval_required_iter():
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
-            DeferredToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
-                args_valid=True,
-                requests=DeferredToolRequests(
-                    calls=[
-                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
-                    ],
-                    approvals=[
-                        ToolCallPart(
-                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
-                        )
-                    ],
-                ),
-            ),
-            DeferredToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
-                ),
-                args_valid=True,
+            DeferredToolRequestsEvent(
                 requests=DeferredToolRequests(
                     calls=[
                         ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')

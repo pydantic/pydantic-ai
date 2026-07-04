@@ -136,6 +136,8 @@ async def main():
     await agent.run('Do the task', event_stream_handler=stream_handler)
 ```
 
+Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
+
 ## Handle Provider Failures
 
 Use `FallbackModel` when the user wants automatic provider or model failover.

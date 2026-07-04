@@ -10,12 +10,14 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -57,7 +59,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
@@ -460,6 +462,85 @@ async def test_run_stream_external_tools():
             "<function-tool-call name='external_tool'>{}</function-tool-call>",
             '</request>',
             "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[], metadata={})</run-result>",
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_deferred_tool_requests_and_results():
+    """`DeferredToolRequestsEvent` and `DeferredToolResultsEvent` emit no protocol events by default.
+
+    The base `UIEventStream` dispatches them to the `handle_deferred_tool_requests` and
+    `handle_deferred_tool_results` no-op hooks, so a run whose deferred calls are resolved inline by a
+    `HandleDeferredToolCalls` handler produces the same protocol stream as one without deferral.
+    """
+
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(model=TestModel(), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{'x': 0}",
+            '<final-result tool_name=None />',
+            "</tool-call name='my_tool'>",
+            '</response>',
+            '<request>',
+            "<function-tool-call name='my_tool'>{'x': 0}</function-tool-call>",
+            "<function-tool-result name='my_tool'>1</function-tool-result>",
+            '</request>',
+            '<response>',
+            '<text follows_text=False>',
+            '<final-result tool_name=None />',
+            '{"my_t',
+            'ool":1}',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<run-result>{"my_tool":1}</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+class DeferredAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-requests approvals={[part.tool_name for part in event.requests.approvals]!r} />'
+
+    async def handle_deferred_tool_results(self, event: DeferredToolResultsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-results approvals={list(event.results.approvals)!r} />'
+
+
+async def test_event_stream_deferred_tool_hook_overrides():
+    """Subclasses can override `handle_deferred_tool_requests`/`handle_deferred_tool_results` to notify the frontend mid-stream."""
+
+    async def event_generator():
+        yield DeferredToolRequestsEvent(
+            requests=DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='approval_1')]
+            )
+        )
+        yield DeferredToolResultsEvent(results=DeferredToolResults(approvals={'approval_1': True}))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    event_stream = DeferredAwareUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<deferred-tool-requests approvals=['my_tool'] />",
+            "<deferred-tool-results approvals=['approval_1'] />",
             '</stream>',
         ]
     )
