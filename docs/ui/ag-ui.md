@@ -294,7 +294,9 @@ See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) f
 
 ### Events
 
-Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
+To emit events while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]. Each `CustomEvent` is delivered to the client as an AG-UI [`CustomEvent`](https://docs.ag-ui.com/sdk/python/core/events#customevent) with the event's `name`. When the event is tool-scoped, the `value` is `{'tool_call_id': ..., 'data': ...}` so the client can attribute it; otherwise the `value` is the payload directly. If the payload is itself an AG-UI [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent), it is passed through verbatim.
+
+In addition, Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) at the point a tool returns by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
 [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`,
 which allows for custom events and state updates.

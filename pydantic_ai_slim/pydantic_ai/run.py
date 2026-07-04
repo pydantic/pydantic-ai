@@ -429,6 +429,23 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
+    def emit_event(self, event: _messages.CustomEvent) -> None:
+        """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into this run's event stream.
+
+        Lets code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] inject application-defined
+        events (e.g. from an external harness or event bus) into the stream, alongside events emitted from
+        tools and capability hooks via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event].
+        The event surfaces on the next pull from the run's node stream.
+
+        Designed to be called from the same event loop driving `agent.iter()`. If you're forwarding events
+        from a different thread, marshal the call back onto the agent's loop first
+        (e.g. `loop.call_soon_threadsafe(agent_run.emit_event, event)`).
+
+        Args:
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+        """
+        self._graph_run.state.event_stream_buffer.append(event)
+
     def enqueue(
         self,
         *content: EnqueueContent,

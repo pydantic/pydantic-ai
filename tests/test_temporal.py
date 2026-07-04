@@ -55,7 +55,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai.messages import CustomEvent, UploadedFile
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -3310,6 +3310,20 @@ def test_temporal_run_context_serializes_metadata():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.metadata == {'env': 'prod'}
+
+
+def test_temporal_run_context_rejects_emit_event():
+    """Emitting a custom event from a tool (inside an activity) raises a clear error.
+
+    Tools run inside activities where the run context is rebuilt without the run's event stream, so
+    `emit_event` can't reach it and must fail loudly rather than silently drop the event.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+
+    with pytest.raises(UserError, match='Emitting custom events from a tool is not supported under Temporal yet'):
+        reconstructed.emit_event(CustomEvent(name='progress'))
 
 
 def test_temporal_run_context_excludes_agent():

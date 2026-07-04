@@ -24,7 +24,7 @@ from ._output import (
 )
 from ._run_context import AgentDepsT, RunContext
 from ._sync_stream import SyncStreamBridge
-from .messages import ModelResponseStreamEvent
+from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -57,6 +57,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
+    _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -111,7 +112,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield msg
                     break
 
-        async with _utils.group_by_temporal(self, debounce_by) as group_iter:
+        async with _utils.group_by_temporal(self._model_response_events(), debounce_by) as group_iter:
             async for _items in group_iter:
                 yield self.response  # state='incomplete' during streaming
 
@@ -357,8 +358,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     deltas.append(text)
                     yield ''.join(deltas)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
+    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
+        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving custom events emitted via `emit_event`."""
         if self._agent_stream_iterator is None:
             self._agent_stream_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, lambda: self.usage
@@ -368,19 +369,40 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         return self._events_iter(base_iter)
 
-    async def _events_iter(
-        self, base_iter: AsyncIterator[ModelResponseStreamEvent]
-    ) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _model_response_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Iterate only the model response stream events, dropping custom events emitted via `emit_event`."""
+        async for event in self:
+            if isinstance(
+                event,
+                _messages.PartStartEvent
+                | _messages.PartDeltaEvent
+                | _messages.PartEndEvent
+                | _messages.FinalResultEvent,
+            ):
+                yield event
+
+    async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared base iterator. An early break from
         # stream_text() can leave a pending `anext()` task in group_by_temporal
         # while cleanup/drain starts iterating the same stream.
         while True:
+            if self._event_stream_buffer_getter is not None:
+                while buffer := self._event_stream_buffer_getter():
+                    yield buffer.pop(0)
+
             async with self._anext_lock:
                 try:
                     event = await anext(base_iter)
 
                 except StopAsyncIteration:
+                    if self._event_stream_buffer_getter is not None:
+                        while buffer := self._event_stream_buffer_getter():
+                            yield buffer.pop(0)
                     return
+
+            if self._event_stream_buffer_getter is not None:
+                while buffer := self._event_stream_buffer_getter():
+                    yield buffer.pop(0)
 
             yield event
 

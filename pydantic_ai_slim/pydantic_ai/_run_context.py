@@ -112,6 +112,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     to add messages rather than mutating it directly.
     """
 
+    _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's live event buffer, shared by reference from `GraphAgentState`. Events emitted via
+    [`emit_event`][pydantic_ai.tools.RunContext.emit_event] are appended here and drained into the
+    event stream. `None` in synthetic contexts not backed by a running agent, where `emit_event` raises.
+    """
+
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -236,6 +244,36 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    def emit_event(self, event: _messages.CustomEvent) -> None:
+        """Emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] into the current run's event stream.
+
+        Safe to call from anywhere a `RunContext` is available during a run — async tools, sync tools
+        (auto-wrapped in a thread executor by Pydantic AI), capability hooks, history processors, and
+        output validators. The event reaches the run's `event_stream_handler`,
+        [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
+        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
+
+        When emitted from within a tool call and the event doesn't already set a
+        [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current
+        [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] is stamped on a copy of the event so
+        consumers can attribute it to the originating tool call.
+
+        Args:
+            event: The [`CustomEvent`][pydantic_ai.messages.CustomEvent] to emit.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's event stream (e.g. a manually
+                constructed context, or the deserialized context inside a Temporal activity).
+        """
+        if self._event_stream_buffer is None:
+            raise UserError(
+                '`emit_event` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.emit_event`). This `RunContext` has no event stream to emit into.'
+            )
+        if event.tool_call_id is None and self.tool_call_id is not None:
+            event = dataclasses.replace(event, tool_call_id=self.tool_call_id)
+        self._event_stream_buffer.append(event)
 
     def enqueue(
         self,

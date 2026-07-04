@@ -87,7 +87,9 @@ async def chat(request: Request) -> Response:
 
 ### Data Chunks
 
-Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) by returning a
+To emit data while a run is in progress — for example progress updates from a long-running tool — emit a [`CustomEvent`](../agent.md#custom-events) via [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event]. Each `CustomEvent` is delivered as a [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk] with `type` set to `data-{name}`. When the event is tool-scoped, the chunk's `data` is `{'tool_call_id': ..., 'data': ...}` so the client can attribute it; otherwise the `data` is the payload directly. If the payload is itself a data-carrying chunk (see below), it is passed through verbatim.
+
+In addition, Pydantic AI tools can send [Vercel AI data stream chunks](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) at the point a tool returns by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a data-carrying chunk
 (or a list of chunks) as `metadata`.
 The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_types.DataChunk],
