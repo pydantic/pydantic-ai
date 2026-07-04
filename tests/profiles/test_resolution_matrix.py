@@ -442,6 +442,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'supported_native_tools': frozenset(),
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_adaptive_thinking': False,
@@ -470,6 +471,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_send_back_thinking_parts': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
@@ -497,6 +499,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_send_back_thinking_parts': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
@@ -521,6 +524,7 @@ def test_bedrock_mistral_large():
             'bedrock_tool_result_format': 'json',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
+            'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
         }
     )
@@ -577,7 +581,8 @@ def test_bedrock_meta_llama3():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supported_native_tools': frozenset(),
-            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image', 'document'}),
         }
     )
 
