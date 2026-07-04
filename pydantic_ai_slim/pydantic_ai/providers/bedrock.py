@@ -278,6 +278,10 @@ def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
             # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
+            # This applies family-wide, but the flag only matters when a tool return actually carries that
+            # media kind: text-only members (e.g. Llama 3) don't receive documents/images in practice, and
+            # if one ever did, the pre-existing sibling-split fallback failed for them too (they can't read
+            # it either way), so reflecting the multimodal variant's capability here is no regression.
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         ),
     )
@@ -296,7 +300,10 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
             # images there — even though it accepts images in a plain user message — and has no video
-            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`.
+            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`. Applies family-wide, but
+            # the flag only matters when a tool return actually carries a document: text-only members (e.g.
+            # `mistral-large-2407`) don't receive documents in practice, and if one ever did, the
+            # pre-existing sibling-split fallback failed for them too, so this is no regression.
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'document'}),
         ),
     )
