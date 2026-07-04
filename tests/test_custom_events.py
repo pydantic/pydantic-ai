@@ -121,6 +121,70 @@ async def test_agent_run_emit_event():
     assert custom == snapshot([CustomEvent(name='external', data={'source': 'bus'})])
 
 
+async def test_agent_run_emit_event_before_call_tools_stream():
+    """Events emitted between nodes drain at the start of the next response-handling stream."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    def progress(ctx: RunContext[Any]) -> str:
+        return 'ok'
+
+    collected: list[AgentStreamEvent] = []
+    async with agent.iter('go') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+            elif Agent.is_call_tools_node(node):
+                run.emit_event(CustomEvent(name='before-tools'))
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        collected.append(event)
+
+    # The custom event drains before the node's own events.
+    assert [event.event_kind for event in collected[:2]] == snapshot(['custom', 'function_tool_call'])
+
+
+async def test_emit_from_output_validator():
+    """An event emitted after the last framework event (from an output validator) still surfaces."""
+
+    async def only_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=only_text))
+
+    @agent.output_validator
+    def validate(ctx: RunContext[Any], output: str) -> str:
+        ctx.emit_event(CustomEvent(name='validated'))
+        return output
+
+    events = await _collect_events(agent)
+    custom = [event for event in events if isinstance(event, CustomEvent)]
+    assert custom == snapshot([CustomEvent(name='validated')])
+
+
+async def test_custom_events_excluded_from_stream_output():
+    """Pending custom events don't disturb `stream_output`, which only reflects model response events."""
+    agent = Agent(FunctionModel(stream_function=_tool_then_text))
+
+    @agent.tool
+    def progress(ctx: RunContext[Any]) -> str:
+        ctx.emit_event(CustomEvent(name='progress'))
+        return 'ok'
+
+    outputs: list[str] = []
+    async with agent.iter('go') as run:
+        run.emit_event(CustomEvent(name='external'))
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for output in stream.stream_output(debounce_by=None):
+                        outputs.append(output)
+
+    assert outputs[-1] == 'done'
+
+
 async def test_surfaced_via_run_stream_events():
     """Custom events surface through `run_stream_events`."""
     agent = Agent(FunctionModel(stream_function=_tool_then_text))

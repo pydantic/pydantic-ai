@@ -295,7 +295,6 @@ Alongside the framework's own events, a tool, [capability](capabilities.md) hook
 From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available, call [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a `CustomEvent` carrying a `name` and an optional `data` payload. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] is stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
 
 ```python {title="custom_events.py"}
-import asyncio
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent, CustomEvent, RunContext
@@ -346,16 +345,10 @@ async def main():
                 )
 
     print(progress)
-    """
-    ['1/3 (from process)', '2/3 (from process)', '3/3 (from process)']
-    """
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    #> ['1/3 (from process)', '2/3 (from process)', '3/3 (from process)']
 ```
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 !!! note
     The `data` payload can be any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters it needs to be serializable by pydantic. Events emitted from tools running concurrently are drained in emission order on the next pull from the stream (best-effort ordering).

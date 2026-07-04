@@ -57,7 +57,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
-    _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] | None = field(default=None, repr=False)
+    _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -386,23 +386,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # stream_text() can leave a pending `anext()` task in group_by_temporal
         # while cleanup/drain starts iterating the same stream.
         while True:
-            if self._event_stream_buffer_getter is not None:
-                while buffer := self._event_stream_buffer_getter():
-                    yield buffer.pop(0)
+            # Drain events emitted via `emit_event` before each pull, so they interleave with the
+            # model's own events. Events emitted while a pull is in flight surface on the next pull,
+            # or through the response-handling node's stream once this stream is exhausted.
+            while buffer := self._event_stream_buffer_getter():
+                yield buffer.pop(0)
 
             async with self._anext_lock:
                 try:
                     event = await anext(base_iter)
 
                 except StopAsyncIteration:
-                    if self._event_stream_buffer_getter is not None:
-                        while buffer := self._event_stream_buffer_getter():
-                            yield buffer.pop(0)
                     return
-
-            if self._event_stream_buffer_getter is not None:
-                while buffer := self._event_stream_buffer_getter():
-                    yield buffer.pop(0)
 
             yield event
 
