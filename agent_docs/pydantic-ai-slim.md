@@ -41,7 +41,7 @@ Before editing, identify which contracts can change:
 
 Node streams own draining the buffer into `wrap_run_event_stream` / `event_stream_handler` around each dependent event. `ModelRequestNode` delegates this to `AgentStream` (via `_event_stream_buffer_getter`) so the public `AgentStream` API is preserved; `CallToolsNode` wraps its handle-response event iterator with the same buffer-draining behavior (`_with_event_stream_buffer`).
 
-Feature code emits typed `AgentStreamEvent`s into the buffer once the public event semantics are true. Pending messages follow this pattern: `PendingMessageDrainCapability` emits an `EnqueuedMessagesEvent` at the moment it delivers each enqueued message into history, describing the messages as delivered (indices are deliberately not carried, since `_clean_message_history` can merge adjacent requests across runs and stale them).
+Feature code emits typed `AgentStreamEvent`s into the buffer once the public event semantics are true. Pending messages follow this pattern: `PendingMessageDrainCapability` emits one `EnqueuedMessagesEvent` per drained `enqueue` call (a single call can carry multiple messages) when it delivers that call's messages into history, describing the messages as delivered (indices are deliberately not carried, since `_clean_message_history` can merge adjacent requests across runs and stale them).
 
 ## Test Shape
 
