@@ -195,7 +195,11 @@ class Vehicle(BaseModel):
 
 
 async def test_native_output_union_preserves_description():
-    """A union `NativeOutput` keeps its own `name`/`description`, not the last member's title/docstring (issue #6262)."""
+    """A union `NativeOutput` keeps its own `name`/`description`, not the last member's title/docstring (issue #6262).
+
+    Taps the internal `output_object` rather than being a VCR test because a cassette matcher isn't sensitive to the
+    request-body schema `description` field, so a VCR test asserting only `result.output` would pass green even with the bug.
+    """
     captured: OutputObjectDefinition | None = None
 
     async def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
