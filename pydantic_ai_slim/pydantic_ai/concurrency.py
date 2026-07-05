@@ -75,6 +75,10 @@ class ConcurrencyLimit:
     max_running: int
     max_queued: int | None = None
 
+    def __post_init__(self) -> None:
+        if self.max_running < 1:
+            raise ValueError(f'max_running must be >= 1, got {self.max_running}')
+
 
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     """A concurrency limiter that tracks waiting operations for observability.
@@ -101,6 +105,8 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
                 a limiter across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
         """
+        if max_running < 1:
+            raise ValueError(f'max_running must be >= 1, got {max_running}')
         self._limiter = anyio.CapacityLimiter(max_running)
         self._max_queued = max_queued
         self._name = name

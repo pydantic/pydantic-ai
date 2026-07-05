@@ -10,7 +10,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
-from pydantic_ai.concurrency import get_concurrency_context
+from pydantic_ai.concurrency import get_concurrency_context, normalize_to_limiter
 from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
@@ -65,6 +65,18 @@ class TestConcurrencyLimiter:
         # With high limit, should acquire immediately
         async with get_concurrency_context(limiter, 'test'):
             pass  # No waiting
+
+    @pytest.mark.parametrize('max_running', [0, -1])
+    async def test_invalid_max_running(self, max_running: int):
+        """Test that invalid concurrency limits are rejected before creating the limiter."""
+        with pytest.raises(ValueError, match=f'max_running must be >= 1, got {max_running}'):
+            ConcurrencyLimiter(max_running=max_running)
+
+    @pytest.mark.parametrize('max_running', [0, -1])
+    async def test_invalid_concurrency_limit_config(self, max_running: int):
+        """Test that invalid concurrency limit config values fail eagerly."""
+        with pytest.raises(ValueError, match=f'max_running must be >= 1, got {max_running}'):
+            ConcurrencyLimit(max_running=max_running)
 
     async def test_waiting_count_tracking(self):
         """Test that waiting_count is accurately tracked."""
@@ -193,6 +205,16 @@ class TestConcurrencyLimiter:
         assert limiter.max_running == 5
         assert limiter._max_queued == 10
 
+    async def test_from_invalid_limit(self):
+        """Test that invalid normalized concurrency limits fail eagerly."""
+        with pytest.raises(ValueError, match='max_running must be >= 1, got 0'):
+            ConcurrencyLimiter.from_limit(0)
+
+    async def test_normalize_to_limiter_rejects_invalid_limit(self):
+        """Test that invalid normalized concurrency limits fail before use."""
+        with pytest.raises(ValueError, match='max_running must be >= 1, got 0'):
+            normalize_to_limiter(0)
+
     async def test_properties(self):
         """Test the various properties of ConcurrencyLimiter."""
         limiter = ConcurrencyLimiter(max_running=5, name='test-limiter')
@@ -303,6 +325,11 @@ class TestAgentConcurrency:
         assert agent._concurrency_limiter is not None
         assert agent._concurrency_limiter.max_running == 5
         assert agent._concurrency_limiter._max_queued == 10
+
+    async def test_agent_invalid_int_concurrency_limit(self):
+        """Test that invalid agent concurrency limits fail before a run can hang."""
+        with pytest.raises(ValueError, match='max_running must be >= 1, got 0'):
+            Agent(TestModel(), max_concurrency=0)
 
 
 class TestConcurrencyLimitedModel:
