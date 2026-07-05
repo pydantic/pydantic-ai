@@ -75,7 +75,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -5247,8 +5247,7 @@ Fix the errors and try again.\
     # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     # instead of RetryPromptPart for tool errors from the Vercel AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = reloaded_messages[2].parts[0]
-    assert isinstance(tool_error_part, ToolReturnPart)
+    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part == snapshot(
         ToolReturnPart(
             tool_name='my_tool',
@@ -5335,8 +5334,7 @@ Fix the errors and try again.\
         )
     )
     # Get original tool_call_id and replace with original RetryPromptPart
-    original_retry = messages[2].parts[0]
-    assert isinstance(original_retry, RetryPromptPart)
+    original_retry = message_part(messages, RetryPromptPart, message_index=2)
     reloaded_messages[2] = ModelRequest(
         parts=[
             RetryPromptPart(
@@ -6099,8 +6097,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
     # Verify roundtrip — load_messages should reconstruct a ToolCallPart without a result
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     assert len(reloaded) == 2
-    tool_call_part = reloaded[1].parts[0]
-    assert isinstance(tool_call_part, ToolCallPart)
+    tool_call_part = message_part(reloaded, ToolCallPart, message_index=1)
     assert tool_call_part.tool_name == 'dangerous_action'
     assert tool_call_part.tool_call_id == 'deferred_tc1'
 
@@ -6371,16 +6368,14 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
 
     # `load_messages` constructs the `UploadedFile` from the client-controlled `providerMetadata`.
     loaded = VercelAIAdapter.load_messages(ui_messages)
-    loaded_part = loaded[0].parts[0]
-    assert isinstance(loaded_part, UserPromptPart)
+    loaded_part = message_part(loaded, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in loaded_part.content)
 
     # The default sanitizer drops it with a warning before it reaches the agent.
     adapter = VercelAIAdapter(agent=agent, run_input=run_input)
     with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
         sanitized = adapter.sanitize_messages(adapter.messages)
-    sanitized_part = sanitized[0].parts[0]
-    assert isinstance(sanitized_part, UserPromptPart)
+    sanitized_part = message_part(sanitized, UserPromptPart)
     assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
     # With the trusted-frontend opt-in, the `UploadedFile` is preserved.
@@ -6388,8 +6383,7 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         preserved = preserve_adapter.sanitize_messages(preserve_adapter.messages)
-    preserved_part = preserved[0].parts[0]
-    assert isinstance(preserved_part, UserPromptPart)
+    preserved_part = message_part(preserved, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
@@ -6445,14 +6439,12 @@ async def test_from_request_threads_allow_uploaded_files(allow_uploaded_files: b
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             sanitized = adapter.sanitize_messages(adapter.messages)
-        sanitized_part = sanitized[0].parts[0]
-        assert isinstance(sanitized_part, UserPromptPart)
+        sanitized_part = message_part(sanitized, UserPromptPart)
         assert any(isinstance(item, UploadedFile) for item in sanitized_part.content)
     else:
         with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
             sanitized = adapter.sanitize_messages(adapter.messages)
-        sanitized_part = sanitized[0].parts[0]
-        assert isinstance(sanitized_part, UserPromptPart)
+        sanitized_part = message_part(sanitized, UserPromptPart)
         assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
 
@@ -6719,8 +6711,7 @@ async def test_adapter_load_messages_json_list_args():
     messages = VercelAIAdapter.load_messages(ui_messages)
 
     assert len(messages) == 2  # ToolCall in response + ToolReturn in request
-    response = messages[0]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse)
     assert len(response.parts) == 1
     tool_call = response.parts[0]
     assert isinstance(tool_call, ToolCallPart)
@@ -7093,8 +7084,7 @@ async def test_adapter_load_messages_provider_executed_dynamic_tool():
     messages = VercelAIAdapter.load_messages(ui_messages)
 
     assert len(messages) == 1
-    response = messages[0]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse)
     assert [type(part) for part in response.parts] == [
         NativeToolCallPart,
         NativeToolReturnPart,
@@ -7234,8 +7224,7 @@ async def test_adapter_dump_load_roundtrip_filepart_vendor_metadata():
     ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
 
-    reloaded_part = reloaded[0].parts[0]
-    assert isinstance(reloaded_part, FilePart)
+    reloaded_part = message_part(reloaded, FilePart)
     assert reloaded_part.content.vendor_metadata == {
         'fps': 24,
         'start_offset': '12.5s',
@@ -7293,8 +7282,7 @@ async def test_adapter_load_filepart_ignores_non_dict_vendor_metadata():
     file_ui_part.provider_metadata['pydantic_ai']['vendor_metadata'] = 'not-a-dict'
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    reloaded_part = reloaded[0].parts[0]
-    assert isinstance(reloaded_part, FilePart)
+    reloaded_part = message_part(reloaded, FilePart)
     assert reloaded_part.content.vendor_metadata is None
 
 
@@ -7706,8 +7694,7 @@ Fix the errors and try again.\
 
     # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = reloaded_messages[2].parts[0]
-    assert isinstance(tool_error_part, ToolReturnPart)
+    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part.outcome == 'failed'
     assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
 
@@ -8673,8 +8660,7 @@ async def test_adapter_dump_messages_tool_return_error():
 
     # Verify roundtrip
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    error_part = reloaded[2].parts[0]
-    assert isinstance(error_part, ToolReturnPart)
+    error_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert error_part.outcome == 'failed'
     assert error_part.content == 'Something went wrong'
 
@@ -9922,10 +9908,7 @@ async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
     assert all(part.provider_metadata is None for part in file_parts)
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(loaded, UserPromptPart)
     assert isinstance(user_part.content, list)
     for item in user_part.content:
         assert getattr(item, 'vendor_metadata', None) is None

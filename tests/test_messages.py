@@ -50,7 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr, message, message_part
 
 
 def test_image_url():
@@ -1121,8 +1121,7 @@ def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
     ]
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
-    part = deserialized[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(deserialized, UserPromptPart)
     uploaded = part.content[0]
     assert isinstance(uploaded, UploadedFile)
     assert uploaded.identifier == 'my-id'
@@ -1171,8 +1170,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     # Deserialize - the dict with 'url' should remain as a dict, not become ImageUrl
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
 
-    tool_return_part = deserialized[2].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart, message_index=2)
 
     # The content should be preserved as a dict, not coerced to ImageUrl
     expected_content = {'items': [{'name': 'Example', 'url': '/some/path/12345'}]}
@@ -1182,8 +1180,7 @@ def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
 
-    reloaded_tool_return = reloaded[2].parts[0]
-    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_tool_return = message_part(reloaded, ToolReturnPart, message_index=2)
     assert reloaded_tool_return.content == expected_content
 
 
@@ -1216,8 +1213,7 @@ def test_tool_return_content_with_explicit_image_url():
 
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
 
-    tool_return_part = deserialized[1].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart, message_index=1)
 
     # Content with explicit kind: "image-url" should become ImageUrl
     assert isinstance(tool_return_part.content, ImageUrl)
@@ -1256,8 +1252,7 @@ def test_tool_return_content_nested_multimodal():
     """
 
     deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
-    tool_return_part = deserialized[0].parts[0]
-    assert isinstance(tool_return_part, ToolReturnPart)
+    tool_return_part = message_part(deserialized, ToolReturnPart)
 
     # `ToolReturnPart`'s typed `ToolSearchReturnPart` subclass narrows `content` to a
     # `TypedDict`; cast back to a plain dict so we can probe arbitrary keys here.
@@ -1277,8 +1272,7 @@ def test_tool_return_content_nested_multimodal():
     # Round-trip should preserve types
     reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
-    reloaded_tool_return = reloaded[0].parts[0]
-    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_tool_return = message_part(reloaded, ToolReturnPart)
     reloaded_content = cast('dict[str, Any]', reloaded_tool_return.content)
     assert isinstance(reloaded_content, dict)
 
@@ -1324,8 +1318,7 @@ def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: st
     else:
         loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
 
-    part = loaded[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(loaded, UserPromptPart)
     assert isinstance(part.content, list)
     reloaded_image, reloaded_audio = part.content
     assert type(reloaded_image) is BinaryImage
@@ -1359,8 +1352,7 @@ def test_every_multimodal_type_rehydrates_as_tool_return_content():
             ModelRequest(parts=[ToolReturnPart(tool_name='t', content=instance, tool_call_id='c')])
         ]
         reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
-        part = reloaded[0].parts[0]
-        assert isinstance(part, ToolReturnPart)
+        part = message_part(reloaded, ToolReturnPart)
         assert type(part.content) is cls, (
             f'{cls.__name__} did not rehydrate through the discriminator gate '
             f'(got {type(part.content).__name__}) — a `_MULTIMODAL_FIELDS` mismatch would cause this'
@@ -1398,15 +1390,13 @@ def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: Bi
     ]
 
     json_loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
-    json_part = json_loaded[0].parts[0]
-    assert isinstance(json_part, ToolReturnPart)
+    json_part = message_part(json_loaded, ToolReturnPart)
     assert json_part.content == content
 
     python_loaded = ModelMessagesTypeAdapter.validate_python(
         ModelMessagesTypeAdapter.dump_python(messages, mode='json')
     )
-    python_part = python_loaded[0].parts[0]
-    assert isinstance(python_part, ToolReturnPart)
+    python_part = message_part(python_loaded, ToolReturnPart)
     assert python_part.content == content
 
 
@@ -1430,8 +1420,7 @@ def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content:
     ]
 
     loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
-    part = loaded[0].parts[0]
-    assert isinstance(part, ToolReturnPart)
+    part = message_part(loaded, ToolReturnPart)
     assert part.content == content
 
 
@@ -1469,8 +1458,7 @@ def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: di
                 ModelMessagesTypeAdapter.dump_python(messages, mode='json')
             )
 
-    part = loaded[0].parts[0]
-    assert isinstance(part, ToolReturnPart)
+    part = message_part(loaded, ToolReturnPart)
     assert part.content == content
 
 
@@ -1499,8 +1487,7 @@ def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bo
     }
 
     loaded = ModelMessagesTypeAdapter.validate_python([dumped])
-    part = loaded[0].parts[0]
-    assert isinstance(part, ToolReturnPart)
+    part = message_part(loaded, ToolReturnPart)
     assert part.content == content
 
 
@@ -1749,8 +1736,7 @@ class TestInstructionParts:
         serialized = ModelMessagesTypeAdapter.dump_json([original])
         deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
 
-        msg = deserialized[0]
-        assert isinstance(msg, ModelRequest)
+        msg = message(deserialized, ModelRequest)
         assert msg.instructions == 'static part\n\ndynamic part'
 
     def test_repr(self):

@@ -77,7 +77,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -405,8 +405,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
             },
         )
     )
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
@@ -3872,8 +3871,7 @@ async def test_anthropic_opus_46_features(
     agent = Agent(m, model_settings=settings_map[case_id])
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-6'
 
     if has_thinking:
@@ -3890,8 +3888,7 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-7'
     request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
@@ -3913,8 +3910,7 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-8'
     request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
@@ -4556,8 +4552,7 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     # The skipped `message=None` chunk contributes no usage and no response id: usage comes from the
     # real `message_start` (input) + `message_delta` (output), and the id from the real event. The model
     # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == snapshot(
         RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
     )
@@ -10811,8 +10806,7 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
 
     # Check that container_id was captured in the response
     messages = result.all_messages()
-    model_response = messages[-1]
-    assert isinstance(model_response, ModelResponse)
+    model_response = message(messages, ModelResponse, index=-1)
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
@@ -10846,8 +10840,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     )
 
     first = await agent.run('How much is 3 * 12390?')
-    first_response = first.all_messages()[-1]
-    assert isinstance(first_response, ModelResponse)
+    first_response = message(first.all_messages(), ModelResponse, index=-1)
     assert first_response.provider_details is not None
     container_id = first_response.provider_details.get('container_id')
     assert isinstance(container_id, str) and container_id.startswith('container_')
