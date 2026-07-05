@@ -12308,3 +12308,81 @@ def test_openai_responses_phase_profile_flag():
     assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
+
+
+async def test_openai_responses_stream_ignores_post_done_function_call_args_delta(allow_model_requests: None):
+    """A stray function-call arguments delta arriving after the item's arguments are `done`
+    must not corrupt the accumulated tool-call `args` (see #5757)."""
+    from openai.types.responses import ResponseFunctionToolCall
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseFunctionToolCall(
+                id='fc_001',
+                call_id='call_001',
+                name='my_tool',
+                arguments='',
+                type='function_call',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            item_id='fc_001',
+            output_index=0,
+            delta='{"x": 1}',
+            type='response.function_call_arguments.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseFunctionCallArgumentsDoneEvent(
+            item_id='fc_001',
+            output_index=0,
+            arguments='{"x": 1}',
+            name='my_tool',
+            type='response.function_call_arguments.done',
+            sequence_number=4,
+        ),
+        # Stray post-done delta from a non-conforming endpoint: must be ignored.
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            item_id='fc_001',
+            output_index=0,
+            delta='}',
+            type='response.function_call_arguments.delta',
+            sequence_number=5,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=6,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.direct import model_request_stream
+    from pydantic_ai.messages import ModelRequest
+
+    async with model_request_stream(model, [ModelRequest.user_text_prompt('')]) as stream_response:
+        async for _ in stream_response:
+            pass
+        response = stream_response.get()
+
+    tool_calls = [part for part in response.parts if part.part_kind == 'tool-call']
+    assert len(tool_calls) == 1
+    # Without the guard the stray '}' would append, yielding the invalid '{"x": 1}}'.
+    assert tool_calls[0].args == '{"x": 1}'

@@ -3379,6 +3379,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
+            # Track function-call items whose arguments have been signaled `done`, so a
+            # stray post-done arguments delta from a non-conforming endpoint doesn't corrupt
+            # the accumulated tool-call `args` (see #5757).
+            _done_function_call_item_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -3427,6 +3431,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
+                    # Drop a stray arguments delta that arrives after the item's arguments were
+                    # signaled `done`; applying it would append to and corrupt the final
+                    # tool-call `args` (see #5757).
+                    if chunk.item_id in _done_function_call_item_ids:
+                        continue
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=chunk.item_id,
                         args=chunk.delta,
@@ -3435,7 +3444,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    _done_function_call_item_ids.add(chunk.item_id)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
