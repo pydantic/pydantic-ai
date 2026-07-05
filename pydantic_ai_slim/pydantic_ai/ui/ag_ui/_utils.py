@@ -6,7 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from typing_extensions import Required, TypedDict
 
@@ -130,6 +130,14 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
+ToolOutcome = Literal['failed', 'denied']
+
+
+def _pydantic_ai_encrypted_value(data: dict[str, Any]) -> str | None:
+    """Pack Pydantic AI metadata into an AG-UI `encrypted_value` blob."""
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: data}) if data else None
+
+
 def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -140,9 +148,7 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
     plain part if it doesn't validate.
     """
-    if tool_kind is None:
-        return None
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
+    return _pydantic_ai_encrypted_value({'tool_kind': tool_kind} if tool_kind is not None else {})
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
@@ -159,6 +165,24 @@ def tool_kind_encrypted_value_kwargs(tool_kind: ToolPartKind | None, *, supporte
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
     value = tool_kind_encrypted_value(tool_kind) if supported else None
+    return {'encrypted_value': value} if value is not None else {}
+
+
+def tool_return_encrypted_value_kwargs(
+    *,
+    tool_kind: ToolPartKind | None,
+    outcome: ToolOutcome | None,
+    supported: bool,
+) -> _EncryptedValueKwargs:
+    """`ToolMessage` kwargs carrying successful `tool_kind` and/or non-success `outcome`."""
+    if not supported:
+        return {}
+    data: dict[str, Any] = {}
+    if tool_kind is not None:
+        data['tool_kind'] = tool_kind
+    if outcome is not None:
+        data['tool_outcome'] = outcome
+    value = _pydantic_ai_encrypted_value(data)
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -179,13 +203,7 @@ def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
     )
 
 
-def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
-    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
-
-    Client-supplied and untrusted: anything that isn't a JSON object carrying
-    `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
-    encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
-    """
+def _parse_encrypted_pydantic_ai_data(encrypted_value: str | None) -> dict[str, Any] | None:
     if not encrypted_value:
         return None
     try:
@@ -195,10 +213,32 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     if not is_str_dict(data):
         return None
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
-    if not is_str_dict(namespaced):
+    return namespaced if is_str_dict(namespaced) else None
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Client-supplied and untrusted: anything that isn't a JSON object carrying
+    `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
+    encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
+    """
+    namespaced = _parse_encrypted_pydantic_ai_data(encrypted_value)
+    if namespaced is None:
         return None
     tool_kind = namespaced.get('tool_kind')
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+
+
+def parse_encrypted_tool_outcome(encrypted_value: str | None) -> ToolOutcome | None:
+    """Read a non-success tool outcome from the `pydantic_ai` namespace."""
+    namespaced = _parse_encrypted_pydantic_ai_data(encrypted_value)
+    if namespaced is None:
+        return None
+    outcome = namespaced.get('tool_outcome')
+    if outcome in ('failed', 'denied'):
+        return outcome
+    return None
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

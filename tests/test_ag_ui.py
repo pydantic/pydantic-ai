@@ -1608,6 +1608,34 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+@pytest.mark.parametrize('outcome', ['failed', 'denied'])
+def test_dump_load_roundtrip_tool_return_outcome(outcome: Literal['failed', 'denied']) -> None:
+    """Non-success tool returns must not reload as successful results."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='not allowed' if outcome == 'denied' else 'tool failed',
+                    outcome=outcome,
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    tool_msg = next(m for m in ag_ui_msgs if isinstance(m, ToolMessage))
+    assert tool_msg.error == ('not allowed' if outcome == 'denied' else 'tool failed')
+    assert json.loads(tool_msg.encrypted_value or '{}') == {'pydantic_ai': {'tool_outcome': outcome}}
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
 def test_dump_load_roundtrip_load_capability() -> None:
     """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.11.
 
@@ -1781,6 +1809,7 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
     )
 
     assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert loaded[1].parts[0].outcome == 'failed'
     assert parse_loaded_capabilities(loaded) == set()
 
 
@@ -2242,6 +2271,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     retry_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
+    assert retry_part.outcome == 'failed'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:

@@ -93,9 +93,11 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
+        parse_encrypted_tool_outcome,
         rehydrate_tool_return_content,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
+        tool_return_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
     )
 except ImportError as e:  # pragma: no cover
@@ -475,11 +477,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
                     tool_kind = None
+                    outcome: Literal['success', 'failed', 'denied'] = 'success'
                     if tool_msg.error is None:
                         encrypted_tool_kind = (
                             parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
                         )
                         tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
+                    else:
+                        encrypted_outcome = (
+                            parse_encrypted_tool_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
+                        )
+                        outcome = encrypted_outcome or 'failed'
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -491,6 +499,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                                 tool_kind=tool_kind,
+                                outcome=outcome,
                             )
                         )
                     else:
@@ -503,6 +512,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
+                                outcome=outcome,
                             )
                         )
 
@@ -658,12 +668,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
+                outcome = None if part.outcome == 'success' else part.outcome
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
+                        error=part.model_response_str() if outcome is not None else None,
+                        **tool_return_encrypted_value_kwargs(
+                            tool_kind=part.tool_kind if outcome is None else None,
+                            outcome=outcome,
+                            supported=use_encrypted_value,
+                        ),
                     )
                 )
             elif isinstance(part, RetryPromptPart):
