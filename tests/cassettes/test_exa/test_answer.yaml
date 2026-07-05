@@ -1,0 +1,895 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '64'
+      content-type:
+      - application/json
+      host:
+      - api.exa.ai
+    method: POST
+    parsed_body:
+      query: What is Pydantic AI?
+      stream: false
+      text: true
+    uri: https://api.exa.ai/answer
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-expose-headers:
+      - PAYMENT-REQUIRED,PAYMENT-RESPONSE,payment-required,payment-response
+      connection:
+      - keep-alive
+      content-length:
+      - '58488'
+      content-security-policy:
+      - frame-ancestors 'self'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      cross-origin-resource-policy:
+      - same-origin
+      etag:
+      - W/"e3e7-2WmxPuIbbw0lElknf4bfroRYOZ0"
+      origin-agent-cluster:
+      - ?1
+      referrer-policy:
+      - no-referrer
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      answer: |-
+        Pydantic AI is an open-source, production-grade Python framework designed for building type-safe generative AI agents [1][2][3]. Developed by the Pydantic team, it aims to provide an ergonomic developer experience similar to FastAPI by leveraging Pydantic's data validation for structured inputs and outputs [4][5][6]. The framework is model-agnostic, supporting major providers like OpenAI, Anthropic, and Google, while including built-in tools for observability, dependency injection, and multi-agent workflows [2][7][6].
+
+        To get started, install the library and define an agent:
+
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+        result = agent.run_sync('What is the capital of France?')
+        print(result.data)
+        ```
+
+        [5][8]
+      citations:
+      - favicon: https://pydantic.dev/docs/favicon.png
+        id: https://pydantic.dev/docs/ai/overview/
+        image: https://pydantic.dev/docs/og/ai/overview/index.png
+        text: "Pydantic AI | Pydantic Docs Skip to content\n\n# Pydantic AI\n\nGenAI Agent Framework, the Pydantic way\n\nPydantic
+          AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade
+          applications and workflows with Generative AI.\n\nFastAPI revolutionized web development by offering an innovative
+          and ergonomic design, built on the foundation of Pydantic Validation and modern Python features like type hints.\n\nYet
+          despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs
+          in Pydantic Logfire, we couldn't find anything that gave us the same feeling.\n\nWe built Pydantic AI with one simple
+          aim: to bring that FastAPI feeling to GenAI app and agent development.\n\n## Why use Pydantic AI\n\nBuilt by the
+          Pydantic Team: Pydantic Validation is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK,
+          LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you
+          can go straight to the source? \U0001F603\n\nModel-agnostic: Supports virtually every model and provider: OpenAI,
+          Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud,
+          Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius,
+          OVHcloud, Alibaba Cloud, and SambaNova. If your favorite model or provider is not listed, you can easily implement
+          a custom model.\n\nSeamless Observability: Tightly integrates with Pydantic Logfire, our general-purpose OpenTelemetry
+          observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and
+          cost tracking. If you already have an observability platform that supports OTel, you can use that too.\n\nFully
+          Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and type
+          checking, moving entire classes of errors from runtime to write-time for a bit of that Rust \"if it compiles, it
+          works\" feel.\n\nPowerful Evals: Enables you to systematically test and evaluate the performance and accuracy of
+          the agentic systems you build, and monitor the performance over time in Pydantic Logfire.\n\nExtensible by Design:
+          Build agents from composable capabilities that bundle tools, hooks, instructions, and model settings into reusable
+          units. Use built-in capabilities for web search, thinking, and MCP, pick from the Pydantic AI Harness capability
+          library, build your own, or install third-party capability packages. Define agents entirely in YAML/JSON-- no code
+          required.\n\nMCP and UI: Integrates the Model Context Protocol and various UI event stream standards to give your
+          agent access to external tools and data and build interactive applications with streaming event-based communication.\n\nHuman-in-the-Loop
+          Tool Approval: Easily lets you flag that certain tool calls require approval before they can proceed, possibly depending
+          on tool call arguments, conversation history, or user preferences.\n\nDurable Execution: Enables you to build durable
+          agents that can preserve their progress across transient API failures and application errors or restarts, and handle
+          long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.\n\nStreamed Outputs:
+          Provides the ability to stream structured output continuously, with immediate validation, ensuring real time access
+          to generated data.\n\nGraph Support: Provides a powerful way to define graphs using type hints, for use in complex
+          applications where standard control flow can degrade to spaghetti code.\n\nRealistically though, no list is going
+          to be as convincing as giving it a try and seeing how it makes you feel!\n\nSign up for our newsletter, The Pydantic
+          Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:\n\nSubscribe\n\n## Hello World Example\n\nHere's
+          a minimal example of Pydantic AI:\n\nhello_world.py\n\n```\nfrom pydantic_ai import Agent\n\nagent = Agent(  # (1)\n
+          \ 'anthropic:claude-sonnet-4-6',\n  instructions='Be concise, reply with one sentence.',  # (2)\n)\n\nresult = agent.run_sync('Where
+          does \"hello world\" come from?')  # (3)\nprint(result.output)\n\"\"\"\nThe first known use of \"hello, world\"
+          was in a 1974 textbook about the C programming language.\n\"\"\"\n```\n\nWe configure the agent to use Anthropic's
+          Claude Sonnet 4.6 model, but you can also set the model when running the agent.\n\nRegister static instructions
+          using a keyword argument to the agent.\n\nRun the agent synchronously, starting a conversation with the LLM.\n\n(This
+          example is complete, it can be run \"as is\", assuming you've installed the pydantic_ai package)\n\nThe exchange
+          will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return
+          a text response.\n\nNot very interesting yet, but we can easily add tools, dynamic instructions, structured outputs,
+          or composable capabilities to build more powerful agents.\n\nHere's the same agent with thinking and web search
+          capabilities:\n\nhello_world_capabilities.py\n\n```\nfrom pydantic_ai import Agent\nfrom pydantic_ai.capabilities
+          import Thinking, WebSearch\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n    instructions='Be concise,
+          reply with one sentence.',\n    capabilities=[Thinking(), WebSearch(local='duckduckgo')],\n)\n\nresult = agent.run_sync('What
+          was the mass of the largest meteorite found this year?')\nprint(result.output)\n\"\"\"\nThe largest meteorite recovered
+          this year weighed approximately 7.6 kg, found in the Sahara Desert in January.\n\"\"\"\n\n```\n\n## Tools & Dependency
+          Injection Example\n\nHere is a concise example using Pydantic AI to build a support agent for a bank:\n\nbank_support.py\n\n```\nfrom
+          dataclasses import dataclass\n\nfrom pydantic import BaseModel, Field\nfrom pydantic_ai import Agent, RunContext\n\nfrom
+          bank_database import DatabaseConn\n\n@dataclass\nclass SupportDependencies:  # (3)\n  customer_id: int\n  db: DatabaseConn
+          \ # (12)\n\nclass SupportOutput(BaseModel):  # (13)\n  support_advice: str = Field(description='Advice returned
+          to the customer')\n  block_card: bool = Field(description=\"Whether to block the customer's card\")\n  risk: int
+          = Field(description='Risk level of query', ge=0, le=10)\n\nsupport_agent = Agent(  # (1)\n  'openai:gpt-5.2',  #
+          (2)\n  deps_type=SupportDependencies,\n  output_type=SupportOutput,  # (9)\n  instructions=(  # (4)\n      'You
+          are a support agent in our bank, give the '\n      'customer support and judge the risk level of their query.'\n
+          \ ),\n)\n\n@support_agent.instructions  # (5)\nasync def add_customer_name(ctx: RunContext[SupportDependencies])
+          -> str:\n  customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)\n  return f\"The customer's
+          name is {customer_name!r}\"\n\n@support_agent.tool  # (6)\nasync def customer_balance(\n  ctx: RunContext[SupportDependencies],
+          include_pending: bool\n) -> float:\n  \"\"\"Returns the customer's current account balance.\"\"\"  # (7)\n  return
+          await ctx.deps.db.customer_balance(\n      id=ctx.deps.customer_id,\n      include_pending=include_pending,\n  )\n\n...
+          \ # (11)\n\nasync def main():\n  deps = SupportDependencies(customer_id=123, db=DatabaseConn())\n  result = await
+          support_agent.run('What is my balance?', deps=deps)  # (8)\n  print(result.output)  # (10)\n  \"\"\"\n  support_advice='Hello
+          John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1\n  \"\"\"\n\n
+          \ result = await support_agent.run('I just lost my card!', deps=deps)\n  print(result.output)\n  \"\"\"\n  support_advice=\"I'm
+          sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions.\" block_card=True
+          risk=8\n  \"\"\"\n```\n\nThis agent will act as first-tier support in a bank. Agents are generic in the type of
+          dependencies they accept and the type of output they return. In this case, the support agent has type`Agent[SupportDependencies,
+          SupportOutput]`.\n\nHere we configure the agent to use OpenAI's GPT-5 model, you can also set the model when running
+          the agent.\n\nThe`SupportDepende"
+        title: Pydantic AI | Pydantic Docs
+        url: https://pydantic.dev/docs/ai/overview/
+      - favicon: https://pydantic.dev/favicon/favicon-32x32.png
+        id: https://pydantic.dev/pydantic-ai?featured_on=talkpython
+        image: https://pydantic.dev/pydantic-ai/opengraph-image.png
+        text: |-
+          # Pydantic -- Validation, agents, observability
+
+          Pydantic is the AI engineering stack for teams building with Python. It covers the full cycle: validate data, build type-safe agents, route model calls, and observe everything in production. Founded in 2018 by Samuel Colvin. Backed by Sequoia, Partech, and Irregular.
+
+          ---
+
+          ## What we make
+
+          ### Pydantic
+
+          The most widely used data validation library for Python. Open source, MIT license, ~500 million monthly downloads.
+
+          Pydantic enforces standard Python type annotations at runtime. It parses and coerces data, generates JSON schemas, and plays well with IDEs, type checkers, and your brain. Fast and extensible.
+
+          The Pydantic library is, has always been, and always will be free.
+
+          - Docs: https://pydantic.dev/docs/validation/latest/get-started/
+          - GitHub: https://github.com/pydantic/pydantic
+          - PyPI: https://pypi.org/project/pydantic
+
+          ### Pydantic AI
+
+          A production-grade Python agent framework. Open source, MIT license.
+
+          Pydantic AI is type-safe and model-agnostic. It supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Groq, Mistral, Ollama, and others. It has built-in OpenTelemetry tracing, so you get full observability out of the box whether you use Logfire or any other OTel backend.
+
+          Key features: structured outputs, function tools, MCP (Model Context Protocol) support, streaming, multi-agent workflows, durable execution, AG-UI protocol.
+
+          The goal: a minimalistic framework that lets developers write AI apps using standard software engineering practices.
+
+          - Docs: https://pydantic.dev/docs/ai/overview/
+          - GitHub: https://github.com/pydantic/pydantic-ai
+          - PyPI: https://pypi.org/project/pydantic-ai
+
+          ### Pydantic Logfire
+
+          A full-stack AI observability platform. Commercial SaaS; SDKs are open source.
+
+          Logfire is built on OpenTelemetry. It gives you end-to-end visibility across your entire application -- HTTP requests, database queries, LLM calls, agent workflows, RAG pipelines -- all on one correlated timeline. No vendor lock-in.
+
+          Core features:
+
+          - Distributed traces, logs, and metrics
+          - LLM traces: prompts, completions, token counts, model parameters
+          - LLM cost tracking across providers
+          - Online evals: automated quality monitoring for production AI agents
+          - Pydantic Evals integration
+          - SQL query interface for ad-hoc analysis
+          - Live view with pending spans for real-time debugging
+          - Logfire MCP server for AI-assisted trace investigation
+          - Dashboards and alerting
+          - OpenTelemetry-native, so any OTel-compatible language can send data; Python (`logfire` on PyPI) and JavaScript/TypeScript (`@pydantic/logfire-node`, `-browser`, `-cf-workers` on npm; source at https://github.com/pydantic/logfire-js) get first-party SDKs that we put extra polish into. A Rust SDK exists too. Everything else: bring your own OTel.
+
+          Free tier: 10M logs/spans/metrics/month, no credit card required. Paid plans from $49/month.
+
+          - App: https://logfire.pydantic.dev
+          - Docs: https://pydantic.dev/docs/logfire/get-started
+          - Pricing: https://pydantic.dev/pricing
+
+          ### Pydantic Evals
+
+          A code-first evaluation library for AI systems. Open source.
+
+          Available in two languages, both wire-compatible:
+
+          - Python -- ships in the pydantic-ai package. Docs: https://pydantic.dev/docs/ai/evals/evals/
+          - JavaScript / TypeScript -- ships in the Logfire JS SDK, exported from the `logfire/evals` subpath. GitHub: https://github.com/pydantic/logfire-js
+
+          Datasets, experiments, cases, and evaluator results all serialize to the same YAML/JSON format and render in the same Pydantic Logfire UI regardless of which language you wrote the eval in. Built-in evaluators (`Equals`, `Contains`, `LLMJudge`, etc.) and report-level evaluators (`ConfusionMatrixEvaluator`, `ROCAUCEvaluator`, etc.) are available in both. Both support offline evaluation and online evaluation for live production monitoring.
+
+          ### Pydantic AI Gateway
+
+          A unified LLM proxy with spend controls and audit trails. Commercial SaaS; consolidating into Logfire.
+
+          One API key for all major LLM providers: OpenAI, Anthropic, Google, AWS Bedrock, Groq, and more. Zero schema translation -- requests pass through in native format, so new provider features work immediately. Granular spend caps per project or user. Full audit trail via OpenTelemetry. Single-digit millisecond overhead via Cloudflare's global edge.
+
+          - Page: https://pydantic.dev/ai-gateway
+
+          ---
+
+          ## Why developers choose Pydantic
+
+          Pydantic came from frustration. Type hints in Python did nothing at runtime. Samuel Colvin wanted to know if they could validate data instead. They could.
+
+          That origin matters. The tools are built from among developers, not over them. The community has grown because the problems being solved are real problems the team experienced themselves.
+
+          The philosophy: the most powerful tools can still be easy to use. Fast to start. Honest about trade-offs. Clear, not clever.
+
+          Five things that matter to the team:
+
+          - Developer experience is the north star, not an afterthought
+          - OpenTelemetry everywhere -- no lock-in by design
+          - Type safety throughout, from validation to agents to observability
+          - Open source first for libraries; commercial only where hosting adds real value
+          - Pedantry is a feature, not a bug
+
+          ---
+
+          ## Key links
+
+          | | |
+          | --- | --- |
+          | Homepage | https://pydantic.dev |
+          | Logfire app | https://logfire.pydantic.dev |
+          | Logfire docs | https://pydantic.dev/docs/logfire/get-started |
+          | Pydantic AI docs | https://pydantic.dev/docs/ai/overview/ |
+          | Pydantic docs | https://pydantic.dev/docs/validation/latest/get-started/ |
+          | Pricing | https://pydantic.dev/pricing |
+          | Blog | https://pydantic.dev/articles |
+          | GitHub | https://github.com/pydantic |
+          | PyPI: pydantic | https://pypi.org/project/pydantic |
+          | PyPI: pydantic-ai | https://pypi.org/project/pydantic-ai |
+
+          ---
+
+          ## Contact
+
+          - General: hello@pydantic.dev
+          - Accounts / billing: accounts@pydantic.dev
+          - Contact form: https://pydantic.dev/contact
+          - Book a discovery call: https://pydantic.dev/contact
+          - Careers: https://pydantic.dev/about#join-the-team
+
+          ---
+
+          ## For AI agents
+
+          Full context for LLMs: /llms-full.txt
+          Pricing (plain text): /pricing.md
+          llms.txt index: /llms.txt
+        title: 'Pydantic AI: Type-Safe Python Framework for AI Agents & LLM Applications'
+        url: https://pydantic.dev/pydantic-ai?featured_on=talkpython
+      - favicon: https://cdn.prod.website-files.com/67824d52d398e5d0c14bb3b2/6829e6dca2eed4580fcef841_6574867738a34feac8a83533_favicon.png
+        id: https://web.appunite.com/blog/understanding-pydantic-ai-a-powerful-alternative-to-lang-chain-and-llama-index
+        image: https://cdn.prod.website-files.com/678252d29e0c0b6adba70b9c/6829e47662b17387d36a66b4_1%20Medium.jpeg
+        text: |-
+          Understanding Pydantic-AI: A Powerful Alternative to LangChain and LlamaIndex (Part: 1) | Appunite Tech Blog
+
+          Our website uses cookies.
+
+          Read more
+
+          Read less
+
+          Reject AllAllow all
+
+          This website stores cookies on your computer. The data is used to collect information about how you interact with our website and allow us to remember you. We use this information to improve and customize your browsing experience and for analytics and metrics about our visitors both on this website and other media.
+
+          Cookie Policy Privacy Notice
+
+          # Understanding Pydantic-AI: A Powerful Alternative to LangChain and LlamaIndex (Part: 1)
+
+          # Understanding Pydantic-AI: A Powerful Alternative to LangChain and LlamaIndex
+
+          ## Introduction
+
+          My journey into AI frameworks began like many others--with excitement, confusion, and a lot of trial and error. After months of building agents with LangChain and LlamaIndex, I kept running into the same issues: complex abstractions that were hard to reason about, inconsistent type hints that led to runtime errors, and testing challenges that made iterative development frustrating.
+
+          That's when I discovered Pydantic-AI, a framework that immediately felt different. Created by the team behind Pydantic (the validation layer used by virtually every major AI framework), it brings a refreshingly straightforward approach to building AI agents. In this article, I'll share what I've learned about Pydantic-AI, how it compares to alternatives, and why it's become my go-to framework for building production AI applications.
+
+          ## What is Pydantic-AI?
+
+          Pydantic-AI is a Python agent framework designed to make it less painful to build production-grade applications with Generative AI. It's developed by the same team behind Pydantic - the validation layer used by OpenAI SDK, Anthropic SDK, LangChain, LlamaIndex, AutoGPT, and many other popular AI tools.
+
+          The key idea is simple but powerful: instead of parsing free-form text responses from AI models, you define schemas for the expected outputs using Pydantic models, and Pydantic-AI handles the interaction with the LLM, ensuring it generates responses that match those schemas.
+
+          ## Why I Chose Pydantic-AI Over Alternatives
+
+          Having invested significant time in both LangChain and LlamaIndex, switching frameworks wasn't a decision I made lightly. Here are the key advantages that convinced me to make the switch:
+
+          ### 1. Python-Centric Design
+
+          While other frameworks introduce their own concepts and abstractions, Pydantic-AI leverages Python's native syntax and familiar control flow. This means you can build AI agents using standard Python best practices, making your code more maintainable and easier to understand.
+
+          I found this particularly refreshing. Instead of learning yet another framework-specific abstraction, I could focus on writing good Python code using patterns I already knew well.
+
+          ### 2. Type Safety Throughout
+
+          Dealing with runtime errors in production AI applications taught me to value type safety. Pydantic-AI is designed to make type checking as powerful and informative as possible. This is a significant advantage over other frameworks where type hints may be incomplete or inconsistent.
+
+          With proper IDE integration, you get autocompletion, error detection, and refactoring support across your entire codebase. This has probably saved me hundreds of hours of debugging already.
+
+          ### 3. Model Agnostic
+
+          When I first started with AI frameworks, I committed heavily to OpenAI's ecosystem. Then I needed to try Anthropic's models, and soon after, Google's Gemini. Each switch meant significant code changes.
+
+          Pydantic-AI supports multiple LLM providers out of the box, including OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral. This gives you the flexibility to switch between providers without changing your core application logic--a feature I've come to appreciate as the AI landscape continues to evolve rapidly.
+
+          ### 4. Dependency Injection System
+
+          One feature I particularly appreciate is Pydantic-AI's optional dependency injection system. Coming from a background in web development with FastAPI, this pattern felt immediately familiar and practical.
+
+          The dependency injection system makes it much easier to test your agents and iterate on their development. You can inject mock data or services during testing, making your tests faster and more reliable--something that was always a pain point with other frameworks.
+
+          ### 5. Built for Production
+
+          Unlike some experimental frameworks, Pydantic-AI is explicitly designed for production use. It integrates with Pydantic Logfire for real-time debugging, performance monitoring, and behavior tracking - essential features for maintaining AI applications in production.
+
+          After deploying several agents to production, I've come to value these capabilities more and more.
+
+          ## Getting Started with Pydantic-AI
+
+          Let's start with a simple "Hello World" example to understand the basics of Pydantic-AI:
+
+          ```
+          from pydantic_ai import Agent
+
+          agent = Agent(
+              'google-gla:gemini-1.5-flash',
+              system_prompt='Be concise, reply with one sentence.',
+          )
+
+          result = agent.run_sync('Where does "hello world" come from?')
+          print(result.output)
+          # Output: "The first known use of "hello, world" was in a 1974 textbook about the C programming language."
+
+          ```
+
+          This simple example demonstrates a few key concepts:
+
+          1. Creating an Agent with a specified model
+          2. Providing a system prompt to guide the model's responses
+          3. Running the agent and getting a result
+
+          But the real power of Pydantic-AI comes when we start using structured outputs and tools.
+
+          ## Building a Comprehensive Bank Support Agent
+
+          For this series of articles, I wanted to create an example that goes beyond basic tutorials--something that demonstrates real-world patterns while remaining accessible. I've chosen to build a bank support agent that can answer customer questions, access account information, and perform actions like blocking a card.
+
+          Note: This bank support agent example is inspired by and adapted from the official Pydantic-AI documentation. I've chosen to build upon this example because it effectively demonstrates the core capabilities of the framework while providing a practical use case. You can find the original example at https://ai.pydantic.dev/examples/bank-support/.
+
+          Let's look at how we define structured outputs, dependency injection, and tools in our bank support agent:
+
+          ```
+          from dataclasses import dataclass
+          from pydantic import BaseModel, Field
+          from pydantic_ai import Agent, RunContext
+          from typing import List, Dict, Any
+
+          # Simulate a database connection
+          class DatabaseConn:
+              async def customer_name(self, id: int) -> str:
+                  # In a real app, this would query a database
+                  return "John Doe"
+
+              async def customer_balance(self, id: int, include_pending: bool) -> float:
+                  # In a real app, this would query a database
+                  return 1234.56 if not include_pending else 1123.45
+
+              async def recent_transactions(self, id: int, limit: int = 5) -> List[Dict[str, Any]]:
+                  # In a real app, this would query a database
+                  return [
+                      {"date": "2023-06-15", "description": "Grocery Store", "amount": -78.52},
+                      {"date": "2023-06-14", "description": "Salary Deposit", "amount": 2500.00},
+                  ][:limit]
+
+          @dataclass
+          class SupportDependencies:
+              customer_id: int
+              db: DatabaseConn
+
+          class SupportOutput(BaseModel):
+              support_advice: str = Field(description='Advice returned to the customer')
+              block_card: bool = Field(description="Whether to block the customer's card")
+              risk_level: int = Field(description='Risk level of query', ge=0, le=10)
+              follow_up_actions: List[str] = Field(description='List of follow-up actions to take', default_factory=list)
+
+          support_agent = Agent(
+              'openai:gpt-4o',
+              deps_type=SupportDependencies,
+              output_type=SupportOutput,
+              system_prompt=(
+                  'You are a support agent at First National Bank. '
+                  'Provide helpful and accurate informati
+        title: 'Understanding Pydantic-AI: A Powerful Alternative to LangChain and LlamaIndex (Part: 1)  | Appunite Tech Blog'
+        url: https://web.appunite.com/blog/understanding-pydantic-ai-a-powerful-alternative-to-lang-chain-and-llama-index
+      - id: https://github.com/pydantic/pydantic-ai/
+        publishedDate: '2024-06-21T15:55:04.000Z'
+        text: "# Repository: pydantic/pydantic-ai\n\nAI Agent Framework, the Pydantic way\n\n- Stars: 18040\n- Forks: 2263\n-
+          Watchers: 113\n- Open issues: 644\n- Primary language: Python\n- Languages: Python (99.6%), Shell (0.3%), TypeScript,
+          Makefile\n- License: MIT License (MIT)\n- Topics: agent-framework, genai, llm, pydantic, python\n- Default branch:
+          main\n- Homepage: https://pydantic.dev/pydantic-ai\n- Created: 2024-06-21T15:55:04Z\n- Last push: 2026-06-27T17:46:11Z\n-
+          Contributors: 480 (top: DouweM, samuelcolvin, Kludex, dsfaccini, dmontagu, alexmojaki, adtyavrdhn, sydney-runkle,
+          Viicos, Wh1isper)\n- Releases: 270\n- Latest release: v2.0.0 (2026-06-23T15:38:17Z)\n\n---\n\n \n \n \n \n \n \n
+          \n \n \n GenAI Agent Framework, the Pydantic way \n \n \n \n \n \n \n \n \n \n\n---\n\n**Documentation**: [ai.pydantic.dev](https://ai.pydantic.dev/)\n\n---\n\n###
+          Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+          grade applications and workflows with Generative AI. \n\nFastAPI revolutionized web development by offering an innovative
+          and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python
+          features like type hints.\n\nYet despite virtually every Python agent framework and LLM library using Pydantic Validation,
+          when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave
+          us the same feeling.\n\nWe built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and
+          agent development.\n\n## Why use Pydantic AI\n\n1. **Built by the Pydantic Team**:\n\n[Pydantic Validation](https://docs.pydantic.dev/latest/)
+          is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers,
+          CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:\n\n1.
+          **Model-agnostic**:\n\nSupports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI,
+          Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud,
+          Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius,
+          OVHcloud, Alibaba Cloud, and SambaNova. If your favorite model or provider is not listed, you can easily implement
+          a [custom model](https://ai.pydantic.dev/models/overview#custom-models).\n\n1. **Seamless Observability**:\n\nTightly
+          [integrates](https://ai.pydantic.dev/logfire) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose
+          OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior,
+          tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that
+          too](https://ai.pydantic.dev/logfire#alternative-observability-backends).\n\n1. **Fully Type-safe**:\n\nDesigned
+          to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](https://ai.pydantic.dev/agents#static-type-checking),
+          moving entire classes of errors from runtime to write-time for a bit of that Rust \"if it compiles, it works\" feel.\n\n1.
+          **Powerful Evals**:\n\nEnables you to systematically test and [evaluate](https://ai.pydantic.dev/evals) the performance
+          and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.\n\n1.
+          **Extensible by Design**:\n\nBuild agents from composable [capabilities](https://ai.pydantic.dev/capabilities) that
+          bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools),
+          [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools),
+          pick from the [Pydantic AI Harness](https://ai.pydantic.dev/harness/overview) capability library, build your own,
+          or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec)
+          -- no code required.\n\n1. **MCP and UI**:\n\nIntegrates the [Model Context Protocol](https://ai.pydantic.dev/mcp/overview)
+          and various [UI event stream](https://ai.pydantic.dev/ui/overview) standards to give your agent access to external
+          tools and data and build interactive applications with streaming event-based communication.\n\n1. **Human-in-the-Loop
+          Tool Approval**:\n\nEasily lets you flag that certain tool calls [require approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval)
+          before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.\n\n1.
+          **Durable Execution**:\n\nEnables you to build [durable agents](https://ai.pydantic.dev/durable_execution/overview/)
+          that can preserve their progress across transient API failures and application errors or restarts, and handle long-running,
+          asynchronous, and human-in-the-loop workflows with production-grade reliability.\n\n1. **Streamed Outputs**:\n\nProvides
+          the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate
+          validation, ensuring real time access to generated data.\n\n1. **Graph Support**:\n\nProvides a powerful way to
+          define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard
+          control flow can degrade to spaghetti code.\n\nRealistically though, no list is going to be as convincing as [giving
+          it a try](#next-steps) and seeing how it makes you feel!\n\n## Hello World Example\n\nHere's a minimal example of
+          Pydantic AI:\n\n```python\nfrom pydantic_ai import Agent\n\n# Define a very simple agent including the model to
+          use, you can also set the model when running the agent.\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n    #
+          Register static instructions using a keyword argument to the agent.\n    # For more complex dynamically-generated
+          instructions, see the example below.\n    instructions='Be concise, reply with one sentence.',\n)\n\n# Run the agent
+          synchronously, conducting a conversation with the LLM.\nresult = agent.run_sync('Where does \"hello world\" come
+          from?')\nprint(result.output)\n\"\"\"\nThe first known use of \"hello, world\" was in a 1974 textbook about the
+          C programming language.\n\"\"\"\n```\n\n_(This example is complete, it can be run \"as is\", assuming you've [installed
+          the `pydantic_ai` package](https://ai.pydantic.dev/install))_\n\nThe exchange will be very short: Pydantic AI will
+          send the instructions and the user prompt to the LLM, and the model will return a text response.\n\nNot very interesting
+          yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions),
+          [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities)
+          to build more powerful agents.\n\nHere's the same agent with [thinking](https://ai.pydantic.dev/capabilities#thinking)
+          and [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools) capabilities:\n\n```python\nfrom
+          pydantic_ai import Agent\nfrom pydantic_ai.capabilities import Thinking, WebSearch\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n
+          \   instructions='Be concise, reply with one sentence.',\n    capabilities=[Thinking(), WebSearch()],\n)\n\nresult
+          = agent.run_sync('What was the mass of the largest meteorite found this year?')\nprint(result.output)\n```\n\n##
+          Tools & Dependency Injection Example\n\nHere is a concise example using Pydantic AI to build a support agent for
+          a bank:\n\n**(Better documented example [in the docs](https://ai.pydantic.dev/#tools-dependency-injection-example))**\n\n```python\nfrom
+          dataclasses import dataclass\n\nfrom pydantic import BaseModel, Field\nfrom pydantic_ai import Agent, RunContext\n\nfrom
+          bank_database import DatabaseConn\n\n# SupportDependencies is used to pass data, connections, and logic into the
+          model that will be needed when r"
+        title: pydantic/pydantic-ai
+        url: https://github.com/pydantic/pydantic-ai/
+      - id: https://pypi.org/project/pydantic-ai/1.84.1/
+        text: "# pydantic-ai v1.84.1\n\nAgent Framework / shim to use Pydantic with LLMs\n\n- Email: Samuel Colvin <samuel@pydantic.dev>,
+          Marcelo Trylesinski <marcelotryle@gmail.com>, David Montague <david@pydantic.dev>, Alex Hall <alex@pydantic.dev>,
+          Douwe Maan <douwe@pydantic.dev>\n- License: MIT\n- Python: >=3.10\n- Status: 5 - Production/Stable\n- PyPI: https://pypi.org/project/pydantic-ai/\n\n##
+          Downloads\n\n| Period | Count |\n| --- | --- |\n| Last day | 1,504,522 |\n| Last week | 9,665,697 |\n| Last month
+          | 41,799,164 |\n\n## Links\n\n- Changelog: https://github.com/pydantic/pydantic-ai/releases\n- Documentation: https://ai.pydantic.dev\n-
+          Homepage: https://ai.pydantic.dev\n- Source: https://github.com/pydantic/pydantic-ai\n\n## Extras\n\n- a2a\n- dbos\n-
+          examples\n- outlines-llamacpp\n- outlines-mlxlm\n- outlines-sglang\n- outlines-transformers\n- outlines-vllm-offline\n-
+          prefect\n- sentence-transformers\n- voyageai\n\n---\n\n## Readme\n\n \n \n \n \n \n \n \n \n \n GenAI Agent Framework,
+          the Pydantic way \n \n \n \n \n \n \n \n \n \n\n---\n\n**Documentation**: [ai.pydantic.dev](https://ai.pydantic.dev/)\n\n---\n\n###
+          Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+          grade applications and workflows with Generative AI. \n\nFastAPI revolutionized web development by offering an innovative
+          and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python
+          features like type hints.\n\nYet despite virtually every Python agent framework and LLM library using Pydantic Validation,
+          when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave
+          us the same feeling.\n\nWe built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and
+          agent development.\n\n## Why use Pydantic AI\n\n1. **Built by the Pydantic Team**:\n\n[Pydantic Validation](https://docs.pydantic.dev/latest/)
+          is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers,
+          CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:\n\n1.
+          **Model-agnostic**:\n\nSupports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI,
+          Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex
+          AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel,
+          Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you
+          can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).\n\n1. **Seamless Observability**:\n\nTightly
+          [integrates](https://ai.pydantic.dev/logfire) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose
+          OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior,
+          tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that
+          too](https://ai.pydantic.dev/logfire#alternative-observability-backends).\n\n1. **Fully Type-safe**:\n\nDesigned
+          to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](https://ai.pydantic.dev/agents#static-type-checking),
+          moving entire classes of errors from runtime to write-time for a bit of that Rust \"if it compiles, it works\" feel.\n\n1.
+          **Powerful Evals**:\n\nEnables you to systematically test and [evaluate](https://ai.pydantic.dev/evals) the performance
+          and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.\n\n1.
+          **Extensible by Design**:\n\nBuild agents from composable [capabilities](https://ai.pydantic.dev/capabilities) that
+          bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools),
+          [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools),
+          pick from the [Pydantic AI Harness](https://ai.pydantic.dev/harness/overview) capability library, build your own,
+          or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec)
+          -- no code required.\n\n1. **MCP, A2A, and UI**:\n\nIntegrates the [Model Context Protocol](https://ai.pydantic.dev/mcp/overview),
+          [Agent2Agent](https://ai.pydantic.dev/a2a), and various [UI event stream](https://ai.pydantic.dev/ui/overview) standards
+          to give your agent access to external tools and data, let it interoperate with other agents, and build interactive
+          applications with streaming event-based communication.\n\n1. **Human-in-the-Loop Tool Approval**:\n\nEasily lets
+          you flag that certain tool calls [require approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval)
+          before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.\n\n1.
+          **Durable Execution**:\n\nEnables you to build [durable agents](https://ai.pydantic.dev/durable_execution/overview/)
+          that can preserve their progress across transient API failures and application errors or restarts, and handle long-running,
+          asynchronous, and human-in-the-loop workflows with production-grade reliability.\n\n1. **Streamed Outputs**:\n\nProvides
+          the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate
+          validation, ensuring real time access to generated data.\n\n1. **Graph Support**:\n\nProvides a powerful way to
+          define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard
+          control flow can degrade to spaghetti code.\n\nRealistically though, no list is going to be as convincing as [giving
+          it a try](#next-steps) and seeing how it makes you feel!\n\n## Hello World Example\n\nHere's a minimal example of
+          Pydantic AI:\n\n```python\nfrom pydantic_ai import Agent\n\n# Define a very simple agent including the model to
+          use, you can also set the model when running the agent.\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n    #
+          Register static instructions using a keyword argument to the agent.\n    # For more complex dynamically-generated
+          instructions, see the example below.\n    instructions='Be concise, reply with one sentence.',\n)\n\n# Run the agent
+          synchronously, conducting a conversation with the LLM.\nresult = agent.run_sync('Where does \"hello world\" come
+          from?')\nprint(result.output)\n\"\"\"\nThe first known use of \"hello, world\" was in a 1974 textbook about the
+          C programming language.\n\"\"\"\n```\n\n_(This example is complete, it can be run \"as is\", assuming you've [installed
+          the `pydantic_ai` package](https://ai.pydantic.dev/install))_\n\nThe exchange will be very short: Pydantic AI will
+          send the instructions and the user prompt to the LLM, and the model will return a text response.\n\nNot very interesting
+          yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions),
+          [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities)
+          to build more powerful agents.\n\nHere's the same agent with [thinking](https://ai.pydantic.dev/capabilities#thinking)
+          and [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools) capabilities:\n\n```python\nfrom
+          pydantic_ai import Agent\nfrom pydantic_ai.capabilities import Thinking, WebSearch\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n
+          \   instructions='Be concise, reply with one sentence.',\n    capabilities=[Thinking(), WebSearch()],\n)\n\nresult
+          = agent.run_sync('What was the mass of the largest meteorite found this year?')\nprint(result.output)\n```\n\n##
+          Tools & Dependency Injection Example\n\nHere is a concise example using Pydantic AI to build a support agent for
+          a bank:\n\n**(Better documented examp"
+        title: pydantic-ai v1.84.1
+        url: https://pypi.org/project/pydantic-ai/1.84.1/
+      - id: https://headofagents.ai/pydanticai
+        image: https://headofagents.ai/api/og?title=PydanticAI&description=Type-safe+AI+agent+framework+built+on+Pydantic.+Strong+validation+and+structured+outputs.&faviconUrl=https://www.google.com/s2/favicons?sz=128%26domain_url=https://ai.pydantic.dev
+        text: |-
+          PydanticAI: Agent framework from the Pydantic team - HeadOfAgents
+
+          # PydanticAI
+
+          ## Type-safe AI agent framework built on Pydantic. Strong validation and structured outputs.
+
+          PydanticAI is an open-source Python agent framework developed by the team behind the widely-used Pydantic data validation library. It brings Pydantic's signature approach -- strict type safety and structured validation -- directly into the AI agent development workflow, making it a natural fit for Python developers who already rely on Pydantic in their applications.
+
+          At its core, PydanticAI provides a clean abstraction for building AI agents with strongly typed inputs, outputs, and dependencies. Agents are defined using Python classes and decorators, and all data flowing through them is validated against Pydantic models. This means agents produce predictable, structured outputs rather than raw text, which is essential for production systems where downstream code needs to parse and act on LLM responses.
+
+          The framework supports a wide range of model providers out of the box: OpenAI, Anthropic, Google, xAI, AWS Bedrock, Groq, Mistral, Cohere, Cerebras, Hugging Face, and OpenRouter. This breadth makes it straightforward to swap providers without rewriting agent logic.
+
+          PydanticAI includes a dependency injection system that allows agents to declare and receive runtime dependencies -- database connections, HTTP clients, configuration -- in a testable, type-safe way. This patterns makes agents significantly easier to unit test compared to frameworks that rely on global state or implicit context.
+
+          Function tools are first-class citizens: Python functions can be registered as tools that agents call during execution, with full type inference for arguments and return values. The framework also ships with built-in tools and supports third-party toolsets, as well as MCP (Model Context Protocol) client and server integration for interoperability with the broader MCP ecosystem.
+
+          For multi-agent workflows, PydanticAI supports agent composition patterns and includes Pydantic Graph -- a beta module for defining stateful, branching agent pipelines with parallel execution support. Pydantic Evals, also included, provides a structured evaluation framework with built-in evaluators, LLM-as-judge support, and Logfire integration for tracing.
+
+          Observability is handled through Pydantic Logfire, which provides structured logging and tracing out of the box. This integration is tighter than what most competing frameworks offer.
+
+          Compared to alternatives like LangChain or LlamaIndex, PydanticAI is more opinionated about type safety and validation, which trades some flexibility for reliability. Compared to lower-level SDKs like the Anthropic or OpenAI Python clients, it adds significant scaffolding for agents, tools, and structured outputs without requiring boilerplate. Compared to CrewAI or AutoGen, it is more Python-idiomatic and leans heavily on the Pydantic ecosystem rather than introducing its own abstractions for things validation handles well already.
+
+          ## Key Features
+
+          - Type-safe agent framework with Pydantic model validation for all inputs and outputs
+          - Multi-provider support: OpenAI, Anthropic, Google, Groq, Mistral, Bedrock, Cohere, Cerebras, Hugging Face, OpenRouter, and more
+          - Dependency injection system for testable, runtime-configurable agents
+          - Function tools with full type inference, plus built-in and third-party toolset support
+          - MCP (Model Context Protocol) client and server integration
+          - Pydantic Graph for stateful multi-agent pipelines with parallel execution (beta)
+          - Pydantic Evals for structured agent evaluation with LLM-as-judge and custom evaluators
+          - Native Pydantic Logfire integration for observability and tracing
+
+          ## Pros & Cons
+
+          ### Pros
+
+          - Deep type safety and structured output validation inherited from Pydantic makes production deployments more reliable
+          - Broad model provider support with a consistent API across providers
+          - Dependency injection makes agents genuinely testable without mocking LLM calls
+          - Strong ecosystem coherence -- Logfire, Evals, and Graph are purpose-built to work together
+          - Python-idiomatic design that fits naturally into existing Pydantic-based codebases
+
+          ### Cons
+
+          - Python-only; not an option for TypeScript or other language stacks
+          - Pydantic Graph (multi-agent pipelines) is still in beta and may have API changes
+          - Heavier Pydantic dependency may feel excessive for simple, single-turn LLM use cases
+          - Smaller community and fewer third-party integrations compared to LangChain
+          - Observability story is tightly coupled to Pydantic Logfire, which may conflict with existing monitoring setups
+
+          ## Pricing
+
+          PydanticAI is open source and free to use under its open-source license. Visit the official website for details on any paid offerings such as Pydantic Logfire, which is a separate hosted product.
+
+          ## Who Is This For?
+
+          PydanticAI is best suited for Python developers building production AI agents who prioritize type safety, structured outputs, and testability over rapid prototyping flexibility. It is particularly well-matched to teams already using Pydantic in their stack -- such as those building FastAPI services -- where a consistent validation model across the entire application is valuable. It also fits teams that need to evaluate agents systematically and want observability baked in from the start.
+
+          Categories:
+
+          #### Tags:
+
+          Copy Link C
+
+          Share:
+
+          Ad
+
+          Get listed as a PydanticAI expert
+
+          ### Similar to PydanticAI
+        title: 'PydanticAI: Agent framework from the Pydantic team - HeadOfAgents'
+        url: https://headofagents.ai/pydanticai
+      - favicon: https://pydantic.dev/favicon/favicon-32x32.png
+        id: https://pydantic.dev/
+        image: https://pydantic.dev/opengraph-image.jpg?0dd4085499769607
+        text: |-
+          # Pydantic -- Validation, agents, observability
+
+          Pydantic is the AI engineering stack for teams building with Python. It covers the full cycle: validate data, build type-safe agents, route model calls, and observe everything in production. Founded in 2018 by Samuel Colvin. Backed by Sequoia, Partech, and Irregular.
+
+          ---
+
+          ## What we make
+
+          ### Pydantic
+
+          The most widely used data validation library for Python. Open source, MIT license, ~500 million monthly downloads.
+
+          Pydantic enforces standard Python type annotations at runtime. It parses and coerces data, generates JSON schemas, and plays well with IDEs, type checkers, and your brain. Fast and extensible.
+
+          The Pydantic library is, has always been, and always will be free.
+
+          - Docs: https://pydantic.dev/docs/validation/latest/get-started/
+          - GitHub: https://github.com/pydantic/pydantic
+          - PyPI: https://pypi.org/project/pydantic
+
+          ### Pydantic AI
+
+          A production-grade Python agent framework. Open source, MIT license.
+
+          Pydantic AI is type-safe and model-agnostic. It supports OpenAI, Anthropic, Google Gemini, AWS Bedrock, Groq, Mistral, Ollama, and others. It has built-in OpenTelemetry tracing, so you get full observability out of the box whether you use Logfire or any other OTel backend.
+
+          Key features: structured outputs, function tools, MCP (Model Context Protocol) support, streaming, multi-agent workflows, durable execution, AG-UI protocol.
+
+          The goal: a minimalistic framework that lets developers write AI apps using standard software engineering practices.
+
+          - Docs: https://pydantic.dev/docs/ai/overview/
+          - GitHub: https://github.com/pydantic/pydantic-ai
+          - PyPI: https://pypi.org/project/pydantic-ai
+
+          ### Pydantic Logfire
+
+          A full-stack AI observability platform. Commercial SaaS; SDKs are open source.
+
+          Logfire is built on OpenTelemetry. It gives you end-to-end visibility across your entire application -- HTTP requests, database queries, LLM calls, agent workflows, RAG pipelines -- all on one correlated timeline. No vendor lock-in.
+
+          Core features:
+
+          - Distributed traces, logs, and metrics
+          - LLM traces: prompts, completions, token counts, model parameters
+          - LLM cost tracking across providers
+          - Online evals: automated quality monitoring for production AI agents
+          - Pydantic Evals integration
+          - SQL query interface for ad-hoc analysis
+          - Live view with pending spans for real-time debugging
+          - Logfire MCP server for AI-assisted trace investigation
+          - Dashboards and alerting
+          - OpenTelemetry-native, so any OTel-compatible language can send data; Python (`logfire` on PyPI) and JavaScript/TypeScript (`@pydantic/logfire-node`, `-browser`, `-cf-workers` on npm; source at https://github.com/pydantic/logfire-js) get first-party SDKs that we put extra polish into. A Rust SDK exists too. Everything else: bring your own OTel.
+
+          Free tier: 10M logs/spans/metrics/month, no credit card required. Paid plans from $49/month.
+
+          - App: https://logfire.pydantic.dev
+          - Docs: https://pydantic.dev/docs/logfire/get-started
+          - Pricing: https://pydantic.dev/pricing
+
+          ### Pydantic Evals
+
+          A code-first evaluation library for AI systems. Open source.
+
+          Available in two languages, both wire-compatible:
+
+          - Python -- ships in the pydantic-ai package. Docs: https://pydantic.dev/docs/ai/evals/evals/
+          - JavaScript / TypeScript -- ships in the Logfire JS SDK, exported from the `logfire/evals` subpath. GitHub: https://github.com/pydantic/logfire-js
+
+          Datasets, experiments, cases, and evaluator results all serialize to the same YAML/JSON format and render in the same Pydantic Logfire UI regardless of which language you wrote the eval in. Built-in evaluators (`Equals`, `Contains`, `LLMJudge`, etc.) and report-level evaluators (`ConfusionMatrixEvaluator`, `ROCAUCEvaluator`, etc.) are available in both. Both support offline evaluation and online evaluation for live production monitoring.
+
+          ### Pydantic AI Gateway
+
+          A unified LLM proxy with spend controls and audit trails. Commercial SaaS; consolidating into Logfire.
+
+          One API key for all major LLM providers: OpenAI, Anthropic, Google, AWS Bedrock, Groq, and more. Zero schema translation -- requests pass through in native format, so new provider features work immediately. Granular spend caps per project or user. Full audit trail via OpenTelemetry. Single-digit millisecond overhead via Cloudflare's global edge.
+
+          - Page: https://pydantic.dev/ai-gateway
+
+          ---
+
+          ## Why developers choose Pydantic
+
+          Pydantic came from frustration. Type hints in Python did nothing at runtime. Samuel Colvin wanted to know if they could validate data instead. They could.
+
+          That origin matters. The tools are built from among developers, not over them. The community has grown because the problems being solved are real problems the team experienced themselves.
+
+          The philosophy: the most powerful tools can still be easy to use. Fast to start. Honest about trade-offs. Clear, not clever.
+
+          Five things that matter to the team:
+
+          - Developer experience is the north star, not an afterthought
+          - OpenTelemetry everywhere -- no lock-in by design
+          - Type safety throughout, from validation to agents to observability
+          - Open source first for libraries; commercial only where hosting adds real value
+          - Pedantry is a feature, not a bug
+
+          ---
+
+          ## Key links
+
+          | | |
+          | --- | --- |
+          | Homepage | https://pydantic.dev |
+          | Logfire app | https://logfire.pydantic.dev |
+          | Logfire docs | https://pydantic.dev/docs/logfire/get-started |
+          | Pydantic AI docs | https://pydantic.dev/docs/ai/overview/ |
+          | Pydantic docs | https://pydantic.dev/docs/validation/latest/get-started/ |
+          | Pricing | https://pydantic.dev/pricing |
+          | Blog | https://pydantic.dev/articles |
+          | GitHub | https://github.com/pydantic |
+          | PyPI: pydantic | https://pypi.org/project/pydantic |
+          | PyPI: pydantic-ai | https://pypi.org/project/pydantic-ai |
+
+          ---
+
+          ## Contact
+
+          - General: hello@pydantic.dev
+          - Accounts / billing: accounts@pydantic.dev
+          - Contact form: https://pydantic.dev/contact
+          - Book a discovery call: https://pydantic.dev/contact
+          - Careers: https://pydantic.dev/about#join-the-team
+
+          ---
+
+          ## For AI agents
+
+          Full context for LLMs: /llms-full.txt
+          Pricing (plain text): /pricing.md
+          llms.txt index: /llms.txt
+        title: Pydantic | The end-to-end AI engineering stack
+        url: https://pydantic.dev/
+      - favicon: https://pydantic.dev/docs/favicon.png
+        id: https://pydantic.dev/docs/ai/overview/install/
+        image: https://pydantic.dev/docs/og/ai/overview/install.png
+        text: |-
+          Installation | Pydantic Docs Skip to content
+
+          # Installation
+
+          Pydantic AI is available on PyPI as pydantic-ai so installation is as simple as:
+
+          - pip
+          - uv
+
+          Terminal
+
+          ```
+          pip install pydantic-ai
+
+          ```
+
+          (Requires Python 3.10+)
+
+          This installs the`pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the CLI, MCP, Evals, Web UI, Retries, and Logfire integrations. To use any other models or integrations, add the relevant extras to your install command, e.g.`pydantic-ai[bedrock,temporal]`. Alternatively, you can install the`pydantic-ai-slim` package with only the extras you need.
+
+          ## Use with Pydantic Logfire
+
+          Pydantic AI has an excellent (but completely optional) integration with Pydantic Logfire to help you view and understand agent runs.
+
+          Logfire comes included with`pydantic-ai`(but not the "slim" version), so you can typically start using it immediately by following the Logfire setup docs.
+
+          ## Running Examples
+
+          We distribute the pydantic_ai_examples directory as a separate PyPI package (pydantic-ai-examples) to make examples extremely easy to customize and run.
+
+          To install examples, use the`examples` optional group:
+
+          - pip
+          - uv
+
+          Terminal
+
+          ```
+          pip install "pydantic-ai[examples]"
+
+          ```
+
+          To run the examples, follow instructions in the examples docs.
+
+          ## Slim Install
+
+          If you know which model you're going to use and want to avoid installing superfluous packages, you can use the pydantic-ai-slim package. For example, if you're using just OpenAIChatModel, you would run:
+
+          - pip
+          - uv
+
+          Terminal
+
+          ```
+          pip install "pydantic-ai-slim[openai]"
+
+          ```
+
+          `pydantic-ai-slim` has the following optional groups:
+
+          - `logfire`-- installs Pydantic Logfire dependency`logfire` PyPI ↗
+          - `evals`-- installs Pydantic Evals dependency`pydantic-evals` PyPI ↗
+          - `openai`-- installs OpenAI Model dependency`openai` PyPI ↗
+          - `google`-- installs Google Model dependency`google-genai` PyPI ↗
+          - `anthropic`-- installs Anthropic Model dependency`anthropic` PyPI ↗
+          - `groq`-- installs Groq Model dependency`groq` PyPI ↗
+          - `mistral`-- installs Mistral Model dependency`mistralai` PyPI ↗
+          - `cohere`- installs Cohere Model dependency`cohere` PyPI ↗
+          - `bedrock`- installs Bedrock Model dependency`boto3` PyPI ↗
+          - `xai`- installs xAI Model dependency`xai-sdk` PyPI ↗
+          - `openrouter`- installs the OpenRouter dependency`openai` PyPI ↗
+          - `huggingface`- installs Hugging Face Model dependency`huggingface-hub` PyPI ↗
+          - `sentence-transformers`- installs Sentence Transformers Embedding Model dependency`sentence-transformers` PyPI ↗
+          - `voyageai`- installs VoyageAI Embedding Model dependency`voyageai` PyPI ↗
+          - `duckduckgo`- installs DuckDuckGo Search Tool dependency`ddgs` PyPI ↗
+          - `tavily`- installs Tavily Search Tool dependency`tavily-python` PyPI ↗
+          - `exa`- installs Exa Search Tool dependency`exa-py` PyPI ↗
+          - `web-fetch`- installs Web Fetch Tool dependency`markdownify` PyPI ↗
+          - `cli`- installs CLI dependencies`rich` PyPI ↗,`prompt-toolkit` PyPI ↗, and`argcomplete` PyPI ↗
+          - `mcp`- installs MCP dependency`fastmcp-slim[client]` PyPI ↗
+          - `ui`- installs UI Event Streams dependency`starlette` PyPI ↗
+          - `web`- installs Web UI dependencies`starlette` PyPI ↗,`httpx` PyPI ↗, and`uvicorn` PyPI ↗
+          - `ag-ui`- installs AG-UI Event Stream Protocol dependencies`ag-ui-protocol` PyPI ↗ and`starlette` PyPI ↗
+          - `retries`- installs HTTP Retries dependency`tenacity` PyPI ↗
+          - `temporal`- installs Temporal Durable Execution dependency`temporalio` PyPI ↗
+          - `dbos`- installs DBOS Durable Execution dependency`dbos` PyPI ↗
+          - `prefect`- installs Prefect Durable Execution dependency`prefect` PyPI ↗
+          - `spec`- installs AgentSpec dependencies`pyyaml` PyPI ↗ and`pydantic-handlebars` PyPI ↗
+
+          You can also install dependencies for multiple models and use cases, for example:
+
+          - pip
+          - uv
+
+          Terminal
+
+          ```
+          pip install "pydantic-ai-slim[openai,google,logfire]"
+
+          ```
+
+          Was this page helpful?
+        title: Installation | Pydantic Docs
+        url: https://pydantic.dev/docs/ai/overview/install/
+      costDollars:
+        total: 0.005
+      requestId: 692c4cda8f11256ea3f27e8b00d44658
+    status:
+      code: 200
+      message: OK
+version: 1

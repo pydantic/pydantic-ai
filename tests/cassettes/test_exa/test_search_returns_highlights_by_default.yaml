@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+      host:
+      - api.exa.ai
+    method: POST
+    parsed_body:
+      contents:
+        highlights: true
+      numResults: 2
+      query: What is Pydantic AI?
+      type: auto
+    uri: https://api.exa.ai/search
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-expose-headers:
+      - PAYMENT-REQUIRED,PAYMENT-RESPONSE,payment-required,payment-response
+      connection:
+      - keep-alive
+      content-length:
+      - '2369'
+      content-security-policy:
+      - frame-ancestors 'self'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      cross-origin-resource-policy:
+      - same-origin
+      etag:
+      - W/"23da-MiCZfdAprHhhJX0tZ4tMn8lNLhY"
+      origin-agent-cluster:
+      - ?1
+      referrer-policy:
+      - no-referrer
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      costDollars:
+        search:
+          neural: 0.007
+        total: 0.007
+      effectiveFilters:
+        excludeDomains: []
+        excludeText: []
+        excludeUrls: []
+        includeDomains: []
+        includeText: []
+        includeUrls: []
+      requestId: 908e5393d933b9f4f8c29962192eba71
+      resolvedSearchType: ''
+      results:
+      - favicon: https://pydantic.dev/docs/favicon.png
+        highlights:
+        - |-
+          # Pydantic AI
+          ...
+          GenAI Agent Framework, the Pydantic way
+          ...
+          Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+          ...
+          We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+          ...
+          `SupportDependencies
+        id: https://pydantic.dev/docs/ai/overview/
+        image: https://pydantic.dev/docs/og/ai/overview/index.png
+        title: Pydantic AI | Pydantic Docs
+        url: https://pydantic.dev/docs/ai/overview/
+      - highlights:
+        - "AI Agent Framework, the Pydantic way\n...\n### Pydantic AI is a Python agent framework designed to help you quickly,
+          confidently, and painlessly build production grade applications and workflows with Generative AI. \n\nFastAPI revolutionized
+          web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev)
+          and modern Python features like type hints.\n...\nWe built Pydantic AI with one simple aim: to bring that FastAPI
+          feeling to GenAI app and agent development.\n...\nand model settings into\n...\nsearch](https://ai\n...\npydantic.dev/capabilities#provider-adaptive-tools),
+          [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools),
+          pick\n...\n](https://ai\n...\nantic.dev/harness/overview) capability library, build your own, or install [third-party
+          capability packages](https://ai.p\n...\nantic.dev/extensibility). Define agents entirely in [YAML\n...\nJSON](https://\n...\nagent-spec\n...\n-
+          [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) - Type-safe
+          agent framework"
+        id: https://github.com/pydantic/pydantic-ai
+        publishedDate: '2024-06-21T15:55:04.000Z'
+        title: AI Agent Framework, the Pydantic way - GitHub
+        url: https://github.com/pydantic/pydantic-ai
+      searchTime: 1695.1
+    status:
+      code: 200
+      message: OK
+version: 1

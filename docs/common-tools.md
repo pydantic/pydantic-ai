@@ -231,8 +231,7 @@ pip/uv-add "pydantic-ai-slim[exa]"
 
 You can use Exa tools individually or as a toolset. The following tools are available:
 
-- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with various search types (auto, keyword, neural, fast, deep)
-- [`exa_find_similar_tool`][pydantic_ai.common_tools.exa.exa_find_similar_tool]: Find pages similar to a given URL
+- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web (with `auto`, `fast`, or `deep` search types), returning token-efficient highlights by default
 - [`exa_get_contents_tool`][pydantic_ai.common_tools.exa.exa_get_contents_tool]: Get full text content from URLs
 - [`exa_answer_tool`][pydantic_ai.common_tools.exa.exa_answer_tool]: Get AI-powered answers with citations
 
@@ -257,6 +256,30 @@ result = agent.run_sync('What are the latest developments in quantum computing?'
 print(result.output)
 ```
 
+By default each result's `text` contains token-efficient highlight snippets relevant to the query;
+set `content='text'` to return the full page text instead, and `max_characters` to cap content length.
+
+Use `include_domains`/`exclude_domains` to restrict (or exclude) result domains.
+
+```py {title="exa_domain_filtering.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.exa import exa_search_tool
+
+api_key = os.getenv('EXA_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[exa_search_tool(api_key, include_domains=['arxiv.org'])],
+    system_prompt='Search the web for information using Exa.',
+)
+
+result = agent.run_sync('Find recent papers about transformer architectures')
+print(result.output)
+```
+
 #### Using ExaToolset
 
 For better efficiency when using multiple Exa tools, use [`ExaToolset`][pydantic_ai.common_tools.exa.ExaToolset]
@@ -276,9 +299,9 @@ toolset = ExaToolset(
     num_results=5,
     max_characters=1000,  # Limit text content to control token usage
     include_search=True,  # Include the search tool (default: True)
-    include_find_similar=True,  # Include the find_similar tool (default: True)
-    include_get_contents=False,  # Exclude the get_contents tool
-    include_answer=True,  # Include the answer tool (default: True)
+    include_find_similar=False,  # Exclude the find_similar tool
+    include_get_contents=True,  # Include the get_contents tool
+    include_answer=False,  # Exclude the answer tool
 )
 
 agent = Agent(

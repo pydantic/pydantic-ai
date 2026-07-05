@@ -1,0 +1,111 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '151'
+      content-type:
+      - application/json
+      host:
+      - api.exa.ai
+    method: POST
+    parsed_body:
+      contents:
+        text:
+          maxCharacters: 500
+      includeDomains:
+      - ai.pydantic.dev
+      numResults: 1
+      query: What is Pydantic AI?
+      type: auto
+    uri: https://api.exa.ai/search
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-expose-headers:
+      - PAYMENT-REQUIRED,PAYMENT-RESPONSE,payment-required,payment-response
+      connection:
+      - keep-alive
+      content-length:
+      - '1024'
+      content-security-policy:
+      - frame-ancestors 'self'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      cross-origin-resource-policy:
+      - same-origin
+      etag:
+      - W/"1ea8-kGKBIy2Jb8PryQpJHahqFEnFs+o"
+      origin-agent-cluster:
+      - ?1
+      referrer-policy:
+      - no-referrer
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      costDollars:
+        search:
+          neural: 0.007
+        total: 0.007
+      effectiveFilters:
+        excludeDomains: []
+        excludeText: []
+        excludeUrls: []
+        includeDomains:
+        - ai.pydantic.dev
+        includeText: []
+        includeUrls: []
+      requestId: f0f17d7fcb9f3bf93e81940b63fb2f2d
+      resolvedSearchType: ''
+      results:
+      - id: https://ai.pydantic.dev/examples/bank-support/index.md
+        text: |-
+          Small but complete example of using Pydantic AI to build a support agent for a bank.
+
+          Demonstrates:
+
+          - tools
+          - structured `output_type`
+          - dynamic system prompt
+
+          ## Running the Example
+
+          With dependencies installed and environment variables set, run:
+
+          ```bash
+          python -m pydantic_ai_examples.bank_support
+
+          ```
+
+          ```bash
+          uv run -m pydantic_ai_examples.bank_support
+
+          ```
+
+          (or `PYDANTIC_AI_MODEL=gemini-3-flash-preview ...`)
+
+          ## Example Code
+
+          Learn about Gateway bank_support.py
+
+          ```python
+          """Small but comp
+        title: Index
+        url: https://ai.pydantic.dev/examples/bank-support/index.md
+      searchTime: 1430.7
+    status:
+      code: 200
+      message: OK
+version: 1
