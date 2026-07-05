@@ -10,7 +10,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
-from pydantic_ai.concurrency import get_concurrency_context
+from pydantic_ai.concurrency import get_concurrency_context, normalize_to_limiter
 from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
@@ -209,6 +209,40 @@ class TestConcurrencyLimiter:
         limiter.release()
         assert limiter.running_count == 0
         assert limiter.available_count == 5
+
+
+class TestNonPositiveMaxRunning:
+    """Tests that non-positive max_running values are rejected eagerly."""
+
+    @pytest.mark.parametrize('max_running', [0, -1, -5])
+    async def test_concurrency_limiter_rejects_non_positive(self, max_running: int):
+        """ConcurrencyLimiter should reject max_running < 1."""
+        with pytest.raises(ValueError, match='max_running must be a positive integer'):
+            ConcurrencyLimiter(max_running=max_running)
+
+    @pytest.mark.parametrize('max_running', [0, -1, -5])
+    async def test_concurrency_limit_rejects_non_positive(self, max_running: int):
+        """ConcurrencyLimit should reject max_running < 1."""
+        with pytest.raises(ValueError, match='max_running must be a positive integer'):
+            ConcurrencyLimit(max_running=max_running)
+
+    @pytest.mark.parametrize('max_running', [0, -1])
+    async def test_normalize_to_limiter_rejects_non_positive(self, max_running: int):
+        """normalize_to_limiter should reject max_running < 1."""
+        with pytest.raises(ValueError, match='max_running must be a positive integer'):
+            normalize_to_limiter(max_running)
+
+    @pytest.mark.parametrize('max_running', [0, -1])
+    async def test_agent_rejects_non_positive_max_concurrency(self, max_running: int):
+        """Agent should reject max_concurrency < 1."""
+        with pytest.raises(ValueError, match='max_running must be a positive integer'):
+            Agent(TestModel(), max_concurrency=max_running)
+
+    async def test_none_still_means_no_limit(self):
+        """None should still be accepted as no concurrency limiting."""
+        assert normalize_to_limiter(None) is None
+        agent = Agent(TestModel(), max_concurrency=None)
+        assert agent._concurrency_limiter is None
 
 
 class TestGetConcurrencyContext:
