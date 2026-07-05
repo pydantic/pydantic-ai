@@ -10,6 +10,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -68,6 +69,7 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
+    nvidia_model_profile_mock = mocker.patch(f'{ns}.nvidia_model_profile', wraps=nvidia_model_profile)
     google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
 
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
@@ -94,6 +96,12 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert google_profile is not None
     assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+
+    nvidia_profile = provider.model_profile('nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4')
+    nvidia_model_profile_mock.assert_called_with('nvidia-nemotron-3-ultra-550b-a55b-nvfp4')
+    assert nvidia_profile is not None
+    assert nvidia_profile.get('openai_supports_tool_choice_required', True) is False
+    assert nvidia_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None

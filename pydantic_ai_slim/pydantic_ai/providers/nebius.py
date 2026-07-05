@@ -15,6 +15,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
@@ -53,6 +54,7 @@ class NebiusProvider(Provider[AsyncOpenAI]):
             'openai': harmony_model_profile,  # used for gpt-oss models on Nebius
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'nvidia': nvidia_model_profile,
         }
 
         profile = None

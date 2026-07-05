@@ -16,6 +16,7 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -108,6 +109,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
+    nvidia_model_profile_mock = mocker.patch(f'{ns}.nvidia_model_profile', wraps=nvidia_model_profile)
 
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
@@ -182,6 +184,12 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert moonshotai_profile is not None
     assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
     assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    nvidia_profile = provider.model_profile('nvidia/nemotron-3-ultra-550b-a55b')
+    nvidia_model_profile_mock.assert_called_with('nemotron-3-ultra-550b-a55b')
+    assert nvidia_profile is not None
+    assert nvidia_profile.get('openai_supports_tool_choice_required', True) is False
+    assert nvidia_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None

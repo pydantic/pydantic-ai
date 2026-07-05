@@ -12,6 +12,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -75,6 +76,7 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     harmony_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     moonshotai_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
+    nvidia_mock = mocker.patch(f'{ns}.nvidia_model_profile', wraps=nvidia_model_profile)
 
     # Test meta provider
     meta_profile = provider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
@@ -117,6 +119,13 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     moonshotai_mock.assert_called_with('kimi-k2-instruct')
     assert moonshotai_profile is not None
     assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # Test nvidia provider
+    nvidia_profile = provider.model_profile('nvidia/Nemotron-3-Ultra-550B-A55B')
+    nvidia_mock.assert_called_with('nemotron-3-ultra-550b-a55b')
+    assert nvidia_profile is not None
+    assert nvidia_profile.get('openai_supports_tool_choice_required', True) is False
+    assert nvidia_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test unknown provider
     unknown_profile = provider.model_profile('unknown-provider/unknown-model')
