@@ -152,7 +152,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsStr
+    from .conftest import IsDatetime, IsStr, message
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1461,8 +1461,7 @@ async def test_dynamic_toolset_outside_workflow():
 
 
 def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
 
 
@@ -1530,8 +1529,7 @@ def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: Agent
     # First request: call a tool to force a second model-request step.
     # Second request (carrying the tool return): echo the instructions, which by then must
     # reflect the current step — proving the cache is repopulated by `get_tools` each step.
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     if any(isinstance(part, ToolReturnPart) for part in request.parts):
         return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
     return ModelResponse(parts=[ToolCallPart('noop', {})])
