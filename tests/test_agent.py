@@ -4415,6 +4415,37 @@ class TestMultipleToolCalls:
             ]
         )
 
+    def test_early_strategy_prefers_native_output_text_over_tool_calls(self):
+        """Test that 'early' strategy does not execute tools when native output text is already final."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{"value": "final"}'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=NativeOutput(OutputType),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early native output')
+
+        assert result.output == OutputType(value='final')
+        assert tool_called == []
+
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
