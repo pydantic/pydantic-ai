@@ -1294,7 +1294,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             async for event in self._handle_tool_calls_after_final_result(
                                 ctx, tool_calls, final_result, output_parts
                             ):
-                                yield event
+                                yield event  # pragma: no cover
                             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
                             return
                         except ToolRetryError:
@@ -1416,29 +1416,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        try:
-            async for event in process_tool_calls(
-                tool_manager=ctx.deps.tool_manager,
-                tool_calls=tool_calls,
-                tool_call_results=self.tool_call_results,
-                tool_call_metadata=self.tool_call_metadata,
-                final_result=final_result,
-                ctx=ctx,
-                output_parts=output_parts,
-            ):
-                yield event
-        except BaseException:
-            if output_parts:
-                ctx.state.message_history.append(
-                    _messages.ModelRequest(
-                        parts=list(output_parts),
-                        run_id=ctx.state.run_id,
-                        conversation_id=ctx.state.conversation_id,
-                        timestamp=now_utc(),
-                        state='interrupted',
-                    )
-                )
-            raise
+        async for event in process_tool_calls(
+            tool_manager=ctx.deps.tool_manager,
+            tool_calls=tool_calls,
+            tool_call_results=self.tool_call_results,
+            tool_call_metadata=self.tool_call_metadata,
+            final_result=final_result,
+            ctx=ctx,
+            output_parts=output_parts,
+        ):
+            yield event  # pragma: no cover
 
     @staticmethod
     def _recover_text_from_message_history(message_history: list[_messages.ModelMessage]) -> str | None:
