@@ -48,6 +48,7 @@ from ..messages import (
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
+from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -107,7 +108,7 @@ PreviewGroqModelNames = Literal[
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen/qwen-3-32b',
+    'qwen/qwen3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -346,9 +347,10 @@ class GroqModel(Model[AsyncGroq]):
         )
 
         extra_body = model_settings.get('extra_body')
-        # `reasoning_effort` value sets are family-specific on Groq (qwen3: none/default; gpt-oss: low/medium/high),
-        # so we don't map the unified `thinking` level here — only the explicit `groq_reasoning_effort` setting, plus
-        # the qwen3 disable signal (`'none'`), which wins. Unified thinking still controls `reasoning_format` above.
+        # `reasoning_effort` value sets are family-specific on Groq, so precedence is:
+        # qwen3 disable (`'none'`) > explicit `groq_reasoning_effort` > unified `thinking` mapping > nothing.
+        # The unified mapping only applies to graded families (gpt-oss: low/medium/high); qwen3's enable levels
+        # have no gradation (only none/default) so unified thinking there just controls `reasoning_format` above.
         groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
         if disable_via_effort and groq_reasoning_effort is not None:
             warnings.warn(
@@ -357,6 +359,12 @@ class GroqModel(Model[AsyncGroq]):
                 UserWarning,
             )
         effort = 'none' if disable_via_effort else groq_reasoning_effort
+        if effort is None and self.profile.get('groq_supports_graded_reasoning_effort', False):
+            thinking = model_request_parameters.thinking
+            if thinking is True:
+                effort = 'medium'
+            elif thinking is not None and thinking is not False:
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
