@@ -12,6 +12,8 @@ import anyio
 from opentelemetry.trace import Tracer, get_tracer
 from typing_extensions import Self
 
+from .exceptions import UserError
+
 __all__ = (
     'AbstractConcurrencyLimiter',
     'ConcurrencyLimiter',
@@ -22,7 +24,9 @@ __all__ = (
 
 def _validate_max_running(max_running: int) -> None:
     if max_running < 1:
-        raise ValueError(f'max_running must be >= 1, got {max_running}')
+        raise UserError(
+            f'max_running must be a positive integer, got {max_running}. Use None for no concurrency limiting.'
+        )
 
 
 class AbstractConcurrencyLimiter(ABC):
