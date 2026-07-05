@@ -5183,14 +5183,8 @@ def test_multimodal_roundtrip_preserves_file_url_force_download(
     assert dumped_content.metadata == {'force_download': content.force_download}
 
     loaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
-    assert isinstance(user_part.content, list)
-    loaded_content = user_part.content[0]
-    assert isinstance(loaded_content, ImageUrl | AudioUrl | VideoUrl | DocumentUrl)
-    assert loaded_content.force_download == content.force_download
+    _sync_timestamps(messages, loaded)
+    assert loaded == messages
 
 
 def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> None:

@@ -107,7 +107,7 @@ __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 
-_MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl]] = {
+_MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'image': ImageUrl,
     'video': VideoUrl,
     'audio': AudioUrl,
