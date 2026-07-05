@@ -1275,10 +1275,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text = compaction_text
 
                 try:
-                    # At the moment, we prioritize at least executing tool calls if they are present.
+                    # At the moment, we generally prioritize at least executing tool calls if they are present.
                     # In the future, we'd consider making this configurable at the agent or run level.
                     # This accounts for cases like anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
+                    # Native output with `end_strategy='early'` is the exception: valid text is already final.
                     alternatives: list[str] = []
                     if (
                         tool_calls
@@ -1288,7 +1289,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         and (text_processor := output_schema.text_processor)
                     ):
                         try:
-                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                            final_result = await self._process_text_response(ctx, text, text_processor)
+                            output_parts: list[_messages.ModelRequestPart] = []
+                            async for event in self._handle_tool_calls_after_final_result(
+                                ctx, tool_calls, final_result, output_parts
+                            ):
+                                yield event
+                            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
                             return
                         except ToolRetryError:
                             pass
@@ -1393,6 +1400,46 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
 
+    async def _handle_tool_calls_after_final_result(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        tool_calls: list[_messages.ToolCallPart],
+        final_result: result.FinalResult[NodeRunEndT],
+        output_parts: list[_messages.ModelRequestPart],
+    ) -> AsyncIterator[_messages.HandleResponseEvent]:
+        run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.output_retries_used,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
+        )
+
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        try:
+            async for event in process_tool_calls(
+                tool_manager=ctx.deps.tool_manager,
+                tool_calls=tool_calls,
+                tool_call_results=self.tool_call_results,
+                tool_call_metadata=self.tool_call_metadata,
+                final_result=final_result,
+                ctx=ctx,
+                output_parts=output_parts,
+            ):
+                yield event
+        except BaseException:
+            if output_parts:
+                ctx.state.message_history.append(
+                    _messages.ModelRequest(
+                        parts=list(output_parts),
+                        run_id=ctx.state.run_id,
+                        conversation_id=ctx.state.conversation_id,
+                        timestamp=now_utc(),
+                        state='interrupted',
+                    )
+                )
+            raise
+
     @staticmethod
     def _recover_text_from_message_history(message_history: list[_messages.ModelMessage]) -> str | None:
         """Search backward through message history for recoverable text from a previous model response.
@@ -1421,6 +1468,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        final_result = await self._process_text_response(ctx, text, text_processor)
+        return self._handle_final_result(ctx, final_result, [])
+
+    async def _process_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
 
@@ -1433,7 +1489,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     async def _handle_image_response(
         self,

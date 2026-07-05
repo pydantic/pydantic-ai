@@ -4445,6 +4445,14 @@ class TestMultipleToolCalls:
 
         assert result.output == OutputType(value='final')
         assert tool_called == []
+        messages = result.all_messages()
+        assert len(messages) == 3
+        assert isinstance(messages[2], ModelRequest)
+        assert len(messages[2].parts) == 1
+        skipped_tool_return = messages[2].parts[0]
+        assert isinstance(skipped_tool_return, ToolReturnPart)
+        assert skipped_tool_return.tool_name == 'regular_tool'
+        assert skipped_tool_return.content == 'Tool not executed - a final result was already processed.'
 
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
