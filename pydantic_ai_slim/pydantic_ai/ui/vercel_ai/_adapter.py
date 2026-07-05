@@ -107,6 +107,12 @@ __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 
+_MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl]] = {
+    'image': ImageUrl,
+    'video': VideoUrl,
+    'audio': AudioUrl,
+}
+
 
 def _generate_message_id(
     msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
@@ -323,36 +329,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
-                                media_type_prefix = part.media_type.split('/', 1)[0]
-                                match media_type_prefix:
-                                    case 'image':
-                                        file = ImageUrl(
-                                            url=part.url,
-                                            media_type=part.media_type,
-                                            force_download=force_download,
-                                            vendor_metadata=vendor_metadata,
-                                        )
-                                    case 'video':
-                                        file = VideoUrl(
-                                            url=part.url,
-                                            media_type=part.media_type,
-                                            force_download=force_download,
-                                            vendor_metadata=vendor_metadata,
-                                        )
-                                    case 'audio':
-                                        file = AudioUrl(
-                                            url=part.url,
-                                            media_type=part.media_type,
-                                            force_download=force_download,
-                                            vendor_metadata=vendor_metadata,
-                                        )
-                                    case _:
-                                        file = DocumentUrl(
-                                            url=part.url,
-                                            media_type=part.media_type,
-                                            force_download=force_download,
-                                            vendor_metadata=vendor_metadata,
-                                        )
+                                url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(part.media_type.split('/', 1)[0], DocumentUrl)
+                                file = url_type(
+                                    url=part.url,
+                                    media_type=part.media_type,
+                                    force_download=force_download,
+                                    vendor_metadata=vendor_metadata,
+                                )
                         else:
                             # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
                             # Reconstruct through the constructor so a malformed client value is rejected
