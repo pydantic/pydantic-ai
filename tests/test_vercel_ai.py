@@ -9876,10 +9876,7 @@ async def test_adapter_roundtrip_preserves_file_url_force_download(
     assert load_provider_metadata(file_parts[0].provider_metadata)['force_download'] == content.force_download
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(loaded, UserPromptPart)
     assert isinstance(user_part.content, list)
     loaded_content = user_part.content[0]
     assert isinstance(loaded_content, ImageUrl | AudioUrl | VideoUrl | DocumentUrl)

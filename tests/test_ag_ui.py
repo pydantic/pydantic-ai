@@ -5183,10 +5183,7 @@ def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> N
     assert not hasattr(dumped_content, 'metadata')
 
     loaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(loaded, UserPromptPart)
     assert isinstance(user_part.content, list)
     loaded_content = user_part.content[0]
     assert isinstance(loaded_content, ImageUrl)
