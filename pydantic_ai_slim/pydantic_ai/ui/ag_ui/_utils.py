@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
+from datetime import datetime
 from typing import Any, Final
 
 from typing_extensions import Required, TypedDict
@@ -130,19 +131,30 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
-def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
-    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
+def tool_kind_encrypted_value(
+    tool_kind: ToolPartKind | None,
+    metadata: Any | None = None,
+    timestamp: datetime | None = None,
+) -> str | None:
+    """Pack a part's `tool_kind`, `metadata`, and `timestamp` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
     AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
     `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot. Our payload is
     nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g. Google's
     encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
-    in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
+    in: `parse_encrypted_tool_return_data` returns it only when the key is present, and it degrades to a
     plain part if it doesn't validate.
     """
-    if tool_kind is None:
+    if tool_kind is None and metadata is None and timestamp is None:
         return None
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
+    payload: dict[str, Any] = {}
+    if tool_kind is not None:
+        payload['tool_kind'] = tool_kind
+    if metadata is not None:
+        payload['metadata'] = metadata
+    if timestamp is not None:
+        payload['timestamp'] = timestamp.isoformat()
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
@@ -151,14 +163,20 @@ class _EncryptedValueKwargs(TypedDict, total=False):
     encrypted_value: str
 
 
-def tool_kind_encrypted_value_kwargs(tool_kind: ToolPartKind | None, *, supported: bool) -> _EncryptedValueKwargs:
-    """`ToolCall`/`ToolMessage` kwargs carrying `tool_kind` as an `encrypted_value`, or empty to omit it.
+def tool_kind_encrypted_value_kwargs(
+    tool_kind: ToolPartKind | None,
+    metadata: Any | None = None,
+    timestamp: datetime | None = None,
+    *,
+    supported: bool,
+) -> _EncryptedValueKwargs:
+    """`ToolCall`/`ToolMessage` kwargs carrying `tool_kind`, `metadata`, and `timestamp` as an `encrypted_value`, or empty to omit it.
 
     Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
     has no `tool_kind`, so — like the streaming carrier — the field is only ever set when there's a
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, metadata, timestamp) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -179,6 +197,40 @@ def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
     )
 
 
+def parse_encrypted_tool_return_data(encrypted_value: str | None) -> tuple[ToolPartKind | None, Any | None, datetime | None]:
+    """Read `tool_kind`, `metadata`, and `timestamp` claims from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Client-supplied and untrusted: anything that isn't a valid JSON object or lacks the `pydantic_ai` key
+    degrades to `(None, None, None)`.
+    """
+    if not encrypted_value:
+        return None, None, None
+    try:
+        data = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None, None, None
+    if not is_str_dict(data):
+        return None, None, None
+    namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
+    if not is_str_dict(namespaced):
+        return None, None, None
+
+    tool_kind_raw = namespaced.get('tool_kind')
+    tool_kind = parse_tool_kind(tool_kind_raw) if isinstance(tool_kind_raw, str) else None
+
+    metadata = namespaced.get('metadata')
+
+    timestamp_raw = namespaced.get('timestamp')
+    timestamp: datetime | None = None
+    if isinstance(timestamp_raw, str):
+        try:
+            timestamp = datetime.fromisoformat(timestamp_raw)
+        except ValueError:
+            pass
+
+    return tool_kind, metadata, timestamp
+
+
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
     """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
 
@@ -186,19 +238,8 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
     encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
     """
-    if not encrypted_value:
-        return None
-    try:
-        data = json.loads(encrypted_value)
-    except json.JSONDecodeError:
-        return None
-    if not is_str_dict(data):
-        return None
-    namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
-    if not is_str_dict(namespaced):
-        return None
-    tool_kind = namespaced.get('tool_kind')
-    return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+    tool_kind, _, _ = parse_encrypted_tool_return_data(encrypted_value)
+    return tool_kind
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

@@ -8,6 +8,7 @@ import warnings
 from base64 import b64decode
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
+from datetime import datetime
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -93,6 +94,7 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
+        parse_encrypted_tool_return_data,
         rehydrate_tool_return_content,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
@@ -475,11 +477,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
                     tool_kind = None
+                    metadata = None
+                    timestamp = None
                     if tool_msg.error is None:
-                        encrypted_tool_kind = (
-                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                        )
+                        if use_encrypted_value:
+                            encrypted_tool_kind, metadata, timestamp = parse_encrypted_tool_return_data(
+                                tool_msg.encrypted_value
+                            )
+                        else:
+                            encrypted_tool_kind = None
                         tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
+
+                    kwargs: dict[str, Any] = {}
+                    if tool_kind is not None:
+                        kwargs['tool_kind'] = tool_kind
+                    if metadata is not None:
+                        kwargs['metadata'] = metadata
+                    if timestamp is not None:
+                        kwargs['timestamp'] = timestamp
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -490,7 +505,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
-                                tool_kind=tool_kind,
+                                **kwargs,
                             )
                         )
                     else:
@@ -502,7 +517,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_name=tool_name,
                                 content=content,
                                 tool_call_id=tool_call_id,
-                                tool_kind=tool_kind,
+                                **kwargs,
                             )
                         )
 
@@ -663,7 +678,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
+                        **tool_kind_encrypted_value_kwargs(
+                            part.tool_kind,
+                            part.metadata,
+                            part.timestamp,
+                            supported=use_encrypted_value,
+                        ),
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -771,7 +791,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
-                            **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
+                            **tool_kind_encrypted_value_kwargs(
+                                builtin_return.tool_kind,
+                                builtin_return.metadata,
+                                builtin_return.timestamp,
+                                supported=use_encrypted_value,
+                            ),
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
