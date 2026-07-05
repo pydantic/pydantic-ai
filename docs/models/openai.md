@@ -472,6 +472,59 @@ agent = Agent(model)
 ...
 ```
 
+#### Choosing an integration path
+
+DashScope exposes an [OpenAI-compatible Chat Completions API](https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope). Pydantic AI supports two ways to connect:
+
+| Approach | Example | API key env var | Qwen [`ModelProfile`][pydantic_ai.profiles.ModelProfile] |
+|----------|---------|-----------------|----------------------------------------------------------|
+| **Recommended** — [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] | `Agent('alibaba:qwen-max')` | `ALIBABA_API_KEY` or `DASHSCOPE_API_KEY` | Applied automatically (JSON schema tweaks, streaming whitespace, etc.) |
+| Generic OpenAI-compatible | `OPENAI_BASE_URL` + `Agent('openai:qwen-max')` | `OPENAI_API_KEY` | **Not** applied — uses the default OpenAI profile |
+
+Use the `alibaba:` prefix (or pass [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] explicitly) for Qwen models. The generic `openai:` + `OPENAI_BASE_URL` path can work for simple text prompts, but structured output and other Qwen-specific behaviour are only configured through [`AlibabaProvider.model_profile`][pydantic_ai.providers.alibaba.AlibabaProvider.model_profile].
+
+!!! note "PDF and document file input is not supported"
+    The DashScope compatible-mode Chat Completions API does not accept document content parts (`type='file'`). PDF [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] and non-`text/plain` document [`BinaryContent`][pydantic_ai.messages.BinaryContent] (for example `application/pdf`) are not supported with [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider]. Plain `text/plain` [`BinaryContent`][pydantic_ai.messages.BinaryContent] is sent as inline text and can work. Image input with vision models such as `qwen-vl-plus` is supported — see [Vision understanding with structured output](#vision-understanding-with-structured-output) below.
+
+#### Vision understanding with structured output
+
+Use a **vision** model (for example `qwen-vl-plus` or `qwen-vl-max`) when the agent must *understand* image content. Text-only models such as `qwen-max` cannot see pixels.
+
+Send images with [`BinaryContent`][pydantic_ai.messages.BinaryContent] (or [`ImageUrl`][pydantic_ai.messages.ImageUrl]) to the vision model. For validated structured fields, use a **second** text-model agent with [`output_type`](../output.md#structured-output) — Qwen VL models return reliable plain-text descriptions from image prompts, while `output_type` on text models such as `qwen-plus` maps cleanly to JSON schema.
+
+```python
+import httpx
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, BinaryContent
+
+class ImageCaption(BaseModel):
+    """Structured description of an uploaded image."""
+
+    description: str
+    tags: list[str] = Field(min_length=1, max_length=5)
+
+
+# Requires DASHSCOPE_API_KEY or ALIBABA_API_KEY in the environment.
+vision_agent = Agent('alibaba:qwen-vl-plus')
+caption_agent = Agent('alibaba:qwen-plus', output_type=ImageCaption)
+
+image_bytes = httpx.get('https://iili.io/3Hs4FMg.png').content
+vision = vision_agent.run_sync(
+    [
+        'Describe this image in a few sentences.',
+        BinaryContent(data=image_bytes, media_type='image/png'),
+    ]
+)
+caption = caption_agent.run_sync(
+    f'Describe this image and suggest short tags based on: {vision.output}'
+)
+print(caption.output)
+#> description='...' tags=['logo', 'pydantic', ...]
+```
+
+For a runnable version of this pattern (including social copy generation), see the [DashScope vision example](../examples/dashscope-vision.md).
+
 ### Ollama
 
 See [Ollama](ollama.md) for dedicated Ollama documentation, including structured output and Ollama Cloud limitations.
