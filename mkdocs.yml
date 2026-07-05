@@ -128,6 +128,7 @@ nav:
       - Setup: examples/setup.md
       - Getting Started:
           - examples/pydantic-model.md
+          - examples/dashscope-vision.md
           - examples/weather-agent.md
       - Conversational Agents:
           - examples/chat-app.md
