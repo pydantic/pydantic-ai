@@ -987,6 +987,7 @@ def test_groq_moonshotai_kimi():
     assert _normalize(profile) == snapshot(
         {
             'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
@@ -1004,6 +1005,7 @@ def test_groq_meta_llama4_maverick():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
         }
@@ -1017,6 +1019,7 @@ def test_groq_meta_llama3_no_overlay():
     assert _normalize(profile) == snapshot(
         {
             'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
         }
@@ -1031,8 +1034,31 @@ def test_groq_deepseek():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_gpt_oss():
+    """Groq's gpt-oss reasons always-on with graded `reasoning_effort` (`low`/`medium`/`high`);
+    the Groq profile's reasoning flags override the generic OpenAI family profile."""
+    profile = GroqProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
         }
     )
 

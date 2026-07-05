@@ -66,7 +66,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -840,21 +840,17 @@ async def test_call_tool():
             assert agent_info.function_tools is not None
             assert len(agent_info.function_tools) == 1
             name = agent_info.function_tools[0].name
-            first = messages[0]
-            assert isinstance(first, ModelRequest)
-            assert isinstance(first.parts[0], UserPromptPart)
-            json_string = json.dumps({'x': first.parts[0].content})
+            part = message_part(messages, UserPromptPart)
+            json_string = json.dumps({'x': part.content})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_string[:3])}
             yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
-            last = messages[-1]
-            assert isinstance(last, ModelRequest)
-            assert isinstance(last.parts[0], ToolReturnPart)
+            part = message_part(messages, ToolReturnPart, message_index=-1)
             assert agent_info.output_tools is not None
             assert len(agent_info.output_tools) == 1
             name = agent_info.output_tools[0].name
-            json_data = json.dumps({'response': [last.parts[0].content, 2]})
+            json_data = json.dumps({'response': [part.content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
