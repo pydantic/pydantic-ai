@@ -113,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, message, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -875,7 +875,7 @@ def test_model_json_schema_with_capabilities():
                         'groq:openai/gpt-oss-safeguard-20b',
                         'groq:playai-tts',
                         'groq:playai-tts-arabic',
-                        'groq:qwen/qwen-3-32b',
+                        'groq:qwen/qwen3-32b',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -914,6 +914,10 @@ def test_model_json_schema_with_capabilities():
                         'mistral:mistral-moderation-latest',
                         'mistral:mistral-small-latest',
                         'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-k2.5',
+                        'moonshotai:kimi-k2.6',
+                        'moonshotai:kimi-k2.7-code',
+                        'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -922,6 +926,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:moonshot-v1-32k-vision-preview',
                         'moonshotai:moonshot-v1-8k',
                         'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-auto',
                         'openai-chat:computer-use-preview',
                         'openai-chat:computer-use-preview-2025-03-11',
                         'openai-chat:gpt-3.5-turbo',
@@ -2064,6 +2069,22 @@ def test_from_file_with_schema_field(tmp_path: str):
     spec = AgentSpec.from_file(spec_with_schema)
     assert spec.model == 'test'
     assert spec.json_schema_path == './agent_schema.json'
+
+
+def test_from_file_empty_yaml_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got NoneType'):
+        AgentSpec.from_file(spec_path)
+
+
+def test_from_file_json_array_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('[{"model": "test"}]', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got list'):
+        AgentSpec.from_file(spec_path)
 
 
 def test_agent_from_file_yaml(tmp_path: str):
@@ -3439,8 +3460,8 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
 
     def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
         call_ids: list[str] = []
-        for message in messages:
-            for part in message.parts:
+        for msg in messages:
+            for part in msg.parts:
                 if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
                     call_ids.append(part.tool_call_id)
         return call_ids
@@ -11009,8 +11030,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         ]
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            first_request = messages[0]
-            assert isinstance(first_request, ModelRequest)
+            first_request = message(messages, ModelRequest)
             first_request_instructions.append(first_request.instructions)
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]

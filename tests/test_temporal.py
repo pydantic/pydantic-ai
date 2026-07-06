@@ -152,7 +152,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsStr
+    from .conftest import IsDatetime, IsStr, message
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1461,8 +1461,7 @@ async def test_dynamic_toolset_outside_workflow():
 
 
 def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
 
 
@@ -1530,8 +1529,7 @@ def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: Agent
     # First request: call a tool to force a second model-request step.
     # Second request (carrying the tool return): echo the instructions, which by then must
     # reflect the current step — proving the cache is repopulated by `get_tools` each step.
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     if any(isinstance(part, ToolReturnPart) for part in request.parts):
         return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
     return ModelResponse(parts=[ToolCallPart('noop', {})])
@@ -2259,7 +2257,9 @@ class SimpleAgentWorkflowWithRunToolsets:
         return result.output  # pragma: no cover
 
 
-async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests: None, client: Client):
+async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_model_requests: None, client: Client):
+    # Executing toolsets (here a `FunctionToolset`) can't be added per-run because their activities must
+    # be registered with the worker before the workflow runs.
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -2269,7 +2269,10 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
+                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
+                'execution when the agent is constructed. Pass them to the agent constructor instead. '
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
             ),
         ):
             await client.execute_workflow(
@@ -2278,6 +2281,58 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
                 id=SimpleAgentWorkflowWithRunToolsets.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def request_runtime_external_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+
+runtime_external_agent = Agent(
+    FunctionModel(request_runtime_external_tool),
+    name='runtime_external_toolset_agent',
+    output_type=[str, DeferredToolRequests],
+)
+runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+runtime_external_toolset = ExternalToolset(
+    tool_defs=[
+        ToolDefinition(
+            name='external',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'query': {'type': 'string'}},
+                'required': ['query'],
+            },
+        )
+    ],
+    id='external',
+)
+
+
+@workflow.defn
+class RuntimeExternalToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        return await runtime_external_temporal_agent.run(prompt, toolsets=[runtime_external_toolset])
+
+
+async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allow_model_requests: None, client: Client):
+    # Non-executing toolsets like `ExternalToolset` need no durable wrapping, so they can be added per-run.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RuntimeExternalToolsetWorkflow],
+        plugins=[AgentPlugin(runtime_external_temporal_agent)],
+    ):
+        result = await client.execute_workflow(
+            RuntimeExternalToolsetWorkflow.run,
+            args=['Call the runtime external tool.'],
+            id=RuntimeExternalToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert result.output == DeferredToolRequests(
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        )
 
 
 @workflow.defn

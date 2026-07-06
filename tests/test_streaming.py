@@ -5,12 +5,13 @@ import datetime
 import gc
 import json
 import re
+import threading
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -48,6 +49,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _utils,
     capture_run_messages,
     models,
 )
@@ -67,7 +69,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -291,6 +293,182 @@ def test_streamed_text_sync_response():
             tool_calls=1,
         )
     )
+
+
+async def test_run_stream_sync_rejects_running_event_loop():
+    """`run_stream_sync` drives its own event loop, so it must refuse to run inside an existing one."""
+    agent = Agent(TestModel())
+    with pytest.raises(RuntimeError, match=r'from within an async context or a running event loop; use `run_stream`'):
+        agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_rejects_disabled_threads():
+    """When threads are disabled (e.g. emscripten or Temporal), the dedicated-thread portal can't be used."""
+    agent = Agent(TestModel())
+    with _utils.disable_threads():
+        with pytest.raises(RuntimeError, match=r'runs on a dedicated event-loop thread.*use `run_stream`'):
+            agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C while blocked on the portal cancels the run instead of leaking tasks/sockets (#5975)."""
+    agent = Agent(TestModel())
+    result = agent.run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    assert bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+
+    # Simulate the interrupt landing in the calling thread while it's blocked on the portal: the first
+    # `portal.call` (the `get_output` below) raises, later ones (the teardown) behave normally.
+    portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
+    original_call = portal.call
+    calls = 0
+
+    def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt
+        return original_call(*args, **kwargs)
+
+    monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+    # Enter the `with` block too, so its `__exit__` also calls `shutdown()` — the interrupt teardown
+    # already ran it once, so this exercises the idempotent (already-disarmed) shutdown path.
+    with pytest.raises(KeyboardInterrupt):
+        with result:
+            result.get_output()
+
+    # The run was torn down as part of handling the interrupt: the finalizer is disarmed and the portal
+    # thread is stopped, so no pending tasks or sockets are left running until GC.
+    assert not bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError):  # the portal has stopped, so it rejects further calls
+        original_call(asyncio.sleep, 0)
+
+
+def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C mid-stream tears down the still-open model stream instead of leaking it (#5975).
+
+    The pre-portal implementation pumped each item via a separate `loop.run_until_complete(anext(...))`
+    on the caller's loop, so a `KeyboardInterrupt` unwound the caller while leaving the run's tasks
+    pending and its model connection open on that loop until GC. Here the model stream is still open
+    (mid-stream) when the interrupt lands; teardown must close it, which we observe via its `finally`.
+    """
+    stream_closed = threading.Event()
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        try:
+            # The final-result event lets `run_stream_sync` return here with the generator suspended at
+            # this `yield` — i.e. the model stream (and its notional connection) still open. The `finally`
+            # runs only when teardown closes it.
+            yield 'The cat sat on the mat.'
+        finally:
+            stream_closed.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    result = agent.run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
+    assert not stream_closed.is_set()  # the model stream is open and producing
+
+    # Simulate the interrupt landing while the caller is blocked on the portal: the first `portal.call`
+    # (the `get_output` below) raises, later ones (the teardown) behave normally.
+    original_call = portal.call
+    calls = 0
+
+    def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt
+        return original_call(*args, **kwargs)
+
+    monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+    with pytest.raises(KeyboardInterrupt):
+        with result:
+            result.get_output()
+
+    # The interrupt teardown ran the still-open model stream's `finally` on the portal thread, so the
+    # connection was closed rather than left pending on the loop until GC — the leak #5975 reported.
+    assert stream_closed.wait(timeout=5)
+
+
+def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
+
+    The interrupt stops the portal before `stream_sync`'s on-loop `aclose` can run, so the synchronous
+    `close()` fallback in its `finally` is what actually closes the receive stream. Without it, the
+    orphaned `MemoryObjectReceiveStream` warns from `__del__` at GC (escalated to an error by pytest's
+    unraisable-exception handling), so this test fails if that fallback regresses.
+    """
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+        portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pump running, receive stream open
+
+        original_call = portal.call
+        calls = 0
+
+        def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise KeyboardInterrupt
+            return original_call(*args, **kwargs)
+
+        monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+        # The interrupt propagates through the `stream_sync` generator's `finally`, which closes the
+        # receive stream synchronously even though the portal is now gone.
+        with pytest.raises(KeyboardInterrupt):
+            next(stream)
+
+    del stream
+    gc.collect()  # surface any unclosed `MemoryObjectReceiveStream` now, not at session teardown
+
+
+def test_run_stream_sync_early_break_tears_down_pump():
+    """Abandoning a sync stream early unblocks and closes the pump without surfacing an error."""
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pull one chunk while the pump still has more to send
+        # `stream_text` is typed `Iterator` but is a generator at runtime; closing it abandons the stream,
+        # closing the receive end the pump is sending into.
+        cast(Any, stream).close()
+
+
+async def test_run_stream_early_break_during_debounce_closes_cleanly():
+    """Breaking out of a debounced `stream_text()` mid-chunk must not raise from stream teardown.
+
+    `stream_text()`/`stream_output()` debounce via `group_by_temporal`, which prefetches the next item in
+    a background task. Abandoning the stream with an early `break` while that prefetch is parked in an
+    in-flight `anext` on the model source used to make the run's `aclose()` raise
+    `RuntimeError: aclose(): asynchronous generator is already running`; `PeekableAsyncStream` now
+    serializes source access so `aclose()` waits for the prefetch to release the source first.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        while True:  # `while True` (not a bounded loop) so teardown mid-loop leaves no uncovered exit branch
+            yield 'chunk '
+            await asyncio.sleep(0.2)  # keep a chunk in-flight (prefetched) when we break
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Consume one chunk (default debounce spawns the prefetch task), then abandon the still-suspended
+    # stream by leaving the `async with`. Tearing down while the prefetch is mid-`anext` must not raise.
+    # (A single `anext` rather than `async for ...: break` avoids an uncovered loop-exit branch; keeping
+    # `stream` referenced stops it being finalized early, which would cancel the prefetch and hide the bug.)
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        assert await anext(stream)
+
+
+def test_run_stream_sync_rejects_already_entered_result():
+    """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
+    with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):
+        StreamedRunResultSync(cast(Any, object.__new__(StreamedRunResult)))
 
 
 async def test_streamed_structured_response():
@@ -665,21 +843,17 @@ async def test_call_tool():
             assert agent_info.function_tools is not None
             assert len(agent_info.function_tools) == 1
             name = agent_info.function_tools[0].name
-            first = messages[0]
-            assert isinstance(first, ModelRequest)
-            assert isinstance(first.parts[0], UserPromptPart)
-            json_string = json.dumps({'x': first.parts[0].content})
+            part = message_part(messages, UserPromptPart)
+            json_string = json.dumps({'x': part.content})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_string[:3])}
             yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
-            last = messages[-1]
-            assert isinstance(last, ModelRequest)
-            assert isinstance(last.parts[0], ToolReturnPart)
+            part = message_part(messages, ToolReturnPart, message_index=-1)
             assert agent_info.output_tools is not None
             assert len(agent_info.output_tools) == 1
             name = agent_info.output_tools[0].name
-            json_data = json.dumps({'response': [last.parts[0].content, 2]})
+            json_data = json.dumps({'response': [part.content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
@@ -3353,8 +3527,13 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
         new_message_index=0,
         run_result=run_result,
     )
-    sync_result = StreamedRunResultSync(streamed)
-    assert sync_result.metadata == {'sync': 'metadata'}
+
+    @asynccontextmanager
+    async def run_stream_cm() -> AsyncGenerator[StreamedRunResult[None, str]]:
+        yield streamed
+
+    with StreamedRunResultSync(run_stream_cm()) as sync_result:
+        assert sync_result.metadata == {'sync': 'metadata'}
 
 
 async def test_iter_stream_response():
