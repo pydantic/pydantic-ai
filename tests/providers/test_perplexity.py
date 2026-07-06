@@ -1,21 +1,18 @@
 from __future__ import annotations as _annotations
 
-import os
 import re
-from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPromptPart, __version__
+from pydantic_ai import Agent, ModelResponse, __version__
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import TestEnv, try_import
 from ..models.mock_openai import (
     MockOpenAI,
     completion_message,
@@ -174,66 +171,46 @@ async def test_perplexity_response_without_citations(allow_model_requests: None)
 
 
 @pytest.mark.anyio
-@pytest.mark.vcr
-async def test_perplexity_agent_run(allow_model_requests: None, env: TestEnv) -> None:
-    env.set(
-        'PERPLEXITY_API_KEY',
-        os.getenv('PERPLEXITY_API_KEY', os.getenv('PPLX_API_KEY', 'mock-api-key')),
-    )
-    agent = Agent('perplexity:sonar-pro')
-
-    result = await agent.run('What is Pydantic AI? Answer in one sentence.')
-
-    assert result.output == snapshot(
-        'Pydantic AI is a Python agent framework from the Pydantic team for building production-grade applications with generative AI.'
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is Pydantic AI? Answer in one sentence.',
-                        timestamp=IsDatetime(),
-                    )
+async def test_perplexity_surfaces_citations_and_search_results(allow_model_requests: None) -> None:
+    # Unit test with a synthetic payload rather than VCR: recording a real cassette needs a live
+    # Perplexity API key. This pins how Perplexity's top-level `citations` and `search_results` are
+    # surfaced into `provider_details`, including that unset result fields are dropped. A real recorded
+    # integration test should replace this once a key is available.
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'id': 'pplx-test',
+                'model': 'sonar-pro',
+                'object': 'chat.completion',
+                'created': 1704067200,
+                'choices': [
+                    {
+                        'finish_reason': 'stop',
+                        'index': 0,
+                        'message': {'role': 'assistant', 'content': 'Pydantic AI is a Python agent framework.'},
+                    }
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content='Pydantic AI is a Python agent framework from the Pydantic team for building production-grade applications with generative AI.'
-                    )
+                'usage': {'prompt_tokens': 4, 'completion_tokens': 6, 'total_tokens': 10},
+                'citations': ['https://ai.pydantic.dev/'],
+                'search_results': [
+                    {'title': 'Pydantic AI', 'url': 'https://ai.pydantic.dev/', 'snippet': 'A Python agent framework.'}
                 ],
-                usage=RequestUsage(
-                    input_tokens=13,
-                    output_tokens=21,
-                    details={'citation_tokens': 125, 'num_search_queries': 1},
-                ),
-                model_name='sonar-pro',
-                timestamp=IsDatetime(),
-                provider_name='perplexity',
-                provider_url='https://api.perplexity.ai',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'citations': ['https://ai.pydantic.dev/'],
-                    'search_results': [
-                        {
-                            'title': 'Pydantic AI',
-                            'url': 'https://ai.pydantic.dev/',
-                            'date': '2026-05-01',
-                            'last_updated': '2026-05-01',
-                            'snippet': 'Pydantic AI is a Python agent framework designed to make it less painful to build production-grade applications with generative AI.',
-                            'source': 'web',
-                        }
-                    ],
-                    'timestamp': datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
-                },
-                provider_response_id='pplx-5250-test',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(http_client=http_client, api_key='api-key'))
+    agent = Agent(model)
+
+    result = await agent.run('What is Pydantic AI?')
+
+    assert result.output == 'Pydantic AI is a Python agent framework.'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert response.provider_details['citations'] == ['https://ai.pydantic.dev/']
+    # `date`, `last_updated`, and `source` were absent from the result, so `exclude_none` drops them.
+    assert response.provider_details['search_results'] == snapshot(
+        [{'title': 'Pydantic AI', 'url': 'https://ai.pydantic.dev/', 'snippet': 'A Python agent framework.'}]
     )
