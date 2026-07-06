@@ -819,7 +819,13 @@ async def test_empty_response():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[],
+                parts=[
+                    RetryPromptPart(
+                        content='Your response was empty. You must provide a text response or use a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
