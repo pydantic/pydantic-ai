@@ -484,7 +484,7 @@ def test_thinking_part_delta_callable_provider_details_serializable():
     assert callable(chained.provider_details)
 
     event = PartDeltaEvent(index=0, delta=chained)
-    adapter = cast(TypeAdapter[AgentStreamEvent], TypeAdapter(AgentStreamEvent))
+    adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
 
     # The callable merge callback can't be JSON-serialized, so it is emitted as `null` instead of raising.
     serialized = adapter.dump_json(event)
