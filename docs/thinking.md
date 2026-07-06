@@ -46,6 +46,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
+| Mistral | `reasoning_effort='high'` | `reasoning_effort='high'` | Only on adjustable-reasoning models (`mistral-small-latest`, `mistral-medium-3-5`); `magistral` reasons always-on. Mistral exposes only `'high'`/`'none'`, so every enabled level (incl. `'minimal'`) → `'high'` and only `thinking=False` → `'none'` |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |

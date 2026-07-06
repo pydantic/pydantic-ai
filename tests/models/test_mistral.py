@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -2884,7 +2884,7 @@ async def test_stream_cancel(allow_model_requests: None):
     [
         pytest.param(True, 'high', id='true'),
         pytest.param(False, 'none', id='false'),
-        pytest.param('minimal', 'none', id='minimal'),
+        pytest.param('minimal', 'high', id='minimal'),
         pytest.param('low', 'high', id='low'),
         pytest.param('medium', 'high', id='medium'),
         pytest.param('high', 'high', id='high'),
@@ -2892,7 +2892,7 @@ async def test_stream_cancel(allow_model_requests: None):
     ],
 )
 async def test_reasoning_effort_with_unified_thinking(allow_model_requests: None, thinking: Any, expected: str) -> None:
-    """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any active thinking, 'none' to disable)."""
+    """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -2903,33 +2903,16 @@ async def test_reasoning_effort_with_unified_thinking(allow_model_requests: None
     assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
 
 
-@pytest.mark.parametrize('effort', ['none', 'high'])
-async def test_reasoning_effort_with_provider_setting(
-    allow_model_requests: None, effort: Literal['none', 'high']
-) -> None:
-    """`mistral_reasoning_effort` is forwarded verbatim as `reasoning_effort`."""
-    c = completion_message(MistralAssistantMessage(content='quick answer', role='assistant'))
+async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_requests: None) -> None:
+    """`thinking` is silently ignored on models without adjustable reasoning, so `reasoning_effort` stays UNSET."""
+    c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_reasoning_effort=effort))
-    assert result.output == 'quick answer'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == effort
-
-
-async def test_reasoning_effort_provider_setting_overrides_unified(allow_model_requests: None) -> None:
-    """`mistral_reasoning_effort` takes precedence over unified `thinking`."""
-    c = completion_message(MistralAssistantMessage(content='answer', role='assistant'))
-    mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
-    agent = Agent(m)
-
-    result = await agent.run(
-        'hello', model_settings=MistralModelSettings(thinking='high', mistral_reasoning_effort='none')
-    )
-    assert result.output == 'answer'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking='high'))
+    assert result.output == 'hello'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
 async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None) -> None:
