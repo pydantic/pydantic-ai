@@ -45,14 +45,20 @@ existing suite. The bug must be one you triggered and observed.
 ## What to Skip
 
 - Speculation without a failing reproduction.
-- By-design lossy fields explicitly documented as such.
-- Behavior already tracked by an open issue or fixed by an open PR — **search both first**.
+- By-design lossy fields explicitly documented as such, OR where a maintainer has
+  already closed the same-or-analogous finding as `not planned`/by-design —
+  **including on a sibling adapter**: a `ToolReturnPart.metadata` decision on the
+  Vercel adapter settles the same field on AG-UI. The property is by-design lossy
+  across the family; do not re-file it per adapter.
+- Behavior already tracked by an open issue, fixed by an open PR, or already
+  **debunked** by a closed issue/PR — **search all three first** (see Deduplication).
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-The gap may already be tracked by an open **issue** or already fixed by an
-open **PR** — check both. Use the MCP GitHub tools (not `gh` CLI — it's
-blocked by the firewall proxy).
+The gap may already be tracked by an open **issue**, fixed by an open **PR**,
+or **already debunked** by a closed issue/PR (filed before and closed
+`not planned`/by-design, or a fix PR closed unmerged). Check all three. Use the
+MCP GitHub tools (not `gh` CLI — it's blocked by the firewall proxy).
 
 **(a) Existing issues** — by sweep signature and by the specific
 boundary/function you investigated:
@@ -68,11 +74,27 @@ open PRs touching the failing symbol or file:
 mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:open <failing symbol / file path>
 ```
 
-If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
-immediately instead of filing. If a PR looks related but you cannot confirm it
-covers this exact gap, still file but fill in the optional **`Possibly
-addressed by #<N>`** row at the top of the body template (see Issue Format),
-linking that PR.
+**(c) Closed/debunked precedent** — the check whose absence lets a settled
+decision be re-filed. Search **closed** issues and PRs for the same
+field/boundary, and for the same property on a **sibling adapter**:
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:closed "[roundtrip-sweep]" <field / boundary>
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:closed reason:"not planned" <field name>
+mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:closed is:unmerged <failing symbol>
+```
+
+If the same-or-analogous finding was closed `not planned`/by-design by a
+maintainer, or its fix PR was closed unmerged, the decision is **settled across
+the field's whole adapter family** — call `mcp__safeoutputs__noop` and do NOT
+re-file (this is how a closed `ToolReturnPart.metadata` decision on Vercel must
+pre-empt an identical AG-UI report).
+
+If a matching open issue or PR exists, or closed/debunked precedent applies, call
+`mcp__safeoutputs__noop` immediately instead of filing. If a PR looks related but
+you cannot confirm it covers this exact gap, still file but fill in the optional
+**`Possibly addressed by #<N>`** row at the top of the body template (see Issue
+Format), linking that PR.
 
 ## Sandbox notes
 
