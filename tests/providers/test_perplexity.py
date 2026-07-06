@@ -19,7 +19,6 @@ from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..models.mock_openai import (
     MockOpenAI,
     completion_message,
-    get_mock_chat_completion_kwargs,
 )
 
 with try_import() as imports_successful:
@@ -114,13 +113,14 @@ def test_perplexity_provider_set_http_client() -> None:
     assert provider.client._client == new_http_client  # type: ignore[reportPrivateUsage]
 
 
-def test_perplexity_model_profile_enables_web_search() -> None:
+def test_perplexity_model_profile() -> None:
     provider = PerplexityProvider(api_key='api-key')
     model = PerplexityModel('sonar-pro', provider=provider)
     profile = model.profile
     assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
-    assert profile.get('openai_chat_supports_web_search') is True
-    assert WebSearchTool in profile.get('supported_native_tools', frozenset())
+    # Perplexity searches natively and is not configurable per request, so WebSearchTool is not supported.
+    assert not profile.get('openai_chat_supports_web_search', False)
+    assert WebSearchTool not in profile.get('supported_native_tools', frozenset())
 
 
 @pytest.mark.parametrize('model_name', ['sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'])
@@ -146,23 +146,26 @@ def test_infer_perplexity_model(env: TestEnv) -> None:
 
 
 @pytest.mark.anyio
-async def test_perplexity_web_search_tool_omits_web_search_options(
-    allow_model_requests: None,
-) -> None:
-    # Unit test rather than VCR: a cassette matcher is not sensitive to the request body, so a regression
-    # re-adding `web_search_options` would still replay green. We inspect the outbound payload directly.
-    # This response also has no citations/search_results, covering the empty-provider-details path.
-    c = completion_message(ChatCompletionMessage(content='Perplexity searches natively.', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(openai_client=mock_client))
+async def test_perplexity_web_search_tool_not_supported(allow_model_requests: None) -> None:
+    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(api_key='api-key'))
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
 
-    result = await agent.run('Search for Pydantic AI.')
+    with pytest.raises(UserError, match='WebSearchTool is not supported'):
+        await agent.run('Search for Pydantic AI.')
 
-    assert result.output == 'Perplexity searches natively.'
-    request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'web_search_options' not in request_kwargs
 
+@pytest.mark.anyio
+async def test_perplexity_response_without_citations(allow_model_requests: None) -> None:
+    # Unit test rather than VCR: exercises the empty-provider-details path (a response with no
+    # citations/search_results) directly, so the `or None` collapse stays covered and asserted.
+    c = completion_message(ChatCompletionMessage(content='Plain answer.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = PerplexityModel('sonar-pro', provider=PerplexityProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('Hello.')
+
+    assert result.output == 'Plain answer.'
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     provider_details = response.provider_details or {}
@@ -177,7 +180,7 @@ async def test_perplexity_agent_run(allow_model_requests: None, env: TestEnv) ->
         'PERPLEXITY_API_KEY',
         os.getenv('PERPLEXITY_API_KEY', os.getenv('PPLX_API_KEY', 'mock-api-key')),
     )
-    agent = Agent('perplexity:sonar-pro', capabilities=[NativeTool(WebSearchTool())])
+    agent = Agent('perplexity:sonar-pro')
 
     result = await agent.run('What is Pydantic AI? Answer in one sentence.')
 

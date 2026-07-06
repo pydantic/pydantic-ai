@@ -5,17 +5,14 @@ from typing import Any, Literal
 from pydantic import BaseModel
 from typing_extensions import override
 
-from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.perplexity import PerplexityProvider
 from ..settings import ModelSettings
-from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI
     from openai.types import chat
-    from openai.types.chat.completion_create_params import WebSearchOptions
 
     from .openai import OpenAIChatModel, _ChatCompletion  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
@@ -40,7 +37,13 @@ class _PerplexityChatCompletion(_ChatCompletion):
 
 
 class PerplexityModel(OpenAIChatModel):
-    """A Perplexity Sonar chat model using the OpenAI-compatible Chat Completions API."""
+    """A Perplexity Sonar chat model using the OpenAI-compatible Chat Completions API.
+
+    Perplexity grounds every response in live web search and returns the sources it used. This model
+    surfaces those as `citations` and `search_results` in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
+    Search is always on and not configurable per request, so [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]
+    is not supported; use the standalone Perplexity Search API for domain or recency filters.
+    """
 
     def __init__(
         self,
@@ -57,20 +60,6 @@ class PerplexityModel(OpenAIChatModel):
             profile=profile,
             settings=settings,
         )
-
-    @classmethod
-    @override
-    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """Return the native tool types this model can handle.
-
-        Perplexity performs web search natively for Sonar chat requests.
-        """
-        return frozenset({WebSearchTool})
-
-    @override
-    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
-        """Perplexity handles search natively, not via the OpenAI `web_search_options` parameter."""
-        return None
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _PerplexityChatCompletion:

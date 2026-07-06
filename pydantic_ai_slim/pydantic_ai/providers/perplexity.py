@@ -28,8 +28,6 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
     Perplexity accepts OpenAI-compatible chat completions requests at
     `https://api.perplexity.ai/chat/completions`, which is what
     [`PerplexityModel`][pydantic_ai.models.perplexity.PerplexityModel] talks to when paired with this provider.
-    Web search runs natively inside Perplexity's chat models, so
-    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is supported without any extra wiring.
     """
 
     @property
@@ -48,14 +46,10 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = perplexity_model_profile(model_name)
 
-        # PerplexityProvider is paired with PerplexityModel, so we apply the OpenAI JSON schema transformer
-        # (mirrors `DeepSeekProvider`). `openai_chat_supports_web_search=True` lets users enable
-        # the cross-provider `WebSearchTool` against Perplexity's natively-grounded chat models.
+        # PerplexityProvider is always paired with PerplexityModel (an OpenAIChatModel), which used to
+        # unconditionally apply the OpenAI JSON schema transformer, so we keep that behavior (mirrors `DeepSeekProvider`).
         return merge_profile(
-            OpenAIModelProfile(
-                json_schema_transformer=OpenAIJsonSchemaTransformer,
-                openai_chat_supports_web_search=True,
-            ),
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
         )
 

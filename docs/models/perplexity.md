@@ -43,18 +43,11 @@ Pick a model name from the [Perplexity model directory](https://docs.perplexity.
 
 ## Web Search
 
-Perplexity's chat models perform web search natively on every request — there's no opt-in flag to send. Pydantic AI exposes this through the standard [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] so the same agent code works whether the underlying provider is Perplexity, OpenAI, Anthropic, or any other supported web-search provider:
+Perplexity's chat models perform web search natively on every request. There is no opt-in flag to send and no per-request configuration, so [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is not supported.
 
-```python
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.native_tools import WebSearchTool
+The sources Perplexity used are returned on each response in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details]: `citations` (a list of URLs) and `search_results` (title, url, snippet, and dates). Read them from `result.all_messages()[-1].provider_details`.
 
-agent = Agent('perplexity:sonar-pro', capabilities=[NativeTool(WebSearchTool())])
-...
-```
-
-For richer search behaviour (domain allow/deny lists, recency windows, custom result counts) outside an LLM loop, call Perplexity's standalone [Search API](https://docs.perplexity.ai/docs/search/quickstart) directly — it lives at `POST https://api.perplexity.ai/search` and returns ranked results without invoking a chat model.
+To control the search itself (domain allow/deny lists, recency windows, custom result counts), call Perplexity's standalone [Search API](https://docs.perplexity.ai/docs/search/quickstart) directly — it lives at `POST https://api.perplexity.ai/search` and returns ranked results without invoking a chat model.
 
 ## Agent API
 
