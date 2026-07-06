@@ -5348,7 +5348,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Your response was empty. You must provide a text response or use a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )

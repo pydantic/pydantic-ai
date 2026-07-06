@@ -4120,8 +4120,8 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
     The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
-    that tells the model its response was empty, while relying on the model adapter to omit the empty
-    response from the API payload.
+    that tells the model which kinds of output are valid, while relying on the model adapter to omit
+    the empty response from the API payload.
     """
     responses = [
         completion_message(ChatCompletionMessage(content=None, role='assistant')),
@@ -4142,7 +4142,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
         {'content': 'hello', 'role': 'user'},
         {
             'role': 'user',
-            'content': 'Validation feedback:\nYour response was empty. You must provide a text response or use a tool.\n\nFix the errors and try again.',
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
         },
     ]
 
@@ -4172,7 +4172,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Your response was empty. You must provide a text response or use a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )

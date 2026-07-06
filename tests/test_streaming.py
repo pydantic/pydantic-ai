@@ -821,7 +821,7 @@ async def test_empty_response():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Your response was empty. You must provide a text response or use a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )

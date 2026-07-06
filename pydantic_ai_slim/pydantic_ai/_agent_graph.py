@@ -1229,25 +1229,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 # If the recovered text was invalid, fall through.
                                 pass
 
-                    if is_empty:
-                        # The model returned a completely empty response (no text, no tool calls,
-                        # no thinking). Send a RetryPromptPart so the model knows what went wrong
-                        # and can attempt to self-correct, rather than silently resubmitting which
-                        # gives the model no signal about the problem.
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                            _messages.ModelRequest(
-                                parts=[
-                                    _messages.RetryPromptPart(
-                                        content='Your response was empty. You must provide a text response or use a tool.',
-                                    )
-                                ]
-                            )
-                        )
-                        return
-
-                    # For thinking-only responses without recoverable text, fall through to the
-                    # normal retry prompt below.
+                    # For empty or thinking-only responses without recoverable text, fall through to
+                    # the normal retry prompt below. That prompt is built from the output schema and
+                    # available tools, so it tells the model which kinds of output are actually valid
+                    # (text, tool call, and/or image) rather than assuming text is always an option.
 
                 text = ''
                 compaction_text = ''

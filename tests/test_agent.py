@@ -3658,7 +3658,7 @@ def test_empty_response():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Your response was empty. You must provide a text response or use a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -3669,7 +3669,7 @@ def test_empty_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=74, output_tokens=4),
+                usage=RequestUsage(input_tokens=63, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3713,7 +3713,7 @@ def test_empty_response_without_recovery():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Your response was empty. You must provide a text response or use a tool.',
+                        content='Please return text or include your response in a tool call.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -3724,7 +3724,7 @@ def test_empty_response_without_recovery():
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=74),
+                usage=RequestUsage(input_tokens=71),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
