@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -5827,7 +5828,7 @@ async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str)
     agent = Agent(m)
 
     with pytest.raises(
-        ModelHTTPError, match='The model `non-existent` does not exist or you do not have access to it.'
+        ModelHTTPError, match=re.escape('The model `non-existent` does not exist or you do not have access to it.')
     ):
         await agent.run('hello')
 

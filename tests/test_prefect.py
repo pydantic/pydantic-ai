@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelSettings,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Instrumentation
@@ -35,6 +36,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:
@@ -171,6 +173,15 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+async def runtime_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('runtime_event', event=event)
+
+
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -219,6 +230,19 @@ complex_agent = Agent(
     name='complex_agent',
 )
 complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
+
+
+async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    del messages, agent_info
+    yield 'Hello'
+    yield ' world'
+
+
+runtime_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='runtime_handler_stream_agent',
+)
+runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -592,6 +616,26 @@ async def test_multiple_agents(allow_model_requests: None) -> None:
     )
 
 
+async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    @flow(name='test_prefect_agent_run_in_flow_with_runtime_event_stream_handler')
+    async def run_agent() -> AgentRunResult[str]:
+        return await runtime_handler_stream_prefect_agent.run(
+            'Say hello', event_stream_handler=runtime_event_stream_handler
+        )
+
+    result = await run_agent()
+    assert result.output == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
+
+
 async def test_agent_requires_name() -> None:
     """Test that PrefectAgent requires a name."""
     agent_without_name = Agent(model)
@@ -840,6 +884,57 @@ async def test_prefect_agent_override_toolsets(allow_model_requests: None) -> No
 
     output = await override_toolsets_flow()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
+    def request_external_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(request_external_tool),
+        name='runtime_external_toolset_prefect_agent',
+        output_type=[str, DeferredToolRequests],
+    )
+    prefect_agent = PrefectAgent(agent)
+
+    result = await prefect_agent.run(
+        'Call the runtime external tool.',
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external',
+                        parameters_json_schema={
+                            'type': 'object',
+                            'properties': {'query': {'type': 'string'}},
+                            'required': ['query'],
+                        },
+                    )
+                ],
+                id='external',
+            )
+        ],
+    )
+
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+    )
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -> None:
+    # Prefect wraps both function tools and MCP servers in tasks registered up front, and dynamic toolsets
+    # can't be introspected ahead of time, so none of them can be added per-run.
+    toolset_factories = {
+        'function': lambda: FunctionToolset(),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp'),
+        'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic'),
+    }
+    labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
 async def test_prefect_agent_override_tools(allow_model_requests: None) -> None:

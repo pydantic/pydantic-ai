@@ -9,7 +9,7 @@ from typing import Annotated, Any, Generic, cast
 from pydantic import Field
 from typing_extensions import TypeVar
 
-from .._utils import get_event_loop
+from .._utils import run_until_complete
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -226,7 +226,7 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         """
         output = self.evaluate(ctx)
         if inspect.iscoroutine(output):  # pragma: no cover
-            return get_event_loop().run_until_complete(output)
+            return run_until_complete(output)
         else:
             return cast(EvaluatorOutput, output)
 

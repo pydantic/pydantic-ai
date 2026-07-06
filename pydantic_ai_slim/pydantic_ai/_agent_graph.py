@@ -92,8 +92,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:
@@ -1195,8 +1195,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                    # both signal that the model has no text output to give. Some models emit only thinking
+                    # after completing the task via a tool call, and forcing a retry just makes them produce
+                    # unnecessary follow-up text.
+                    if output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _output.run_none_process_hooks(
@@ -1229,17 +1232,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 # If the recovered text was invalid, fall through.
                                 pass
 
-                    if is_empty:
-                        # Go back to the model request node with an empty request, which means we'll
-                        # essentially resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
-                        return
-
-                    # For thinking-only responses without recoverable text, fall through to the
-                    # normal retry prompt below.
+                    # For empty or thinking-only responses without recoverable text, fall through to
+                    # the normal retry prompt below. That prompt is built from the output schema and
+                    # available tools, so it tells the model which kinds of output are actually valid
+                    # (text, tool call, and/or image) rather than assuming text is always an option.
 
                 text = ''
                 compaction_text = ''
@@ -1780,6 +1776,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
+                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
+                # nor try to preserve them across the merge. These fields are only bookkeeping for
+                # callers; they're never part of what gets sent to the model. Refusing to merge on a
+                # mismatch would leave two consecutive requests where the model expects one, breaking
+                # providers (and provider-side conversation state) that require a single request per
+                # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(

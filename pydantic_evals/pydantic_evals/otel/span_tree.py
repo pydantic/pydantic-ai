@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from textwrap import indent
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -18,8 +18,11 @@ if TYPE_CHECKING:  # pragma: no cover
 # Should match opentelemetry.util.types.AttributeValue
 AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
 
+SpanStatus = Literal['unset', 'ok', 'error']
+"""The status of a span, mirroring `opentelemetry.trace.StatusCode`."""
 
-__all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
+
+__all__ = 'SpanNode', 'SpanQuery', 'SpanStatus', 'SpanTree'
 
 
 class SpanQuery(TypedDict, total=False):
@@ -42,6 +45,9 @@ class SpanQuery(TypedDict, total=False):
     ## Attribute conditions
     has_attributes: dict[str, Any]
     has_attribute_keys: list[str]
+
+    ## Status conditions
+    has_status: SpanStatus
 
     ## Timing conditions
     min_duration: timedelta | float
@@ -89,6 +95,8 @@ class SpanNode:
     start_timestamp: datetime
     end_timestamp: datetime
     attributes: dict[str, AttributeValue]
+    status: SpanStatus = 'unset'
+    """The span's status; `'error'` if the operation the span represents raised an exception."""
 
     @property
     def duration(self) -> timedelta:
@@ -129,6 +137,8 @@ class SpanNode:
         assert span.context is not None, 'Span has no context'
         assert span.start_time is not None, 'Span has no start time'
         assert span.end_time is not None, 'Span has no end time'
+        status_code_name = span.status.status_code.name  # 'UNSET' | 'OK' | 'ERROR'
+        status: SpanStatus = 'error' if status_code_name == 'ERROR' else 'ok' if status_code_name == 'OK' else 'unset'
         return SpanNode(
             name=span.name,
             trace_id=span.context.trace_id,
@@ -137,6 +147,7 @@ class SpanNode:
             start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=timezone.utc),
             end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=timezone.utc),
             attributes=dict(span.attributes or {}),
+            status=status,
         )
 
     def add_child(self, child: SpanNode) -> None:
@@ -273,6 +284,10 @@ class SpanNode:
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
             key in self.attributes for key in has_attributes_keys
         ):
+            return False
+
+        # Status conditions
+        if (has_status := query.get('has_status')) and self.status != has_status:
             return False
 
         # Timing conditions

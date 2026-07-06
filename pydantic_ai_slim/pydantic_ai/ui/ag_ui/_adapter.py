@@ -89,9 +89,11 @@ try:
         MULTIMODAL_VERSION,
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,
+        dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
+        rehydrate_tool_return_content,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
@@ -221,20 +223,7 @@ def _user_content_to_input(
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
-
-    [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] (inherited from
-    `UIAdapter`, default `False`) gates two behaviors. On the way in, client-submitted
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
-    `sanitize_messages` unless it is `True`, since the server resolves them with its own
-    credentials; only set it when the frontend is trusted. On the way out and back in, when
-    `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/messages) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity. When `False`,
-    they are dropped. If your AG-UI frontend uses activities, be aware that
-    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
-    ignored by frontend activity handlers.
-    """
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
@@ -257,6 +246,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     of this setting.
     """
 
+    preserve_file_data: bool = False
+    """Whether to round-trip `FilePart` and `UploadedFile` through reserved `pydantic_ai_*`
+    [activity messages](https://docs.ag-ui.com/concepts/messages).
+
+    Defaults to `False`. AG-UI has no native representation for agent-generated files
+    ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
+    ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
+    serialized as sidecar activity messages on `dump_messages` and reconstructed on
+    `load_messages`. A frontend only completes the round-trip if it echoes these activity
+    messages back on the next request.
+
+    This is a representation setting, not a security one: honoring a reconstructed inbound
+    `UploadedFile` still requires
+    [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files], which the shared
+    `sanitize_messages` step enforces regardless of this flag. Multimodal tool-return files are
+    unaffected — they ride inline in `ToolMessage.content`.
+    """
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body."""
@@ -277,6 +284,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -288,6 +296,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -458,6 +467,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
+                    # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
+                    # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
+                    content = rehydrate_tool_return_content(tool_msg.content)
+
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
@@ -471,12 +484,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
                         provider_name, original_id = builtin_id
-                        content: Any = tool_msg.content
-                        if isinstance(content, str):
-                            try:
-                                content = json.loads(content)
-                            except json.JSONDecodeError:
-                                pass
                         builder.add(
                             NativeToolReturnPart(
                                 tool_name=tool_name,
@@ -487,13 +494,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
                     else:
-                        # AG-UI sends tool content as a string; the final `narrow_message_parts` pass
-                        # parses it into a typed return subclass when the `tool_kind` claim validates,
-                        # and leaves the plain string part (dropping the claim) when it doesn't.
+                        # The final `narrow_message_parts` pass parses the rehydrated content into a typed
+                        # return subclass when the `tool_kind` claim validates, and leaves the base
+                        # `ToolReturnPart` (dropping the claim) when it doesn't.
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
-                                content=tool_msg.content,
+                                content=content,
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
                             )
@@ -650,10 +657,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
+                # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
-                        content=part.model_response_str(),
+                        content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
@@ -757,10 +765,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
+                    # Built-in tool-return files also ride inline in `ToolMessage.content` (see above).
                     tool_messages.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=builtin_return.model_response_str(),
+                            content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
                             **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
                         )
@@ -824,16 +833,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           success to its readers), so those reload as plain `ToolReturnPart`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
+        - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
+          multimodal content gained a metadata carrier).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
+        - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
+          regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
+          inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
+          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:
             messages: A sequence of ModelMessage objects to convert.
             ag_ui_version: AG-UI protocol version controlling `ThinkingPart` emission.
-            preserve_file_data: Whether to include `FilePart` and `UploadedFile` as `ActivityMessage`.
+            preserve_file_data: Whether to include `FilePart` and `UploadedFile` items as `ActivityMessage`s.
+                (Multimodal tool-return files always ride inline in `ToolMessage.content` and are unaffected.)
 
         Returns:
             A list of AG-UI Message objects.
