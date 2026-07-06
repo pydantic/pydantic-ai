@@ -5347,7 +5347,13 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
-                parts=[],
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

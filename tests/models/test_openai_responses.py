@@ -57,7 +57,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -2854,8 +2854,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
 
     # Turn 1 establishes a stored response we can seed from.
     result1 = await agent.run('Say hi in one word, no punctuation.')
-    last = result1.all_messages()[-1]
-    assert isinstance(last, ModelResponse)
+    last = message(result1.all_messages(), ModelResponse, index=-1)
     seed_response_id = last.provider_response_id
     assert seed_response_id is not None
 
@@ -3002,8 +3001,7 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         )
 
         assert result.output == snapshot('stored')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3014,8 +3012,7 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         )
 
         assert result.output == snapshot('CONV-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3032,8 +3029,7 @@ async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
             model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
         )
 
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
         original_pydantic_ai_conversation_id = response.conversation_id
@@ -3047,11 +3043,9 @@ async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
         )
 
         assert forked.output == snapshot('forked')
-        request = forked.all_messages()[-2]
-        assert isinstance(request, ModelRequest)
+        request = message(forked.all_messages(), ModelRequest, index=-2)
         assert request.conversation_id != original_pydantic_ai_conversation_id
-        response = forked.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(forked.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert 'conversation_id' not in response.provider_details
 
@@ -3086,8 +3080,7 @@ async def test_openai_conversation_id_preserves_mismatched_history(allow_model_r
         )
 
         assert result.output == snapshot('LOCAL-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3102,8 +3095,7 @@ async def test_openai_conversation_id_auto_without_history(allow_model_requests:
     )
 
     assert result.output == snapshot('no conversation')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.provider_details is not None
     assert 'conversation_id' not in response.provider_details
 
@@ -3126,8 +3118,7 @@ async def test_openai_conversation_id_tool_call_continuation(allow_model_request
         )
 
         assert result.output == snapshot('TOOL-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3165,8 +3156,7 @@ async def test_openai_conversation_id_streaming_provider_details(allow_model_req
             output = await result.get_output()
 
         assert output == snapshot('streamed')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3920,8 +3910,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
         ]
     )
 
-    response = messages[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse, index=-1)
     assert isinstance(response.parts, list)
     response.parts[1] = TextPart(content='The meaning of life is 42')
 
@@ -12083,8 +12072,7 @@ async def test_openai_responses_phase_non_streamed(allow_model_requests: None):
     agent = Agent(model=model)
 
     result = await agent.run('What is the capital of France?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
     assert [(p.id, p.content, (p.provider_details or {}).get('phase')) for p in text_parts] == snapshot(
         [
@@ -12176,8 +12164,7 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     async with agent.run_stream('What is the capital of France?') as result:
         await result.get_output()
 
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
     assert len(text_parts) == 1
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})

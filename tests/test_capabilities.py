@@ -113,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, message, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -742,7 +742,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
                         'gateway/anthropic:claude-sonnet-5',
-                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -875,7 +874,7 @@ def test_model_json_schema_with_capabilities():
                         'groq:openai/gpt-oss-safeguard-20b',
                         'groq:playai-tts',
                         'groq:playai-tts-arabic',
-                        'groq:qwen/qwen-3-32b',
+                        'groq:qwen/qwen3-32b',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -2140,6 +2139,50 @@ def test_to_file_json(tmp_path: str):
 
     # Schema file should be generated
     schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_yaml_with_absolute_schema_path(tmp_path: Path):
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    content = spec_path.read_text(encoding='utf-8')
+    assert content.startswith('# yaml-language-server: $schema=agent_schema.json')
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_external_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_dir = tmp_path / 'specs'
+    schema_dir = tmp_path / 'schemas'
+    spec_dir.mkdir()
+    schema_dir.mkdir()
+    spec_path = spec_dir / 'agent.json'
+    schema_path = schema_dir / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == str(schema_path)
     assert schema_path.exists()
 
 
@@ -3460,8 +3503,8 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
 
     def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
         call_ids: list[str] = []
-        for message in messages:
-            for part in message.parts:
+        for msg in messages:
+            for part in msg.parts:
                 if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
                     call_ids.append(part.tool_call_id)
         return call_ids
@@ -11030,8 +11073,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         ]
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            first_request = messages[0]
-            assert isinstance(first_request, ModelRequest)
+            first_request = message(messages, ModelRequest)
             first_request_instructions.append(first_request.instructions)
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
