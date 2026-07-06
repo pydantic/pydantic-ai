@@ -961,6 +961,27 @@ class BedrockConverseModel(Model[BaseClient]):
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
+
+        # Content-block kinds that may share a user turn with a `toolResult` block for this model.
+        colocatable_content = profile.get(
+            'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
+        )
+
+        # Media returned from a tool that can't live inside a `toolResult` block (see
+        # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
+        # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
+        # immediately following it, with nothing else sharing that turn, so such sibling media can't be
+        # placed there. When the media kind can't co-locate with a `toolResult` for this model, we collect
+        # it across the whole consecutive tool-return group and flush it as a separate user message after
+        # the grouped tool results; the merge pass below then separates it with a synthetic assistant turn.
+        # Media that this model does allow alongside a `toolResult` stays co-located in the same turn.
+        deferred_media_content: list[ContentBlockUnionTypeDef] = []
+
+        def flush_deferred_media() -> None:
+            if deferred_media_content:
+                bedrock_messages.append({'role': 'user', 'content': [*deferred_media_content]})
+                deferred_media_content.clear()
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
@@ -968,6 +989,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
+                        flush_deferred_media()
                         bedrock_messages.extend(
                             await self._map_user_prompt(
                                 part,
@@ -978,7 +1000,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         tool_result_content: list[Any] = []
-                        sibling_content: list[ContentBlockUnionTypeDef] = []
+                        colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
@@ -1018,8 +1040,15 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                    sibling_content.append(file_block)
+                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    if kind in colocatable_content:
+                                        # This model allows the media alongside the `toolResult`; keep it in the same turn.
+                                        colocated_media_content.append(media_note)
+                                        colocated_media_content.append(file_block)
+                                    else:
+                                        # The media can't share the `toolResult`'s turn; defer it to a later user turn.
+                                        deferred_media_content.append(media_note)
+                                        deferred_media_content.append(file_block)
                             elif isinstance(item, str):
                                 tool_result_content.append({'text': item})
                             else:
@@ -1029,19 +1058,24 @@ class BedrockConverseModel(Model[BaseClient]):
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
 
-                        user_content: list[ContentBlockUnionTypeDef] = [
+                        bedrock_messages.append(
                             {
-                                'toolResult': {
-                                    'toolUseId': part.tool_call_id,
-                                    'content': tool_result_content,
-                                    'status': 'success',
-                                }
+                                'role': 'user',
+                                'content': [
+                                    {
+                                        'toolResult': {
+                                            'toolUseId': part.tool_call_id,
+                                            'content': tool_result_content,
+                                            'status': 'success',
+                                        }
+                                    },
+                                    *colocated_media_content,
+                                ],
                             }
-                        ]
-                        user_content.extend(sibling_content)
-                        bedrock_messages.append({'role': 'user', 'content': user_content})
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
+                            flush_deferred_media()
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -1062,6 +1096,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
@@ -1123,14 +1158,15 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 assert_never(message)
 
+        # Flush any tool-return media that trails the conversation (the common case: history ends with
+        # tool returns and no following assistant turn).
+        flush_deferred_media()
+
         # Merge together sequential user messages. Some models reject a user message that co-locates a
         # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
-        # profile marks the combined content as not co-locatable, split the turns instead of merging.
-        # See #6081 and `bedrock_tool_result_colocatable_content`.
-        colocatable_content = profile.get(
-            'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
-        )
+        # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
+        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
