@@ -1214,12 +1214,17 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
     tools: list[chat_types.chat_pb2.Tool] = []
     for builtin_tool in model_request_parameters.native_tools:
         if isinstance(builtin_tool, WebSearchTool):
-            # Note: user_location and search_context_size are not supported by xAI
+            # Note: `search_context_size` is not supported by xAI.
+            user_location = builtin_tool.user_location or {}
             tools.append(
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
                     enable_image_understanding=False,
+                    user_location_country=user_location.get('country'),
+                    user_location_city=user_location.get('city'),
+                    user_location_region=user_location.get('region'),
+                    user_location_timezone=user_location.get('timezone'),
                 )
             )
         elif isinstance(builtin_tool, CodeExecutionTool):

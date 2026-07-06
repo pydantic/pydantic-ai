@@ -272,7 +272,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames
+# TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
+# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See PR #5849 for the same
+# bridge-then-drop pattern applied to `claude-fable-5`.
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -2804,7 +2807,7 @@ def _map_tool_search_tool_result_block(
     provider_details: dict[str, Any] | None = None
     matches: list[ToolSearchMatch] = []
     if block.type == 'tool_search_tool_search_result':
-        matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
+        matches = [{'name': ref.tool_name} for ref in block.tool_references]
     else:  # tool_search_tool_result_error
         provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
     return NativeToolSearchReturnPart(

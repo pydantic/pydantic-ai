@@ -30,6 +30,7 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-sonnet-4-5',
     'claude-sonnet-4-6',
+    'claude-sonnet-5',
 )
 
 
@@ -182,6 +183,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-6',
         'claude-opus-4-7',
         'claude-opus-4-8',
+        'claude-sonnet-5',
     )
     """These models support both structured outputs and strict tool calling."""
     # TODO update when new models are released that support structured outputs
@@ -196,6 +198,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-fable-5',
             'claude-mythos-5',
             'claude-sonnet-4-6',
+            'claude-sonnet-5',
             'claude-opus-4-6',
             'claude-opus-4-7',
             'claude-opus-4-8',
@@ -212,22 +215,23 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-4-7',
             'claude-opus-4-8',
             'claude-sonnet-4-6',
+            'claude-sonnet-5',
         )
     )
     supports_xhigh_effort = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-5')
     )
     disallows_budget_thinking = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-5')
     )
     disallows_sampling_settings = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-5')
     )
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
     supports_task_budgets = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-5')
     )
 
     # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
@@ -244,6 +248,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-mythos-5',
             'claude-mythos-preview',
             'claude-sonnet-4-6',
+            'claude-sonnet-5',
             'claude-opus-4-6',
             'claude-opus-4-7',
             'claude-opus-4-8',
@@ -259,6 +264,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-mythos-5',
             'claude-sonnet-4-5',
             'claude-sonnet-4-6',
+            'claude-sonnet-5',
             'claude-opus-4-5',
             'claude-opus-4-6',
             'claude-opus-4-7',

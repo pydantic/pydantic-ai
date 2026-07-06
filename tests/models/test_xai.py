@@ -74,7 +74,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -222,8 +222,7 @@ async def test_xai_cost_calculation(allow_model_requests: None):
     assert result.output == 'world'
 
     # Verify cost is calculated via genai-prices
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.000045'))
 
 
@@ -925,6 +924,186 @@ async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) ->
         [
             {'function': {'name': 'tool_a', 'parameters': '{"type": "object", "properties": {}}'}},
             {'function': {'name': 'tool_c', 'parameters': '{"type": "object", "properties": {}}'}},
+        ]
+    )
+
+
+async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
+    """`WebSearchTool.user_location` should be forwarded to xAI's `web_search` location fields.
+
+    This pins the outgoing tool payload directly. The proto-cassette replay client
+    (see `test_xai_web_search_user_location_recorded`) ignores the request it's handed,
+    so a regression that dropped `user_location` would still replay green — only this
+    payload assertion catches it.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'city': 'San Francisco',
+                    'country': 'US',
+                    'region': 'California',
+                    'timezone': 'America/Los_Angeles',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                        'city': 'San Francisco',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_partial(allow_model_requests: None) -> None:
+    """A partially-populated `user_location` forwards only the set fields.
+
+    `user_location.get(...)` yields `None` for the unset fields, and the xAI SDK omits
+    `None` values from the `WebSearchUserLocation` proto — so only `country` reaches the wire.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'country': 'US',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_recorded(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Live-recorded proof that xAI accepts `WebSearchTool.user_location` fields.
+
+    Recorded against the real xAI API (proto cassette); the committed cassette's request
+    payload shows the `user_location` fields xAI accepted without error. The mapping itself
+    is pinned by `test_xai_web_search_user_location` — the replay client ignores the request.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    user_location={
+                        'city': 'San Francisco',
+                        'country': 'US',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    }
+                )
+            )
+        ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_web_search_output=True,
+        ),
+    )
+
+    result = await agent.run('Search the web for one popular tourist attraction near me and name it.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search the web for one popular tourist attraction near me and name it.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "Search the web for one popular tourist attraction near me and name it."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'popular tourist attractions San Francisco', 'num_results': '5'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    TextPart(
+                        content='**Golden Gate Bridge** is one of the most popular tourist attractions near you in San Francisco.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2747,
+                    cache_read_tokens=1280,
+                    output_tokens=23,
+                    details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
         ]
     )
 
@@ -1651,7 +1830,7 @@ async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with XaiModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1737,10 +1916,7 @@ async def test_xai_response_with_logprobs(allow_model_requests: None):
 
     result = await agent.run('What is the capital of Minas Gerais?')
     messages = result.all_messages()
-    response_msg = messages[1]
-    assert isinstance(response_msg, ModelResponse)
-    text_part = response_msg.parts[0]
-    assert isinstance(text_part, TextPart)
+    text_part = message_part(messages, TextPart, message_index=1)
     assert text_part.provider_details is not None
     assert 'logprobs' in text_part.provider_details
     assert text_part.provider_details['logprobs'] == snapshot(
@@ -3683,8 +3859,8 @@ Fix the errors and try again.\
     # Verify the retry prompt was sent as a user message
     messages = result.all_messages()
     assert len(messages) == 4  # UserPrompt, ModelResponse, RetryPrompt, ModelResponse
-    assert isinstance(messages[2].parts[0], RetryPromptPart)
-    assert messages[2].parts[0].tool_name is None
+    part = message_part(messages, RetryPromptPart, message_index=2)
+    assert part.tool_name is None
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):

@@ -4,21 +4,22 @@ import base64
 import hashlib
 import mimetypes
 import os
+import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, assert_never
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -207,6 +208,8 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -520,6 +523,8 @@ class BinaryContent:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `MistralModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
@@ -856,7 +861,13 @@ class UploadedFile:
 
 
 MultiModalContent = Annotated[
-    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, pydantic.Discriminator('kind')
+    ImageUrl
+    | AudioUrl
+    | DocumentUrl
+    | VideoUrl
+    | Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
+    | UploadedFile,
+    pydantic.Discriminator('kind'),
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
@@ -1065,16 +1076,108 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
+# Derived from the union members (pinned by `test_multi_modal_content_types_matches_union`) so it can't drift.
+_MULTIMODAL_KINDS: frozenset[str] = frozenset(t.__dataclass_fields__['kind'].default for t in MULTI_MODAL_CONTENT_TYPES)
+
+# Type-specific fields that, alongside a matching `kind`, mark a dict as a real `MultiModalContent`
+# rather than a user dict reusing one of our `kind` values: `url` (`FileUrl` types), `media_type`
+# (every dumped item), `file_id` (`UploadedFile`).
+_MULTIMODAL_FIELDS: frozenset[str] = frozenset({'url', 'media_type', 'file_id'})
+
+
+def _tool_return_content_discriminator(value: Any) -> str:
+    """Route a `ToolReturnContent` value to one of the tagged union branches.
+
+    Pydantic's smart-union resolution would otherwise pick `Mapping[str, ToolReturnContent]`
+    for a dumped `MultiModalContent` dict (e.g. `{'kind': 'binary', 'data': '...'}`) and skip
+    the discriminated `MultiModalContent` branch in `validate_python`, leaving multimodal
+    leaves as plain dicts.
+
+    A matching `kind` alone is not enough: this alias is wired into the core `ToolReturnContent`
+    type, so `ModelMessagesTypeAdapter` runs the discriminator on every tool return everywhere.
+    A type-specific field must also be present — `url` for the `FileUrl` types, `media_type`
+    (carried by every dumped `MultiModalContent`), or `file_id` for `UploadedFile` — so a user
+    dict that merely reuses one of our `kind` values (e.g. `{'kind': 'binary', 'label': 'foo'}`)
+    stays a plain mapping instead of being forced through multimodal validation.
+    """
+    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
+        return 'multimodal'
+    if isinstance(value, Mapping):
+        if (
+            'kind' in value
+            and isinstance(value['kind'], str)
+            and value['kind'] in _MULTIMODAL_KINDS
+            and any(field in value for field in _MULTIMODAL_FIELDS)
+        ):
+            return 'multimodal'
+        return 'mapping'
+    if isinstance(value, (str, bytes, bytearray)):
+        return 'any'
+    if isinstance(value, Sequence):
+        return 'sequence'
+    return 'any'
+
+
+def _validate_multimodal_or_passthrough(value: Any, handler: pydantic.ValidatorFunctionWrapHandler) -> Any:
+    """Validate a `multimodal`-tagged value as `MultiModalContent`, falling back to the raw value.
+
+    The discriminator gates a dict into the `multimodal` branch on a matching `kind` plus a
+    type-specific field, but that's a heuristic: a user tool-return dict that merely reuses one of
+    our `kind` values and happens to carry a `media_type`/`url`/`file_id` key (e.g.
+    `{'kind': 'binary', 'media_type': 'text/plain'}`) would otherwise raise a hard `ValidationError`.
+    Returning it unchanged keeps such dicts as plain mappings, matching the pre-discriminator behavior
+    where they fell through to the `Any` arm rather than being force-validated as multimodal content.
+    """
+    try:
+        return handler(value)
+    except pydantic.ValidationError:
+        return value
+
+
+def _serialize_multimodal_or_passthrough(value: Any, handler: pydantic.SerializerFunctionWrapHandler) -> Any:
+    """Serialize a `multimodal`-tagged value, passing non-`MultiModalContent` values through as-is.
+
+    Mirror of `_validate_multimodal_or_passthrough`: a passthrough dict left as a plain mapping (see
+    there) is still routed to the `multimodal` branch by the discriminator on serialization, where the
+    `MultiModalContent` serializer would emit a spurious `PydanticSerializationUnexpectedValue` warning.
+    Serializing it as a plain value avoids that while real `MultiModalContent` instances dump normally.
+    """
+    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
+        return handler(value)
+    return value
+
+
 if TYPE_CHECKING:
     # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
     ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
 else:
     # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
-    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization.
+    # The explicit `Discriminator` is required because smart-union resolution otherwise picks
+    # `Mapping`/`Any` over the inner-discriminated `MultiModalContent` branch in python mode.
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
-        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+        Annotated[
+            Annotated[
+                MultiModalContent,
+                pydantic.WrapValidator(_validate_multimodal_or_passthrough),
+                pydantic.WrapSerializer(_serialize_multimodal_or_passthrough),
+                pydantic.Tag('multimodal'),
+            ]
+            | Annotated[Mapping[str, 'ToolReturnContent'], pydantic.Tag('mapping')]
+            | Annotated[Sequence['ToolReturnContent'], pydantic.Tag('sequence')]
+            | Annotated[Any, pydantic.Tag('any')],
+            pydantic.Discriminator(_tool_return_content_discriminator),
+        ],
     )
+
+
+tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeAdapter(
+    ToolReturnContent, config=pydantic.ConfigDict(defer_build=True)
+)
+"""TypeAdapter for `ToolReturnContent` — used by UI adapters to rehydrate multimodal items
+(`BinaryContent`, `ImageUrl`, etc.) from raw JSON/dict payloads carried in wire-protocol fields
+typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
 
 
 ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
@@ -1088,6 +1191,18 @@ typed-part families (e.g. web search) gain dedicated subclasses.
 Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 `'function'`, `'output'`, `'external'`, `'unapproved'`).
 """
+
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def parse_tool_kind(value: str) -> ToolPartKind | None:
+    """Return `value` if it's a known [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
+
+    UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
+    string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
+    bogus discriminator.
+    """
+    return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
 @dataclass(repr=False)
@@ -1248,6 +1363,29 @@ class BaseToolReturnPart:
         else:
             return {RETURN_VALUE_KEY: json_content}
 
+    def structured_content(self) -> dict[str, Any] | list[Any] | None:
+        """Return `content` as structured JSON data (a `dict` or `list`), or `None` if it has none.
+
+        A JSON string is parsed; already-structured content is returned as-is; a plain/non-JSON
+        string, scalar, or multimodal content yields `None` (there is no structured payload). A
+        read-side companion to [`files`][pydantic_ai.messages.BaseToolReturnPart.files] and
+        [`model_response_object`][pydantic_ai.messages.BaseToolReturnPart.model_response_object]; some
+        UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, so
+        [`narrow_type`][pydantic_ai.messages.ToolReturnPart.narrow_type] uses it to recover the
+        structured payload a typed return subclass expects.
+        """
+        content = self.content
+        if isinstance(content, str):
+            try:
+                content = pydantic_core.from_json(content)
+            except ValueError:
+                return None
+        if isinstance(content, dict):
+            return cast('dict[str, Any]', content)
+        if isinstance(content, list):
+            return cast('list[Any]', content)
+        return None
+
     def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
@@ -1308,18 +1446,13 @@ class ToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _TOOL_RETURN_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_return(part, _TOOL_RETURN_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1353,17 +1486,13 @@ class NativeToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
         """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _NATIVE_RETURN_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1690,7 +1819,7 @@ class CompactionPart:
 class FilePart:
     """A file response from a model."""
 
-    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
     """The file content of the response."""
 
     _: KW_ONLY
@@ -1837,18 +1966,13 @@ class ToolCallPart(BaseToolCallPart):
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _TOOL_CALL_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_call(part, _TOOL_CALL_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1899,17 +2023,13 @@ class NativeToolCallPart(BaseToolCallPart):
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
         """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _NATIVE_CALL_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_call(part, _NATIVE_CALL_NARROWERS, tool_kind)
 
 
 # Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
@@ -1923,6 +2043,44 @@ _NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolR
 # without native tool search.
 _TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
 _TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
+
+
+_CallPartT = TypeVar('_CallPartT', bound='BaseToolCallPart')
+_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
+
+
+def _narrow_call(
+    part: _CallPartT, narrowers: dict[str, Callable[[_CallPartT], _CallPartT]], tool_kind: ToolPartKind | None
+) -> _CallPartT:
+    """Best-effort promotion shared by the call-part `narrow_type` methods. See `ToolCallPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    try:
+        return narrower(part)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
+
+
+def _narrow_return(
+    part: _ReturnPartT, narrowers: dict[str, Callable[[_ReturnPartT], _ReturnPartT]], tool_kind: ToolPartKind | None
+) -> _ReturnPartT:
+    """Best-effort promotion shared by the return-part `narrow_type` methods. See `ToolReturnPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
+    # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+    structured = part.structured_content()
+    narrow_input = (
+        replace(part, content=structured) if structured is not None and structured is not part.content else part
+    )
+    try:
+        return narrower(narrow_input)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 _TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
@@ -2259,6 +2417,476 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
+    if isinstance(part, NativeToolCallPart):
+        return NativeToolCallPart.narrow_type(part)
+    if isinstance(part, NativeToolReturnPart):
+        return NativeToolReturnPart.narrow_type(part)
+    if isinstance(part, ToolCallPart):
+        return ToolCallPart.narrow_type(part)
+    return part
+
+
+def _narrow_request_part(part: ModelRequestPart) -> ModelRequestPart:
+    if isinstance(part, ToolReturnPart):
+        return ToolReturnPart.narrow_type(part)
+    return part
+
+
+def narrow_message_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Promote each tool call/return part across `messages` to its typed subclass via its `tool_kind`.
+
+    Best-effort and idempotent: a part whose `tool_kind` resolves to a registered typed subclass and
+    whose data validates against it is promoted; a part with no `tool_kind`, an unregistered one, or
+    shape-invalid data is left a base part (an unsubstantiated `tool_kind` is stripped — see
+    [`ToolCallPart.narrow_type`][pydantic_ai.messages.ToolCallPart.narrow_type]).
+
+    UI adapters reconstruct base parts from the wire format with `tool_kind` set from client-echoed
+    metadata, then call this once instead of narrowing each part inline. Pydantic deserialization of a
+    `ModelMessage` performs the same promotion via its discriminated-union dispatch; this is the
+    direct-construction equivalent for callers that build parts by hand.
+    """
+    narrowed: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            new_response_parts = [_narrow_response_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_response_parts, message.parts)):
+                message = replace(message, parts=new_response_parts)
+        elif isinstance(message, ModelRequest):
+            new_request_parts = [_narrow_request_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_request_parts, message.parts)):
+                message = replace(message, parts=new_request_parts)
+        else:
+            assert_never(message)
+        narrowed.append(message)
+    return narrowed
+
+
+_FileUrlT = TypeVar('_FileUrlT', bound=FileUrl)
+"""TypeVar for a [`FileUrl`][pydantic_ai.messages.FileUrl] subclass, used to preserve the concrete
+subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
+
+
+def sanitize_messages(
+    messages: Sequence[ModelMessage],
+    *,
+    strip_system_prompts: bool = True,
+    allowed_file_url_schemes: Collection[str] = ('http', 'https'),
+    allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
+    allow_uploaded_files: bool = False,
+    resolved_tool_call_ids: Collection[str] = (),
+) -> list[ModelMessage]:
+    """Strip message parts that aren't safe to honor from untrusted input.
+
+    This is the same default sanitization the [UI adapters](../ui/overview.md) apply to
+    client-submitted messages before they're passed to an agent. Use it when loading
+    `message_history` from a source the application does not fully trust, such as a browser request.
+
+    By default it strips:
+
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s (disable with
+      `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
+      inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
+      parts, the request is dropped from history entirely.
+    - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
+      `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
+      cause the model provider to fetch the object using the server-side IAM role, so they should
+      only be accepted from trusted clients.
+    - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than
+      `False` that aren't in `allowed_file_url_force_download`, resetting them to `False`. Both
+      `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
+      those nested in tool return parts.
+    - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
+      Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
+      using the server-side IAM role. Applies to uploaded files in user content and those nested in
+      tool return parts.
+    - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
+      `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
+      correspond to a paused agent run and shouldn't be executed.
+      [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s are left in place: the provider
+      executes them server-side and pairs each with a
+      [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
+      agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
+      final response with no parts, the response is dropped from history entirely.
+
+    Args:
+        messages: Messages to sanitize.
+        strip_system_prompts: Whether to strip
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+        allowed_file_url_schemes: URL schemes allowed for [`FileUrl`][pydantic_ai.messages.FileUrl]
+            parts. Defaults to `http` and `https`.
+        allowed_file_url_force_download: Additional
+            [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to allow.
+            `False` is always allowed. Defaults to no additional values.
+        allow_uploaded_files: Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] items
+            from the untrusted input. Off by default, since an uploaded file references an object the model
+            provider fetches using the server-side IAM role.
+        resolved_tool_call_ids: Tool call IDs to preserve when the final response ends with tool calls.
+            Use this for human-in-the-loop resumption when matching tool results are being submitted
+            with the same request.
+    """
+    allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
+    allowed_force_download = set(allowed_file_url_force_download)
+    resolved_ids = set(resolved_tool_call_ids)
+
+    stripped_system_prompt = False
+    disallowed_url_schemes: set[str] = set()
+    reset_force_download_values: set[ForceDownloadMode] = set()
+    dropped_uploaded_file_providers: set[str] = set()
+    dangling_tool_call_names: list[str] = []
+
+    sanitized: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
+                message.parts,
+                strip_system_prompts=strip_system_prompts,
+                allowed_file_url_schemes=allowed_schemes,
+                allowed_file_url_force_download=allowed_force_download,
+                allow_uploaded_files=allow_uploaded_files,
+                disallowed_schemes=disallowed_url_schemes,
+                reset_force_download_values=reset_force_download_values,
+                dropped_uploaded_file_providers=dropped_uploaded_file_providers,
+            )
+            stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+            if new_request_parts:
+                sanitized.append(replace(message, parts=new_request_parts))
+            # Otherwise drop the request entirely so we don't leave an empty
+            # `ModelRequest(parts=[])` in history.
+        elif isinstance(message, ModelResponse):
+            new_response_parts = _sanitize_response_parts(
+                message.parts,
+                allowed_file_url_schemes=allowed_schemes,
+                allowed_file_url_force_download=allowed_force_download,
+                allow_uploaded_files=allow_uploaded_files,
+                disallowed_schemes=disallowed_url_schemes,
+                reset_force_download_values=reset_force_download_values,
+                dropped_uploaded_file_providers=dropped_uploaded_file_providers,
+            )
+            if new_response_parts:
+                sanitized.append(replace(message, parts=new_response_parts))
+            # Otherwise drop the response entirely so we don't leave an empty
+            # `ModelResponse(parts=[])` in history.
+        else:
+            assert_never(message)
+
+    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
+
+    if stripped_system_prompt:
+        warnings.warn(
+            'Client-submitted system prompts were stripped. Pass `strip_system_prompts=False` only when the '
+            "client is trusted to own the system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if disallowed_url_schemes:
+        warnings.warn(
+            f'Client-submitted file URLs with scheme(s) {sorted(disallowed_url_schemes)!r} '
+            f'were dropped because those schemes are not in `allowed_file_url_schemes` '
+            f'(currently {sorted(allowed_schemes)!r}). Non-HTTP schemes like '
+            f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
+            f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
+            f'`allowed_file_url_schemes`.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if reset_force_download_values:
+        warnings.warn(
+            f'Client-submitted file URLs with `force_download` value(s) '
+            f'{sorted(reset_force_download_values, key=repr)!r} were reset to `False` because '
+            f'those values are not in `allowed_file_url_force_download` '
+            f'(currently {sorted(allowed_force_download, key=repr)!r}). '
+            f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
+            f'the server fetch the file itself, so neither should be accepted from untrusted '
+            f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
+            f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if dropped_uploaded_file_providers:
+        warnings.warn(
+            f'Client-submitted uploaded file(s) for provider(s) {sorted(dropped_uploaded_file_providers)!r} '
+            f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
+            f'an uploaded file references an object the model provider fetches using the server-side IAM role '
+            f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
+            f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
+            f'`message_history` directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if dangling_tool_call_names:
+        warnings.warn(
+            f'Client-submitted history ended with unresolved tool call(s) '
+            f'{sorted(set(dangling_tool_call_names))!r}, which were stripped. Tool calls are '
+            f'produced by the model on the server side, so an unresolved tool call at the end '
+            f'of client-supplied history does not correspond to a paused agent run. For '
+            f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
+            f'or pass matching `deferred_tool_results` to a UI adapter run method.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return sanitized
+
+
+def _strip_dangling_tail_tool_calls(
+    sanitized: list[ModelMessage],
+    resolved_tool_call_ids: set[str],
+    dangling_names: list[str],
+) -> None:
+    """Strip unresolved (dangling) tool calls from the surviving tail of already-sanitized history.
+
+    The tail is only known once empty messages have been dropped: a trailing `ModelRequest` that
+    sanitized to empty (e.g. a client-supplied system prompt) is gone, which can re-expose an earlier
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] whose tool calls a promptless run would
+    dispatch directly. Anchoring on the pre-drop index would miss that re-exposed response. Walks
+    back over trailing responses so several dropped messages can't hide a dangling call, keeping
+    calls in `resolved_tool_call_ids` so a same-request human-in-the-loop resume still works.
+
+    Only user-executed `ToolCallPart`s are stripped;
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s are left in place since the
+    provider resolves them server-side (paired with a
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]) and the agent loop never
+    dispatches them.
+
+    Mutates `sanitized` (dropping/rewriting trailing responses) and appends stripped tool names to
+    `dangling_names` in place.
+    """
+    while sanitized and isinstance(tail := sanitized[-1], ModelResponse):
+        kept_parts: list[ModelResponsePart] = []
+        for part in tail.parts:
+            if isinstance(part, ToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+                dangling_names.append(part.tool_name)
+            else:
+                kept_parts.append(part)
+        if len(kept_parts) == len(tail.parts):
+            break
+        if kept_parts:
+            sanitized[-1] = replace(tail, parts=kept_parts)
+            break
+        sanitized.pop()
+
+
+def _sanitize_request_parts(
+    parts: Sequence[ModelRequestPart],
+    *,
+    strip_system_prompts: bool,
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+) -> tuple[list[ModelRequestPart], bool]:
+    """Sanitize the parts of an untrusted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+
+    `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
+    updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
+    uploaded file providers encountered.
+    Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s
+    were stripped.
+    """
+    stripped_system_prompt = False
+    new_parts: list[ModelRequestPart] = []
+    for part in parts:
+        if strip_system_prompts and isinstance(part, SystemPromptPart):
+            stripped_system_prompt = True
+            continue
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+            filtered_content = _filter_user_content(
+                part.content,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            )
+            new_parts.append(replace(part, content=filtered_content))
+        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
+            # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
+            # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
+            # during sanitization would leave it schema-invalid.
+            keep_content, sanitized_content = _sanitize_tool_return_content(
+                part.content,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            )
+            new_parts.append(replace(part, content=sanitized_content if keep_content else None))
+        else:
+            new_parts.append(part)
+    return new_parts, stripped_system_prompt
+
+
+def _filter_user_content(
+    content: Sequence[UserContent],
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+) -> list[UserContent]:
+    """Sanitize untrusted file references (file URLs and uploaded files) in user content.
+
+    Drops file URLs whose scheme isn't in the allowlist, and resets `force_download` values that
+    aren't `False` and aren't in `allowed_file_url_force_download` on kept items to `False`. Drops
+    uploaded files unless `allow_uploaded_files` is set.
+
+    `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
+    updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
+    file providers encountered.
+    """
+    filtered: list[UserContent] = []
+    for item in content:
+        if isinstance(item, FileUrl):
+            scheme = urlparse(item.url).scheme.lower()
+            if scheme and scheme not in allowed_file_url_schemes:
+                disallowed_schemes.add(scheme)
+                continue
+            item = _sanitize_file_url(item, allowed_file_url_force_download, reset_force_download_values)
+        elif isinstance(item, UploadedFile) and not allow_uploaded_files:
+            dropped_uploaded_file_providers.add(item.provider_name)
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _sanitize_file_url(
+    file_url: _FileUrlT,
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    reset_force_download_values: set[ForceDownloadMode],
+) -> _FileUrlT:
+    """Reset a [`FileUrl`][pydantic_ai.messages.FileUrl]'s `force_download` if it's not allowlisted.
+
+    `reset_force_download_values` is updated in place with the original value when it's reset.
+    """
+    if file_url.force_download is not False and file_url.force_download not in allowed_file_url_force_download:
+        reset_force_download_values.add(file_url.force_download)
+        return replace(file_url, force_download=False)
+    return file_url
+
+
+def _sanitize_tool_return_content(
+    content: ToolReturnContent,
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+) -> tuple[bool, ToolReturnContent]:
+    """Recursively sanitize file references (file URLs and uploaded files) nested in tool return content.
+
+    Tool return content is an arbitrarily nested structure of files, sequences, and mappings,
+    so any `FileUrl` or `UploadedFile` it contains — including those introduced by multimodal tool
+    returns — is walked and sanitized the same way file references in user content are: file URL
+    schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
+    is set.
+
+    `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
+    updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
+    file providers encountered.
+    """
+    if isinstance(content, FileUrl):
+        scheme = urlparse(content.url).scheme.lower()
+        if scheme and scheme not in allowed_file_url_schemes:
+            disallowed_schemes.add(scheme)
+            return False, content
+        return True, _sanitize_file_url(content, allowed_file_url_force_download, reset_force_download_values)
+    if isinstance(content, UploadedFile):
+        if not allow_uploaded_files:
+            dropped_uploaded_file_providers.add(content.provider_name)
+            return False, content
+        return True, content
+    # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
+    # but resolves to `Any` at type-check time, so pyright can't infer the element types.
+    if isinstance(content, Mapping):
+        mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        sanitized_mapping: dict[str, ToolReturnContent] = {}
+        for key, value in mapping.items():
+            keep, sanitized_value = _sanitize_tool_return_content(
+                value,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            )
+            if keep:
+                sanitized_mapping[key] = sanitized_value
+        return True, sanitized_mapping
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        sanitized_sequence: list[ToolReturnContent] = []
+        for item in sequence:
+            keep, sanitized_item = _sanitize_tool_return_content(
+                item,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            )
+            if keep:
+                sanitized_sequence.append(sanitized_item)
+        return True, sanitized_sequence
+    return True, content
+
+
+def _sanitize_response_parts(
+    parts: Sequence[ModelResponsePart],
+    *,
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+) -> list[ModelResponsePart]:
+    """Sanitize the file references nested in an untrusted response's tool return parts.
+
+    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
+    [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
+    `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
+    the surviving tail, by `sanitize_messages`.
+
+    `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
+    updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
+    file providers encountered.
+    """
+    new_parts: list[ModelResponsePart] = []
+    for part in parts:
+        if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
+            # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
+            # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
+            # during sanitization would leave it schema-invalid.
+            keep_content, sanitized_content = _sanitize_tool_return_content(
+                part.content,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            )
+            new_parts.append(replace(part, content=sanitized_content if keep_content else None))
+        else:
+            new_parts.append(part)
+    return new_parts
 
 
 @dataclass(repr=False)

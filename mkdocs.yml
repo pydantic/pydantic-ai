@@ -42,6 +42,7 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
+          - models/zai.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -77,10 +78,12 @@ nav:
           - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
+          - Standard Quality Metrics: evals/evaluators/standard-quality-metrics.md
           - Third-Party Integrations: evals/evaluators/framework-integrations.md
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+          - Agentic: evals/evaluators/agentic.md
       - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
@@ -133,6 +136,7 @@ nav:
           - examples/sql-gen.md
           - examples/data-analyst.md
           - examples/rag.md
+          - examples/twelvelabs-video-agent.md
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
@@ -177,6 +181,7 @@ nav:
           - api/models/openai.md
           - api/models/openrouter.md
           - api/models/test.md
+          - api/models/zai.md
           - api/models/wrapper.md
           - api/output.md
           - api/profiles.md

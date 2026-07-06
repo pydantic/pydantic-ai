@@ -45,7 +45,10 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan
+from pydantic_graph._utils import (
+    AbstractSpan,
+    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+)
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
@@ -67,7 +70,7 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
@@ -79,7 +82,9 @@ def disable_threads() -> Generator[None]:
     being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
 
     This is useful in environments where threading is restricted, such as
-    Temporal workflows which use a sandboxed event loop.
+    Temporal workflows which use a sandboxed event loop. On emscripten,
+    sync callbacks already run inline by default because Python threads are
+    unavailable there.
 
     Yields:
         None
@@ -334,7 +339,7 @@ async def group_by_temporal(
                 'soft_max_interval must be a positive number'
             )
             buffer: list[T] = []
-            group_start_time = time.monotonic()
+            group_start_time: float | None = None
 
             while True:
                 if group_start_time is None:
@@ -392,15 +397,6 @@ def sync_anext(iterator: Iterator[T]) -> T:
         return next(iterator)
     except StopIteration as e:
         raise StopAsyncIteration() from e
-
-
-def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = get_event_loop()
-    while True:
-        try:
-            yield loop.run_until_complete(anext(async_iter))
-        except StopAsyncIteration:
-            break
 
 
 def now_utc() -> datetime:
@@ -462,6 +458,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
+        # Serialize access to the underlying source so `aclose()` waits for any in-flight `__anext__`/
+        # `peek()` to finish before closing it. A debounced consumer (`group_by_temporal`) prefetches the
+        # next item in a background task, so the source generator can be mid-`anext` when the stream is
+        # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
+        # `RuntimeError: aclose(): asynchronous generator is already running`.
+        self._source_lock = anyio.Lock()
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -479,11 +481,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            self._buffer = await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            return UNSET
+        async with self._source_lock:
+            try:
+                self._buffer = await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                return UNSET
 
         return self._buffer
 
@@ -513,18 +516,22 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            return await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            raise
+        async with self._source_lock:
+            try:
+                return await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                raise
 
     async def aclose(self) -> None:
         self._exhausted = True
         value = self._source_iter if self._source_iter is not None else self.source
         aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
         if aclose is not None:
-            await aclose()
+            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
+            # release the source before closing it, so we don't close a generator that's still running.
+            async with self._source_lock:
+                await aclose()
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
@@ -764,7 +771,7 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
     return rewritten_schemas, all_defs
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -799,7 +806,7 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover
