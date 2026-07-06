@@ -396,7 +396,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
             for part in message.parts:
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolReturnPart):
+                elif isinstance(part, ToolReturnPart | NativeToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())

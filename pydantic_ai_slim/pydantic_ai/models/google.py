@@ -1016,6 +1016,8 @@ class GoogleModel(Model[Client]):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.extend(await self._map_tool_return(part))
+                    elif isinstance(part, NativeToolReturnPart):
+                        pass
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})

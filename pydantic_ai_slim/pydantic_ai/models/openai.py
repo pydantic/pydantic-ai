@@ -1499,6 +1499,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
@@ -2729,6 +2731,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=part.model_response(),
                             )
                             openai_messages.append(item)
+                    elif isinstance(part, NativeToolReturnPart):
+                        pass
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

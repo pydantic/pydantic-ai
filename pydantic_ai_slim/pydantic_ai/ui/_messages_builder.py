@@ -31,18 +31,18 @@ class MessagesBuilder:
     def add(self, part: ModelRequestPart | ModelResponsePart) -> None:
         """Add a new part, creating a new request or response message if necessary."""
         last_message = self.messages[-1] if self.messages else None
-        if isinstance(part, get_union_args(ModelRequestPart)):
-            part = cast(ModelRequestPart, part)
-            if isinstance(last_message, ModelRequest):
-                last_message.parts = [*last_message.parts, part]
-            else:
-                self.messages.append(ModelRequest(parts=[part]))
-        else:
+        if isinstance(part, get_union_args(ModelResponsePart)):
             part = cast(ModelResponsePart, part)
             if isinstance(last_message, ModelResponse):
                 last_message.parts = [*last_message.parts, part]
             else:
                 self.messages.append(ModelResponse(parts=[part]))
+        else:
+            part = cast(ModelRequestPart, part)
+            if isinstance(last_message, ModelRequest):
+                last_message.parts = [*last_message.parts, part]
+            else:
+                self.messages.append(ModelRequest(parts=[part]))
 
     def checkpoint(self) -> BuilderCheckpoint:
         """Snapshot the current builder state. Pair with [`last_modified`][pydantic_ai.ui.MessagesBuilder.last_modified]."""

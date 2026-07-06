@@ -557,6 +557,8 @@ class MistralModel(Model[Mistral]):
                     tool_call_id=part.tool_call_id,
                     content=tool_text,
                 )
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield MistralUserMessage(content=part.model_response())  # pragma: no cover

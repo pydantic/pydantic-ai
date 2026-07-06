@@ -1059,6 +1059,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                     ],
                                 }
                             )
+                    elif isinstance(part, NativeToolReturnPart):
+                        pass
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

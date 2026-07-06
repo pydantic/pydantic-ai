@@ -473,6 +473,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         'content': tool_text,
                     }
                 )
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore

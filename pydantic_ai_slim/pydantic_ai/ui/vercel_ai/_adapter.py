@@ -626,6 +626,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
                     # Tool-related retries are handled when processing ToolCallPart in ModelResponse

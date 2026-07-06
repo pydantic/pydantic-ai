@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     MULTI_MODAL_CONTENT_TYPES,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    NativeToolSearchReturnPart,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
@@ -1919,6 +1920,33 @@ def test_stripped_tool_kind_part_survives_roundtrip():
     messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart.narrow_type(invalid)])]
     reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
     assert type(reloaded[0].parts[0]) is ToolReturnPart
+
+
+def test_model_request_native_tool_return_parts_survive_json_roundtrip():
+    """Native tool returns can appear in request history and must survive persistence reloads."""
+    search_return = NativeToolSearchReturnPart(
+        content={'discovered_tools': [{'name': 'search_docs'}]},
+        tool_call_id='search-1',
+        provider_name='anthropic',
+    )
+    native_return = NativeToolReturnPart(
+        tool_name='web_fetch',
+        content='result text',
+        tool_call_id='fetch-1',
+        provider_name='anthropic',
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[search_return, native_return])]
+
+    reloaded = message(
+        ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)), ModelRequest
+    )
+    reloaded_search_return = reloaded.parts[0]
+    reloaded_native_return = reloaded.parts[1]
+
+    assert type(reloaded_search_return) is NativeToolSearchReturnPart
+    assert reloaded_search_return.content == {'discovered_tools': [{'name': 'search_docs'}]}
+    assert type(reloaded_native_return) is NativeToolReturnPart
+    assert reloaded_native_return == native_return
 
 
 def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():

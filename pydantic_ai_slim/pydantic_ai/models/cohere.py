@@ -368,6 +368,8 @@ class CohereModel(Model[AsyncClientV2]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover

@@ -666,6 +666,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
                     flush_user_content()

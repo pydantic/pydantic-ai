@@ -365,6 +365,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 tool_results.append(part)
+            elif isinstance(part, NativeToolReturnPart):
+                pass
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     xai_messages.append(user(part.model_response()))
