@@ -559,7 +559,7 @@ class MistralModel(Model[Mistral]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
+                    yield MistralUserMessage(content=part.model_response())
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,

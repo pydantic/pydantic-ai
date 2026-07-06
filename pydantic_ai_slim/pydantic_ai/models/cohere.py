@@ -375,7 +375,7 @@ class CohereModel(Model[AsyncClientV2]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
+                    yield UserChatMessageV2(role='user', content=part.model_response())
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
