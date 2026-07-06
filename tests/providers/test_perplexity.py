@@ -3,12 +3,11 @@ from __future__ import annotations as _annotations
 import os
 import re
 from datetime import datetime, timezone
-from importlib.metadata import version
 
 import httpx
 import pytest
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPromptPart, __version__
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool
@@ -99,7 +98,7 @@ async def test_perplexity_provider_sends_attribution_header(allow_model_requests
     result = await agent.run('Send attribution header.')
 
     assert result.output == 'Perplexity attribution sent.'
-    assert requests[0].headers['X-Pplx-Integration'] == f'pydantic-ai/{version("pydantic-ai")}'
+    assert requests[0].headers['X-Pplx-Integration'] == f'pydantic-ai/{__version__}'
 
 
 def test_perplexity_pass_openai_client() -> None:
@@ -124,11 +123,19 @@ def test_perplexity_model_profile_enables_web_search() -> None:
     assert WebSearchTool in profile.get('supported_native_tools', frozenset())
 
 
-def test_perplexity_reasoning_model_profile() -> None:
+@pytest.mark.parametrize('model_name', ['sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'])
+def test_perplexity_reasoning_model_profile(model_name: str) -> None:
     provider = PerplexityProvider(api_key='api-key')
-    model = PerplexityModel('sonar-reasoning-pro', provider=provider)
+    model = PerplexityModel(model_name, provider=provider)
     assert model.profile.get('supports_thinking') is True
     assert model.profile.get('ignore_streamed_leading_whitespace') is True
+
+
+def test_perplexity_non_reasoning_model_profile() -> None:
+    provider = PerplexityProvider(api_key='api-key')
+    model = PerplexityModel('sonar-pro', provider=provider)
+    assert model.profile.get('supports_thinking') is False
+    assert model.profile.get('ignore_streamed_leading_whitespace') is False
 
 
 def test_infer_perplexity_model(env: TestEnv) -> None:
@@ -142,6 +149,9 @@ def test_infer_perplexity_model(env: TestEnv) -> None:
 async def test_perplexity_web_search_tool_omits_web_search_options(
     allow_model_requests: None,
 ) -> None:
+    # Unit test rather than VCR: a cassette matcher is not sensitive to the request body, so a regression
+    # re-adding `web_search_options` would still replay green. We inspect the outbound payload directly.
+    # This response also has no citations/search_results, covering the empty-provider-details path.
     c = completion_message(ChatCompletionMessage(content='Perplexity searches natively.', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     model = PerplexityModel('sonar-pro', provider=PerplexityProvider(openai_client=mock_client))
@@ -152,6 +162,12 @@ async def test_perplexity_web_search_tool_omits_web_search_options(
     assert result.output == 'Perplexity searches natively.'
     request_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'web_search_options' not in request_kwargs
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    provider_details = response.provider_details or {}
+    assert 'citations' not in provider_details
+    assert 'search_results' not in provider_details
 
 
 @pytest.mark.anyio

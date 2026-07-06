@@ -6,11 +6,10 @@ from . import ModelProfile
 def perplexity_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Perplexity model.
 
-    Perplexity's chat models perform web search natively, so [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]
-    is enabled at the provider level rather than per-model. Reasoning models in the Sonar family stream a
-    leading newline that needs to be ignored, matching DeepSeek R1 behaviour.
+    Reasoning models in the Sonar family (`sonar-reasoning*` and `sonar-deep-research`) emit thinking and
+    stream a leading newline that needs to be ignored, matching DeepSeek R1 behaviour.
     """
-    is_reasoning = 'reasoning' in model_name
+    is_reasoning = 'reasoning' in model_name or 'deep-research' in model_name
     return ModelProfile(
         ignore_streamed_leading_whitespace=is_reasoning,
         supports_thinking=is_reasoning,

@@ -27,7 +27,7 @@ except ImportError as _import_error:
 
 class _PerplexitySearchResult(BaseModel):
     title: str | None = None
-    url: str
+    url: str | None = None
     date: str | None = None
     last_updated: str | None = None
     snippet: str | None = None

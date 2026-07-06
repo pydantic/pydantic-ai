@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
 import os
-from importlib.metadata import PackageNotFoundError, version
 from typing import overload
 
 import httpx
 
-from pydantic_ai import ModelProfile
+from pydantic_ai import ModelProfile, __version__
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -95,11 +94,7 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
                 ' to use the Perplexity provider.'
             )
 
-        try:
-            package_version = version('pydantic-ai')
-        except PackageNotFoundError:
-            package_version = version('pydantic-ai-slim')
-        default_headers = {'X-Pplx-Integration': f'pydantic-ai/{package_version}'}
+        default_headers = {'X-Pplx-Integration': f'pydantic-ai/{__version__}'}
 
         if openai_client is not None:
             self._client = openai_client
