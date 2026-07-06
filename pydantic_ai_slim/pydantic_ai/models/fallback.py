@@ -341,8 +341,13 @@ class FallbackModel(Model):
 
         Only the pinned model holds the server-side job, so resolve it from the response's
         continuation pin and delegate. If no pin resolves, there is nothing to cancel.
+
+        Resolve the pin directly from metadata rather than via `_get_continuation_model`: the
+        cancel path is driven by `_ContinuationStreamedResponse.get()`, whose `state` is already
+        `'interrupted'`/`'incomplete'`/`'complete'` (never `'suspended'`) by the time cancellation
+        unwinds, so gating on `state == 'suspended'` here would never find the pin.
         """
-        if pinned := self._get_continuation_model([response]):
+        if pinned := self._pinned_continuation_model(response):
             await pinned.cancel_suspended_response(response)
 
     @cached_property
@@ -368,7 +373,11 @@ class FallbackModel(Model):
         last = messages[-1]
         if not isinstance(last, ModelResponse) or last.state != 'suspended':
             return None
-        pydantic_ai_meta = (last.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+        return self._pinned_continuation_model(last)
+
+    def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
+        """Resolve the underlying model pinned to this continuation from its routing metadata."""
+        pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
         if model_id := pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
