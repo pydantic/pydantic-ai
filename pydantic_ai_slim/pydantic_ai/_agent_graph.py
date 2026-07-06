@@ -1195,8 +1195,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                    # both signal that the model has no text output to give. Some models emit only thinking
+                    # after completing the task via a tool call, and forcing a retry just makes them produce
+                    # unnecessary follow-up text.
+                    if output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _output.run_none_process_hooks(

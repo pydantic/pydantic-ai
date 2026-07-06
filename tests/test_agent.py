@@ -11060,6 +11060,73 @@ async def test_agent_allows_none_output_after_tool():
     )
 
 
+async def test_agent_allows_none_output_thinking_only():
+    """Test that Agent(output_type=str | None) succeeds on a thinking-only response after a tool call.
+
+    Some models emit only a ThinkingPart after completing the task via a tool call, with nothing to
+    add. Forcing a retry only produces unnecessary follow-up text, so this is accepted as a None result.
+    Uses FunctionModel because no real provider reliably emits a thinking-only final response on demand.
+    """
+    call_count = 0
+
+    async def tool_then_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[ThinkingPart(content='Task complete, nothing more to add.')])
+
+    model = FunctionModel(function=tool_then_thinking_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_thinking_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Task complete, nothing more to add.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='function:tool_then_thinking_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_agent_allows_none_output_validator_called():
     """Test that output validators are called when returning None on empty response."""
 
