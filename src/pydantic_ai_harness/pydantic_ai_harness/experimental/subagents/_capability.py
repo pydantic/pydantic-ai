@@ -140,6 +140,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     repeated flaky sub-agent does not abort the parent run on its first repeat;
     set `None` to inherit the parent agent's default tool retries instead."""
 
+    contain_errors: bool = False
+    """Default for `SubAgent.contain_errors`: whether an unexpected sub-agent crash
+    is caught and returned to the parent as a bounded `ModelRetry` instead of
+    aborting the parent run. Off by default, so a crash propagates. Any `SubAgent`
+    can override this per delegate. See `SubAgent.contain_errors` for the
+    containment contract and what always propagates regardless."""
+
     _by_name: dict[str, SubAgent[AgentDepsT]] = field(
         default_factory=dict[str, 'SubAgent[AgentDepsT]'], init=False, repr=False, compare=False
     )
@@ -273,6 +280,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             event_stream_handler=self.event_stream_handler,
             tool_name=self.tool_name,
             tool_retries=self.tool_retries,
+            contain_errors=self.contain_errors,
             call_counts=self._call_counts,
         )
 

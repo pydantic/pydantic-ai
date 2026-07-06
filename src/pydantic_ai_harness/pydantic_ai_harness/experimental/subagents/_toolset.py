@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
@@ -17,6 +28,23 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import UsageLimits
+
+logger = logging.getLogger(__name__)
+
+# Signals that must always reach the parent run, even when a delegate has
+# `contain_errors` on. Containing the first five would break the agent graph
+# (deferred/approval/skip control-flow); a `UserError` is a setup bug that no
+# retry can fix, so masking it into a retry only delays and obscures it.
+# Cancellation (`asyncio.CancelledError`, a `BaseException`) is out of `except
+# Exception`'s reach already, and a shared `UsageLimitExceeded` has its own clause.
+_ALWAYS_PROPAGATE: tuple[type[Exception], ...] = (
+    CallDeferred,
+    ApprovalRequired,
+    SkipModelRequest,
+    SkipToolValidation,
+    SkipToolExecution,
+    UserError,
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +96,19 @@ class SubAgent(Generic[AgentDepsT]):
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
 
+    contain_errors: bool | None = None
+    """Whether an unexpected sub-agent crash is contained instead of aborting the
+    parent run. When `True`, an exception the child raises that is not an expected
+    soft degradation (a provider `ModelAPIError`/`FallbackExceptionGroup`, a plain
+    `ValueError` from a bad tool argument, etc.) is caught and returned to the parent
+    as a bounded `ModelRetry`, so one delegate crash cannot kill the whole run. It
+    stays loud: the exception rides the retry message and is logged, and
+    `tool_retries` still bounds consecutive crashes into an abort. Cancellation, a
+    shared usage-limit, pydantic-ai control-flow signals, and `UserError` always
+    propagate regardless. Unset inherits `SubAgents.contain_errors` (default off).
+    Orthogonal to `on_failure`, which only sets the message for expected soft
+    degradations; a contained crash always raises the loud `ModelRetry`."""
+
     @property
     def resolved_name(self) -> str | None:
         """The delegate's name: `name` if set, else the agent's own `name`."""
@@ -108,6 +149,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None,
         tool_name: str,
         tool_retries: int | None,
+        contain_errors: bool,
         call_counts: dict[str, dict[str, int]],
     ) -> None:
         super().__init__()
@@ -117,6 +159,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._shared_capabilities = list(shared_capabilities)
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
+        self._contain_errors = contain_errors
         # Run-scoped delegation counts, keyed by run_id then sub-agent name.
         # Shared with the capability, which clears each run's entry in wrap_run.
         self._call_counts = call_counts
@@ -233,6 +276,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 return sub_agent.on_failure
             # Soft sub-agent failures come back to the parent as a retry it can react to.
             raise ModelRetry(f'Sub-agent {agent_name!r} failed: {exc}') from exc
+        except _ALWAYS_PROPAGATE:
+            raise
+        except Exception as exc:
+            contain = sub_agent.contain_errors if sub_agent.contain_errors is not None else self._contain_errors
+            if not contain:
+                raise
+            # Contain the crash so it cannot abort the parent, but keep it loud: the
+            # exception rides the retry message and is logged, and `tool_retries`
+            # bounds consecutive crashes into an abort.
+            logger.warning('Contained crash from sub-agent %r', agent_name, exc_info=exc)
+            raise ModelRetry(
+                f'Sub-agent {agent_name!r} crashed: {type(exc).__name__}: {exc}. '
+                f'Treat this as a recoverable failure and decide from existing evidence.'
+            ) from exc
         return str(result.output)
 
     @staticmethod

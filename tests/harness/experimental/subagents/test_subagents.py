@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -91,6 +91,25 @@ def _delegate_n_then_finish(agent_name: str, n: int) -> FunctionModel:
                         'delegate_task', {'agent_name': agent_name, 'task': 't'}, tool_call_id=f'c{calls["n"]}'
                     )
                 ]
+            )
+        return ModelResponse(parts=[TextPart('all done')])
+
+    return FunctionModel(model_fn)
+
+
+def _delegate_two_then_finish(first: str, second: str) -> FunctionModel:
+    """A parent model that delegates to `first`, then `second`, then replies with text."""
+    calls = {'n': 0}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls['n'] += 1
+        if calls['n'] == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('delegate_task', {'agent_name': first, 'task': 't'}, tool_call_id='c1')]
+            )
+        if calls['n'] == 2:
+            return ModelResponse(
+                parts=[ToolCallPart('delegate_task', {'agent_name': second, 'task': 't'}, tool_call_id='c2')]
             )
         return ModelResponse(parts=[TextPart('all done')])
 
@@ -308,6 +327,7 @@ class TestDelegation:
             event_stream_handler=None,
             tool_name='delegate_task',
             tool_retries=1,
+            contain_errors=False,
             call_counts={},
         )
         parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
@@ -653,6 +673,97 @@ class TestRunControls:
         assert len(returns) == 2
         assert 'W' in returns
         assert any("Delegate budget for 'worker' is exhausted" in r for r in returns)
+
+
+def _crash(message: str = 'provider down') -> FunctionModel:
+    """A sub-agent model that raises a `ModelAPIError` (an unexpected crash, not a soft failure)."""
+
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError('m', message)
+
+    return FunctionModel(boom)
+
+
+def _delegate_retries(result: Any) -> list[str]:
+    """The `delegate_task` retry-prompt contents from a run result, in order."""
+    return [
+        str(part.content)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+    ]
+
+
+class TestContainErrors:
+    """`contain_errors`: an unexpected sub-agent crash becomes a bounded retry instead of aborting the parent."""
+
+    async def test_crash_propagates_by_default(self) -> None:
+        boomer = Agent(_crash(), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[SubAgents(agents=[SubAgent(boomer)])],
+        )
+        with pytest.raises(ModelAPIError):
+            await parent.run('go')
+
+    async def test_contained_crash_becomes_model_retry(self) -> None:
+        boomer = Agent(_crash(), name='boomer')
+        worker = Agent(TestModel(custom_output_text='OK'), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('boomer', 'worker'),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, contain_errors=True), SubAgent(worker)])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        retries = _delegate_retries(result)
+        assert any('crashed: ModelAPIError' in r and 'provider down' in r for r in retries)
+
+    async def test_capability_default_contains_unset_delegate(self) -> None:
+        boomer = Agent(_crash(), name='boomer')
+        worker = Agent(TestModel(custom_output_text='OK'), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('boomer', 'worker'),
+            capabilities=[SubAgents(agents=[SubAgent(boomer), SubAgent(worker)], contain_errors=True)],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert any('crashed' in r for r in _delegate_retries(result))
+
+    async def test_delegate_override_beats_capability_default(self) -> None:
+        boomer = Agent(_crash(), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, contain_errors=False)], contain_errors=True)],
+        )
+        with pytest.raises(ModelAPIError):
+            await parent.run('go')
+
+    async def test_user_error_always_propagates(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UserError('bad setup')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, contain_errors=True)])],
+        )
+        # A setup bug must reach the developer even under containment, not become a retry.
+        with pytest.raises(UserError):
+            await parent.run('go')
+
+    async def test_on_failure_does_not_soften_contained_crash(self) -> None:
+        boomer = Agent(_crash(), name='boomer')
+        worker = Agent(TestModel(custom_output_text='OK'), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('boomer', 'worker'),
+            capabilities=[
+                SubAgents(agents=[SubAgent(boomer, contain_errors=True, on_failure='soft note'), SubAgent(worker)])
+            ],
+        )
+        result = await parent.run('go')
+        # A crash stays loud: it is a retry, and on_failure's soft message never becomes a delegate return.
+        assert any('crashed' in r for r in _delegate_retries(result))
+        assert 'soft note' not in _delegate_returns(result)
 
 
 class TestNameValidation:
