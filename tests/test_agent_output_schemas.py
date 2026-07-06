@@ -1,7 +1,7 @@
 import dataclasses
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -231,6 +231,174 @@ async def test_custom_output_json_schema():
             'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
             'title': 'Human',
             'required': ['name', 'age'],
+        }
+    )
+
+
+async def test_structured_dict_non_recursive_defs():
+    """Non-recursive `$defs` are inlined, and the schema is still exposed via the pydantic hook."""
+
+    class Address(BaseModel):
+        street: str
+
+    class Person(BaseModel):
+        name: str
+        address: Address
+
+    PersonDict = StructuredDict(Person.model_json_schema())
+
+    # The pydantic hook returns the inlined schema, so `StructuredDict` can be used as a type elsewhere.
+    assert TypeAdapter(PersonDict).json_schema() == snapshot(
+        {
+            'properties': {
+                'name': {'title': 'Name', 'type': 'string'},
+                'address': {
+                    'properties': {'street': {'title': 'Street', 'type': 'string'}},
+                    'required': ['street'],
+                    'title': 'Address',
+                    'type': 'object',
+                },
+            },
+            'required': ['name', 'address'],
+            'title': 'Person',
+            'type': 'object',
+        }
+    )
+
+    agent = Agent('test', output_type=PersonDict)
+    assert agent.output_json_schema() == snapshot(
+        {
+            'properties': {
+                'name': {'title': 'Name', 'type': 'string'},
+                'address': {
+                    'properties': {'street': {'title': 'Street', 'type': 'string'}},
+                    'required': ['street'],
+                    'title': 'Address',
+                    'type': 'object',
+                },
+            },
+            'required': ['name', 'address'],
+            'title': 'Person',
+            'type': 'object',
+        }
+    )
+
+
+async def test_structured_dict_nested_recursive_refs():
+    """A `StructuredDict` built from a schema that embeds a recursive type keeps its `$defs` (issue #4018)."""
+
+    class Tree(BaseModel):
+        value: int
+        children: list['Tree']
+
+    class Forest(BaseModel):
+        name: str
+        root: Tree
+
+    ForestDict = StructuredDict(Forest.model_json_schema())
+    agent = Agent('test', output_type=ForestDict)
+    assert agent.output_json_schema() == snapshot(
+        {
+            '$defs': {
+                'Tree': {
+                    'properties': {
+                        'value': {'title': 'Value', 'type': 'integer'},
+                        'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
+                    },
+                    'required': ['value', 'children'],
+                    'title': 'Tree',
+                    'type': 'object',
+                },
+                'Forest': {
+                    'properties': {
+                        'name': {'title': 'Name', 'type': 'string'},
+                        'root': {
+                            'properties': {
+                                'value': {'title': 'Value', 'type': 'integer'},
+                                'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
+                            },
+                            'required': ['value', 'children'],
+                            'title': 'Tree',
+                            'type': 'object',
+                        },
+                    },
+                    'required': ['name', 'root'],
+                    'title': 'Forest',
+                    'type': 'object',
+                },
+            },
+            'properties': {
+                'name': {'title': 'Name', 'type': 'string'},
+                'root': {
+                    'properties': {
+                        'value': {'title': 'Value', 'type': 'integer'},
+                        'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
+                    },
+                    'required': ['value', 'children'],
+                    'title': 'Tree',
+                    'type': 'object',
+                },
+            },
+            'required': ['name', 'root'],
+            'title': 'Forest',
+            'type': 'object',
+        }
+    )
+
+
+async def test_structured_dict_recursive_root_key_collision():
+    """When the root schema's title collides with a recursive `$defs` key, the transformer picks a fresh key."""
+    schema = StructuredDict(
+        {
+            'type': 'object',
+            'title': 'Node',
+            'properties': {'child': {'$ref': '#/$defs/Node'}},
+            'required': ['child'],
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'title': 'Node',
+                    'properties': {'child': {'$ref': '#/$defs/Node'}},
+                    'required': ['child'],
+                }
+            },
+        }
+    )
+    agent = Agent('test', output_type=schema)
+    assert agent.output_json_schema() == snapshot(
+        {
+            '$defs': {
+                'Node': {
+                    'properties': {'child': {'$ref': '#/$defs/Node'}},
+                    'required': ['child'],
+                    'title': 'Node',
+                    'type': 'object',
+                },
+                'Node_root': {
+                    'properties': {
+                        'child': {
+                            'type': 'object',
+                            'title': 'Node',
+                            'properties': {'child': {'$ref': '#/$defs/Node'}},
+                            'required': ['child'],
+                        }
+                    },
+                    'required': ['child'],
+                    'title': 'Node',
+                    'type': 'object',
+                },
+            },
+            'properties': {
+                'child': {
+                    'type': 'object',
+                    'title': 'Node',
+                    'properties': {'child': {'$ref': '#/$defs/Node'}},
+                    'required': ['child'],
+                }
+            },
+            'required': ['child'],
+            'title': 'Node',
+            'type': 'object',
         }
     )
 

@@ -2590,13 +2590,61 @@ def test_structured_dict_recursive_refs():
             '$ref': '#/$defs/Node',
         }
     )
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
-        ),
-    ):
-        StructuredDict(schema)
+    NodeDict = StructuredDict(schema)
+
+    # The recursive `$defs` are preserved and sent to the model as-is, rather than raising.
+    output_args: dict[str, Any] = {'nodes': [{'nodes': []}]}
+    agent = Agent(TestModel(custom_output_args=output_args), output_type=NodeDict)
+    assert agent.output_json_schema() == snapshot(
+        {
+            'properties': {
+                'nodes': {
+                    'anyOf': [
+                        {'items': {'$ref': '#/$defs/Node'}, 'type': 'array'},
+                        {'additionalProperties': {'$ref': '#/$defs/Node'}, 'type': 'object'},
+                    ],
+                    'title': 'Nodes',
+                }
+            },
+            'required': ['nodes'],
+            'title': 'Node',
+            'type': 'object',
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'nodes': {
+                            'anyOf': [
+                                {'items': {'$ref': '#/$defs/Node'}, 'type': 'array'},
+                                {'additionalProperties': {'$ref': '#/$defs/Node'}, 'type': 'object'},
+                            ],
+                            'title': 'Nodes',
+                        }
+                    },
+                    'required': ['nodes'],
+                    'title': 'Node',
+                    'type': 'object',
+                }
+            },
+        }
+    )
+
+    result = agent.run_sync('Build a tree')
+    assert result.output == snapshot({'nodes': [{'nodes': []}]})
+
+
+def test_structured_dict_recursive_refs_native_output():
+    """A recursive `StructuredDict` also works wrapped in `NativeOutput`, as called out in issue #4018."""
+
+    class Node(BaseModel):
+        nodes: list['Node']
+
+    model = TestModel(
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+        custom_output_text='{"nodes": [{"nodes": []}]}',
+    )
+    agent = Agent(model, output_type=NativeOutput(StructuredDict(Node.model_json_schema())))
+    assert '$defs' in agent.output_json_schema()
+    assert agent.run_sync('Build a tree').output == snapshot({'nodes': [{'nodes': []}]})
 
 
 def test_default_structured_output_mode():

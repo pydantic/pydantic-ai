@@ -903,9 +903,15 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
+
+            # `StructuredDict` carries its own JSON schema, which we use directly instead of going through
+            # `TypeAdapter.json_schema()` as the latter can't handle recursive `$ref`s/`$defs`. See issue #4018.
+            if (structured_dict_schema := _utils.structured_dict_json_schema(output)) is not None:
+                json_schema = _utils.check_object_json_schema(structured_dict_schema)
+            else:
+                json_schema = _utils.check_object_json_schema(
+                    json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+                )
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM

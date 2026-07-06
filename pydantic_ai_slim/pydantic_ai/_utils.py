@@ -178,6 +178,17 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
         raise UserError('Schema must be an object')
 
 
+def structured_dict_json_schema(output_type: Any) -> ObjectJsonSchema | None:
+    """Return a copy of the JSON schema carried by a `StructuredDict` type, or `None` for other types.
+
+    `StructuredDict` stores its (possibly recursive) schema directly so callers can use it as-is instead of
+    going through `TypeAdapter.json_schema()`, which can't handle recursive `$ref`s/`$defs`. See
+    https://github.com/pydantic/pydantic-ai/issues/4018.
+    """
+    schema = getattr(output_type, '__pydantic_ai_structured_dict_schema__', None)
+    return None if schema is None else copy.deepcopy(schema)
+
+
 def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
     """Recursively check if an object contains any $ref keys."""
     items: Iterable[JsonSchemaValue]

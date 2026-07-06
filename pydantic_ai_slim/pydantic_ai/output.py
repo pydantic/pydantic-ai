@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
@@ -9,7 +10,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
-from . import _utils, exceptions
+from . import _utils
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
@@ -375,16 +376,19 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
-    json_schema = _utils.check_object_json_schema(json_schema)
+    json_schema = _utils.check_object_json_schema(deepcopy(json_schema))
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
     if '$defs' in json_schema:
         json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
-        if '$defs' in json_schema:
-            raise exceptions.UserError(
-                '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
-            )
+
+        # Recursive schemas can't be fully inlined, so the transformer returns a root `$ref` into `$defs`.
+        # Resolve it back into a root `object` schema (keeping `$defs` for the recursive references) so the
+        # schema stays valid and can be handed to the model directly. See https://github.com/pydantic/pydantic-ai/issues/4018
+        if (root_ref := json_schema.get('$ref')) is not None:
+            root_key = root_ref.removeprefix('#/$defs/')
+            json_schema = {**json_schema['$defs'][root_key], '$defs': json_schema['$defs']}
 
     if name:
         json_schema['title'] = name
@@ -394,6 +398,7 @@ def StructuredDict(
 
     class _StructuredDict(JsonSchemaValue):
         __is_model_like__ = True
+        __pydantic_ai_structured_dict_schema__ = json_schema
 
         @classmethod
         def __get_pydantic_core_schema__(
@@ -408,7 +413,7 @@ def StructuredDict(
         def __get_pydantic_json_schema__(
             cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
         ) -> JsonSchemaValue:
-            return json_schema
+            return deepcopy(json_schema)
 
     return _StructuredDict
 
