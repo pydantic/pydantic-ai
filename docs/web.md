@@ -94,6 +94,10 @@ agent = Agent('openai:gpt-5.2')
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
 
+## Tool Approval
+
+Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval) are surfaced in the UI as approve/reject prompts: when the agent calls such a tool, the UI renders the pending call and lets you approve or deny it before the run continues. This works out of the box — no extra configuration is needed.
+
 ## Reserved Routes
 
 The web UI app uses the following routes which should not be overwritten:
@@ -115,7 +119,7 @@ For offline usage, download the html file once while you have internet access:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.2.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.0.0/dist/index.html
 ```
 
 You can then download the file using the URL printed above:

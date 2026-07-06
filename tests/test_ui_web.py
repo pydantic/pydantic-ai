@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Literal
 from unittest.mock import AsyncMock
 
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.tools import DeferredToolRequests
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -441,6 +445,56 @@ async def test_post_chat_endpoint():
         )
 
         assert response.status_code == 200
+
+
+def _parse_sse_chunk_types(body: str) -> list[str]:
+    """Extract the ordered `type` of each `data:` chunk from a Vercel AI SSE stream body."""
+    types: list[str] = []
+    for line in body.splitlines():
+        if line.startswith('data: ') and (payload := line.removeprefix('data: ')) != '[DONE]':
+            types.append(json.loads(payload)['type'])
+    return types
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('sdk_version', [None, 5, 6])
+async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_version: Literal[5, 6] | None):
+    """The bundled web path targets Vercel AI SDK v6, so a tool call that requires approval streams a
+    `tool-approval-request` chunk the v7 UI renders as approve/reject buttons.
+
+    `sdk_version=None` exercises the default (`create_web_app` bundles the v7 UI, so it targets 6);
+    explicit `6` matches, while `5` falls back to `tool-input-available` with no approval chunk.
+    """
+
+    async def stream_function(messages: list[Any], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "test.txt"}', tool_call_id='delete_1')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'Deleted {path}'  # pragma: no cover
+
+    app = create_web_app(agent) if sdk_version is None else create_web_app(agent, sdk_version=sdk_version)
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Delete test.txt'}]}],
+                'builtinTools': [],
+            },
+        )
+        assert response.status_code == 200
+        chunk_types = _parse_sse_chunk_types(response.text)
+
+    if sdk_version == 5:
+        assert 'tool-approval-request' not in chunk_types
+        assert 'tool-input-available' in chunk_types
+    else:
+        assert 'tool-approval-request' in chunk_types
 
 
 def test_chat_app_options_endpoint():

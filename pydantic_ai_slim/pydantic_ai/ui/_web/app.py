@@ -5,7 +5,7 @@ import os
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import httpx
 
@@ -26,8 +26,13 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '1.2.0'
+CHAT_UI_VERSION = '2.0.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
+
+# The bundled chat UI (v7 of the Vercel AI SDK) consumes the `sdk_version=6` wire protocol, which is
+# what enables tool-approval streaming. `to_web()` controls both ends (server + bundled UI), so the
+# API path targets 6 to match the UI it ships. See `VercelAIAdapter.sdk_version`.
+BUNDLED_UI_SDK_VERSION: Literal[6] = 6
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
@@ -150,6 +155,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
+    sdk_version: Literal[5, 6] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -174,6 +180,9 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
+        sdk_version: Vercel AI SDK version to target on the chat endpoint. Defaults to `6`, which the
+            bundled UI needs for tool-approval streaming. Only lower it to `5` when pairing an
+            older UI via `html_source`.
 
     Returns:
         A configured Starlette application ready to be served
@@ -185,6 +194,7 @@ def create_web_app(
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
+        sdk_version=sdk_version,
     )
 
     routes = [Mount('/api', app=api_app)]
