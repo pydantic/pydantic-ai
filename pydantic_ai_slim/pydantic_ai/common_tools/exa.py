@@ -9,7 +9,7 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast, overload
 
-from typing_extensions import Any, TypedDict
+from typing_extensions import Any, TypedDict, assert_never
 
 from pydantic_ai import FunctionToolset
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -158,10 +158,12 @@ class ExaSearchTool:
                 if self.max_characters is not None
                 else {'highlights': True}
             )
-        else:
+        elif self.content == 'text':
             contents = (
                 {'text': {'max_characters': self.max_characters}} if self.max_characters is not None else {'text': True}
             )
+        else:
+            assert_never(self.content)
 
         response = await self.client.search(
             query,
@@ -176,8 +178,10 @@ class ExaSearchTool:
         for result in response.results:
             if self.content == 'highlights':
                 text = ' ... '.join(result.highlights or [])
-            else:
+            elif self.content == 'text':
                 text = result.text or ''
+            else:
+                assert_never(self.content)
             results.append(
                 ExaSearchResult(
                     title=result.title or '',
