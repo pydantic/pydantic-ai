@@ -24,9 +24,7 @@ __all__ = (
 
 def _validate_max_running(max_running: int) -> None:
     if max_running < 1:
-        raise UserError(
-            f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.'
-        )
+        raise UserError(f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.')
 
 
 class AbstractConcurrencyLimiter(ABC):
