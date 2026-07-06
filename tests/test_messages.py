@@ -492,6 +492,9 @@ def test_thinking_part_delta_callable_provider_details_serializable():
     # The serialized event round-trips back into an `AgentStreamEvent`.
     assert isinstance(adapter.validate_json(serialized), PartDeltaEvent)
 
+    # Serialization is scoped to JSON mode, so Python-mode `model_dump()` keeps the callable intact.
+    assert callable(adapter.dump_python(event)['delta']['provider_details'])
+
     # A plain dict `provider_details` is preserved as-is.
     dict_event = PartDeltaEvent(
         index=0,
