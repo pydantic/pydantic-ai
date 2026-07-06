@@ -1290,15 +1290,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     ):
                         try:
                             final_result = await self._process_text_response(ctx, text, text_processor)
-                            output_parts: list[_messages.ModelRequestPart] = []
-                            async for event in self._handle_tool_calls_after_final_result(
-                                ctx, tool_calls, final_result, output_parts
-                            ):
-                                yield event  # pragma: no cover
-                            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
-                            return
                         except ToolRetryError:
                             pass
+                        else:
+                            # Record the tool calls as skipped so history has no dangling calls.
+                            async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
+                                yield event
+                            return
 
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
@@ -1348,6 +1346,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
+        final_result: result.FinalResult[NodeRunEndT] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1363,12 +1362,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
+            # When `final_result` is set (e.g. native output already won under `end_strategy='early'`),
+            # `process_tool_calls` records the tool calls as skipped rather than executing them.
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
-                final_result=None,
+                final_result=final_result,
                 ctx=ctx,
                 output_parts=output_parts,
                 output_final_result=output_final_result,
@@ -1399,33 +1400,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_parts.append(_messages.UserPromptPart(self.user_prompt))
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
-
-    async def _handle_tool_calls_after_final_result(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        tool_calls: list[_messages.ToolCallPart],
-        final_result: result.FinalResult[NodeRunEndT],
-        output_parts: list[_messages.ModelRequestPart],
-    ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        run_context = build_run_context(ctx)
-        run_context = replace(
-            run_context,
-            retry=ctx.state.output_retries_used,
-            max_retries=ctx.deps.tool_manager.default_max_retries,
-        )
-
-        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-
-        async for event in process_tool_calls(
-            tool_manager=ctx.deps.tool_manager,
-            tool_calls=tool_calls,
-            tool_call_results=self.tool_call_results,
-            tool_call_metadata=self.tool_call_metadata,
-            final_result=final_result,
-            ctx=ctx,
-            output_parts=output_parts,
-        ):
-            yield event  # pragma: no cover
 
     @staticmethod
     def _recover_text_from_message_history(message_history: list[_messages.ModelMessage]) -> str | None:
