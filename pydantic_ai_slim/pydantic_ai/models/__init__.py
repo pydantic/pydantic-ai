@@ -1020,7 +1020,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama, Z.AI and Perplexity need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel

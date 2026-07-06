@@ -9,6 +9,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.perplexity import perplexity_model_profile
 from pydantic_ai.providers import Provider
@@ -51,10 +52,13 @@ class PerplexityProvider(Provider[AsyncOpenAI]):
         # PerplexityProvider is paired with PerplexityModel, so we apply the OpenAI JSON schema transformer
         # (mirrors `DeepSeekProvider`). `openai_chat_supports_web_search=True` lets users enable
         # the cross-provider `WebSearchTool` against Perplexity's natively-grounded chat models.
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_chat_supports_web_search=True,
-        ).update(profile)
+        return merge_profile(
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                openai_chat_supports_web_search=True,
+            ),
+            profile,
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

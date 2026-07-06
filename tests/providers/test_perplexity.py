@@ -12,7 +12,7 @@ from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPrompt
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -118,17 +118,17 @@ def test_perplexity_provider_set_http_client() -> None:
 def test_perplexity_model_profile_enables_web_search() -> None:
     provider = PerplexityProvider(api_key='api-key')
     model = PerplexityModel('sonar-pro', provider=provider)
-    profile = OpenAIModelProfile.from_profile(model.profile)
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert profile.openai_chat_supports_web_search is True
-    assert WebSearchTool in model.profile.supported_native_tools
+    profile = model.profile
+    assert profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+    assert profile.get('openai_chat_supports_web_search') is True
+    assert WebSearchTool in profile.get('supported_native_tools', frozenset())
 
 
 def test_perplexity_reasoning_model_profile() -> None:
     provider = PerplexityProvider(api_key='api-key')
     model = PerplexityModel('sonar-reasoning-pro', provider=provider)
-    assert model.profile.supports_thinking is True
-    assert model.profile.ignore_streamed_leading_whitespace is True
+    assert model.profile.get('supports_thinking') is True
+    assert model.profile.get('ignore_streamed_leading_whitespace') is True
 
 
 def test_infer_perplexity_model(env: TestEnv) -> None:

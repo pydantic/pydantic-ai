@@ -78,14 +78,15 @@ class PerplexityModel(OpenAIChatModel):
 
     @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
-        provider_details = super()._process_provider_details(response) or {}
-        perplexity_response = _PerplexityChatCompletion.model_validate(response.model_dump())
+        # `_validate_completion` has already parsed the response into `_PerplexityChatCompletion`.
+        assert isinstance(response, _PerplexityChatCompletion)
 
-        if perplexity_response.citations:
-            provider_details['citations'] = perplexity_response.citations
-        if perplexity_response.search_results:
+        provider_details = super()._process_provider_details(response) or {}
+        if response.citations:
+            provider_details['citations'] = response.citations
+        if response.search_results:
             provider_details['search_results'] = [
-                search_result.model_dump(exclude_none=True) for search_result in perplexity_response.search_results
+                search_result.model_dump(exclude_none=True) for search_result in response.search_results
             ]
 
         return provider_details or None
