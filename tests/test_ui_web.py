@@ -465,6 +465,9 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
 
     `sdk_version=None` exercises the default (`create_web_app` bundles the v7 UI, so it targets 6);
     explicit `6` matches, while `5` falls back to `tool-input-available` with no approval chunk.
+
+    Not a VCR test: this asserts the server→client SSE stream shape, which has no provider API to
+    record. `FunctionModel` deterministically drives the deferred tool call the wire format hinges on.
     """
 
     async def stream_function(
