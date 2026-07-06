@@ -4151,8 +4151,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) intentionally retries empty responses by emitting an
-    empty `ModelRequest` as well, relying on the model adapter to omit both from the API payload.
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    that tells the model which kinds of output are valid, while relying on the model adapter to omit
+    the empty response from the API payload.
     """
     responses = [
         completion_message(ChatCompletionMessage(content=None, role='assistant')),
@@ -4165,8 +4166,17 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'hello back'
 
+    # The empty response is omitted from the payload (no `content=None` assistant message that would
+    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
-    assert second_call_messages == [{'content': 'hello', 'role': 'user'}]
+    assert not any(message['role'] == 'assistant' for message in second_call_messages)
+    assert second_call_messages == [
+        {'content': 'hello', 'role': 'user'},
+        {
+            'role': 'user',
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+        },
+    ]
 
     assert result.all_messages() == snapshot(
         [
@@ -4191,7 +4201,18 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='hello back')],
                 model_name='gpt-4o-123',
