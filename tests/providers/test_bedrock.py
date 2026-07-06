@@ -13,7 +13,9 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._inline_snapshot import snapshot
@@ -97,6 +99,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     amazon_model_profile_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    zai_model_profile_mock = mocker.patch(f'{ns}.zai_model_profile', wraps=zai_model_profile)
+    moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-3-5-sonnet-20240620-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
@@ -265,6 +269,46 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert nvidia_profile.get('supports_json_schema_output', False) is True
     assert nvidia_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert nvidia_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+
+    # Z.AI GLM composes the upstream `zai_model_profile` (thinking support) with Bedrock overrides.
+    zai_profile = provider.model_profile('zai.glm-5')
+    zai_model_profile_mock.assert_called_with('glm-5')
+    assert isinstance(zai_profile, dict)
+    assert zai_profile.get('bedrock_supports_tool_choice', False) is True
+    assert zai_profile.get('bedrock_supports_leading_assistant_message', False) is True
+    assert zai_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert zai_profile.get('supports_json_schema_output', False) is True
+    assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    assert zai_profile.get('supports_thinking', False) is True
+    assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+
+    # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
+    for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):
+        kimi_profile = provider.model_profile(kimi_model)
+        assert isinstance(kimi_profile, dict), kimi_model
+        assert kimi_profile.get('bedrock_supports_tool_choice', False) is True
+        assert kimi_profile.get('bedrock_supports_leading_assistant_message', False) is True
+        assert kimi_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+        assert kimi_profile.get('supports_json_schema_output', False) is True
+        assert kimi_profile.get('bedrock_supports_strict_tool_definition', False) is True
+        assert kimi_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+        # Kimi rejects every media kind inside a `toolResult`, so media tool returns are deferred.
+        assert kimi_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset()
+    moonshotai_model_profile_mock.assert_any_call('kimi-k2-thinking')
+    moonshotai_model_profile_mock.assert_any_call('kimi-k2.5')
+
+    # Writer Palmyra has no upstream provider module, so its profile is built from scratch.
+    writer_profile = provider.model_profile('us.writer.palmyra-x4-v1:0')
+    assert isinstance(writer_profile, dict)
+    assert writer_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Writer requires a `toolResult` to be alone in its turn, and doesn't support tool choice forcing,
+    # a leading assistant turn, or structured output — all of which stay at their (falsy) defaults.
+    assert writer_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
+    assert writer_profile.get('bedrock_supports_tool_choice', False) is False
+    assert writer_profile.get('bedrock_supports_leading_assistant_message', False) is False
+    assert writer_profile.get('supports_json_schema_output', False) is False
+    # Writer also rejects the `status` field on a `toolResult` block.
+    assert writer_profile.get('bedrock_supports_tool_result_status', True) is False
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')

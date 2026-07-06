@@ -967,6 +967,9 @@ class BedrockConverseModel(Model[BaseClient]):
             'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
         )
 
+        # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
+        supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
+
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
         # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
@@ -1058,19 +1061,16 @@ class BedrockConverseModel(Model[BaseClient]):
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
 
+                        success_result: ToolResultBlockOutputTypeDef = {
+                            'toolUseId': part.tool_call_id,
+                            'content': tool_result_content,
+                        }
+                        if supports_tool_result_status:
+                            success_result['status'] = 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': tool_result_content,
-                                            'status': 'success',
-                                        }
-                                    },
-                                    *colocated_media_content,
-                                ],
+                                'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
                         )
                     elif isinstance(part, RetryPromptPart):
@@ -1079,20 +1079,13 @@ class BedrockConverseModel(Model[BaseClient]):
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
-                            bedrock_messages.append(
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {
-                                            'toolResult': {
-                                                'toolUseId': part.tool_call_id,
-                                                'content': [{'text': part.model_response()}],
-                                                'status': 'error',
-                                            }
-                                        }
-                                    ],
-                                }
-                            )
+                            error_result: ToolResultBlockOutputTypeDef = {
+                                'toolUseId': part.tool_call_id,
+                                'content': [{'text': part.model_response()}],
+                            }
+                            if supports_tool_result_status:
+                                error_result['status'] = 'error'
+                            bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

@@ -1,0 +1,107 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the temperature in London?"}]}], "system": [{"text":
+      "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "temperature",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"],
+      "type": "object"}}, "description": "Get the current temperature in a city."}}, {"toolSpec": {"name": "final_result",
+      "inputSchema": {"json": {"properties": {"temperature": {"type": "string"}, "city": {"type": "string"}}, "required":
+      ["temperature", "city"], "type": "object"}}, "description": "The final response which ends this conversation"}}], "toolChoice":
+      {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjgxZjU4NjMtZGMxNS00NzU4LTg2YTgtODU0MDBmNDEzYTFk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '727'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '324'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 756
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: London
+              name: temperature
+              toolUseId: tooluse_BmsLkZzRWcIfg3GImUKHq0
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 255
+        outputTokens: 25
+        serverToolUsage: {}
+        totalTokens: 280
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the temperature in London?"}]}, {"role": "assistant",
+      "content": [{"toolUse": {"toolUseId": "tooluse_BmsLkZzRWcIfg3GImUKHq0", "name": "temperature", "input": {"city": "London"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_BmsLkZzRWcIfg3GImUKHq0", "content": [{"text": "30\u00b0C"}],
+      "status": "success"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "temperature", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
+      {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current temperature in a city."}},
+      {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"temperature": {"type": "string"}, "city":
+      {"type": "string"}}, "required": ["temperature", "city"], "type": "object"}}, "description": "The final response which
+      ends this conversation"}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2ZmNWU4Y2YtNTQ1MC00OWFiLTk4OTUtOTgyYTZiNjMyN2Yw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1030'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-4.7-flash/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '353'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 711
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: London
+                temperature: 30°C
+              name: final_result
+              toolUseId: tooluse_2g7bS0AY9yhfPxC4Ld0ZaB
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 283
+        outputTokens: 26
+        serverToolUsage: {}
+        totalTokens: 309
+    status:
+      code: 200
+      message: OK
+version: 1
