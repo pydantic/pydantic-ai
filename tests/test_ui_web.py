@@ -500,7 +500,12 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
         assert 'tool-approval-request' not in chunk_types
         assert 'tool-input-available' in chunk_types
     else:
+        # v6 emits `tool-input-available` (carrying the tool args the UI renders in the prompt)
+        # before `tool-approval-request` (which only carries approval_id + tool_call_id), so the
+        # v7 UI can show the pending call's input alongside the approve/reject buttons.
+        assert 'tool-input-available' in chunk_types
         assert 'tool-approval-request' in chunk_types
+        assert chunk_types.index('tool-input-available') < chunk_types.index('tool-approval-request')
 
 
 def test_chat_app_options_endpoint():
