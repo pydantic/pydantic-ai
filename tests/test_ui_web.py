@@ -458,13 +458,14 @@ def _parse_sse_chunk_types(body: str) -> list[str]:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('sdk_version', [None, 5, 6])
-async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_version: Literal[5, 6] | None):
-    """The bundled web path targets Vercel AI SDK v6, so a tool call that requires approval streams a
+@pytest.mark.parametrize('sdk_version', [None, 5, 6, 7])
+async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_version: Literal[5, 6, 7] | None):
+    """The bundled web path targets Vercel AI SDK v7, so a tool call that requires approval streams a
     `tool-approval-request` chunk the v7 UI renders as approve/reject buttons.
 
-    `sdk_version=None` exercises the default (`create_web_app` bundles the v7 UI, so it targets 6);
-    explicit `6` matches, while `5` falls back to `tool-input-available` with no approval chunk.
+    `sdk_version=None` exercises the default (`create_web_app` bundles the v7 UI, so it targets 7);
+    explicit `6`/`7` match (7 emits the same wire as 6), while `5` falls back to `tool-input-available`
+    with no approval chunk.
 
     Not a VCR test: this asserts the server→client SSE stream shape, which has no provider API to
     record. `FunctionModel` deterministically drives the deferred tool call the wire format hinges on.
@@ -500,7 +501,7 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
         assert 'tool-approval-request' not in chunk_types
         assert 'tool-input-available' in chunk_types
     else:
-        # v6 emits `tool-input-available` (carrying the tool args the UI renders in the prompt)
+        # v6/v7 emit `tool-input-available` (carrying the tool args the UI renders in the prompt)
         # before `tool-approval-request` (which only carries approval_id + tool_call_id), so the
         # v7 UI can show the pending call's input alongside the approve/reject buttons.
         assert 'tool-input-available' in chunk_types

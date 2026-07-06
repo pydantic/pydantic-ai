@@ -150,7 +150,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
-    sdk_version: Literal[5, 6] = BUNDLED_UI_SDK_VERSION,
+    sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -175,9 +175,10 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
-        sdk_version: Vercel AI SDK version to target on the chat endpoint. Defaults to `6`, which the
-            bundled UI needs for tool-approval streaming. Only lower it to `5` when pairing an
-            older UI via `html_source`.
+        sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
+            `7` to match the bundled v7 UI, which needs it for tool-approval streaming (7 emits the
+            same wire as 6, since v7's data-stream protocol equals v6's). Only lower it to `5` when
+            pairing an older UI via `html_source`.
 
     Returns:
         A configured Starlette application ready to be served
