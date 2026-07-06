@@ -175,6 +175,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'moonshotai',
         'xai',
         'huggingface',
+        'zai',
         'snowflake-cortex',
     )
     models = {line.strip().split(' ')[0] for line in output[3:]}
