@@ -421,6 +421,10 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
         'google',
         'minimax',
         'nvidia',
+        'writer',
+        'zai',
+        'moonshot',
+        'moonshotai',
     }
 
     for model_name in model_names:
