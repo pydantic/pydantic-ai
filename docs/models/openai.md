@@ -642,27 +642,6 @@ agent = Agent(model)
 
 GitHub Models supports various model families with different prefixes. You can see the full list on the [GitHub Marketplace](https://github.com/marketplace?type=models) or the public [catalog endpoint](https://models.github.ai/catalog/models).
 
-### Perplexity
-
-Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
-guide to create an API key, then initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
-
-model = OpenAIChatModel(
-    'sonar-pro',
-    provider=OpenAIProvider(
-        base_url='https://api.perplexity.ai',
-        api_key='your-perplexity-api-key',
-    ),
-)
-agent = Agent(model)
-...
-```
-
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
