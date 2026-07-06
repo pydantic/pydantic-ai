@@ -2936,6 +2936,69 @@ async def test_run_stream(
     )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_stream_sync(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    my_agent = Agent(model=TestModel(), capabilities=[Instrumentation()])
+
+    @my_agent.instructions
+    def instructions(ctx: RunContext):
+        return 'Instructions for the current agent run'
+
+    with my_agent.run_stream_sync('Hello') as stream:
+        for _ in stream.stream_output():
+            pass
+
+    summary = get_logfire_summary()
+    # The `chat` span is correctly nested under the agent run span (not orphaned).
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent my_agent',
+                'message': 'my_agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+    # The agent run span's end attributes (all_messages, final_result, usage) are all populated.
+    assert summary.attributes[0] == snapshot(
+        {
+            'model_name': 'test',
+            'agent_name': 'my_agent',
+            'gen_ai.agent.name': 'my_agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
+            'logfire.msg': 'my_agent run',
+            'logfire.span_type': 'span',
+            'final_result': 'success (no tool calls)',
+            'gen_ai.aggregated_usage.input_tokens': 51,
+            'gen_ai.aggregated_usage.output_tokens': 4,
+            'pydantic_ai.all_messages': IsJson(
+                snapshot(
+                    [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
+                    ]
+                )
+            ),
+            'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
+            'logfire.json_schema': IsJson(
+                snapshot(
+                    {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    }
+                )
+            ),
+        }
+    )
+
+
 def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
     """Get the completed tool span from exported spans."""
     spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))

@@ -157,7 +157,7 @@ else:
         MistralProvider = None
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -376,10 +376,7 @@ def test_result_pydantic_model_validation_error():
         ]
     )
 
-    user_retry = result.all_messages()[2]
-    assert isinstance(user_retry, ModelRequest)
-    retry_prompt = user_retry.parts[0]
-    assert isinstance(retry_prompt, RetryPromptPart)
+    retry_prompt = message_part(result.all_messages(), RetryPromptPart, message_index=2)
     assert retry_prompt.model_response() == snapshot("""\
 1 validation error:
 ```json
@@ -4430,6 +4427,76 @@ class TestMultipleToolCalls:
             ]
         )
 
+    def test_early_strategy_prefers_native_output_text_over_tool_calls(self):
+        """Test that 'early' strategy does not execute tools when native output text is already final."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{"value": "final"}'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=NativeOutput(OutputType),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early native output')
+
+        assert result.output == OutputType(value='final')
+        assert tool_called == []
+        messages = result.all_messages()
+        assert len(messages) == 3
+        assert isinstance(messages[2], ModelRequest)
+        assert len(messages[2].parts) == 1
+        skipped_tool_return = messages[2].parts[0]
+        assert isinstance(skipped_tool_return, ToolReturnPart)
+        assert skipped_tool_return.tool_name == 'regular_tool'
+        assert skipped_tool_return.content == 'Tool not executed - a final result was already processed.'
+
+    def test_early_strategy_falls_back_to_tools_when_native_output_text_is_invalid(self):
+        """Test that invalid native output text does not prevent tool-call handling."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{}'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=NativeOutput(OutputType),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early native output fallback')
+
+        assert result.output == OutputType(value='after tool')
+        assert tool_called == ['regular_tool']
+
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
@@ -6480,8 +6547,7 @@ class TestMultipleToolCalls:
             with pytest.raises(RuntimeError, match='tool-failure'):
                 agent.run_sync('test')
 
-        interrupted = messages[-1]
-        assert isinstance(interrupted, ModelRequest)
+        interrupted = message(messages, ModelRequest, index=-1)
         assert interrupted.state == 'interrupted'
         # The completed tool's return part and its user-content part both surface.
         assert interrupted.parts == snapshot(
@@ -7259,8 +7325,7 @@ def test_dynamic_system_prompt_none_return():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
     # The None value should have a '' placeholder due to keeping a reference to the dynamic prompt
     assert '' in sys_texts
@@ -7270,8 +7335,7 @@ def test_dynamic_system_prompt_none_return():
     with capture_run_messages() as messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
     # The None value should have a '' placeholder due to keep a reference to the dynamic prompt
     assert '' not in sys_texts
@@ -7289,8 +7353,7 @@ def test_system_prompt_none_return_are_omitted():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
     # The None value should be omitted
     assert 'STATIC' in sys_texts
@@ -7536,8 +7599,7 @@ def test_image_url_serializable_missing_media_type():
 
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
-    part = messages[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(messages, UserPromptPart)
     content = part.content[1]
     assert isinstance(content, ImageUrl)
     assert content.media_type == 'image/jpeg'
@@ -7617,8 +7679,7 @@ def test_image_url_serializable():
 
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
-    part = messages[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(messages, UserPromptPart)
     content = part.content[1]
     assert isinstance(content, ImageUrl)
     assert content.media_type == 'image/jpeg'
@@ -10050,8 +10111,7 @@ async def test_user_prompt_with_deferred_tool_results():
         # Second call: model responds to tool results and user prompt
         else:
             # Verify we received both tool results and user prompt
-            last_request = messages[-1]
-            assert isinstance(last_request, ModelRequest)
+            last_request = message(messages, ModelRequest, index=-1)
             has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
             has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
             assert has_tool_return, 'Expected tool return part in request'
@@ -10270,16 +10330,14 @@ def test_override_instructions_basic():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions == 'SHOULD_BE_IGNORED'
 
     with agent.override(instructions='OVERRIDE'):
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE'
 
 
@@ -10294,10 +10352,8 @@ def test_override_reset_after_context():
     with capture_run_messages() as messages_orig:
         agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req_new = messages_new[0]
-    assert isinstance(req_new, ModelRequest)
-    req_orig = messages_orig[0]
-    assert isinstance(req_orig, ModelRequest)
+    req_new = message(messages_new, ModelRequest)
+    req_orig = message(messages_orig, ModelRequest)
     assert req_new.instructions == 'NEW'
     assert req_orig.instructions == 'ORIG'
 
@@ -10314,8 +10370,7 @@ def test_override_none_clears_instructions():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions is None
 
 
@@ -10333,8 +10388,7 @@ def test_override_instructions_callable_replaces_functions():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions is not None
     assert 'BASE_FN' in base_req.instructions
 
@@ -10342,8 +10396,7 @@ def test_override_instructions_callable_replaces_functions():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE_FN'
     assert 'BASE_FN' not in req.instructions
 
@@ -10360,8 +10413,7 @@ async def test_override_instructions_async_callable():
         with capture_run_messages() as messages:
             await agent.run('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'ASYNC_FN'
 
 
@@ -10379,8 +10431,7 @@ def test_override_instructions_sequence_mixed_types():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
     assert 'BASE' not in req.instructions
 
@@ -10393,8 +10444,7 @@ async def test_override_concurrent_isolation():
         with agent.override(instructions=instr):
             with capture_run_messages() as messages:
                 await agent.run('Hi', model=TestModel(custom_output_text='ok'))
-            req = messages[0]
-            assert isinstance(req, ModelRequest)
+            req = message(messages, ModelRequest)
             return req.instructions
 
     a, b = await asyncio.gather(
@@ -10414,8 +10464,7 @@ def test_override_replaces_instructions():
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'NEW_INSTR'
 
 
@@ -10431,10 +10480,8 @@ def test_override_nested_contexts():
             with capture_run_messages() as inner_messages:
                 agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    outer_req = outer_messages[0]
-    assert isinstance(outer_req, ModelRequest)
-    inner_req = inner_messages[0]
-    assert isinstance(inner_req, ModelRequest)
+    outer_req = message(outer_messages, ModelRequest)
+    inner_req = message(inner_messages, ModelRequest)
 
     assert outer_req.instructions == 'OUTER'
     assert inner_req.instructions == 'INNER'
@@ -10448,8 +10495,7 @@ async def test_override_async_run():
         with capture_run_messages() as messages:
             await agent.run('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'ASYNC_OVERRIDE'
 
 
@@ -10470,8 +10516,7 @@ def test_override_with_dynamic_prompts():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions == 'DYNAMIC_INSTR'
 
     # Override should take precedence over dynamic instructions but leave system prompts intact
@@ -10479,8 +10524,7 @@ def test_override_with_dynamic_prompts():
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE_INSTR'
     sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
     # The dynamic system prompt should still be present since overrides target instructions only

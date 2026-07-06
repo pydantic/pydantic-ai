@@ -261,7 +261,7 @@ KnownModelName = TypeAliasType(
         'groq:openai/gpt-oss-safeguard-20b',
         'groq:playai-tts',
         'groq:playai-tts-arabic',
-        'groq:qwen/qwen-3-32b',
+        'groq:qwen/qwen3-32b',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
         'heroku:claude-3-5-haiku',

@@ -92,8 +92,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:
@@ -1268,11 +1268,30 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text = compaction_text
 
                 try:
-                    # At the moment, we prioritize at least executing tool calls if they are present.
+                    # At the moment, we generally prioritize at least executing tool calls if they are present.
                     # In the future, we'd consider making this configurable at the agent or run level.
                     # This accounts for cases like anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
+                    # Native output with `end_strategy='early'` is the exception: valid text is already final.
                     alternatives: list[str] = []
+                    if (
+                        tool_calls
+                        and text
+                        and ctx.deps.end_strategy == 'early'
+                        and output_schema.mode == 'native'
+                        and (text_processor := output_schema.text_processor)
+                    ):
+                        try:
+                            final_result = await self._process_text_response(ctx, text, text_processor)
+                        except ToolRetryError:
+                            pass
+                        else:
+                            # Record the tool calls as skipped so history has no dangling calls.
+                            # Skipped tools emit no events, so the loop body isn't reached here.
+                            async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
+                                yield event  # pragma: no cover
+                            return
+
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
@@ -1321,6 +1340,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
+        final_result: result.FinalResult[NodeRunEndT] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1336,12 +1356,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
+            # When `final_result` is set (e.g. native output already won under `end_strategy='early'`),
+            # `process_tool_calls` records the tool calls as skipped rather than executing them.
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
-                final_result=None,
+                final_result=final_result,
                 ctx=ctx,
                 output_parts=output_parts,
                 output_final_result=output_final_result,
@@ -1401,6 +1423,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        final_result = await self._process_text_response(ctx, text, text_processor)
+        return self._handle_final_result(ctx, final_result, [])
+
+    async def _process_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
 
@@ -1413,7 +1444,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     async def _handle_image_response(
         self,
