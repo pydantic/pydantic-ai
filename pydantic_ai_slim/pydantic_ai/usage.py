@@ -286,10 +286,14 @@ class UsageLimits:
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop
     protection that cumulative limits provide.
+
+    Set `count_tokens_before_request=True` to enforce this preemptively; otherwise the
+    request is sent before the limit is checked, so the oversized request is still
+    billed (matching `input_tokens_limit`).
     """
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `input_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` and `per_request_input_tokens_limit` ahead of time.
 
     This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
     and is disabled by default.
