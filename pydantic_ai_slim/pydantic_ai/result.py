@@ -955,7 +955,7 @@ def _get_usage_checking_stream_response(
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
 ) -> AsyncIterator[ModelResponseStreamEvent]:
-    if limits is not None and (limits.has_token_limits() or limits.per_request_input_tokens_limit is not None):
+    if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
             async for item in stream_response:

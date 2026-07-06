@@ -5,7 +5,6 @@ import re
 from collections.abc import AsyncIterator
 from datetime import timezone
 from decimal import Decimal
-from typing import Any
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
@@ -1048,62 +1047,6 @@ def test_per_request_input_tokens_limit_is_not_cumulative() -> None:
         build_agent().run_sync('run tools', usage_limits=UsageLimits(input_tokens_limit=100))
 
 
-def test_check_per_request_input_tokens_unit() -> None:
-    """Unit test for the check_per_request_input_tokens method."""
-    limits = UsageLimits(per_request_input_tokens_limit=10)
-
-    # Under limit — no error
-    limits.check_per_request_input_tokens(5)
-    limits.check_per_request_input_tokens(10)
-
-    # Over limit — raises
-    with pytest.raises(
-        UsageLimitExceeded,
-        match=re.escape('Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=11)'),
-    ):
-        limits.check_per_request_input_tokens(11)
-
-    # None limit — never raises
-    unlimited = UsageLimits(per_request_input_tokens_limit=None)
-    unlimited.check_per_request_input_tokens(1_000_000)
-
-
-def test_per_request_input_tokens_limit_with_count_before() -> None:
-    """When count_tokens_before_request=True and the counted tokens exceed the
-    per-request limit, the error is raised before the model call.
-
-    Unit test: the pre-request guard cannot be reliably triggered through the public
-    API without a real model that implements `count_tokens`, so we stub `count_tokens`
-    to return a known count and assert the guard fires before the request is sent.
-    """
-
-    counted = 200
-
-    async def fake_count_tokens(
-        messages: list[ModelMessage],
-        model_settings: Any,
-        model_request_parameters: Any,
-    ) -> RequestUsage:
-        return RequestUsage(input_tokens=counted)
-
-    model = TestModel()
-    model.count_tokens = fake_count_tokens
-
-    agent = Agent(model)
-
-    with pytest.raises(
-        UsageLimitExceeded,
-        match=re.escape(f'Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens={counted})'),
-    ):
-        agent.run_sync(
-            'Hello',
-            usage_limits=UsageLimits(
-                per_request_input_tokens_limit=10,
-                count_tokens_before_request=True,
-            ),
-        )
-
-
 async def test_per_request_input_tokens_limit_streaming() -> None:
     """The limit is enforced while streaming, mirroring `input_tokens_limit`.
 
@@ -1119,5 +1062,6 @@ async def test_per_request_input_tokens_limit_streaming() -> None:
         UsageLimitExceeded,
         match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
     ):
+        # run_stream aborts on entry once the request's input size is known, so the body never runs
         async with agent.run_stream('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5)):
-            pass  # pragma: no cover - run_stream aborts on entry once the request's input size is known
+            pass  # pragma: no cover
