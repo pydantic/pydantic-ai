@@ -1294,8 +1294,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             pass
                         else:
                             # Record the tool calls as skipped so history has no dangling calls.
+                            # Skipped tools emit no events, so the loop body isn't reached here.
                             async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
-                                yield event
+                                yield event  # pragma: no cover
                             return
 
                     if tool_calls:
