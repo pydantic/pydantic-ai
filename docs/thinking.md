@@ -46,7 +46,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
-| Mistral | `reasoning_effort='high'` | `reasoning_effort='high'` | Only on adjustable-reasoning models (`mistral-small-latest`, `mistral-medium-3-5`); `magistral` reasons always-on. Mistral exposes only `'high'`/`'none'`, so every enabled level (incl. `'minimal'`) → `'high'` and only `thinking=False` → `'none'` |
+| Mistral | `reasoning_effort='high'` | `reasoning_effort='high'` | Only on adjustable-reasoning models (e.g. `mistral-small-latest`, `mistral-medium-3-5`); `magistral` reasons always-on and gets no `reasoning_effort`. Mistral exposes only `'high'`/`'none'`, so every enabled level (incl. `'minimal'`) → `'high'` and only `thinking=False` → `'none'` |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |
@@ -303,7 +303,9 @@ agent = Agent(model, model_settings=settings)
 
 ## Mistral
 
-Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.
+The `magistral` family always reasons and does not need to be specifically enabled; `thinking=False` is silently ignored.
+
+Models with adjustable reasoning (`mistral-small-latest`, `mistral-medium-latest`, and their versioned `mistral-small-4*` / `mistral-medium-3-5*` names) are controlled via the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting, which maps to Mistral's `reasoning_effort`. Mistral exposes only `'high'` (full thinking) and `'none'` (thinking suppressed), so every enabled level maps to `'high'` and only `thinking=False` maps to `'none'`. Older `mistral-small-*` / `mistral-medium-*` versions do not support reasoning, so `thinking` is silently ignored for them.
 
 ## Cohere
 

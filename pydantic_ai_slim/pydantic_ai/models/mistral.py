@@ -564,13 +564,17 @@ class MistralModel(Model[Mistral]):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
-    @staticmethod
     def _translate_thinking(
+        self,
         model_request_parameters: ModelRequestParameters,
     ) -> Literal['none', 'high'] | MistralUnset:
-        """Map the unified `thinking` setting to Mistral's `reasoning_effort`."""
+        """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
+
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
+        (`magistral`) reason unconditionally and must not receive it.
+        """
         thinking = model_request_parameters.thinking
-        if thinking is None:
+        if thinking is None or self.profile.get('thinking_always_enabled', False):
             return UNSET
         return MISTRAL_REASONING_EFFORT_MAP[thinking]
 
