@@ -300,6 +300,11 @@ class CohereModel(Model[AsyncClientV2]):
                     else:
                         assert_never(item)
 
+                if not texts and not thinking and not tool_calls:
+                    # Cohere rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
                     contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
