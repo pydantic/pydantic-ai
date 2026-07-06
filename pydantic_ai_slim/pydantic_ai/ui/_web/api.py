@@ -23,6 +23,11 @@ OutputDataT = TypeVar('OutputDataT')
 # Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
 ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
 
+# The bundled chat UI (v7 of the Vercel AI SDK) consumes the `sdk_version=6` wire protocol, which is
+# what enables tool-approval streaming. `to_web()` controls both ends (server + bundled UI), so the
+# API path targets 6 to match the UI it ships. See `VercelAIAdapter.sdk_version`.
+BUNDLED_UI_SDK_VERSION: Literal[6] = 6
+
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Defines an AI model with its associated built-in tools."""
@@ -84,7 +89,7 @@ def create_api_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-    sdk_version: Literal[5, 6] = 6,
+    sdk_version: Literal[5, 6] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create API app for the web chat UI.
 

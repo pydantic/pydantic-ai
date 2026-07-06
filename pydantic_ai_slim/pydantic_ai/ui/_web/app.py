@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
-from .api import ModelsParam, create_api_app
+from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
@@ -28,11 +28,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 CHAT_UI_VERSION = '2.0.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
-
-# The bundled chat UI (v7 of the Vercel AI SDK) consumes the `sdk_version=6` wire protocol, which is
-# what enables tool-approval streaming. `to_web()` controls both ends (server + bundled UI), so the
-# API path targets 6 to match the UI it ships. See `VercelAIAdapter.sdk_version`.
-BUNDLED_UI_SDK_VERSION: Literal[6] = 6
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, MCPServerTool
@@ -466,7 +467,9 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
     explicit `6` matches, while `5` falls back to `tool-input-available` with no approval chunk.
     """
 
-    async def stream_function(messages: list[Any], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    async def stream_function(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
         yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "test.txt"}', tool_call_id='delete_1')}
 
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])

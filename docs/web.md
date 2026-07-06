@@ -98,6 +98,9 @@ app = agent.to_web(instructions='Always respond in a friendly tone.')
 
 Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval) are surfaced in the UI as approve/reject prompts: when the agent calls such a tool, the UI renders the pending call and lets you approve or deny it before the run continues. This works out of the box — no extra configuration is needed.
 
+!!! warning
+    The chat endpoint executes tool approvals relayed by the client, including for tools marked `requires_approval=True`. The server trusts the approval decision it receives, so a client with direct access to the endpoint can approve any pending call. As noted above, the web UI is meant for local development — this is fine when it's bound to localhost, but do not expose `to_web()` to untrusted clients without putting authentication in front of it.
+
 ## Reserved Routes
 
 The web UI app uses the following routes which should not be overwritten:
