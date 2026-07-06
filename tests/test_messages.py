@@ -1,3 +1,4 @@
+import json
 import re
 import sys
 import warnings
@@ -484,15 +485,19 @@ def test_thinking_part_delta_callable_provider_details_serializable():
 
     event = PartDeltaEvent(index=0, delta=chained)
     adapter = cast(TypeAdapter[AgentStreamEvent], TypeAdapter(AgentStreamEvent))
+
+    # The callable merge callback can't be JSON-serialized, so it is emitted as `null` instead of raising.
     serialized = adapter.dump_json(event)
+    assert json.loads(serialized)['delta']['provider_details'] is None
+    # The serialized event round-trips back into an `AgentStreamEvent`.
+    assert isinstance(adapter.validate_json(serialized), PartDeltaEvent)
 
-    assert b'"provider_details":null' in serialized
-
+    # A plain dict `provider_details` is preserved as-is.
     dict_event = PartDeltaEvent(
         index=0,
         delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
     )
-    assert b'"provider_details":{"provider":"detail"}' in adapter.dump_json(dict_event)
+    assert json.loads(adapter.dump_json(dict_event))['delta']['provider_details'] == {'provider': 'detail'}
 
 
 def test_pre_usage_refactor_messages_deserializable():

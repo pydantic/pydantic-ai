@@ -144,6 +144,9 @@ ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 
 
 def _serialize_provider_details_delta(value: Any) -> dict[str, Any] | None:
+    # A callable `provider_details` is a transient merge callback used while chaining deltas; it cannot be
+    # JSON-serialized, so it is emitted as `null`. Once the delta is applied to a `ThinkingPart` the callback is
+    # resolved to a concrete dict, which serializes normally.
     if callable(value):
         return None
     return value
