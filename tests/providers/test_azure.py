@@ -150,6 +150,9 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     openai_model_profile_mock.assert_called_with('o4-mini')
     assert openai_profile is not None
     assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # Azure OpenAI rejects `include=['reasoning.encrypted_content']`, so even reasoning models
+    # must not send it. See https://github.com/pydantic/pydantic-ai/issues/2915.
+    assert openai_profile.get('openai_supports_encrypted_reasoning_content', None) is False
 
     unknown_profile = provider.model_profile('unknown-model')
     openai_model_profile_mock.assert_called_with('unknown-model')

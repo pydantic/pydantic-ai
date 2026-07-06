@@ -76,8 +76,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # OpenAI models are unprefixed.
             base = openai_model_profile(model_name)
 
-        # Azure Chat Completions API doesn't support document input.
-        return merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        # Azure Chat Completions API doesn't support document input, and Azure OpenAI rejects the
+        # `include=['reasoning.encrypted_content']` request option that reasoning models otherwise send
+        # (see https://github.com/pydantic/pydantic-ai/issues/2915).
+        return merge_profile(
+            base,
+            OpenAIModelProfile(
+                openai_chat_supports_document_input=False,
+                openai_supports_encrypted_reasoning_content=False,
+            ),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...
