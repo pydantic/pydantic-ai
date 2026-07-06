@@ -54,10 +54,11 @@ def _response(
     state: str,
     input_tokens: int,
     output_tokens: int,
+    model_name: str = 'fake',
 ) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content=p) for p in parts],
-        model_name='fake',
+        model_name=model_name,
         provider_name='fake',
         provider_response_id=provider_response_id,
         usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
@@ -236,6 +237,47 @@ async def test_replace_reuses_indices_and_replaces_response() -> None:
     merged = stream.get()
     assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['a', 'final']
     assert merged.usage == RequestUsage(input_tokens=5, output_tokens=6)
+    assert merged.state == 'complete'
+
+
+async def test_model_change_replaces_indices() -> None:
+    """A segment from a different model *replaces* rather than accumulates, mirroring `merge_mode`.
+
+    Unreachable through the public API today — every continuation pins to a single model (Anthropic and
+    OpenAI reuse it, `FallbackModel` pins to the producing model) — so this drives the composite directly
+    to pin the accumulate-vs-replace boundary that `_segment_offset` shares with `merge_mode`.
+    """
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a'), (1, 'b')),
+                response=_response(
+                    parts=['a', 'b'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'x')),
+                response=_response(
+                    parts=['x'],
+                    provider_response_id='r2',
+                    state='complete',
+                    input_tokens=2,
+                    output_tokens=3,
+                    model_name='other',
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    events = [event async for event in stream]
+
+    # A different `model_name` (with a fresh id) is a replace signal, so the second segment reuses the
+    # index space (offset stays 0) rather than appending past the first segment's parts.
+    assert _part_start_indices(events) == [0, 1, 0]
+
+    merged = stream.get()
+    assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['x']
+    assert merged.model_name == 'other'
     assert merged.state == 'complete'
 
 

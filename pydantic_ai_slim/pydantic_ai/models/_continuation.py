@@ -235,13 +235,17 @@ class _ContinuationStreamedResponse(StreamedResponse):
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
         """Index at which the current segment's parts begin in the stitched stream.
 
-        Mirrors [`merge_mode`][pydantic_ai.models._continuation.merge_mode]: a segment sharing the
-        prior response's `provider_response_id` *replaces* it (reuse the replaced segment's index
-        space), otherwise it *accumulates* (append after all prior parts).
+        Mirrors [`merge_mode`][pydantic_ai.models._continuation.merge_mode]: a segment that *replaces*
+        the prior response — because it shares its `provider_response_id`, or because the model changed —
+        reuses the replaced segment's index space, while one that *accumulates* appends after all prior parts.
         """
         if response is None:
             return 0
-        if sub.provider_response_id and sub.provider_response_id == response.provider_response_id:
+        same_response = (
+            bool(response.provider_response_id) and response.provider_response_id == sub.provider_response_id
+        )
+        changed_model = bool(response.model_name) and bool(sub.model_name) and response.model_name != sub.model_name
+        if same_response or changed_model:
             return last_segment_offset
         return len(response.parts)
 
