@@ -292,6 +292,7 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "examples/pydantic_ai_examples/realtime_voice.py",       # optional, untyped `sounddevice` audio dep
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 

@@ -18,9 +18,8 @@ loop for you.
     [Delegating to a text agent](#delegating-to-a-text-agent)).
 
 !!! tip "Prefer to see it running first?"
-    Two complete, runnable apps are the fastest way in: a [voice finance assistant](examples/realtime-finance.md)
-    that delegates to a text agent, and a [talk-and-show camera assistant](examples/realtime-camera.md)
-    you can open on your phone. Come back here for the *why*.
+    The [voice assistant example](examples/realtime-voice.md) is a complete, runnable script —
+    microphone in, speakers out, one tool. Come back here for the *why*.
 
 ## Installation
 
@@ -210,8 +209,7 @@ await session.send_image(jpeg_bytes, mime_type='image/jpeg')
 continuously and set `turn_coverage='all_video'` so every frame stays in context. Because a frame
 alone never triggers a turn, drive proactive narration by periodically sending a short text turn
 ("say what changed, else stay silent"); combine with `proactive_audio=True` (native-audio) so the
-model keeps quiet when nothing changed. The [realtime camera example](examples/realtime-camera.md)
-implements exactly this with a *Watch* toggle.
+model keeps quiet when nothing changed.
 
 ## Tool calling
 
@@ -445,8 +443,8 @@ async def main():
         ...
 ```
 
-The [realtime finance example](examples/realtime-finance.md) builds this out into a full voice app —
-including [background tools](#background-tools) so the model keeps talking while a slow analysis runs.
+For a slow delegated run, mark the tool as a [background tool](#background-tools) so the model keeps
+talking while the analysis runs.
 
 ## Implementing a provider
 

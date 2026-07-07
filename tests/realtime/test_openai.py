@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -413,7 +414,7 @@ async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> N
     ws = HangingWebSocket([])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime', api_key='k', handshake_timeout=0.02)
-    with pytest.raises(TimeoutError, match="'session.created'"):
+    with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
         async with model.connect(instructions='x'):
             pass  # pragma: no cover
 
