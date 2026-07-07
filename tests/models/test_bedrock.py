@@ -52,7 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -5457,23 +5457,23 @@ async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: Bedrock
 
 
 @pytest.mark.vcr()
-async def test_bedrock_zai_tool_and_native_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """Z.AI GLM via Bedrock supports tool calls and native structured output (`supports_json_schema_output=True`)."""
+async def test_bedrock_zai_native_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Z.AI GLM via Bedrock supports native structured output (`supports_json_schema_output=True`).
+
+    `NativeOutput` exercises Bedrock's `outputConfig` path rather than the default tool-output mode, so
+    the response arrives as structured output with no `final_result` output-tool call in the history.
+    """
     model = BedrockConverseModel('zai.glm-4.7-flash', provider=bedrock_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'output': 5})
 
-    class Response(TypedDict):
-        temperature: str
+    class City(TypedDict):
         city: str
+        country: str
 
-    @agent.tool_plain
-    async def temperature(city: str) -> str:
-        """Get the current temperature in a city."""
-        return '30°C'
-
-    result = await agent.run('What is the temperature in London?', output_type=Response)
-    assert result.output == snapshot({'temperature': '30°C', 'city': 'London'})
-    assert any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+    result = await agent.run('Where is the Eiffel Tower?', output_type=NativeOutput(City))
+    assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
+    # Native output travels via `outputConfig`, so there is no output-tool call in the message history.
+    assert not any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
 
 
 @pytest.mark.vcr()
