@@ -228,9 +228,7 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        if (provider_cost := cost_from_provider_details(response)) is not None:
-            self.cost_histogram.record(float(provider_cost), attributes)
-        elif price_calculation:
+        if price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
 
