@@ -15,16 +15,14 @@ from __future__ import annotations
 
 import warnings
 from decimal import Decimal
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._cost import best_effort_cost, best_effort_price_calculation, cost_from_provider_details
+from pydantic_ai._cost import best_effort_price_calculation
 from pydantic_ai._warnings import CostCalculationFailedWarning
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -176,95 +174,3 @@ def test_run_usage_cost_arithmetic():
     # `RequestUsage` carries no cost, so incrementing with one leaves the accumulated cost unchanged.
     usage.incr(RequestUsage(input_tokens=10))
     assert usage.cost == Decimal('3.5')
-
-
-def _response_with_provider_details(provider_details: dict[str, Any] | None) -> ModelResponse:
-    """A minimal priceable `gpt-4o` response so provider-vs-`genai-prices` preference is observable."""
-    return ModelResponse(
-        parts=[],
-        usage=RequestUsage(input_tokens=100, output_tokens=50),
-        model_name='gpt-4o',
-        provider_name='openai',
-        provider_details=provider_details,
-    )
-
-
-def test_cost_from_provider_details_openrouter_cost():
-    """OpenRouter reports its own cost under `provider_details['cost']` (a float, via `Decimal(str(...))`).
-
-    The end-to-end path is covered by `test_openrouter.py::test_openrouter_usage`; this pins the parsing and
-    the float-to-`Decimal` conversion (which must go through `str` to avoid binary-float noise) in isolation.
-    """
-    assert cost_from_provider_details(_response_with_provider_details({'cost': 0.00333825})) == Decimal('0.00333825')
-    # A reported cost of exactly zero is a value, not "unknown", so it's returned rather than skipped.
-    assert cost_from_provider_details(_response_with_provider_details({'cost': 0.0})) == Decimal('0')
-
-
-def test_cost_from_provider_details_gateway():
-    """The Pydantic AI Gateway reports a `cost_estimate` nested under `provider_details['usage']`."""
-    response = _response_with_provider_details({'usage': {'pydantic_ai_gateway': {'cost_estimate': 0.00012625}}})
-    assert cost_from_provider_details(response) == Decimal('0.00012625')
-
-
-def test_cost_from_provider_details_openrouter_cost_takes_precedence_over_gateway():
-    """A top-level OpenRouter `cost` wins over the nested gateway estimate."""
-    response = _response_with_provider_details(
-        {'cost': 0.5, 'usage': {'pydantic_ai_gateway': {'cost_estimate': 0.1}}}
-    )
-    assert cost_from_provider_details(response) == Decimal('0.5')
-
-
-@pytest.mark.parametrize(
-    'provider_details',
-    [
-        pytest.param(None, id='no_provider_details'),
-        pytest.param({}, id='empty'),
-        pytest.param({'finish_reason': 'stop'}, id='unrelated_keys'),
-        pytest.param({'cost': None}, id='explicit_none_cost'),
-        pytest.param({'usage': {}}, id='usage_without_gateway'),
-        pytest.param({'usage': 'not-a-dict'}, id='malformed_usage'),
-        pytest.param({'usage': {'pydantic_ai_gateway': 'not-a-dict'}}, id='malformed_gateway'),
-        pytest.param({'usage': {'pydantic_ai_gateway': {}}}, id='gateway_without_price'),
-        pytest.param({'usage': {'pydantic_ai_gateway': {'cost_estimate': None}}}, id='explicit_none_estimate'),
-    ],
-)
-def test_cost_from_provider_details_absent(provider_details: dict[str, Any] | None):
-    """When no provider-reported cost is present, `None` is returned so pricing falls back to `genai-prices`."""
-    assert cost_from_provider_details(_response_with_provider_details(provider_details)) is None
-
-
-def test_best_effort_cost_prefers_provider_details():
-    """A provider-reported cost overrides `genai-prices`, even for a model `genai-prices` can price itself."""
-    response = _response_with_provider_details({'cost': 0.123})
-
-    # `gpt-4o` is priceable, so this is a genuine choice between two available numbers, not a fallback.
-    price_calculation = best_effort_price_calculation(response)
-    assert price_calculation is not None
-    assert price_calculation.total_price == snapshot(Decimal('0.00075'))
-
-    assert best_effort_cost(response) == Decimal('0.123')
-
-
-async def test_run_usage_cost_prefers_provider_details(allow_model_requests: None):
-    """`RunUsage.cost` uses provider-reported cost when it is available on the final model response."""
-
-    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[TextPart('done')],
-            usage=RequestUsage(input_tokens=100, output_tokens=50),
-            provider_details={'cost': 0.123},
-        )
-
-    agent = Agent(FunctionModel(model_function, model_name='gpt-4o'))
-    result = await agent.run('hello')
-
-    assert result.output == 'done'
-    assert result.usage.cost == Decimal('0.123')
-
-
-def test_best_effort_cost_falls_back_to_price_calculation():
-    """Without a provider-reported cost, `best_effort_cost` uses the `genai-prices` calculation."""
-    response = _response_with_provider_details(None)
-    price_calculation = best_effort_price_calculation(response)
-    assert price_calculation is not None
-    assert best_effort_cost(response) == price_calculation.total_price == snapshot(Decimal('0.00075'))

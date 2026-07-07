@@ -22,7 +22,6 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
-from .._cost import cost_from_provider_details
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (

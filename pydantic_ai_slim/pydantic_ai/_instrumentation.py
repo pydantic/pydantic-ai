@@ -16,7 +16,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
-from ._cost import best_effort_price_calculation, cost_from_provider_details
+from ._cost import best_effort_price_calculation
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -257,10 +257,7 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                cost_from_provider = cost_from_provider_details(response)
-                price_calculation = (
-                    None if cost_from_provider is not None else best_effort_price_calculation(response)
-                )
+                price_calculation = best_effort_price_calculation(response)
 
                 if not span.is_recording():
                     return
@@ -271,9 +268,7 @@ def open_model_request_span(
                     **response.usage.opentelemetry_attributes(),
                     'gen_ai.response.model': response_model,
                 }
-                if cost_from_provider is not None:
-                    attributes_to_set['operation.cost'] = float(cost_from_provider)
-                elif price_calculation is not None:
+                if price_calculation is not None:
                     attributes_to_set['operation.cost'] = float(price_calculation.total_price)
                 if response.provider_response_id is not None:
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id

@@ -314,35 +314,6 @@ async def test_instrumented_model_not_recording():
     )
 
 
-async def test_instrumented_model_operation_cost_prefers_provider_details(capfire: CaptureLogfire):
-    """`operation.cost` uses provider-reported cost even when `genai-prices` can price the model."""
-
-    class ProviderCostModel(MyModel):
-        async def request(
-            self,
-            messages: list[ModelMessage],
-            model_settings: ModelSettings | None,
-            model_request_parameters: ModelRequestParameters,
-        ) -> ModelResponse:
-            response = await super().request(messages, model_settings, model_request_parameters)
-            response.provider_details = {**(response.provider_details or {}), 'cost': 0.123}
-            return response
-
-    model = InstrumentedModel(ProviderCostModel(), InstrumentationSettings())
-
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-    await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
-
-    attributes = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
-    assert attributes['operation.cost'] == 0.123
-
-    cost_metric = next(metric for metric in capfire.get_collected_metrics() if metric['name'] == 'operation.cost')
-    cost_metric_point = cost_metric['data']['data_points'][0]
-    assert cost_metric_point['sum'] == 0.123
-    assert cost_metric_point['min'] == 0.123
-    assert cost_metric_point['max'] == 0.123
-
-
 async def test_instrumented_model_serializes_lone_surrogates_without_crashing(capfire: CaptureLogfire):
     """Lone surrogates in message content make `to_json` raise; instrumentation must not crash the run.
 
@@ -1343,34 +1314,6 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
             }
         ]
     )
-
-
-class ProviderCostModel(MyModel):
-    """A model whose response `genai-prices` can't price, but which reports its own cost (e.g. OpenRouter)."""
-
-    async def request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        return ModelResponse(
-            parts=[TextPart('text1')],
-            usage=RequestUsage(input_tokens=100, output_tokens=200),
-            model_name='some-unpriceable-model',
-            provider_details={'cost': 0.42},
-        )
-
-
-async def test_operation_cost_from_provider_details(capfire: CaptureLogfire):
-    """`operation.cost` falls back to the provider-reported cost when `genai-prices` can't price the model."""
-    model = InstrumentedModel(ProviderCostModel())
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-
-    await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
-
-    (span,) = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    assert span['attributes']['operation.cost'] == 0.42
 
 
 def test_message_with_native_tool_calls():
