@@ -3085,6 +3085,40 @@ async def test_uploaded_file_adds_files_api_beta_to_count_tokens(allow_model_req
     assert 'files-api-2025-04-14' in count_tokens_kwargs['betas']
 
 
+async def test_uploaded_file_in_tool_return_adds_files_api_beta(allow_model_requests: None) -> None:
+    """An `UploadedFile` returned by a tool auto-attaches the Files API beta on the follow-up request.
+
+    Unit test (not VCR): tool-returned files are mapped to the same `source.type='file'` wire shape
+    as user-prompt files and require the same beta, but cassette matchers don't pin the `betas` kwarg,
+    so a regression dropping the auto-beta on the tool-return path would still replay green. We assert
+    the kwarg directly on the second (post-tool) request. The first request carries no file, so it must
+    not include the beta.
+    """
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={}, name='get_file', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaTextBlock(text='ok', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=2),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_file() -> UploadedFile:
+        return UploadedFile(file_id='file-tr-1', provider_name='anthropic')
+
+    await agent.run('Fetch a file and describe it')
+
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert 'files-api-2025-04-14' not in (request_kwargs[0].get('betas') or [])
+    assert 'files-api-2025-04-14' in (request_kwargs[1].get('betas') or [])
+
+
 def test_init_with_provider():
     provider = AnthropicProvider(api_key='api-key')
     model = AnthropicModel('claude-3-opus-latest', provider=provider)
