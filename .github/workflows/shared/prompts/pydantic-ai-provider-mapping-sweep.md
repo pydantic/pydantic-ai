@@ -73,7 +73,8 @@ gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=provider-mapping-swe
 ```
 
 Only if that is inconclusive, widen to a full open-issue scan and grep locally
-for your chosen provider name (and the `[bug-hunter]` prefix):
+for your chosen provider name (and the `[provider-mapping-sweep]` and
+`[bug-hunter]` prefixes — the latter also files provider bugs):
 
 ```
 gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
@@ -125,3 +126,4 @@ the impact is cosmetic. One well-evidenced issue beats several weak ones.
 > - **Existing tests checked:** [tests read; none assert the current behavior, and the fix doesn't break them]
 > - **Ruled out by-design:** [nearby comment / profile / maintainer decision / same in other providers]
 > - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

@@ -125,3 +125,4 @@ Call `mcp__safeoutputs__noop` if any of these are true:
 > - **Existing tests checked:** [tests read; none assert the current behavior, and the fix doesn't break them]
 > - **Ruled out by-design:** [nearby comment / profile / maintainer decision / same in other providers]
 > - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [open-issue scan returned nothing covering this]

@@ -161,8 +161,10 @@ INSTRUCTIONS = (
     'filter. When the sweep files under a dedicated label, prefer a narrow label '
     "query (`gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' "
     "--jq '.[] | select(.pull_request == null) | {number, title}'`); if it has no "
-    'dedicated label or the filter is inconclusive, widen to a full `--paginate` '
-    'open-issue scan.'
+    'dedicated label or the filter is inconclusive, widen to a full open-issue scan '
+    "(`gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' "
+    "--jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'`). "
+    '`select(.pull_request == null)` drops PRs, which the issues endpoint also returns.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.

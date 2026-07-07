@@ -107,3 +107,4 @@ run.
 > - **Existing tests checked:** [tests read; none assert this behavior is intentional]
 > - **Ruled out by-design:** [nearby comment / profile / maintainer decision checked]
 > - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

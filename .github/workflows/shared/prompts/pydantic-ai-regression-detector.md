@@ -108,3 +108,4 @@ test that passes on `OLD` and fails on `NEW`, with both outputs captured.
 > - **Reproduced on OLD and NEW:** [commands + real outputs for both versions]
 > - **Change was NOT intentional:** [found the commit/PR that changed it and confirmed it wasn't a deliberate behavior change — the #1 reason regression reports get rejected]
 > - **Existing tests checked:** [NEW-version tests read; none assert the new behavior as intended]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

@@ -111,3 +111,4 @@ minimal, failing streaming reproduction and captured event trace.
 > - **Reproduced on `main`:** [exact command + real captured trace — confirm the asymmetry/failure actually exists, not a false premise]
 > - **Existing tests checked:** [streaming tests read; none assert the current behavior, and the fix doesn't break them]
 > - **Ruled out by-design:** [sibling streaming methods behave the same / nearby comment / maintainer decision checked]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]
