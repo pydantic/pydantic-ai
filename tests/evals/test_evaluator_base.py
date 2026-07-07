@@ -82,20 +82,20 @@ def test_strict_abc_meta():
     from pydantic_evals.evaluators.report_evaluator import ReportEvaluator
 
     # Subclasses that don't implement inherited abstract methods are rejected at definition time
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
     # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
-    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]

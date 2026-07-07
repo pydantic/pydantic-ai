@@ -326,6 +326,31 @@ async def test_multi_agent_usage_no_incr():
     }
 
 
+def test_opentelemetry_attributes_excludes_first_class_token_details():
+    """`details` entries named like a first-class token attribute must never be emitted under `details.*`.
+
+    Adapters stash `input_tokens`/`output_tokens` in `details` for different reasons (Anthropic's
+    streaming carry-forward and pre-compaction raw counts, Cohere's billed units), but the name
+    collides with the first-class `gen_ai.usage.{input,output}_tokens` attributes. Emitting the value
+    under both makes consumers like Langfuse sum them and double-count tokens and cost, regardless of
+    whether the two values happen to match. They stay accessible on `RequestUsage.details`; only the
+    ambiguous OTel emission is dropped. Not reachable through the public API since it depends on an
+    adapter leaving these keys in `details`, so pinned directly on the OTel attribute mapping.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        # A matching value (Anthropic exact-copy case) and a differing one (Cohere billed-units /
+        # Anthropic compaction case) are both dropped: the colliding name is what makes them ambiguous.
+        details={'input_tokens': 100, 'output_tokens': 42, 'reasoning_tokens': 10},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 10,
+    }
+
+
 async def test_multi_agent_usage_sync():
     """As in `test_multi_agent_usage_async`, with a sync tool."""
     controller_agent = Agent(TestModel())

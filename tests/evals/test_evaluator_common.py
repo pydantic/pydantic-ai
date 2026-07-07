@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
@@ -17,15 +18,18 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
+        DEFAULT_EVALUATORS,
         Contains,
         Equals,
         EqualsExpected,
+        GEval,
         HasMatchingSpan,
         IsInstance,
         LLMJudge,
         MaxDuration,
         OutputConfig,
     )
+    from pydantic_evals.evaluators.llm_as_a_judge import GEvalOutput
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
@@ -503,3 +507,75 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     # Test non-matching attributes
     evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False
+
+
+async def test_g_eval_evaluator(mocker: MockerFixture):
+    """Test GEval evaluator."""
+    mock_judge_g_eval = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval')
+    mock_judge_g_eval.return_value = GEvalOutput(reason='Clear and well structured', score=4)
+
+    ctx = EvaluatorContext(
+        name='test',
+        inputs='Explain gravity.',
+        metadata=None,
+        expected_output=None,
+        output='Gravity pulls masses together.',
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('spans were not recorded'),
+        attributes={},
+        metrics={},
+    )
+
+    evaluator = GEval(
+        criteria='coherence',
+        evaluation_steps=['Read the output carefully.', 'Assign a score from 1 to 5.'],
+        include_input=True,
+    )
+    assert await evaluator.evaluate(ctx) == snapshot(EvaluationReason(value=4, reason='Clear and well structured'))
+    mock_judge_g_eval.assert_called_once_with(
+        'Gravity pulls masses together.',
+        'coherence',
+        ['Read the output carefully.', 'Assign a score from 1 to 5.'],
+        (1, 5),
+        inputs='Explain gravity.',
+        model=None,
+        model_settings=None,
+    )
+
+    # By default the inputs are not shown to the judge
+    mock_judge_g_eval.reset_mock()
+    evaluator = GEval(criteria='fluency', evaluation_steps=['Check grammar.'])
+    await evaluator.evaluate(ctx)
+    assert mock_judge_g_eval.call_args.kwargs['inputs'] is None
+
+
+def test_g_eval_validates_arguments_at_construction():
+    """Invalid `score_range`/`evaluation_steps` fail at construction (and thus at dataset load), not at evaluation time."""
+    with pytest.raises(ValueError, match='`score_range` must satisfy min < max'):
+        GEval(criteria='c', evaluation_steps=['s'], score_range=(5, 1))
+
+    # An empty steps list would produce a prompt with no chain-of-thought section, defeating the method.
+    with pytest.raises(ValueError, match='`evaluation_steps` must contain at least one step'):
+        GEval(criteria='c', evaluation_steps=[])
+
+
+def test_g_eval_evaluation_name():
+    assert GEval(criteria='c', evaluation_steps=['s']).get_default_evaluation_name() == 'GEval'
+    evaluator = GEval(criteria='c', evaluation_steps=['s'], evaluation_name='coherence')
+    assert evaluator.get_default_evaluation_name() == 'coherence'
+
+
+def test_g_eval_registered_in_defaults():
+    """`GEval` deserializes from YAML/JSON dataset configs via `DEFAULT_EVALUATORS`."""
+    assert GEval in DEFAULT_EVALUATORS
+
+
+def test_g_eval_model_instance_serialized_as_string():
+    """`GEval` serializes a `Model` instance as its `model_id`, matching `LLMJudge`."""
+    model = TestModel()
+    evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model=model)
+    assert evaluator.build_serialization_arguments()['model'] == model.model_id
+
+    # A string model name is already serializable and passes through unchanged.
+    evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
+    assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'

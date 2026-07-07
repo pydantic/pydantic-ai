@@ -1,9 +1,9 @@
 name: PR Guard
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate PRs and manage issues; no fork code is checked out
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate/unlinked PRs and manage issues; no fork code is checked out
   pull_request_target:
-    types: [opened, ready_for_review, edited]
+    types: [opened, reopened, ready_for_review, edited]
 
 permissions: {}
 
@@ -27,9 +27,17 @@ jobs:
           PR_NUMBER="${GITHUB_EVENT_PULL_REQUEST_NUMBER}"
           PR_AUTHOR="${GITHUB_EVENT_PULL_REQUEST_USER_LOGIN}"
           AUTHOR_ASSOCIATION="${GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION}"
-          PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
+
+          # `edited` also fires on closed and merged PRs (e.g. an author updating
+          # the description before reopening, as the close comment suggests, or a
+          # bot rewriting the description). Nothing to check, and `gh pr close`
+          # on an already-closed PR would fail the job.
+          if [ "${GITHUB_EVENT_PULL_REQUEST_STATE}" != "open" ]; then
+            echo "PR is ${GITHUB_EVENT_PULL_REQUEST_STATE}, skipping checks."
+            exit 0
+          fi
 
           # Skip draft PRs — authors may create drafts to save progress
           if [ "${GITHUB_EVENT_PULL_REQUEST_DRAFT}" = "true" ]; then
@@ -37,10 +45,54 @@ jobs:
             exit 0
           fi
 
+          # Only check PRs targeting the default branch. GitHub interprets closing
+          # keywords ("Fixes #123") *only* on default-branch PRs; on any other base
+          # branch they're ignored and closingIssuesReferences is always empty, so
+          # enforcing the issue-link policy there would close validly-linked PRs (e.g.
+          # a fix targeting a maintenance branch). Fail open if either value is empty.
+          if [ -z "${DEFAULT_BRANCH}" ] || [ -z "${GITHUB_EVENT_PULL_REQUEST_BASE_REF}" ] || [ "${GITHUB_EVENT_PULL_REQUEST_BASE_REF}" != "${DEFAULT_BRANCH}" ]; then
+            echo "PR base '${GITHUB_EVENT_PULL_REQUEST_BASE_REF}' is not the default branch '${DEFAULT_BRANCH}'; skipping checks."
+            exit 0
+          fi
+
           # Maintainer bypass
           if [[ "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
             echo "Author is a maintainer/collaborator, skipping checks."
             exit 0
+          fi
+
+          # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
+          # relationship to the repo, so without this the guard re-closes a
+          # contributor PR every time a maintainer acts on it: reopening it, or
+          # editing its title/body (`reopened` and `edited` both re-run this
+          # workflow, so a reopen-only bypass gets undone by the next edit). When
+          # the person who triggered this run isn't the author, confirm they have
+          # triage-or-higher access on *this* repo and, if so, treat their action
+          # as a deliberate decision to keep the PR open and skip the checks.
+          #   - We read `role_name`, not the legacy `permission` (which collapses
+          #     triage into read), so a triager — who can legitimately reopen —
+          #     still counts.
+          #   - We require `sender != author` and a base-repo role because GitHub
+          #     also lets a collaborator on the contributor's *fork* reopen the PR;
+          #     `sender != author` alone isn't proof of base-repo trust.
+          #   - If the role can't be determined, err toward respecting the action:
+          #     this is a courtesy gate (trivially satisfied by linking any open
+          #     issue), not a security boundary, and a deliberate maintainer action
+          #     shouldn't be undone by a transient API hiccup.
+          # The author acting on their own PR (e.g. the `opened` event, where the
+          # sender is always the author) still gets checked, so the issue-link
+          # policy can't be bypassed this way.
+          if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
+            SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            case "$SENDER_ROLE" in
+              read | none)
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
+                ;;
+              *)
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}); a trusted collaborator acted on this PR, skipping checks."
+                exit 0
+                ;;
+            esac
           fi
 
           # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
@@ -54,13 +106,88 @@ jobs:
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
-          # Parse closing keywords from PR body
-          # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
-          # Case-insensitive, with optional leading - or *
-          ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+          # Helper: close a contributor PR that doesn't link to any existing issue.
+          # Only external contributors reach this point (maintainers/collaborators
+          # bypass above). Exemptions:
+          #   - bot authors (pydanty, dependabot, etc.) — they never file issues first
+          #   - docs-only changes — small doc fixes are welcome without an issue
+          close_for_missing_issue() {
+            case "$PR_AUTHOR" in
+              *"[bot]")
+                echo "Author ${PR_AUTHOR} is a bot; not closing for missing issue link."
+                return 0
+                ;;
+            esac
+
+            # If the changed files can't be determined, err on the side of leaving
+            # the PR open: closing is destructive and the docs-only exemption
+            # can't be ruled out.
+            if ! CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$CHANGED_FILES" ]; then
+              echo "Could not determine changed files; not closing for missing issue link."
+              return 0
+            fi
+            DOCS_ONLY="true"
+            while IFS= read -r CHANGED_FILE; do
+              case "$CHANGED_FILE" in
+                docs/*|*.md|mkdocs.yml) ;;
+                *) DOCS_ONLY="false"; break ;;
+              esac
+            done <<< "$CHANGED_FILES"
+            if [ "$DOCS_ONLY" = "true" ]; then
+              echo "PR only touches documentation; not closing for missing issue link."
+              return 0
+            fi
+
+            echo "Closing PR #${PR_NUMBER} — no linked issue."
+            COMMENT=$(printf '%s\n\n%s\n\n%s\n\n%s' \
+              "Thanks for the contribution! To make sure changes are discussed before code is written, we ask that every PR references an existing issue with a closing keyword (e.g. \`Fixes #1234\`) in its description, so this PR has been closed automatically." \
+              "If there's no issue for this yet, please open one first (e.g. a bug report with a reproducible example), wait for a maintainer to confirm it, then update this PR's description to reference it and reopen the PR." \
+              "Documentation-only fixes are exempt and don't need an issue." \
+              "Feel free to ping our team if you think this was closed in error.")
+            # Comment before closing so the PR can never end up closed without an
+            # explanation; if commenting fails, set -e stops us and the PR stays open.
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+            gh pr close "$PR_NUMBER" --repo "$REPO"
+          }
+
+          # Ask GitHub which issues this PR would close, rather than parsing the
+          # body ourselves: GitHub's own parser is the authority on closing-keyword
+          # syntax ("Fixes #123", "Fixes: #123", "Fixes owner/repo#123", full issue
+          # URLs) and only counts references that resolve to real issues. Closed
+          # issues are included (with state CLOSED), so the checks below still see
+          # them. References to issues in other repos don't count: the policy
+          # requires an issue in this repo. If the query fails, set -e fails the
+          # job and the PR is left open.
+          fetch_linked_issues() {
+            gh api graphql \
+              -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$PR_NUMBER" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    pullRequest(number: $number) {
+                      closingIssuesReferences(first: 100) {
+                        nodes { number repository { nameWithOwner } }
+                      }
+                    }
+                  }
+                }' \
+              --jq ".data.repository.pullRequest.closingIssuesReferences.nodes[] | select(.repository.nameWithOwner == \"${REPO}\") | .number"
+          }
+
+          ISSUE_NUMBERS=$(fetch_linked_issues)
 
           if [ -z "$ISSUE_NUMBERS" ]; then
-            echo "No closing keywords found in PR body."
+            # GitHub resolves closing references asynchronously, so a query right
+            # after a PR is opened or edited can transiently come back empty.
+            # Closing is destructive — wait and confirm before acting on it.
+            echo "No linked issues found; re-checking in 30s in case GitHub hasn't resolved references yet."
+            sleep 30
+            ISSUE_NUMBERS=$(fetch_linked_issues)
+          fi
+
+          if [ -z "$ISSUE_NUMBERS" ]; then
+            echo "No linked issues found in PR body."
+            close_for_missing_issue
             exit 0
           fi
 
@@ -82,21 +209,17 @@ jobs:
             fi
           }
 
-          # Fetch all open PRs once upfront (the list endpoint includes body and labels).
-          # Done outside the loop to avoid repeated paginated calls when multiple issues are referenced.
-          ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
-
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
           for ISSUE_NUM in $ISSUE_NUMBERS; do
             echo ""
             echo "--- Checking issue #${ISSUE_NUM} ---"
 
-            # Fetch issue details, skip if not found (gh api exits non-zero on 404)
-            if ! ISSUE_JSON=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" 2>/dev/null); then
-              echo "Issue #${ISSUE_NUM} not found, skipping."
-              continue
-            fi
+            # Issues come from closingIssuesReferences, so they are known to exist;
+            # a fetch failure here is transient. Let set -e fail the job (leaving
+            # the PR open) rather than treating the reference as unresolved, which
+            # could get a validly-linked PR closed.
+            ISSUE_JSON=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}")
 
             # Skip if this is actually a pull request
             IS_PR=$(echo "$ISSUE_JSON" | jq 'has("pull_request")')
@@ -117,12 +240,43 @@ jobs:
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
             # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
-            # Look for any other open PR (excluding this one) that references this issue.
+            # As with the current PR's linked issues, ask GitHub which open PRs
+            # would close this issue instead of regex-matching PR bodies, so all
+            # closing syntaxes (and manually linked PRs) are recognized. Bot
+            # logins get their "[bot]" suffix restored to match the REST-style
+            # logins used elsewhere (PYDANTY_LOGIN, ISSUE_AUTHOR).
+            # Only PRs created before this one can block it: two PRs racing each
+            # other's guard runs would otherwise both see the other as open and
+            # both get closed, and a newer PR (e.g. pydanty's, deliberately left
+            # alongside an older human PR) must not close the older one when an
+            # edit re-triggers the guard. The pydanty supersede logic below is
+            # unaffected: it only ever targets PRs opened before pydanty's.
             echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
 
             BLOCKING_PRS=""
             FOUND_STALE_PR="false"
-            MATCHING_PRS=$(echo "$ALL_OPEN_PRS" | jq -c "[.[] | select(.number != ${PR_NUMBER} and (.body // \"\" | test(\"(?i)\\\\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\\\\s+#${ISSUE_NUM}(\\\\s|$|[^0-9])\")))] | .[]")
+            MATCHING_PRS=$(gh api graphql \
+              -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$ISSUE_NUM" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    issue(number: $number) {
+                      closedByPullRequestsReferences(first: 100) {
+                        nodes {
+                          number
+                          state
+                          createdAt
+                          repository { nameWithOwner }
+                          author { __typename login }
+                          labels(first: 100) { nodes { name } }
+                        }
+                      }
+                    }
+                  }
+                }' \
+              --jq ".data.repository.issue.closedByPullRequestsReferences.nodes[]
+                | select(.state == \"OPEN\" and .repository.nameWithOwner == \"${REPO}\" and .number != ${PR_NUMBER} and .createdAt < \"${GITHUB_EVENT_PULL_REQUEST_CREATED_AT}\")
+                | {number, created_at: .createdAt, user: {login: (if .author.__typename == \"Bot\" then .author.login + \"[bot]\" else .author.login end)}, labels: [.labels.nodes[]]}")
 
             while IFS= read -r PR_JSON; do
               [ -z "$PR_JSON" ] && continue
@@ -157,8 +311,8 @@ jobs:
                   SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
                     "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
                     "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
+                  gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT"
                   gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
-                  gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT" || true
                 else
                   echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before pydanty's; leaving both open for a maintainer."
                 fi
@@ -180,8 +334,8 @@ jobs:
                 "Thanks for your interest in this issue! However, there are already open PRs addressing issue #${ISSUE_NUM}: ${BLOCKING_PRS}." \
                 "To avoid duplicate efforts, this PR has been closed. If you'd like to contribute, you can review the existing PRs or share your thoughts on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM})." \
                 "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
               gh pr close "$PR_NUMBER" --repo "$REPO"
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
               exit 0
             fi
 
@@ -196,24 +350,36 @@ jobs:
             if [ -z "$ASSIGNEES" ]; then
               # No assignee — attempt to assign PR author (may fail if user lacks push access)
               try_assign "$ISSUE_NUM" "$PR_AUTHOR" || true
-            elif echo ",$ASSIGNEES," | grep -q ",${PR_AUTHOR},"; then
+            elif echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
               echo "Issue #${ISSUE_NUM} is already assigned to ${PR_AUTHOR}."
             else
               echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
             fi
           done
 
+          # If none of the referenced numbers resolved to an actual issue (open or
+          # closed), the PR is effectively unlinked — same policy as no keywords at all.
+          if [ "$FOUND_OPEN_ISSUE" = "false" ] && [ "$FOUND_CLOSED_ISSUE" = "false" ]; then
+            echo "No referenced numbers resolved to actual issues."
+            close_for_missing_issue
+            exit 0
+          fi
+
           # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
           if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
             echo "All referenced issues are closed. Closing PR."
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first." || true
           fi
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          GITHUB_EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           GITHUB_EVENT_PULL_REQUEST_CREATED_AT: ${{ github.event.pull_request.created_at }}
           GITHUB_EVENT_PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}
+          GITHUB_EVENT_PULL_REQUEST_STATE: ${{ github.event.pull_request.state }}
+          GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

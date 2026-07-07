@@ -77,7 +77,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -408,8 +408,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
             cost=Decimal('0.00002688'),
         )
     )
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
@@ -486,7 +485,9 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
 
     with pytest.raises(
         UserError,
-        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+        match=re.escape(
+            'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.'
+        ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
 
@@ -2920,7 +2921,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with AnthropicModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
@@ -2934,7 +2935,7 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+    with pytest.raises(UserError, match=r'Unsupported media type.*audio/mpeg'):
         await agent.run(
             [
                 'Analyze this file',
@@ -3875,8 +3876,7 @@ async def test_anthropic_opus_46_features(
     agent = Agent(m, model_settings=settings_map[case_id])
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-6'
 
     if has_thinking:
@@ -3893,8 +3893,7 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-7'
     request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
@@ -3916,8 +3915,7 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-8'
     request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
@@ -4443,6 +4441,59 @@ def test_usage(
     assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
+def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
+    """With compaction, `details['input_tokens']` (raw, pre-compaction) diverges from the first-class
+    `input_tokens` (raw + compaction totals), yet both name the same conceptual quantity. The colliding
+    `input_tokens`/`output_tokens` detail keys must not be emitted under `gen_ai.usage.details.*`, or a
+    Langfuse-style consumer summing them double-counts. `compaction_*` keys don't collide and are kept.
+    """
+    message = anth_msg(
+        BetaUsage(
+            input_tokens=23,
+            output_tokens=1,
+            iterations=[
+                BetaCompactionIterationUsage(
+                    type='compaction',
+                    input_tokens=180,
+                    output_tokens=3,
+                    cache_creation_input_tokens=4,
+                    cache_read_input_tokens=5,
+                ),
+                BetaMessageIterationUsage(
+                    type='message',
+                    model='claude-sonnet-4-5',
+                    input_tokens=23,
+                    output_tokens=1,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                ),
+            ],
+        )
+    )
+    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    assert mapped.input_tokens == 212
+    assert mapped.details['input_tokens'] == 23  # still accessible on `details`
+    attributes = mapped.opentelemetry_attributes()
+    assert 'gen_ai.usage.details.input_tokens' not in attributes
+    assert 'gen_ai.usage.details.output_tokens' not in attributes
+    assert attributes == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 212,
+            'gen_ai.usage.output_tokens': 4,
+            'gen_ai.usage.cache_creation.input_tokens': 4,
+            'gen_ai.usage.cache_read.input_tokens': 5,
+            'gen_ai.usage.details.compaction_iterations': 1,
+            'gen_ai.usage.details.message_iterations': 1,
+            'gen_ai.usage.details.compaction_input_tokens': 180,
+            'gen_ai.usage.details.compaction_output_tokens': 3,
+            'gen_ai.usage.details.compaction_cache_creation_input_tokens': 4,
+            'gen_ai.usage.details.compaction_cache_read_input_tokens': 5,
+            'gen_ai.usage.details.cache_write_tokens': 4,
+            'gen_ai.usage.details.cache_read_tokens': 5,
+        }
+    )
+
+
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
     initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
@@ -4506,8 +4557,7 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     # The skipped `message=None` chunk contributes no usage and no response id: usage comes from the
     # real `message_start` (input) + `message_delta` (output), and the id from the real event. The model
     # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == snapshot(
         RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
     )
@@ -10125,7 +10175,7 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
     )
     agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
-    with pytest.raises(UserError, match="Native `MemoryTool` requires a 'memory' tool to be defined."):
+    with pytest.raises(UserError, match=re.escape("Native `MemoryTool` requires a 'memory' tool to be defined.")):
         await agent.run('Where do I live?')
 
     class FakeMemoryTool(BetaAbstractMemoryTool):
@@ -10330,7 +10380,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',
@@ -10412,7 +10462,7 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',
@@ -10787,8 +10837,7 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
 
     # Check that container_id was captured in the response
     messages = result.all_messages()
-    model_response = messages[-1]
-    assert isinstance(model_response, ModelResponse)
+    model_response = message(messages, ModelResponse, index=-1)
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
@@ -10822,8 +10871,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     )
 
     first = await agent.run('How much is 3 * 12390?')
-    first_response = first.all_messages()[-1]
-    assert isinstance(first_response, ModelResponse)
+    first_response = message(first.all_messages(), ModelResponse, index=-1)
     assert first_response.provider_details is not None
     container_id = first_response.provider_details.get('container_id')
     assert isinstance(container_id, str) and container_id.startswith('container_')
@@ -11578,3 +11626,70 @@ async def test_anthropic_top_k_propagation(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['top_k'] == 40
+
+
+async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):
+    """An empty `ModelResponse` in history is omitted from the payload; a retry prompt is sent
+    instead so the model can produce a non-empty response. Anthropic accepts the resulting
+    consecutive user turns.
+    """
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot("""\
+# Hi there! 👋
+
+How can I help you today?\
+""")
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+# Hi there! 👋
+
+How can I help you today?\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=26,
+                    output_tokens=18,
+                    details={
+                        'input_tokens': 26,
+                        'output_tokens': 18,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-haiku-4-5-20251001',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

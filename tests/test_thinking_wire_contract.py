@@ -9,7 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 from vcr.cassette import Cassette
@@ -28,10 +28,22 @@ with try_import() as cerebras_imports:
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
+with try_import() as google_imports:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+
+# Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
+# map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
+_PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
+    'groq': pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
+    'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
+    'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
+}
 
 
 @dataclass(frozen=True)
@@ -51,7 +63,11 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
-    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+    @property
+    def marks(self) -> tuple[pytest.MarkDecorator, ...]:
+        """Skip mark gating this case on its provider's SDK — derived from `provider`, the single source of truth."""
+        return (_PROVIDER_SKIP_MARKS[self.provider],)
 
 
 CASES = [
@@ -62,7 +78,6 @@ CASES = [
         thinking=False,
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-qwen3-disable-merges-user-extra-body',
@@ -73,7 +88,6 @@ CASES = [
         # The user's own `extra_body` must survive the merge that injects `reasoning_effort='none'`.
         present={'reasoning_effort': 'none', 'service_tier': 'on_demand'},
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='cerebras-zai-clear-thinking',
@@ -86,7 +100,6 @@ CASES = [
         # doesn't strip replayed reasoning — no user setting needed.
         present={'reasoning_effort': 'none', 'clear_thinking': False},
         absent=('disable_reasoning',),
-        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
     ),
     WireCase(
         id='groq-qwen3-effort-setting',
@@ -98,7 +111,6 @@ CASES = [
         present={'reasoning_effort': 'default', 'service_tier': 'on_demand'},
         # `thinking` is unset, so `_translate_thinking` returns NOT_GIVEN and `reasoning_format` stays off the wire.
         absent=('reasoning_format',),
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='groq-qwen3-disable-overrides-effort-setting',
@@ -111,7 +123,82 @@ CASES = [
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
         expect_warning='`groq_reasoning_effort` will be ignored',
-        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    # gpt-oss on Groq: unified `thinking` levels drive the graded `reasoning_effort` (low/medium/high).
+    WireCase(
+        id='groq-gpt-oss-thinking-high',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='high',
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-medium',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='medium',
+        present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-minimal-folds-to-low',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='minimal',
+        # gpt-oss has no `minimal`, so it folds to the nearest accepted value, `low`.
+        present={'reasoning_effort': 'low', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-xhigh-folds-to-high',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='xhigh',
+        # gpt-oss has no `xhigh`, so it folds to the nearest accepted value, `high`.
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-true-maps-to-medium',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking=True,
+        # Bare enable maps to the neutral `medium`, mirroring other providers' default.
+        present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-false-noop',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking=False,
+        # gpt-oss always reasons and can't disable via effort (none/default → 400), so `thinking=False`
+        # is silently ignored: no `reasoning_effort` and (since it's stripped as always-on) no `reasoning_format`.
+        absent=('reasoning_effort', 'reasoning_format'),
+    ),
+    WireCase(
+        id='groq-gpt-oss-explicit-effort-overrides-thinking',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='low',
+        groq_reasoning_effort='high',
+        # Explicit `groq_reasoning_effort` wins over the unified `thinking` mapping (`low` → `low`).
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-merges-user-extra-body',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='high',
+        extra_body={'service_tier': 'on_demand'},
+        # The user's own `extra_body` must survive the merge that injects the mapped `reasoning_effort`.
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed', 'service_tier': 'on_demand'},
+    ),
+    WireCase(
+        id='groq-qwen3-enable-level-sends-no-effort',
+        provider='groq',
+        model_name='qwen/qwen3-32b',
+        thinking='high',
+        # qwen3 only accepts none/default effort (no gradation), so a unified enable *level* sends no
+        # `reasoning_effort` — reasoning is still enabled via `reasoning_format='parsed'`.
+        present={'reasoning_format': 'parsed'},
+        absent=('reasoning_effort',),
     ),
     WireCase(
         id='cerebras-gpt-oss-always-on',
@@ -122,16 +209,24 @@ CASES = [
         # rejects `reasoning_effort='none'` for gpt-oss too), so `thinking=False` must be silently
         # ignored: no disable signal of any kind on the wire, request accepted.
         absent=('disable_reasoning', 'reasoning_effort'),
-        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
+    ),
+    WireCase(
+        id='google-gemini-25-disable',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking=False,
+        present={'generationConfig.thinkingConfig.thinking_budget': 0},
     ),
 ]
 
 
-def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str) -> Model:
+def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
     if case.provider == 'cerebras':
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
+    if case.provider == 'google':
+        return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -141,11 +236,14 @@ async def test_reasoning_wire_contract(
     allow_model_requests: None,
     groq_api_key: str,
     cerebras_api_key: str,
+    gemini_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
     supports it, its absence where reasoning is always on, and `groq_reasoning_effort` mapped to `reasoning_effort`."""
-    model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
+    model = _build_model(
+        case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key, gemini_api_key=gemini_api_key
+    )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
     else:
@@ -162,7 +260,12 @@ async def test_reasoning_wire_contract(
         await agent.run('What is 2+2? Reply with just the number.')
 
     body = single_request_body(vcr)
-    for key, value in case.present.items():
-        assert body.get(key) == value, f'expected {key}={value!r} on the wire, got {body.get(key)!r}'
+    for path, value in case.present.items():
+        # `path` is dotted where a provider nests the signal (Google: `generationConfig.thinkingConfig.thinking_budget`);
+        # flat keys are just a single segment.
+        node: Any = body
+        for key in path.split('.'):
+            node = node[key]
+        assert node == value, f'expected {path}={value!r} on the wire, got {node!r}'
     for key in case.absent:
         assert key not in body, f'expected {key!r} absent from the wire, got {body[key]!r}'
