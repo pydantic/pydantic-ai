@@ -40,6 +40,7 @@ from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
+    AudioWithTranscriptPart,
     BinaryContent,
     BinaryImage,
     CachePoint,
@@ -1254,6 +1255,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CompactionPart):  # pragma: no cover
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
+                elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                    # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
+                    pass
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1508,6 +1512,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                pass
             else:
                 assert_never(part)
         if file_content:
@@ -2729,6 +2736,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=part.model_response(),
                             )
                             openai_messages.append(item)
+                    elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                        pass
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -3010,6 +3020,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='compaction',
                                 )
                             )
+                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
+                        pass
                     else:
                         assert_never(item)
             else:

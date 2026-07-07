@@ -19,6 +19,7 @@ from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_ca
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
+    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -512,7 +513,7 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -540,6 +541,9 @@ class GroqModel(Model[AsyncGroq]):
                         pass
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:
                         assert_never(item)

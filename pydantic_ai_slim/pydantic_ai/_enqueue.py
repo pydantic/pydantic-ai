@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from .exceptions import UserError
 from .messages import (
+    AudioWithTranscriptPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -96,7 +97,15 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
             flush_request()
             messages.append(item)
         elif isinstance(
-            item, (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart, ToolSearchReturnPart)
+            item,
+            (
+                SystemPromptPart,
+                UserPromptPart,
+                ToolReturnPart,
+                RetryPromptPart,
+                ToolSearchReturnPart,
+                AudioWithTranscriptPart,
+            ),
         ):
             flush_content()
             parts.append(item)

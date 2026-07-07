@@ -14,6 +14,7 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
+    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -377,7 +378,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
         return tools, tool_choice
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
@@ -405,6 +406,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         pass
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                        # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:
                         assert_never(item)
@@ -486,6 +490,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
+                pass
             else:
                 assert_never(part)
         if file_content:

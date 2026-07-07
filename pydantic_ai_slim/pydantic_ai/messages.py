@@ -1666,6 +1666,13 @@ class ModelRequest:
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, AudioWithTranscriptPart) and part.speaker != 'user':
+                raise ValueError(
+                    f"`AudioWithTranscriptPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
+                )
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -1849,6 +1856,72 @@ class FilePart:
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class AudioWithTranscriptPart:
+    """Spoken audio exchanged during a realtime session, paired with its transcript.
+
+    This part is a member of both [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] and
+    [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart], distinguished by `speaker`:
+    in `ModelRequest.parts` the speaker is always `'user'`; in `ModelResponse.parts` it is always
+    `'assistant'`. This invariant is enforced at runtime when a message is constructed.
+
+    Standard (non-realtime) models can't consume this part directly; when history containing it is
+    used in an agent run, [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages]
+    converts user-speaker parts to [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s and
+    assistant-speaker parts to [`TextPart`][pydantic_ai.messages.TextPart]s.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Whether the audio was spoken by the end user or by the model."""
+
+    transcript: str | None = None
+    """The transcript of the audio. `None` if transcription was unavailable."""
+
+    audio: BinaryContent | None = None
+    """The audio data, if retained.
+
+    Audio is only retained when the realtime session is configured to do so
+    (see the `audio_retention` setting), so this is usually `None`.
+    """
+
+    id: str | None = None
+    """The provider item ID, used to correlate the part with provider-side conversation items."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated or transcribed the audio.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['audio-with-transcript'] = 'audio-with-transcript'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        if self.transcript is not None:
+            parts.append(
+                _otel_messages.TextPart(
+                    type='text', **({'content': self.transcript} if settings.include_content else {})
+                )
+            )
+        if (audio := self.audio) is not None:
+            parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
+        return parts
+
+    def has_content(self) -> bool:
+        """Return `True` if the part has a transcript or retained audio."""
+        return bool(self.transcript) or self.audio is not None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2151,6 +2224,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
 ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
+    | Annotated[AudioWithTranscriptPart, pydantic.Tag('audio-with-transcript')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
@@ -2198,7 +2272,8 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
-    | Annotated[FilePart, pydantic.Tag('file')],
+    | Annotated[FilePart, pydantic.Tag('file')]
+    | Annotated[AudioWithTranscriptPart, pydantic.Tag('audio-with-transcript')],
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
@@ -2273,6 +2348,13 @@ class ModelResponse:
 
     state: ModelResponseState = 'complete'
     """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
+
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, AudioWithTranscriptPart) and part.speaker != 'assistant':
+                raise ValueError(
+                    f"`AudioWithTranscriptPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
+                )
 
     @property
     def text(self) -> str | None:
@@ -3212,8 +3294,57 @@ class ToolCallPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class AudioWithTranscriptPartDelta:
+    """A partial update (delta) for an `AudioWithTranscriptPart` to append transcript text and/or audio data."""
+
+    transcript_delta: str | None = None
+    """Incremental transcript text to append to the existing transcript, if any."""
+
+    audio_chunk: bytes | None = None
+    """A raw audio chunk (e.g. PCM data), if any.
+
+    Suitable for live playback; only accumulated on the part if it is retaining audio (see
+    [`AudioWithTranscriptPartDelta.apply`][pydantic_ai.messages.AudioWithTranscriptPartDelta.apply]).
+    """
+
+    part_delta_kind: Literal['audio_with_transcript'] = 'audio_with_transcript'
+    """Part delta type identifier, used as a discriminator."""
+
+    def apply(self, part: ModelResponsePart) -> AudioWithTranscriptPart:
+        """Apply this delta to an existing `AudioWithTranscriptPart`.
+
+        `transcript_delta` is appended to the part's transcript (a part with `transcript=None` gets
+        `transcript=transcript_delta`). `audio_chunk` is appended to the part's retained audio data,
+        but only if the part already has `audio` set: a part with `audio=None` is not retaining audio,
+        so the chunk is intentionally not stored — it remains available on the delta itself for live
+        playback.
+
+        Args:
+            part: The existing model response part, which must be an `AudioWithTranscriptPart`.
+
+        Returns:
+            A new `AudioWithTranscriptPart` with the delta applied.
+
+        Raises:
+            ValueError: If `part` is not an `AudioWithTranscriptPart`.
+        """
+        if not isinstance(part, AudioWithTranscriptPart):
+            raise ValueError('Cannot apply AudioWithTranscriptPartDeltas to non-AudioWithTranscriptParts')
+        transcript = part.transcript
+        if self.transcript_delta:
+            transcript = (transcript or '') + self.transcript_delta
+        audio = part.audio
+        if self.audio_chunk and audio is not None:
+            audio = replace(audio, data=audio.data + self.audio_chunk)
+        return replace(part, transcript=transcript, audio=audio)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponsePartDelta = Annotated[
-    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta | AudioWithTranscriptPartDelta,
+    pydantic.Discriminator('part_delta_kind'),
 ]
 """A partial update (delta) for any model response part."""
 
@@ -3233,7 +3364,16 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'audio-with-transcript',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -3274,7 +3414,16 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'audio-with-transcript',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.

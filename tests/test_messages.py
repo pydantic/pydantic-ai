@@ -12,6 +12,8 @@ from pydantic import TypeAdapter
 from pydantic_ai import (
     Agent,
     AudioUrl,
+    AudioWithTranscriptPart,
+    AudioWithTranscriptPartDelta,
     BinaryContent,
     BinaryImage,
     DocumentUrl,
@@ -47,10 +49,16 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
     narrow_message_parts,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part
+from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+
+with try_import() as openai_import_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 def test_image_url():
@@ -1948,3 +1956,297 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_audio_with_transcript_part_has_content():
+    assert AudioWithTranscriptPart(speaker='user', transcript='Hello').has_content()
+    audio = BinaryContent(data=b'\x01', media_type='audio/pcm')
+    assert AudioWithTranscriptPart(speaker='user', audio=audio).has_content()
+    assert not AudioWithTranscriptPart(speaker='user').has_content()
+    assert not AudioWithTranscriptPart(speaker='assistant', transcript='').has_content()
+
+
+def test_audio_with_transcript_part_speaker_invariant():
+    """In `ModelRequest.parts` the speaker must be 'user'; in `ModelResponse.parts` it must be 'assistant'."""
+    user_part = AudioWithTranscriptPart(speaker='user', transcript='Hello')
+    assistant_part = AudioWithTranscriptPart(speaker='assistant', transcript='Hi!')
+
+    assert ModelRequest(parts=[user_part]).parts == [user_part]
+    assert ModelResponse(parts=[assistant_part]).parts == [assistant_part]
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "`AudioWithTranscriptPart` in `ModelRequest.parts` must have `speaker='user'`, got 'assistant'"
+        ),
+    ):
+        ModelRequest(parts=[assistant_part])
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "`AudioWithTranscriptPart` in `ModelResponse.parts` must have `speaker='assistant'`, got 'user'"
+        ),
+    ):
+        ModelResponse(parts=[user_part])
+
+
+def test_audio_with_transcript_part_serialization_roundtrip():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                AudioWithTranscriptPart(
+                    speaker='user',
+                    transcript='Hello',
+                    audio=BinaryContent(data=b'\x01\x02', media_type='audio/pcm'),
+                    id='item-1',
+                    provider_name='openai',
+                )
+            ]
+        ),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='Hi!')]),
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert serialized == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'speaker': 'user',
+                        'transcript': 'Hello',
+                        'audio': {
+                            'data': 'AQI=',
+                            'media_type': 'audio/pcm',
+                            'vendor_metadata': None,
+                            'kind': 'binary',
+                            'identifier': '0ca623',
+                        },
+                        'id': 'item-1',
+                        'provider_name': 'openai',
+                        'provider_details': None,
+                        'part_kind': 'audio-with-transcript',
+                    }
+                ],
+                'timestamp': None,
+                'instructions': None,
+                'kind': 'request',
+                'run_id': None,
+                'conversation_id': None,
+                'metadata': None,
+                'state': 'complete',
+            },
+            {
+                'parts': [
+                    {
+                        'speaker': 'assistant',
+                        'transcript': 'Hi!',
+                        'audio': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'audio-with-transcript',
+                    }
+                ],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': None,
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': None,
+                'provider_url': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+                'run_id': None,
+                'conversation_id': None,
+                'metadata': None,
+                'state': 'complete',
+            },
+        ]
+    )
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+
+
+def test_audio_with_transcript_part_delta_apply():
+    part = AudioWithTranscriptPart(
+        speaker='assistant', transcript='Hello', audio=BinaryContent(data=b'\x01', media_type='audio/pcm')
+    )
+    delta = AudioWithTranscriptPartDelta(transcript_delta=' there', audio_chunk=b'\x02')
+
+    applied = delta.apply(part)
+    assert applied == AudioWithTranscriptPart(
+        speaker='assistant', transcript='Hello there', audio=BinaryContent(data=b'\x01\x02', media_type='audio/pcm')
+    )
+    # The original part is unchanged.
+    assert part.transcript == 'Hello'
+    assert part.audio == BinaryContent(data=b'\x01', media_type='audio/pcm')
+
+
+def test_audio_with_transcript_part_delta_apply_without_transcript():
+    """A `transcript_delta` applied to a part with `transcript=None` starts the transcript."""
+    applied = AudioWithTranscriptPartDelta(transcript_delta='Hello').apply(AudioWithTranscriptPart(speaker='user'))
+    assert applied == AudioWithTranscriptPart(speaker='user', transcript='Hello')
+
+
+def test_audio_with_transcript_part_delta_apply_not_retaining_audio():
+    """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
+    applied = AudioWithTranscriptPartDelta(audio_chunk=b'\x01').apply(
+        AudioWithTranscriptPart(speaker='assistant', transcript='Hi')
+    )
+    assert applied == AudioWithTranscriptPart(speaker='assistant', transcript='Hi')
+
+
+def test_audio_with_transcript_part_delta_apply_wrong_part_type():
+    with pytest.raises(ValueError, match='Cannot apply AudioWithTranscriptPartDeltas to non-AudioWithTranscriptParts'):
+        AudioWithTranscriptPartDelta(transcript_delta='Hello').apply(TextPart(content='Hi'))
+
+
+def test_audio_with_transcript_part_otel_message_parts():
+    part = AudioWithTranscriptPart(
+        speaker='user', transcript='Hello', audio=BinaryContent(data=b'\x01', media_type='audio/pcm')
+    )
+    assert part.otel_message_parts(InstrumentationSettings()) == snapshot(
+        [
+            {'type': 'text', 'content': 'Hello'},
+            {'type': 'blob', 'mime_type': 'audio/pcm', 'modality': 'audio', 'content': 'AQ=='},
+        ]
+    )
+    assert part.otel_message_parts(InstrumentationSettings(include_content=False)) == snapshot(
+        [{'type': 'text'}, {'type': 'blob', 'mime_type': 'audio/pcm', 'modality': 'audio'}]
+    )
+    assert AudioWithTranscriptPart(speaker='assistant').otel_message_parts(InstrumentationSettings()) == []
+
+
+def test_prepare_messages_converts_audio_with_transcript_parts():
+    """`Model.prepare_messages` is the shared seam that converts realtime session history into parts any
+    standard model can consume, so per-provider message-mapping code never sees `AudioWithTranscriptPart`s.
+
+    Unit test rather than VCR because it pins the seam itself; `test_agent_run_with_audio_with_transcript_history`
+    covers the public-API flow.
+    """
+    audio = BinaryContent(data=b'\x01', media_type='audio/pcm')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='What time is it?', audio=audio)]),
+        ModelResponse(
+            parts=[AudioWithTranscriptPart(speaker='assistant', transcript='It is noon.'), TextPart(content='Bye!')]
+        ),
+    ]
+
+    # The default profile doesn't support audio input, so the transcript is used.
+    prepared = TestModel().prepare_messages(history)
+    assert message(prepared, ModelRequest, index=0).parts == [
+        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=timezone.utc))
+    ]
+    assert message(prepared, ModelResponse, index=1).parts == [
+        TextPart(content='It is noon.'),
+        TextPart(content='Bye!'),
+    ]
+
+    # A model that supports audio input receives the retained audio instead of the transcript.
+    prepared = TestModel(profile={'supports_audio_input': True}).prepare_messages(history)
+    assert message(prepared, ModelRequest, index=0).parts == [
+        UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
+    ]
+
+
+def test_prepare_messages_drops_empty_audio_with_transcript_parts():
+    """Parts without usable content are dropped, as are messages left without parts."""
+    user_prompt = UserPromptPart(content='hello')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user')]),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant')]),
+        ModelRequest(parts=[user_prompt, AudioWithTranscriptPart(speaker='user')]),
+    ]
+    prepared = TestModel().prepare_messages(history)
+    assert len(prepared) == 1
+    assert message(prepared, ModelRequest, index=0).parts == [user_prompt]
+
+    # A user part with audio but no transcript is also dropped when the model doesn't support audio input.
+    audio_only: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                user_prompt,
+                AudioWithTranscriptPart(speaker='user', audio=BinaryContent(data=b'\x01', media_type='audio/pcm')),
+            ]
+        ),
+    ]
+    prepared = TestModel().prepare_messages(audio_only)
+    assert message(prepared, ModelRequest, index=0).parts == [user_prompt]
+
+
+def test_prepare_messages_passes_through_without_audio_with_transcript_parts():
+    """History without `AudioWithTranscriptPart`s passes through untouched (same message objects)."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(parts=[TextPart(content='hi')]),
+    ]
+    prepared = TestModel().prepare_messages(history)
+    assert prepared[0] is history[0]
+    assert prepared[1] is history[1]
+
+
+@pytest.mark.anyio
+async def test_agent_run_with_audio_with_transcript_history():
+    """History from a realtime session (containing both speaker variants) replays through
+    `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
+    model's message mapping (which ends in `assert_never`) sees them."""
+    received: list[ModelMessage] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                AudioWithTranscriptPart(
+                    speaker='user',
+                    transcript='Hello',
+                    audio=BinaryContent(data=b'\x01', media_type='audio/pcm'),
+                )
+            ]
+        ),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='Hi! How can I help?')]),
+    ]
+
+    agent = Agent(FunctionModel(capture))
+    result = await agent.run('What time is it?', message_history=history)
+    assert result.output == 'done'
+    assert received == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Hi! How can I help?')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='What time is it?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.anyio
+async def test_openai_mapping_of_prepared_audio_with_transcript_history():
+    """A real provider model's message mapping handles realtime session history once it has passed
+    through `prepare_messages`, which the framework applies before every request.
+
+    Unit test rather than VCR because it pins the request payload shape a cassette matcher
+    wouldn't catch.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='fake'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='Hello')]),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='Hi!')]),
+    ]
+    prepared = model.prepare_messages(history)
+    openai_messages = await model._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot([{'role': 'user', 'content': 'Hello'}, {'role': 'assistant', 'content': 'Hi!'}])
