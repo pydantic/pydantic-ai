@@ -3635,6 +3635,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             async for chunk in self._response:
                 self._last_sequence_number = chunk.sequence_number
+                if isinstance(
+                    chunk,
+                    (
+                        responses.ResponseCreatedEvent,
+                        responses.ResponseInProgressEvent,
+                        responses.ResponseQueuedEvent,
+                        responses.ResponseCompletedEvent,
+                        responses.ResponseFailedEvent,
+                        responses.ResponseIncompleteEvent,
+                    ),
+                ):
+                    # Stamp the background marker from any status event that carries it, so it survives a
+                    # stream that starts mid-way (a resumed `retrieve(stream=True)` whose first event is
+                    # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
+                    # relies on it to cancel the server-side job.
+                    self._track_background(chunk.response)
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -3672,7 +3688,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseCreatedEvent):
                     self._set_state(chunk.response.status)
-                    self._track_background(chunk.response)
                     if chunk.response.id:  # pragma: no branch
                         self.provider_response_id = chunk.response.id
                     self._store_conversation_id(chunk.response)
@@ -3695,9 +3710,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
-                    # A resumed `retrieve(stream=True)` segment has no `ResponseCreatedEvent`, so stamp
-                    # the background marker here too (its first event is `in_progress`/`queued`).
-                    self._track_background(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)

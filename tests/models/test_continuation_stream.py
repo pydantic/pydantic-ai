@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models._continuation import _ContinuationStreamedResponse
+from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_responses
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -238,6 +238,29 @@ async def test_replace_reuses_indices_and_replaces_response() -> None:
     assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['a', 'final']
     assert merged.usage == RequestUsage(input_tokens=5, output_tokens=6)
     assert merged.state == 'complete'
+
+
+def test_merge_preserves_background_marker_across_segments() -> None:
+    """The OpenAI `background` cancel marker is carried forward when a later segment omits it.
+
+    A resumed `retrieve(stream=True)` (replace) or an interrupted segment may not re-stamp
+    `provider_details['background']`; without preserving it, `cancel_suspended_response` couldn't reach
+    the server-side job. Driven at the merge level since the gap is a provider-detail race, not stitching.
+    """
+    existing = ModelResponse(parts=[TextPart('a')], provider_response_id='r1', provider_details={'background': True})
+
+    # Replace (same id): the resumed segment carries its own `finish_reason` but no `background`.
+    replaced = merge_responses(
+        existing,
+        ModelResponse(
+            parts=[TextPart('a2')], provider_response_id='r1', provider_details={'finish_reason': 'completed'}
+        ),
+    )
+    assert replaced.provider_details == {'finish_reason': 'completed', 'background': True}
+
+    # Accumulate (different id): the new segment has no `provider_details` at all.
+    accumulated = merge_responses(existing, ModelResponse(parts=[TextPart('b')], provider_response_id='r2'))
+    assert (accumulated.provider_details or {}).get('background') is True
 
 
 async def test_model_change_replaces_indices() -> None:

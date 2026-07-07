@@ -86,17 +86,27 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     Otherwise, accumulate parts, sum usage, and use other fields from the new response.
     """
     if merge_mode(existing, new) == 'replace':
-        return new
+        merged = new
+    else:
+        # Same model, different response → accumulate parts and sum usage.
+        # Preserve existing provider response IDs when continuation responses omit them
+        # (e.g. resumed OpenAI streams that start after a sequence number).
+        merged = replace(
+            new,
+            parts=[*existing.parts, *new.parts],
+            usage=existing.usage + new.usage,
+            provider_response_id=new.provider_response_id or existing.provider_response_id,
+        )
 
-    # Same model, different response → accumulate parts and sum usage.
-    # Preserve existing provider response IDs when continuation responses omit them
-    # (e.g. resumed OpenAI streams that start after a sequence number).
-    return replace(
-        new,
-        parts=[*existing.parts, *new.parts],
-        usage=existing.usage + new.usage,
-        provider_response_id=new.provider_response_id or existing.provider_response_id,
-    )
+    # A background job's identity spans every segment, but a resumed or replaced segment may not
+    # re-stamp the `background` marker. Carry it forward so `cancel_suspended_response` can still reach
+    # the server-side job. Other `provider_details` (e.g. `finish_reason`) are per-segment, so `new`'s win.
+    if (background := (existing.provider_details or {}).get('background')) and not (merged.provider_details or {}).get(
+        'background'
+    ):
+        merged = replace(merged, provider_details={**(merged.provider_details or {}), 'background': background})
+
+    return merged
 
 
 @dataclass
