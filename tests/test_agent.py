@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, TypeAdapter, ValidationError, field_validator
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import Self
 
@@ -12375,6 +12375,86 @@ async def test_stop_run_structured_output():
     assert result.output == Result(answer=42)
 
 
+async def test_stop_run_coerces_structured_output():
+    """A plain semantic value passed to `StopRun` is coerced against `output_type`.
+
+    Uses `FunctionModel` (not VCR): it pins the local StopRun output pipeline rather than
+    provider-specific structured-output behavior.
+    """
+
+    class Result(BaseModel):
+        answer: int
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=Result)
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun({'answer': '42'})
+
+    result = await agent.run('go')
+    assert result.output == Result(answer=42)
+
+
+async def test_stop_run_coerces_primitive_output():
+    """Primitive output types do not require Pydantic AI's internal transport wrapper."""
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=int)
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun('42')
+
+    result = await agent.run('go')
+    assert result.output == 42
+
+
+async def test_stop_run_runs_output_function():
+    """Output functions run on a `StopRun` semantic value before the final result is committed."""
+
+    class Result(BaseModel):
+        answer: int
+
+    def build_result(answer: int) -> Result:
+        return Result(answer=answer + 1)
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=build_result)
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun('41')
+
+    result = await agent.run('go')
+    assert result.output == Result(answer=42)
+
+
+async def test_stop_run_coerces_tool_output():
+    """Pure `ToolOutput` schemas validate a `StopRun` semantic value without a tool call wrapper."""
+
+    class Result(BaseModel):
+        answer: int
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=ToolOutput(Result))
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun({'answer': '42'})
+
+    result = await agent.run('go')
+    assert result.output == Result(answer=42)
+
+
 async def test_stop_run_runs_output_validators():
     """Output validators run on a `StopRun` output, transforming it just like a model-produced output.
 
@@ -12399,6 +12479,33 @@ async def test_stop_run_runs_output_validators():
     assert result.output == 'HELLO'
 
 
+async def test_stop_run_runs_output_process_hooks():
+    """Output process hooks wrap the `StopRun` output pipeline."""
+
+    @dataclass
+    class ProcessHookCapability(AbstractCapability[Any]):
+        async def after_output_process(
+            self,
+            ctx: RunContext[Any],
+            *,
+            output_context: Any,
+            output: Any,
+        ) -> Any:
+            return f'{output} processed'
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=str, capabilities=[ProcessHookCapability()])
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun('hello')
+
+    result = await agent.run('go')
+    assert result.output == 'hello processed'
+
+
 async def test_stop_run_validation_error_propagates():
     """An output validator rejecting a `StopRun` output propagates the error instead of continuing.
 
@@ -12420,6 +12527,25 @@ async def test_stop_run_validation_error_propagates():
         raise StopRun('hello')
 
     with pytest.raises(ValueError, match='rejected'):
+        await agent.run('go')
+
+
+async def test_stop_run_output_type_validation_error_propagates():
+    """Schema validation failures from `StopRun` propagate instead of retrying the model."""
+
+    class Result(BaseModel):
+        answer: int
+
+    def call_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('stop', {})])
+
+    agent = Agent(FunctionModel(call_stop), output_type=Result)
+
+    @agent.tool_plain
+    def stop() -> None:
+        raise StopRun({'answer': 'not an int'})
+
+    with pytest.raises(ValidationError):
         await agent.run('go')
 
 

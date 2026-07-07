@@ -1363,6 +1363,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_data = await _output.run_stop_run_output(
                 e.output,
                 run_context=run_context,
+                capability=ctx.deps.root_capability,
+                schema=ctx.deps.output_schema,
                 output_validators=ctx.deps.output_validators,
             )
             self._next_node = self._handle_final_result(

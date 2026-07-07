@@ -85,17 +85,14 @@ class StopRun(Exception):
     `after_tool_execute`), or a node hook (`wrap_node_run`, `after_node_run`, `on_node_run_error`).
     It is *not* handled when raised from `before_node_run` — raise it from `wrap_node_run` instead.
 
-    The provided `output` is run through the agent's output validators (the same ones a
-    model-produced output would run through) and becomes the run's final output without another
-    model request. Any tool call results produced so far in the current step are preserved in the
-    message history.
-
-    Note: `output` is used as-is after the validators run; it is not re-validated or coerced against
-    the agent's output type, so it is your responsibility to pass a value of the correct type.
+    The provided `output` is treated as the semantic final-output value, validated/coerced against
+    the agent's output type, and run through output hooks, output functions, and output validators
+    before becoming the run's final output without another model request. Any tool call results
+    produced so far in the current step are preserved in the message history.
     """
 
     output: Any
-    """The value to use as the run's final output, after the output validators run."""
+    """The semantic value to validate and use as the run's final output."""
 
     def __init__(self, output: Any):
         self.output = output

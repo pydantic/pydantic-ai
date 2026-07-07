@@ -322,6 +322,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             output_data = await _output.run_stop_run_output(
                 e.output,
                 run_context=run_context,
+                capability=self.ctx.deps.root_capability,
+                schema=self.ctx.deps.output_schema,
                 output_validators=self.ctx.deps.output_validators,
             )
             end = End(FinalResult(output_data))
