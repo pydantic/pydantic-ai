@@ -9,11 +9,12 @@ the application:
 - `CodeExecutionTool` uses `executable_code` / `code_execution_result` parts and is
   preserved regardless of the tool-combination capability.
 
-Response side, `_process_response_from_parts` / `GeminiStreamedResponse` — web-search
-source URLs live in `grounding_metadata.grounding_chunks`, not in the explicit
-web-search `tool_response` (which holds only a `search_suggestions` widget on
-Gemini 3+), so grounding chunks populate the `NativeToolReturnPart` content in both
-the streamed and non-streamed paths.
+Response side, `_process_response_from_parts` / `GeminiStreamedResponse` — on Gemini 3+
+the explicit native `tool_response` doesn't carry the grounded results: file_search
+leaves it empty and web_search holds only a `search_suggestions` widget, with the real
+contexts/source URLs delivered in `grounding_metadata.grounding_chunks`. These tests pin
+that grounding chunks populate the `NativeToolReturnPart` content in both the streamed
+and non-streamed paths, including the streaming cross-chunk deferral.
 """
 
 from __future__ import annotations as _annotations
@@ -30,6 +31,8 @@ from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import CombinedCapability
 from pydantic_ai.messages import (
     ModelResponse,
+    ModelResponsePart,
+    ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -54,6 +57,7 @@ with try_import() as imports_successful:
         Content,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GroundingMetadata,
         Part,
         ToolType,
     )
@@ -714,3 +718,171 @@ async def test_gemini_response_with_explicit_web_fetch_parts():
             ),
         ]
     )
+
+
+# On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
+# leaves the response empty, delivering the retrieved contexts (incl. each doc's `custom_metadata`, e.g.
+# `source_url`) in `grounding_metadata`. These pin that the empty `NativeToolReturnPart` is filled from it.
+# Unit, not VCR: the cassette matcher is body-insensitive, and the streaming cross-chunk assembly is asserted
+# at the event level, which VCR can't reach.
+
+_FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
+    'grounding_chunks': [
+        {
+            'retrieved_context': {
+                'text': 'Paris is the capital of France.',
+                'title': 'paris.txt',
+                'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                'file_search_store': 'fileSearchStores/test-store',
+            }
+        }
+    ]
+}
+
+
+def _process_response(parts: list[dict[str, Any]], *, grounding: dict[str, Any]) -> ModelResponse:
+    return _process_response_from_parts(
+        parts=[Part.model_validate(p) for p in parts],
+        grounding_metadata=GroundingMetadata.model_validate(grounding),
+        model_name='gemini-3.5-flash',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        provider_response_id='response-id',
+    )
+
+
+def test_file_search_grounding_fills_empty_tool_response():
+    """The empty file_search `tool_response` is filled from `grounding_metadata`, incl. each doc's source_url."""
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}},
+            {'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}},
+        ],
+        grounding=_FILE_SEARCH_GROUNDING_METADATA,
+    )
+
+    _, file_search_return = response.parts
+    assert isinstance(file_search_return, NativeToolReturnPart)
+    assert file_search_return.content == snapshot(
+        [
+            {
+                'text': 'Paris is the capital of France.',
+                'title': 'paris.txt',
+                'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                'file_search_store': 'fileSearchStores/test-store',
+            }
+        ]
+    )
+
+
+def test_file_search_populated_tool_response_not_overwritten():
+    """A file_search `tool_response` that already carries content is kept as-is, not clobbered by grounding."""
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}},
+            {'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'response': {'kept': 'value'}}},
+        ],
+        grounding=_FILE_SEARCH_GROUNDING_METADATA,
+    )
+
+    _, file_search_return = response.parts
+    assert isinstance(file_search_return, NativeToolReturnPart)
+    assert file_search_return.content == {'kept': 'value'}
+
+
+def _stream_chunk(parts: list[dict[str, Any]], grounding: dict[str, Any] | None = None) -> GenerateContentResponse:
+    candidate: dict[str, Any] = {'content': {'role': 'model', 'parts': parts}}
+    if grounding is not None:
+        candidate['grounding_metadata'] = grounding
+    return GenerateContentResponse.model_validate({'candidates': [candidate]})
+
+
+async def _drive_stream(
+    chunks: list[GenerateContentResponse],
+) -> tuple[list[ModelResponseStreamEvent], list[ModelResponsePart]]:
+    async def stream() -> AsyncIterator[GenerateContentResponse]:
+        for chunk in chunks:
+            yield chunk
+
+    streamed = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-3.5-flash',
+        _response=PeekableAsyncStream(stream()),
+        _provider_name='google-gla',
+        _provider_url='https://generativelanguage.googleapis.com/',
+    )
+    events = [event async for event in streamed]
+    return events, list(streamed.get().parts)
+
+
+def _file_search_returns(parts: list[ModelResponsePart]) -> list[NativeToolReturnPart]:
+    return [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+
+
+def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> list[NativeToolReturnPart]:
+    return _file_search_returns([e.part for e in events if isinstance(e, PartStartEvent)])
+
+
+@pytest.mark.anyio
+async def test_file_search_grounding_fills_empty_tool_response_streaming():
+    """Streaming: grounding arrives several chunks after the empty `tool_response`, which is then filled in
+    place — a single `PartStartEvent` (no empty-then-filled duplicate), ordered ahead of the grounded text.
+
+    Content shape is pinned by the non-streaming test and end-to-end by the VCR test; here we only assert the
+    streaming-specific mechanics.
+    """
+    events, parts = await _drive_stream(
+        [
+            _stream_chunk([{'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'text': 'Paris is the '}]),
+            _stream_chunk([{'text': 'capital of France.'}]),
+            _stream_chunk([{'text': ''}], grounding=_FILE_SEARCH_GROUNDING_METADATA),
+        ]
+    )
+
+    call, file_search_return, text = parts
+    assert isinstance(call, NativeToolCallPart)
+    assert isinstance(file_search_return, NativeToolReturnPart) and file_search_return.content is not None
+    assert isinstance(text, TextPart)
+    assert len(_file_search_return_start_parts(events)) == 1
+
+
+@pytest.mark.anyio
+async def test_file_search_multiple_calls_all_filled_streaming():
+    """Every reserved file_search return is filled from the aggregate grounding, not just the last."""
+    events, parts = await _drive_stream(
+        [
+            _stream_chunk([{'tool_call': {'id': 'call_1', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'call_1', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'tool_call': {'id': 'call_2', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'call_2', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'text': 'Paris.'}], grounding=_FILE_SEARCH_GROUNDING_METADATA),
+        ]
+    )
+
+    returns = _file_search_returns(parts)
+    assert [r.tool_call_id for r in returns] == ['call_1', 'call_2']
+    assert all(r.content is not None for r in returns)
+    assert len(_file_search_return_start_parts(events)) == 2
+
+
+@pytest.mark.anyio
+async def test_file_search_grounding_absent_leaves_empty_content_streaming():
+    """If grounding never arrives, the reserved return keeps its empty content and its deferred event is
+    flushed at the end of the stream, so event consumers still see every part present in the final response."""
+    events, parts = await _drive_stream(
+        [
+            _stream_chunk([{'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'text': 'Paris is the capital of France.'}]),
+        ]
+    )
+
+    returns = _file_search_returns(parts)
+    assert len(returns) == 1 and returns[0].content is None
+    # The reserved return's deferred `PartStartEvent` is still flushed (empty, exactly once), so event
+    # consumers see every part present in the final response.
+    starts = _file_search_return_start_parts(events)
+    assert len(starts) == 1 and starts[0].content is None

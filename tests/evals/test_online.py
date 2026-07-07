@@ -234,6 +234,13 @@ async def test_online_evaluator_custom_config():
     assert online.max_concurrency == 5
 
 
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+def test_online_evaluator_invalid_max_concurrency(max_concurrency: int):
+    """OnlineEvaluator rejects non-positive concurrency limits."""
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        OnlineEvaluator(evaluator=AlwaysTrue(), max_concurrency=max_concurrency)
+
+
 @pytest.mark.anyio
 async def test_run_evaluators_success():
     """run_evaluators returns results from all evaluators."""

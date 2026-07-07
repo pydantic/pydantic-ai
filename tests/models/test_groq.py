@@ -5970,3 +5970,25 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_groq_web_search_tool_domain_filters(allow_model_requests: None, groq_api_key: str, vcr: Any):
+    """`WebSearchTool` domain filters are forwarded to the Groq API as `search_settings`.
+
+    Asserts against the recorded request body rather than the response: the cassette matcher isn't
+    sensitive to the body, so a regression that dropped the filters would still replay green. Recorded
+    against the real `compound-beta` endpoint to confirm it accepts `search_settings`.
+    """
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(WebSearchTool(allowed_domains=['python.org'], blocked_domains=['w3schools.com']))],
+    )
+
+    result = await agent.run('What is the latest stable version of Python?')
+
+    assert isinstance(result.output, str)
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['search_settings'] == snapshot(
+        {'include_domains': ['python.org'], 'exclude_domains': ['w3schools.com']}
+    )

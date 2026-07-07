@@ -87,6 +87,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
         'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',

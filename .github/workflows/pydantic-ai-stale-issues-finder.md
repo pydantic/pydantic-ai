@@ -63,6 +63,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[stale-finder] "
+    labels: [stale-issues]
     close-older-key: "[stale-finder]"
     close-older-issues: false
     expires: 7d
