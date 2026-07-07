@@ -236,7 +236,7 @@ def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook)
     """Add a request hook without replacing caller-provided HTTPX hooks."""
     request_hooks = [
         existing_hook
-        for existing_hook in http_client.event_hooks.setdefault('request', [])
+        for existing_hook in http_client.event_hooks.get('request', [])
         if not isinstance(existing_hook, _GatewayRequestHook)
     ]
     request_hooks.append(hook)
