@@ -10708,15 +10708,20 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     )
 
 
-def test_agent_override_native_tools_preserves_dynamic_capability_tools():
+@pytest.mark.parametrize('instrument', [False, True])
+def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrument: bool):
     """Native tools that only materialize in `for_run` (here from a capability function) are
     preserved under `override(native_tools=...)`, which replaces only the agent's baseline tools.
+
+    With `instrument=True`, the Instrumentation capability joins the resolved layers as part of
+    the baseline, and must not be attributed to the preserved per-run layer.
 
     Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
     `TestModel` pre-request guard, which no cassette would reliably catch.
     """
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+    agent.instrument = instrument
 
     def dynamic_cap(ctx: RunContext) -> AbstractCapability:
         return NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))

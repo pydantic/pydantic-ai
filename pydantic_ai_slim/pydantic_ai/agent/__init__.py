@@ -1252,13 +1252,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
 
-        # Per-run capability: resolve `for_run` exactly once per capability (it's documented as
-        # called once per run and may have per-run side effects), keeping the resolved extras
-        # addressable so `override(native_tools=...)` below can see native tools that only
-        # materialize at resolution time, e.g. from a capability function's returned capability.
-        # `CombinedCapability` auto-flattens its input, so composing from the resolved pieces
-        # yields the same structure as resolving a pre-composed tree.
+        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
+        # `CombinedCapability` first and resolving that (which would gather over the same
+        # children): `override(native_tools=...)` below needs the *resolved* extras — their
+        # native tools may only materialize in `for_run`, e.g. from a capability function's
+        # returned capability — and the composed tree can't give them back. `CombinedCapability`
+        # re-flattens and re-sorts its children both at construction and on the `replace()`
+        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
+        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
+        # once per run and may have per-run side effects (e.g. the durable-exec integrations
+        # rely on this for deterministic replay). Composing from the resolved pieces below
+        # yields the same structure as resolving a pre-composed tree, since the same
+        # flatten-and-sort runs on the same resolved children either way.
         resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
+        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
         if len(resolved_layers) > 1:
             run_capability = CombinedCapability(resolved_layers)
