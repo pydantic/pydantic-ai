@@ -9843,6 +9843,46 @@ async def test_adapter_roundtrip_preserves_file_vendor_metadata():
     )
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True),
+            id='image-true',
+        ),
+        pytest.param(
+            AudioUrl(url='https://example.com/audio.mp3', media_type='audio/mpeg', force_download='allow-local'),
+            id='audio-allow-local',
+        ),
+        pytest.param(
+            VideoUrl(url='https://example.com/video.mp4', media_type='video/mp4', force_download=True),
+            id='video-true',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf', force_download='allow-local'),
+            id='document-allow-local',
+        ),
+    ],
+)
+async def test_adapter_roundtrip_preserves_file_url_force_download(
+    content: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+):
+    """`FileUrl.force_download` survives a Vercel AI dump -> load round-trip."""
+    messages = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, FileUIPart)]
+    assert len(file_parts) == 1
+    assert load_provider_metadata(file_parts[0].provider_metadata)['force_download'] == content.force_download
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    user_part = message_part(loaded, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    loaded_content = user_part.content[0]
+    assert isinstance(loaded_content, ImageUrl | AudioUrl | VideoUrl | DocumentUrl)
+    assert loaded_content.force_download == content.force_download
+
+
 async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
     """A file with no `vendor_metadata` round-trips to `None` (no spurious metadata)."""
     messages = [
