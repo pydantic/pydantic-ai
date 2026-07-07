@@ -19,7 +19,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypedDict, TypeVar, assert_never
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1495,7 +1495,31 @@ class NativeToolReturnPart(BaseToolReturnPart):
         return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
 
 
-error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
+if TYPE_CHECKING:
+    _ErrorDetails: TypeAlias = pydantic_core.ErrorDetails
+else:
+
+    class _ErrorDetails(TypedDict, total=False):
+        """Runtime stand-in for [`ErrorDetails`][pydantic_core.ErrorDetails] with every key optional.
+
+        `ErrorDetails` marks `type`, `loc`, `msg`, and `input` as required, but nothing enforces that when a
+        [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is constructed, and `content` is commonly
+        built from dicts that omit some of them, e.g. `ValidationError.errors(include_input=False)` or
+        history processors that redact `input`. Validating and serializing against this all-optional shape
+        keeps such message histories round-trippable through
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], instead of failing on
+        load after serializing with a `PydanticSerializationUnexpectedValue` warning.
+        """
+
+        type: str
+        loc: tuple[int | str, ...]
+        msg: str
+        input: Any
+        ctx: dict[str, Any]
+        url: str
+
+
+error_details_ta = pydantic.TypeAdapter(list[_ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass(repr=False)
@@ -1514,11 +1538,12 @@ class RetryPromptPart:
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
-    content: list[pydantic_core.ErrorDetails] | str
+    content: list[_ErrorDetails] | str
     """Details of why and how the model should retry.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
-    error details.
+    [`ErrorDetails`][pydantic_core.ErrorDetails]. Entries are allowed to omit keys (e.g. when built with
+    `ValidationError.errors(include_input=False)`) and still (de)serialize.
     """
 
     _: KW_ONLY

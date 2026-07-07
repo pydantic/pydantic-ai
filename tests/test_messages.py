@@ -8,6 +8,7 @@ from typing import Annotated, Any, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
@@ -734,6 +735,56 @@ def test_model_messages_type_adapter_back_compat_missing_conversation_id():
     ]
     deserialized = ModelMessagesTypeAdapter.validate_python(pre_pr_serialized)
     assert all(m.conversation_id is None for m in deserialized)
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            [{'type': 'missing', 'loc': ('x',), 'msg': 'Field required', 'input': {'y': 1}}],
+            id='no-ctx-url',
+        ),
+        pytest.param(
+            [{'type': 'missing', 'loc': ('x',), 'msg': 'Field required'}],
+            id='no-input',
+        ),
+        pytest.param(
+            [
+                {
+                    'type': 'greater_than',
+                    'loc': ('a', 'b'),
+                    'msg': 'Input should be greater than 0',
+                    'input': -1,
+                    'ctx': {'gt': 0},
+                    'url': 'https://errors.pydantic.dev/2/v/greater_than',
+                }
+            ],
+            id='full',
+        ),
+    ],
+)
+def test_retry_prompt_content_round_trips_with_partial_error_details(content: list[dict[str, Any]]):
+    """`RetryPromptPart.content` entries may omit `ErrorDetails` keys that construction never enforces,
+    e.g. when built with `ValidationError.errors(include_input=False)`; a serialized history containing
+    them must load back without warnings or errors (https://github.com/pydantic/pydantic-ai/issues/5987).
+
+    Unit test: this pins the (de)serialization contract of `ModelMessagesTypeAdapter`, which no model
+    request exercises.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[RetryPromptPart(content=cast('list[ErrorDetails]', content), tool_name='foo', tool_call_id='call_1')]
+        )
+    ]
+
+    with warnings.catch_warnings():
+        # A `PydanticSerializationUnexpectedValue` warning here means the serialization schema regressed.
+        warnings.simplefilter('error')
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+
+    part = ModelMessagesTypeAdapter.validate_json(serialized)[0].parts[0]
+    assert isinstance(part, RetryPromptPart)
+    assert part.content == content
 
 
 def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
