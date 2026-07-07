@@ -28,4 +28,6 @@
 
 ::: pydantic_ai.profiles.qwen
 
+::: pydantic_ai.profiles.groq
+
 ::: pydantic_ai.profiles.zai

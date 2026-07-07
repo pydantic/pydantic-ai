@@ -32,7 +32,7 @@ from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsStr, message, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -534,9 +534,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         )
     )
 
-    last_message = result.all_messages()[-1]
-
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.provider_details == snapshot(
         {
             'finish_reason': 'completed',
