@@ -1428,8 +1428,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         user_content_params.append(tool_result_block_param)
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
-                            text = request_part.model_response()  # pragma: no cover
-                            retry_param = BetaTextBlockParam(type='text', text=text)  # pragma: no cover
+                            text = request_part.model_response()
+                            retry_param = BetaTextBlockParam(type='text', text=text)
                         else:
                             retry_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
@@ -2849,7 +2849,7 @@ def _map_tool_search_tool_result_block(
     provider_details: dict[str, Any] | None = None
     matches: list[ToolSearchMatch] = []
     if block.type == 'tool_search_tool_search_result':
-        matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
+        matches = [{'name': ref.tool_name} for ref in block.tool_references]
     else:  # tool_search_tool_result_error
         provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
     return NativeToolSearchReturnPart(

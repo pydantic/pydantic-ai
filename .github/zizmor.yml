@@ -20,6 +20,11 @@ rules:
       - ci.yml
       - docs-preview.yml
       - manually-deploy-docs.yml
+      # `pr-guard.yml` reads `GH_AW_GITHUB_TOKEN` as job-level env solely to
+      # confirm private org membership via `gh api orgs/.../members/{author}`;
+      # it's used as a `gh` credential, never interpolated into a run script,
+      # and the job checks out no fork code, so shell-injection exposure is nil.
+      - pr-guard.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF
