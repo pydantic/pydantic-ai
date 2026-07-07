@@ -1244,20 +1244,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        if extra_capabilities:
-            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+
+        # Per-run capability: resolve `for_run` exactly once per capability (it's documented as
+        # called once per run and may have per-run side effects), keeping the resolved extras
+        # separate so `override(native_tools=...)` below can see native tools that only
+        # materialize at resolution time, e.g. from a capability function's returned capability.
+        # `CombinedCapability` auto-flattens its input, so composing from the resolved pieces
+        # yields the same structure as resolving a pre-composed tree.
+        resolved_base, *resolved_extras = await _utils.gather(
+            base_capability.for_run(initial_ctx), *(cap.for_run(initial_ctx) for cap in extra_capabilities)
+        )
+        if resolved_extras:
+            run_capability = CombinedCapability([resolved_base, *resolved_extras])
         else:
-            effective_capability = base_capability
+            run_capability = resolved_base
 
         # Prepend Instrumentation capability (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves. `CombinedCapability`
-        # auto-flattens its input so a nested `effective_capability` is splatted into
-        # the new outer container — leaves participate as siblings in the ordering pass.
-        if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
-            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
+        # but only if the user hasn't already added one themselves.
+        if instrumentation_cap is not None and not has_capability_type(
+            [base_capability, *extra_capabilities], InstrumentationCap
+        ):
+            run_capability = CombinedCapability([await instrumentation_cap.for_run(initial_ctx), run_capability])
 
-        # Per-run capability: re-extract get_*() if for_run returns a different instance
-        run_capability = await effective_capability.for_run(initial_ctx)
+        # Re-extract get_*() from the resolved capability if anything is contributed per-run
         capabilities_dict = _build_run_capabilities(run_capability)
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already
         # return one, mirroring the `has_capability_type` guard used for instrumentation above.
@@ -1270,10 +1279,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
-        if run_capability is not effective_capability:
+        if run_capability is not base_capability or override_cap is not None:
             source_cap = run_capability
-        elif override_cap is not None or extra_capabilities:
-            source_cap = effective_capability
         else:
             source_cap = None
 
@@ -1291,10 +1298,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
-        # `capabilities=[NativeTool(...)]`) on top.
+        # `capabilities=[NativeTool(...)]`) on top. Read those from the *resolved* capabilities,
+        # as they may only materialize in `for_run`, e.g. from a capability function.
         if some_native_tools := self._override_native_tools.get():
             extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
-            for cap in extra_capabilities:
+            for cap in resolved_extras:
                 extra_native_tools.extend(cap.get_native_tools())
             cap_native_tools = [*some_native_tools.value, *extra_native_tools]
 
