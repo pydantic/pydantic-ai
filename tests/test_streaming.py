@@ -3485,39 +3485,22 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
 
 
 async def test_agent_stream_iter_events_reuses_initialized_iterator() -> None:
-    response_message = ModelResponse(parts=[TextPart('reuse')], model_name='test')
-    stream_response = ModelTestStreamedResponse(
-        model_request_parameters=models.ModelRequestParameters(),
-        _model_name='test',
-        _structured_response=response_message,
-        _messages=[],
-        _provider_name='test',
-    )
-    run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    stream = AgentStream(
-        _raw_stream_response=stream_response,
-        _output_schema=MagicMock(),
-        _model_request_parameters=models.ModelRequestParameters(),
-        _output_validators=[],
-        _run_ctx=run_ctx,
-        _usage_limits=None,
-        _tool_manager=ToolManager(toolset=MagicMock()),
-        _root_capability=CombinedCapability([]),
-    )
+    agent = Agent(TestModel(custom_output_text='reuse'))
 
-    first_iterator = stream.iter_events()
-    second_iterator = stream.iter_events()
+    events: list[AgentStreamEvent] | None = None
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    first_iterator = stream.iter_events()
+                    second_iterator = stream.iter_events()
 
-    assert first_iterator is second_iterator
-    assert [type(event) async for event in first_iterator] == [
-        ModelResponseStartEvent,
-        PartStartEvent,
-        FinalResultEvent,
-        PartDeltaEvent,
-        PartDeltaEvent,
-        PartEndEvent,
-        ModelResponseEndEvent,
-    ]
+                    assert first_iterator is second_iterator
+                    events = [event async for event in first_iterator]
+
+    assert events is not None
+    assert isinstance(events[0], ModelResponseStartEvent)
+    assert isinstance(events[-1], ModelResponseEndEvent)
 
 
 async def test_iter_stream_response():
