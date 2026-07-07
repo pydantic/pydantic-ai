@@ -11,6 +11,10 @@ Pydantic AI exposes this through a small provider-agnostic layer in
 as the high-level entry point: it reuses the agent's tools and instructions and runs the tool-call
 loop for you.
 
+!!! note "Beta Feature"
+    Realtime support is in beta. The API is stable enough to build on, but may still be refined in
+    future releases as more providers and use cases are covered.
+
 !!! note "Realtime is separate from the text `Model`"
     A realtime session is not a `Model` request. It opens a connection you stream audio into and
     iterate events out of. Use a realtime model for the conversational surface, and a normal text
@@ -119,14 +123,65 @@ The remaining realtime control-plane events:
 | [`Sources`][pydantic_ai.realtime.Sources] | Web pages the model grounded its answer on, when using a built-in web tool (see [Built-in tools](#built-in-tools-web-search)). |
 | [`SessionError`][pydantic_ai.realtime.SessionError] | The provider reported an error (`recoverable=False` means the connection dropped). |
 
-The session accumulates ordinary [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as the
-conversation proceeds. [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
-(seeded history plus this session) and
-[`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] (this session only)
-return snapshots you can hand off to a standard [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
-Pass `message_history=` to `realtime_session` to seed a session from a prior conversation (text
-projection only — audio is not replayed), and `audio_retention=` to keep spoken audio bytes on the
-history parts (see [`AudioRetention`][pydantic_ai.realtime.AudioRetention]).
+## Message history
+
+A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMessage]
+[history](message-history.md) a standard agent run does, so a voice conversation composes with the
+rest of the framework: seed a session from an earlier conversation, and hand a finished session off
+to a text [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] for summarization, structured
+extraction, or follow-up. Spoken turns are recorded as
+[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s; everything else is the
+ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] /
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] shape, including tool calls and results.
+
+The session exposes two snapshots (each a copy, so it won't change as the session continues):
+
+| Method | Returns |
+| --- | --- |
+| [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | The seeded history plus everything from this session. |
+| [`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only the messages created during this session. |
+
+Seed a session with `message_history=` and hand its history off to a text agent afterwards:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+voice = Agent(instructions='You are a helpful voice assistant.')
+notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bullet points.')
+
+
+async def main(prior_history):
+    async with voice.realtime_session(
+        model=OpenAIRealtimeModel('gpt-realtime'),
+        message_history=prior_history,  # resume an earlier conversation
+    ) as session:
+        async for event in session:
+            ...  # stream audio, run tools
+
+    # Hand the spoken conversation to a text agent.
+    summary = await notetaker.run(message_history=session.all_messages())
+    print(summary.output)
+```
+
+Seeding is a **text/transcript projection**: the prior conversation's transcripts and text are
+replayed to the provider as initial conversation items, but audio is not (see
+[Not yet supported](#not-yet-supported)). Seeding requires a provider that accepts it — see
+[Capabilities](#capabilities).
+
+### Retaining audio
+
+By default only transcripts are kept on the history parts. Pass
+`audio_retention=` to [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] to also retain
+the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent]) on the
+`AudioWithTranscriptPart`s, at the cost of memory:
+
+| [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
+| --- | --- |
+| `'transcript_only'` (default) | Transcripts only; no audio bytes. |
+| `'input'` | The user's spoken audio. |
+| `'output'` | The model's spoken audio. |
+| `'both'` | Both sides' audio. |
 
 ## Configuring the session
 
@@ -210,7 +265,8 @@ async for event in session:
 ```
 
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
-caller's responsibility.
+caller's responsibility. Explicit `interrupt()` and manual turn-taking require provider support (see
+[Capabilities](#capabilities)); Gemini Live handles barge-in automatically and exposes neither.
 
 ### Push-to-talk (manual turn-taking)
 
@@ -225,6 +281,33 @@ async with agent.realtime_session(model=model) as session:
     await session.send_audio(chunk)
     await session.commit_audio()
     await session.create_response()
+```
+
+## Capabilities
+
+Realtime providers differ in what they support, so features like manual turn-taking and barge-in
+aren't universal. Each model reports its support through
+[`RealtimeModel.capabilities`][pydantic_ai.realtime.RealtimeModel.capabilities], a frozen
+[`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities]:
+
+| [`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities] flag | Gates | OpenAI | Gemini |
+| --- | --- | :---: | :---: |
+| [`image_input`][pydantic_ai.realtime.RealtimeCapabilities.image_input] | [`send_image`](#images) | ✅ | ✅ |
+| [`manual_turn_control`][pydantic_ai.realtime.RealtimeCapabilities.manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ |
+| [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption] | [`interrupt`/`truncate_output`](#turn-taking-and-barge-in) | ✅ | ❌ |
+| [`session_seeding`][pydantic_ai.realtime.RealtimeCapabilities.session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ |
+
+Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
+exposes neither the manual turn verbs nor an explicit `interrupt()`. Calling a method the model
+doesn't support raises a clear [`UserError`][pydantic_ai.exceptions.UserError] *before* anything is
+sent, so you can branch on `capabilities` up front rather than handle a mid-session failure:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+model = OpenAIRealtimeModel('gpt-realtime')
+if model.capabilities.interruption:
+    await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
 ## Images
@@ -482,6 +565,19 @@ async def main():
 
 For a slow delegated run, mark the tool as a [background tool](#background-tools) so the model keeps
 talking while the analysis runs.
+
+## Not yet supported
+
+Realtime is in beta, and some capabilities are intentionally out of scope for now:
+
+- **Browser-direct transport (WebRTC).** Sessions run server-side over WebSocket; there is no direct browser-to-provider WebRTC path.
+- **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.
+- **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
+- **The xAI provider.** Only OpenAI Realtime and Gemini Live ship today.
+- **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
+- **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
+- **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.
+- **Audio replay when seeding history.** Seeding a session with `message_history=` projects text and transcripts only; prior audio is not replayed (see [Message history](#message-history)).
 
 ## Implementing a provider
 

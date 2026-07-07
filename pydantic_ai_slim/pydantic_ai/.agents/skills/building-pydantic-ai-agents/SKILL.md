@@ -212,6 +212,55 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
+### Realtime (speech-to-speech) sessions
+
+For voice models that stream audio over a persistent connection (OpenAI Realtime, Gemini Live), use
+`agent.realtime_session()` instead of `run()`. It reuses the agent's tools and instructions and runs
+the tool loop for you. Stream input with `send_audio`/`send_text`/`send_image`, and iterate the
+session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
+`PartDeltaEvent` / `PartEndEvent` carrying `AudioWithTranscriptPart`s and `ToolCallPart`s, plus
+`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`SpeechStarted`,
+`TurnComplete`, ...).
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import AudioWithTranscriptPart, AudioWithTranscriptPartDelta
+from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main(microphone_chunk: bytes):
+    async with agent.realtime_session(model=OpenAIRealtimeModel('gpt-realtime')) as session:
+        await session.send_audio(microphone_chunk)  # PCM16 bytes
+        async for event in session:
+            match event:
+                case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if chunk:
+                    ...  # play audio out
+                case PartEndEvent(part=AudioWithTranscriptPart(speaker='user', transcript=t)):
+                    print('user said:', t)
+
+    # A session builds ordinary ModelMessage history: hand it off to a text agent.
+    notes = Agent('openai:gpt-5.2', instructions='Summarize.')
+    await notes.run(message_history=session.all_messages())
+```
+
+Key facts for building realtime agents:
+
+- **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
+  return real `ModelMessage`s; seed with `realtime_session(message_history=...)` (text/transcript
+  projection — audio isn't replayed).
+- **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
+  agent behind a tool, or hand off history afterwards.
+- **Query capabilities before calling capability-gated methods**: `model.capabilities` (a
+  `RealtimeCapabilities`) reports `manual_turn_control`, `interruption`, `image_input`, and
+  `session_seeding`. OpenAI supports all four; Gemini Live lacks `manual_turn_control` and
+  `interruption` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+- **Slow tools**: pass `background_tools={'name'}` so the model keeps speaking while a tool runs.
+
+See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
+
 ## Task Routing Table
 
 Load only the most relevant reference first. Read additional references only if the task spans multiple areas.
