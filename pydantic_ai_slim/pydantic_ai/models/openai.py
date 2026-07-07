@@ -2446,7 +2446,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
-                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+                container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
+                if tool.files:
+                    # Cross-provider files are dropped silently here, not raised via
+                    # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                    provider_file_ids = [file.file_id for file in tool.files if file.provider_name == self.system]
+                    if provider_file_ids:
+                        container['file_ids'] = provider_file_ids
+                tools.append({'type': 'code_interpreter', 'container': container})
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
