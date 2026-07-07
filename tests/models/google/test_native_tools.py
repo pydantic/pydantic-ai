@@ -66,6 +66,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _fill_native_tool_return_from_grounding,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.result import AgentStream
@@ -521,6 +522,29 @@ async def test_gemini_streamed_response_web_search_sources_are_extractable():
     assert sources == snapshot([('https://ai.pydantic.dev/native-tools/', 'Native tools')])
 
 
+async def test_gemini_streamed_response_web_search_grounding_metadata_reconstructed_once():
+    """Grounding metadata repeated on a trailing chunk must not emit a duplicate web-search pair."""
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Answer.'}]),
+            _generate_stream_response('stream-2', grounding_metadata=_GROUNDING_METADATA),
+            _generate_stream_response(
+                'stream-3',
+                grounding_metadata=_GROUNDING_METADATA,
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    response = streamed_response.get()
+    assert [type(part).__name__ for part in response.parts] == snapshot(
+        ['TextPart', 'NativeToolCallPart', 'NativeToolReturnPart']
+    )
+
+
 @pytest.mark.parametrize(
     'grounding_with_explicit_parts',
     [
@@ -599,6 +623,26 @@ async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web
     )
 
 
+def test_fill_web_search_return_preserves_raw_tool_response_once_filled():
+    """Defensive re-entry guard: a web-search return that already carries `raw_tool_response`
+    reports grounded and is left untouched, so a repeated fill can't overwrite the preserved
+    raw API response with the source list. Unit, not VCR: no real flow calls the fill twice.
+    """
+    part = NativeToolReturnPart(
+        tool_name=WebSearchTool.kind,
+        provider_name='google',
+        tool_call_id='web-search-call-1',
+        content={'search_suggestions': '<style>chip</style>'},
+    )
+    grounding = GroundingMetadata.model_validate(_GROUNDING_METADATA)
+
+    assert _fill_native_tool_return_from_grounding(part, grounding)
+    assert _fill_native_tool_return_from_grounding(part, grounding)
+
+    assert part.provider_details == {'raw_tool_response': {'search_suggestions': '<style>chip</style>'}}
+    assert part.content == [{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}]
+
+
 async def test_gemini_response_uses_grounding_sources_with_explicit_web_search_parts():
     raw_response = _generate_stream_response(
         'response-1',
@@ -642,8 +686,8 @@ async def test_gemini_response_uses_grounding_sources_with_explicit_web_search_p
 
 
 async def test_gemini_streamed_response_with_explicit_web_fetch_parts():
-    """Non-web-search native tool parts stream through without the web-search-specific
-    vendor-id and grounding-source handling.
+    """Native tool parts that don't await grounding stream through immediately, without
+    the reserve-and-fill deferral used for web_search and file_search returns.
     """
     streamed_response = _gemini_streamed_response_from_chunks(
         [
