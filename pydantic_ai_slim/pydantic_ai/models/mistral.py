@@ -559,7 +559,7 @@ class MistralModel(Model[Mistral]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
+                    yield MistralUserMessage(content=part.model_response())
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -604,6 +604,11 @@ class MistralModel(Model[Mistral]):
                         assert_never(part)
                 if thinking_chunks:
                     content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
+                if not content_chunks and not tool_calls:
+                    # Mistral rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)

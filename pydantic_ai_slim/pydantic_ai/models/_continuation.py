@@ -22,6 +22,7 @@ deterministically under durable executors (e.g. Temporal).
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
@@ -162,6 +163,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # `'interrupted'` rather than `'complete'`.
         try:
             async for event in iterator:
+                if self._first_chunk_monotonic is None:
+                    # First event surfaced to the consumer: stamp the monotonic clock so
+                    # `time_to_first_chunk` works, mirroring the base cancel-guard this replaces.
+                    self._first_chunk_monotonic = time.perf_counter()
                 yield event
         except self.get_stream_cancel_errors():
             if not self.cancelled:

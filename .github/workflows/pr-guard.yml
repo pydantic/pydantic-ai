@@ -61,6 +61,19 @@ jobs:
             exit 0
           fi
 
+          # Private-membership bypass. The `author_association` in the webhook only
+          # reflects *public* org membership, so a private member of the org that
+          # owns this repo is reported as CONTRIBUTOR and misses the bypass above.
+          # Confirm real membership via the API, which sees private members when the
+          # token has `read:org` — the default `github.token` cannot, so this uses
+          # `ORG_READ_TOKEN` (an existing org-scoped secret). Fails open: if that
+          # token is unset or lacks the scope the API call errors and the existing
+          # policy applies unchanged, so no unlinked PR is ever wrongly kept open.
+          if [ -n "${ORG_READ_TOKEN:-}" ] && GH_TOKEN="$ORG_READ_TOKEN" gh api "orgs/${REPO%/*}/members/${PR_AUTHOR}" >/dev/null 2>&1; then
+            echo "Author ${PR_AUTHOR} is an org member (confirmed via API, incl. private membership); skipping checks."
+            exit 0
+          fi
+
           # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
           # relationship to the repo, so without this the guard re-closes a
           # contributor PR every time a maintainer acts on it: reopening it, or
@@ -373,6 +386,10 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          # Read-only org-scoped token, used solely to confirm private org
+          # membership (see the private-membership bypass). Falls back to empty
+          # when unset, which the bypass handles by failing open.
+          ORG_READ_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           GITHUB_EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}

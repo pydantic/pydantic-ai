@@ -563,6 +563,16 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
+def test_cache_control_last_cacheable_param_allows_empty_params():
+    """Empty-params guard for the cache-control walk — a defensive branch no real API response reaches, so it's a unit test, not VCR."""
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+    params: list[Any] = []
+
+    m._add_cache_control_to_last_cacheable_param(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert params == []
+
+
 def test_build_cache_control_includes_ttl():
     """Test that _build_cache_control includes TTL for all clients, including Bedrock."""
     from unittest.mock import MagicMock
@@ -763,6 +773,99 @@ async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_mod
     assert content == snapshot(
         [{'text': 'Some context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
     )
+
+
+async def test_anthropic_code_execution_files_with_message_cache(allow_model_requests: None):
+    """Pins that the non-cacheable `container_upload` block doesn't capture the cache breakpoint (it lands on the text instead).
+
+    Not a VCR test: cassette matchers aren't sensitive to `cache_control` placement in the request body, so this asserts the built payload via the mock client.
+    """
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                CodeExecutionTool(
+                    files=[
+                        UploadedFile(file_id='file_anthropic', provider_name='anthropic'),
+                        UploadedFile(file_id='file_openai', provider_name='openai'),
+                    ]
+                )
+            )
+        ],
+        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    result = await agent.run('Use the attached file.')
+    assert result.output == 'Response'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'files-api-2025-04-14' in completion_kwargs['betas']
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Use the attached file.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_anthropic_code_execution_files_append_to_first_user_message(allow_model_requests: None):
+    """Pins the internal `_map_message` placement: uploads attach to the *first* user message (keeping the cacheable prefix byte-identical as history grows), not a later one, and none are added when history has no user message.
+
+    Not a VCR test: the first-vs-later placement and the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
+    """
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    parameters = ModelRequestParameters(
+        native_tools=[
+            CodeExecutionTool(files=[UploadedFile(file_id='file_anthropic', provider_name='anthropic')]),
+        ]
+    )
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        [
+            ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+            ModelResponse(parts=[TextPart(content='Previous response')]),
+            ModelRequest(parts=[UserPromptPart(content='And now summarize it.')]),
+        ],
+        parameters,
+        AnthropicModelSettings(),
+    )
+
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Use the attached file.', 'type': 'text'},
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'And now summarize it.', 'type': 'text'}]},
+        ]
+    )
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        [ModelResponse(parts=[TextPart(content='Previous response')])],
+        parameters,
+        AnthropicModelSettings(),
+    )
+
+    assert messages == snapshot([{'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]}])
 
 
 async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
@@ -11884,3 +11987,70 @@ async def test_anthropic_top_k_propagation(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['top_k'] == 40
+
+
+async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):
+    """An empty `ModelResponse` in history is omitted from the payload; a retry prompt is sent
+    instead so the model can produce a non-empty response. Anthropic accepts the resulting
+    consecutive user turns.
+    """
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot("""\
+# Hi there! 👋
+
+How can I help you today?\
+""")
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+# Hi there! 👋
+
+How can I help you today?\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=26,
+                    output_tokens=18,
+                    details={
+                        'input_tokens': 26,
+                        'output_tokens': 18,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-haiku-4-5-20251001',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

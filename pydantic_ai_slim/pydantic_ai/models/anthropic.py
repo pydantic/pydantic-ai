@@ -129,6 +129,7 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
+        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -292,6 +293,10 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
     'text_editor_code_execution',
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
+# See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
+_ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
+    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
+)
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
@@ -1188,6 +1193,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
+                # Cross-provider files are dropped silently here, not raised via
+                # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                if tool.files and any(file.provider_name == self.system for file in tool.files):
+                    beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
                 tools.append(web_fetch_tool)
@@ -1326,6 +1335,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        # Cross-provider files are dropped silently here, not raised via
+        # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+        pending_container_uploads = [
+            file.file_id
+            for tool in model_request_parameters.native_tools
+            if isinstance(tool, CodeExecutionTool) and tool.files
+            for file in tool.files
+            if file.provider_name == self.system
+        ]
         # Whenever the current request carries any `ToolSearchTool` builtin, render any
         # local-shape `search_tools` history exchanges as Anthropic's "client-side"
         # tool-search wire — `tool_use` paired with a `tool_result` whose `content` is a
@@ -1419,8 +1437,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         user_content_params.append(tool_result_block_param)
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
-                            text = request_part.model_response()  # pragma: no cover
-                            retry_param = BetaTextBlockParam(type='text', text=text)  # pragma: no cover
+                            text = request_part.model_response()
+                            retry_param = BetaTextBlockParam(type='text', text=text)
                         else:
                             retry_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
@@ -1689,6 +1707,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        if pending_container_uploads:
+            upload_blocks = [
+                BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
+                for file_id in pending_container_uploads
+            ]
+            # Inject the uploads into the *first* user message, not the last. The blocks are
+            # recomputed from the static `CodeExecutionTool.files` config on every request, so
+            # pinning them to the first message keeps that message byte-identical as history grows,
+            # which keeps the cacheable prefix stable across steps. Injecting at the tail instead
+            # would move the insertion point every turn and silently bust the prompt cache.
+            for msg in anthropic_messages:
+                if msg['role'] == 'user':
+                    existing = msg['content']
+                    assert not isinstance(existing, str)
+                    msg['content'] = [*existing, *upload_blocks]
+                    break
+
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
@@ -1909,8 +1945,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ]
         else:
             content_blocks = cast(list[BetaContentBlockParam], content)
-            if content_blocks and 'cache_control' not in cast(dict[str, Any], content_blocks[-1]):
-                self._add_cache_control_to_last_param(content_blocks, ttl)
+            self._add_cache_control_to_last_cacheable_param(content_blocks, ttl)
+
+    def _add_cache_control_to_last_cacheable_param(
+        self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
+    ) -> None:
+        for param in reversed(params):
+            if not is_str_dict(param):  # pragma: no cover
+                continue
+            if 'cache_control' in param:
+                return
+            if param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                param['cache_control'] = self._build_cache_control(ttl)
+                return
 
     def _add_cache_control_to_last_param(
         self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
@@ -1929,13 +1976,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 'To cache system instructions or tool definitions, use the `anthropic_cache_instructions` or `anthropic_cache_tool_definitions` settings instead.'
             )
 
-        # Only certain types support cache_control
-        # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
-        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
         # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
         # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
         last_param = cast(dict[str, Any], params[-1])
-        if last_param['type'] not in cacheable_types:
+        if last_param['type'] not in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
