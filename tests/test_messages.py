@@ -8,7 +8,7 @@ from typing import Annotated, Any, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
-from pydantic_core import ErrorDetails
+from pydantic_core import ErrorDetails, ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -39,6 +39,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import ToolRetryError
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
@@ -781,10 +782,41 @@ def test_retry_prompt_content_round_trips_with_partial_error_details(content: li
         # A `PydanticSerializationUnexpectedValue` warning here means the serialization schema regressed.
         warnings.simplefilter('error')
         serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
 
-    part = ModelMessagesTypeAdapter.validate_json(serialized)[0].parts[0]
-    assert isinstance(part, RetryPromptPart)
-    assert part.content == content
+    for deserialized in (
+        ModelMessagesTypeAdapter.validate_json(serialized),
+        ModelMessagesTypeAdapter.validate_python(dumped),
+    ):
+        part = deserialized[0].parts[0]
+        assert isinstance(part, RetryPromptPart)
+        assert part.content == content
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert 'validation error' in part.model_response()
+
+
+def test_retry_prompt_content_rejects_non_error_details_dicts():
+    """Only the `input` key is optional: entries missing `type`/`loc`/`msg` are not valid `ErrorDetails`
+    and must keep failing loudly on load rather than validating to empty dicts."""
+    serialized = (
+        b'[{"parts":[{"content":[{"foo":"bar"}],"tool_name":"foo","tool_call_id":"call_1",'
+        b'"timestamp":"2026-01-01T00:00:00Z","part_kind":"retry-prompt"}],"kind":"request"}]'
+    )
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_json(serialized)
+
+
+def test_tool_retry_error_formats_content_without_input():
+    """`ToolRetryError` renders `RetryPromptPart.content` entries that omit the optional `input` key."""
+    part = RetryPromptPart(
+        content=cast('list[ErrorDetails]', [{'type': 'missing', 'loc': ('x',), 'msg': 'Field required'}]),
+        tool_name='foo',
+    )
+    assert str(ToolRetryError(part)) == snapshot("""\
+1 validation error for 'foo'
+x
+  Field required [type=missing]""")
 
 
 def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():

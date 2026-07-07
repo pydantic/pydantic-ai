@@ -301,7 +301,9 @@ class ToolRetryError(Exception):
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)
-            lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
+            # `input` may be omitted, e.g. when the part was built with `errors(include_input=False)`.
+            input_value = f', input_value={e["input"]!r}' if 'input' in e else ''
+            lines.append(f'  {e["msg"]} [type={e["type"]}{input_value}]')
         return '\n'.join(lines)
 
 
