@@ -765,7 +765,7 @@ def test_model_messages_type_adapter_back_compat_missing_conversation_id():
     ],
 )
 def test_retry_prompt_content_round_trips_with_partial_error_details(content: list[dict[str, Any]]):
-    """`RetryPromptPart.content` entries may omit `ErrorDetails` keys that construction never enforces,
+    """`RetryPromptPart.content` entries may omit the `input` key, which construction never enforces,
     e.g. when built with `ValidationError.errors(include_input=False)`; a serialized history containing
     them must load back without warnings or errors (https://github.com/pydantic/pydantic-ai/issues/5987).
 
