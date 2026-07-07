@@ -41,6 +41,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
@@ -50,6 +51,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
     narrow_message_parts,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
@@ -477,13 +479,25 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
 
 
 def test_thinking_part_delta_callable_provider_details_serializable():
-    delta1 = ThinkingPartDelta(content_delta='first', provider_details=lambda d: {**(d or {}), 'first': True})
-    delta2 = ThinkingPartDelta(content_delta=' second', provider_details=lambda d: {**(d or {}), 'second': True})
-    chained = delta2.apply(delta1)
-    assert isinstance(chained, ThinkingPartDelta)
-    assert callable(chained.provider_details)
+    # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
+    # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
+    # (see `_make_raw_content_updater` in models/openai.py). Such an event must still serialize, e.g.
+    # when crossing a Temporal activity boundary in durable execution.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    list(manager.handle_thinking_delta(vendor_part_id='t', content='reasoning', provider_details={'raw_content': ['']}))
 
-    event = PartDeltaEvent(index=0, delta=chained)
+    def update_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = {**(existing or {})}
+        details['raw_content'] = [*details.get('raw_content', []), 'tok']
+        return details
+
+    events = list(manager.handle_thinking_delta(vendor_part_id='t', content=' more', provider_details=update_details))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartDeltaEvent)
+    assert isinstance(event.delta, ThinkingPartDelta)
+    assert callable(event.delta.provider_details)
+
     adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
 
     # The callable merge callback can't be JSON-serialized, so it is emitted as `null` instead of raising.
