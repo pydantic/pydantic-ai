@@ -204,6 +204,33 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
+async def test_request_usage_without_tokens(allow_model_requests: None):
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=4, output_tokens=2),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            details={
+                'input_tokens': 4,
+                'output_tokens': 2,
+            },
+        )
+    )
+
+
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         AssistantMessageResponse(
