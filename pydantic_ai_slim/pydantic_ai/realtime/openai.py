@@ -590,7 +590,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     OpenAI-compatible endpoints that expose a realtime API work too.
 
     Args:
-        model: The model name, e.g. `gpt-realtime` or `gpt-4o-realtime-preview`.
+        model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
         voice: Voice for audio output, e.g. `alloy`, `echo`, or `shimmer`.
