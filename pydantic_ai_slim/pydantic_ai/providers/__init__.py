@@ -227,10 +227,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sentence_transformers import SentenceTransformersProvider
 
         return SentenceTransformersProvider
-    elif provider in ('snowflake-cortex', 'snowflake'):
-        from .snowflake import SnowflakeCortexProvider
+    elif provider == 'snowflake':
+        from .snowflake import SnowflakeProvider
 
-        return SnowflakeCortexProvider
+        return SnowflakeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

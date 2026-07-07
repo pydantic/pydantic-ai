@@ -34,6 +34,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -60,6 +61,7 @@ with try_import() as imports_successful:
         ('litellm', LiteLLMProvider, None),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
+        ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),

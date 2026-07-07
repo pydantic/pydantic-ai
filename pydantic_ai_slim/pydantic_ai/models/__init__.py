@@ -99,6 +99,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'snowflake',
         'together',
         'vercel',
         'zai',
@@ -1019,7 +1020,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1029,6 +1030,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'snowflake':
+        from .snowflake import SnowflakeModel
+
+        return SnowflakeModel(model_name, provider=provider)
     elif model_kind == 'ollama':
         from .ollama import OllamaModel
 
@@ -1077,12 +1082,6 @@ def infer_model(  # noqa: C901
         from .xai import XaiModel
 
         return XaiModel(model_name, provider=provider)
-    elif model_kind in ('snowflake-cortex', 'snowflake'):
-        from .snowflake import SnowflakeCortexModel
-
-        # SnowflakeCortexModel handles its own provider routing (OpenAI vs Anthropic)
-        # based on model name, so we don't pass the provider from provider_factory.
-        return SnowflakeCortexModel(model_name)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 

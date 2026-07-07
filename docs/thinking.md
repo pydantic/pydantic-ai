@@ -302,6 +302,22 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## Snowflake Cortex
+
+To enable thinking on Claude models, use the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] [model setting](agent.md#model-run-settings), or set [`SnowflakeModelSettings.snowflake_reasoning`][pydantic_ai.models.snowflake.SnowflakeModelSettings.snowflake_reasoning] directly to control the reasoning token budget:
+
+```python {title="snowflake_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.snowflake import SnowflakeModel, SnowflakeModelSettings
+
+model = SnowflakeModel('claude-sonnet-4-6')
+settings = SnowflakeModelSettings(snowflake_reasoning={'max_tokens': 4096})
+agent = Agent(model, model_settings=settings)
+...
+```
+
+On OpenAI models, use the unified `thinking` setting or [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.

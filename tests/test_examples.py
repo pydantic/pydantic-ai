@@ -223,6 +223,8 @@ def test_docs_examples(
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
+    env.set('SNOWFLAKE_TOKEN', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
