@@ -18,7 +18,13 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
 )
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, call_model, open_model_stream, process_event_stream
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.durable_exec._utils import (
+    StreamedActivityResult,
+    model_request,
+    model_request_stream,
+    process_event_stream,
+)
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -114,8 +120,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         Returns a new bound instance; the original capability is left pristine so the
         same instance can be passed to multiple agents.
         """
-        from pydantic_ai.exceptions import UserError
-
         if not agent.name:
             raise UserError('An agent needs to have a unique `name` in order to be used with Prefect.')
         if not isinstance(agent.model, Model):
@@ -148,7 +152,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            return await call_model(model, request_context=request_context, run_context=run_context)
+            return await model_request(model, request_context=request_context, run_context=run_context)
 
         bound._request_task = request_task
 
@@ -165,7 +169,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            async with open_model_stream(
+            async with model_request_stream(
                 model, request_context=request_context, run_context=run_context
             ) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
@@ -287,7 +291,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         # time handler that needs to fire inside the task. The streaming task
         # fires the chain against live events inside the boundary and buffers
         # events for replay through any per-run handler on the workflow side.
-        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
+        if request_context.streaming or self._event_stream_handler is not None:
             result: StreamedActivityResult = await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
             )(

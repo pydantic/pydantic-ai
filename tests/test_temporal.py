@@ -60,11 +60,13 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
     Model,
+    ModelRequestContext,
     ModelRequestParameters,
     create_async_http_client,
     infer_model,
@@ -98,7 +100,7 @@ try:
 
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
-        DurabilityPlugin,
+        AgentPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
@@ -4815,7 +4817,7 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[SimpleDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(simple_durable_agent)],
+        plugins=[AgentPlugin(simple_durable_agent)],
     ):
         output = await client.execute_workflow(
             SimpleDurableAgentWorkflow.run,
@@ -4872,7 +4874,7 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[ComplexDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(complex_durable_agent)],
+        plugins=[AgentPlugin(complex_durable_agent)],
     ):
         output = await client.execute_workflow(
             ComplexDurableAgentWorkflow.run,
@@ -4913,7 +4915,7 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[ThreadsDurableWorkflow],
-        plugins=[DurabilityPlugin(_threads_agent)],
+        plugins=[AgentPlugin(_threads_agent)],
     ):
         output = await client.execute_workflow(
             ThreadsDurableWorkflow.run,
@@ -5056,7 +5058,7 @@ class RuntimeModelWorkflow:
 async def test_durability_runtime_registered_model_is_used(client: Client):
     """agent.run(model=registered_model) routes through the registered model's activity."""
     async with Worker(
-        client, task_queue=TASK_QUEUE, workflows=[RuntimeModelWorkflow], plugins=[DurabilityPlugin(_rt_agent)]
+        client, task_queue=TASK_QUEUE, workflows=[RuntimeModelWorkflow], plugins=[AgentPlugin(_rt_agent)]
     ):
         output = await client.execute_workflow(
             RuntimeModelWorkflow.run,
@@ -5109,6 +5111,67 @@ def test_durability_resolve_model_id_uses_provider_factory():
     resolved = bound.resolve_model_id('test', agent=agent)
     assert resolved is not None
     assert resolved.model_id == 'test:test'
+
+
+# --- Outer capability swaps `request_context.model` inside a workflow ---
+
+
+def _swapped_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='swapped-response')])
+
+
+_swap_target_registered = FunctionModel(_swapped_model_fn)
+
+
+class _SwapModelCapability(AbstractCapability[Any]):
+    """Outer capability that swaps the request's model to a fresh, unregistered instance."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model = FunctionModel(_swapped_model_fn)
+        return request_context
+
+
+_swap_model_durability = TemporalDurability(
+    # A *different* instance is registered under the same `model_id`, so the swapped
+    # instance can only reach the activity via the `model_id` string round-trip.
+    models={_swap_target_registered.model_id: _swap_target_registered},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+_swap_model_agent = Agent(
+    _durability_fn_model,
+    name='durability_swap_model_agent',
+    capabilities=[_SwapModelCapability(), _swap_model_durability],
+)
+
+
+@workflow.defn
+class SwapModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _swap_model_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_outer_capability_model_swap_round_trips(client: Client):
+    """A model swapped in by an outer capability's `before_model_request` survives the activity boundary.
+
+    Managed-style capabilities sit outside the durability capability and may replace
+    `request_context.model` with a freshly-built instance the durability registry has
+    never seen. `_find_model_id` must fall back to the instance's `model_id` string
+    (rather than erroring), so the activity can rebuild the equivalent model.
+    """
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[SwapModelWorkflow], plugins=[AgentPlugin(_swap_model_agent)]
+    ):
+        output = await client.execute_workflow(
+            SwapModelWorkflow.run,
+            args=['ignored'],
+            id='SwapModelWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'swapped-response'
 
 
 def test_durability_find_model_id_falls_back_to_model_id_string():
@@ -5213,10 +5276,10 @@ def test_durability_get_serialization_name():
 
 
 def test_durability_plugin_requires_durability_capability():
-    """`DurabilityPlugin` raises a clear error when the agent has no `TemporalDurability`."""
+    """`AgentPlugin` raises a clear error when the agent has no `TemporalDurability`."""
     plain_agent = Agent(_durability_fn_model, name='no_cap_agent')
     with pytest.raises(UserError, match='no `TemporalDurability` capability'):
-        DurabilityPlugin(plain_agent)
+        AgentPlugin(plain_agent)
 
 
 _pydantic_ai_agents_durable = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
@@ -5399,7 +5462,7 @@ async def test_durability_streaming_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[StreamDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(_stream_durable_agent)],
+        plugins=[AgentPlugin(_stream_durable_agent)],
     ):
         output = await client.execute_workflow(
             StreamDurableAgentWorkflow.run,
@@ -5518,7 +5581,7 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
         client,
         task_queue=TASK_QUEUE,
         workflows=[ProcessStreamDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(_process_durable_agent)],
+        plugins=[AgentPlugin(_process_durable_agent)],
     ):
         output = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
@@ -5544,7 +5607,7 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
 #
 # Each test below is the capability-path equivalent of a `TemporalAgent`-based
 # test earlier in this file. They assert the same behaviors but use
-# `Agent(..., capabilities=[TemporalDurability(...)])` and `DurabilityPlugin`
+# `Agent(..., capabilities=[TemporalDurability(...)])` and `AgentPlugin`
 # instead of wrapping the agent.
 
 
@@ -5604,7 +5667,7 @@ async def test_durability_complex_agent_logfire_span_tree(
         client_with_logfire,
         task_queue=TASK_QUEUE,
         workflows=[ComplexDurableAgentLogfireWorkflow],
-        plugins=[DurabilityPlugin(complex_durable_logfire_agent)],
+        plugins=[AgentPlugin(complex_durable_logfire_agent)],
     ):
         output = await client_with_logfire.execute_workflow(
             ComplexDurableAgentLogfireWorkflow.run,
@@ -5983,7 +6046,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityModelRetryWorkflow],
-        plugins=[DurabilityPlugin(_durability_model_retry_agent)],
+        plugins=[AgentPlugin(_durability_model_retry_agent)],
     ):
         wf = await client.start_workflow(
             DurabilityModelRetryWorkflow.run,
@@ -6144,7 +6207,7 @@ async def test_durability_multi_model_selection_in_workflow(allow_model_requests
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityMultiModelWorkflow],
-        plugins=[DurabilityPlugin(_durability_multi_model_agent)],
+        plugins=[AgentPlugin(_durability_multi_model_agent)],
     ):
         # Default model (no model arg)
         output = await client.execute_workflow(
@@ -6206,7 +6269,7 @@ async def test_durability_model_selection_by_instance(
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityMultiModelInstanceWorkflow],
-        plugins=[DurabilityPlugin(_durability_multi_model_agent)],
+        plugins=[AgentPlugin(_durability_multi_model_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityMultiModelInstanceWorkflow.run,
@@ -6253,7 +6316,7 @@ async def test_durability_web_search_in_workflow(allow_model_requests: None, cli
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityWebSearchAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_web_search_agent)],
+        plugins=[AgentPlugin(_durability_web_search_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityWebSearchAgentWorkflow.run,
@@ -6295,7 +6358,7 @@ async def test_durability_dynamic_builtin_tools_select_by_model(allow_model_requ
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityBuiltinToolWorkflow],
-        plugins=[DurabilityPlugin(_durability_builtin_tool_agent)],
+        plugins=[AgentPlugin(_durability_builtin_tool_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityBuiltinToolWorkflow.run,
@@ -6361,7 +6424,7 @@ async def test_durability_mcp_dynamic_toolset_in_workflow(allow_model_requests: 
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityMCPDynamicToolsetAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_mcp_dynamic_toolset_agent)],
+        plugins=[AgentPlugin(_durability_mcp_dynamic_toolset_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityMCPDynamicToolsetAgentWorkflow.run,
@@ -6407,7 +6470,7 @@ async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, cli
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityMCPToolsetAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_mcptoolset_agent)],
+        plugins=[AgentPlugin(_durability_mcptoolset_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityMCPToolsetAgentWorkflow.run,
@@ -6457,7 +6520,7 @@ async def test_durability_dynamic_toolset_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityDynamicToolsetAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_dynamic_toolset_agent)],
+        plugins=[AgentPlugin(_durability_dynamic_toolset_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityDynamicToolsetAgentWorkflow.run,
@@ -6512,7 +6575,7 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityToolReturnMetadataWorkflow],
-        plugins=[DurabilityPlugin(_durability_tool_return_metadata_agent)],
+        plugins=[AgentPlugin(_durability_tool_return_metadata_agent)],
     ):
         messages = await client.execute_workflow(
             DurabilityToolReturnMetadataWorkflow.run,
@@ -6601,7 +6664,7 @@ async def test_durability_passing_image_to_run(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityMultiModalContentWorkflow],
-        plugins=[DurabilityPlugin(_durability_multimodal_agent)],
+        plugins=[AgentPlugin(_durability_multimodal_agent)],
     ):
         prompt: list[str | MultiModalContent] = [
             'Process these files and call the tool',
@@ -6668,7 +6731,7 @@ async def test_durability_uploaded_file_serialization_preserves_media_type(allow
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityUploadedFileAgentWorkflow],
-        plugins=[DurabilityPlugin(_durability_uploaded_file_agent)],
+        plugins=[AgentPlugin(_durability_uploaded_file_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityUploadedFileAgentWorkflow.run,
@@ -6702,7 +6765,7 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityRuntimeFunctionToolsetWorkflow],
-        plugins=[DurabilityPlugin(simple_durable_agent)],
+        plugins=[AgentPlugin(simple_durable_agent)],
     ):
         with workflow_raises(
             UserError,
@@ -6783,7 +6846,7 @@ async def test_durability_run_in_workflow_with_runtime_external_toolset(allow_mo
         client,
         task_queue=TASK_QUEUE,
         workflows=[DurabilityRuntimeExternalToolsetWorkflow],
-        plugins=[DurabilityPlugin(_durability_runtime_external_agent)],
+        plugins=[AgentPlugin(_durability_runtime_external_agent)],
     ):
         output = await client.execute_workflow(
             DurabilityRuntimeExternalToolsetWorkflow.run,

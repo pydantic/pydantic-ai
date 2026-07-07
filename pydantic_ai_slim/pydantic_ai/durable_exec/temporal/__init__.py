@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+try:
+    import temporalio  # noqa: F401  # pyright: ignore[reportUnusedImport]
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `temporalio` package to use the Temporal integration, '
+        'you can use the `temporal` optional group — `pip install "pydantic-ai-slim[temporal]"`'
+    ) from _import_error
+
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
@@ -27,7 +35,6 @@ __all__ = [
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
-    'DurabilityPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
@@ -174,30 +181,27 @@ class PydanticAIPlugin(SimplePlugin):
 
 
 class AgentPlugin(SimplePlugin):
-    """Temporal worker plugin for a specific Pydantic AI agent."""
+    """Temporal worker plugin for a specific Pydantic AI agent.
 
-    def __init__(self, agent: TemporalAgent[Any, Any]):  # pyright: ignore[reportDeprecated]
-        super().__init__(  # type: ignore[reportUnknownMemberType]
-            name='AgentPlugin',
-            activities=agent.temporal_activities,
-        )
-
-
-class DurabilityPlugin(SimplePlugin):
-    """Temporal worker plugin for an agent carrying a `TemporalDurability` capability.
-
-    Walks the agent's capability chain to find the bound `TemporalDurability` and
-    registers its activities on the worker.
+    Accepts either a regular `Agent` carrying a
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
+    capability (whose chain is walked to find the bound capability), or the
+    deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
+    wrapper, and registers the agent's activities on the worker.
     """
 
     def __init__(self, agent: AbstractAgent[Any, Any]):
-        durability = TemporalDurability.from_agent(agent)
-        if durability is None:
-            raise UserError(
-                f'Agent {agent.name!r} has no `TemporalDurability` capability; '
-                'add one to `capabilities=[...]` before constructing the plugin.'
-            )
+        if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+            activities = agent.temporal_activities
+        else:
+            durability = TemporalDurability.from_agent(agent)
+            if durability is None:
+                raise UserError(
+                    f'Agent {agent.name!r} has no `TemporalDurability` capability; '
+                    'add one to `capabilities=[...]` before constructing the plugin.'
+                )
+            activities = durability.temporal_activities
         super().__init__(  # type: ignore[reportUnknownMemberType]
-            name='DurabilityPlugin',
-            activities=durability.temporal_activities,
+            name='AgentPlugin',
+            activities=activities,
         )

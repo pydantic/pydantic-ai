@@ -575,7 +575,7 @@ async def _prepare_request_parameters(
 # translation) lands in both paths automatically.
 
 
-async def call_model(
+async def model_request(
     model: models.Model,
     *,
     request_context: ModelRequestContext,
@@ -583,7 +583,7 @@ async def call_model(
 ) -> _messages.ModelResponse:
     """Run the innermost non-streaming model request.
 
-    Used internally by `pydantic_ai.durable_exec._utils.call_model` so the bundled
+    Used internally by `pydantic_ai.durable_exec._utils.model_request` so the bundled
     durable-execution capabilities (Temporal/DBOS/Prefect) can perform the actual
     provider request from inside their activity/step/task with the run context
     correctly threaded through.
@@ -606,7 +606,7 @@ async def call_model(
 
 
 @asynccontextmanager
-async def open_model_stream(
+async def model_request_stream(
     model: models.Model,
     *,
     request_context: ModelRequestContext,
@@ -614,7 +614,7 @@ async def open_model_stream(
 ) -> AsyncGenerator[models.StreamedResponse]:
     """Open the innermost streaming model request.
 
-    Used internally by `pydantic_ai.durable_exec._utils.open_model_stream` so the
+    Used internally by `pydantic_ai.durable_exec._utils.model_request_stream` so the
     bundled durable-execution capabilities can drain the `StreamedResponse` and
     (optionally) fire `wrap_run_event_stream` hooks against live events inside
     the activity/step/task before returning the assembled `ModelResponse`.
@@ -710,7 +710,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
-            async with open_model_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
                 ctx.state.usage.requests += 1
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
@@ -732,7 +732,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Promoting this to a proper public field on `ModelRequestContext` is tracked
         # alongside the runtime-capability rework in
         # https://github.com/pydantic/pydantic-ai/issues/5477.
-        wrap_request_context._streaming_requested = True  # pyright: ignore[reportPrivateUsage]
+        wrap_request_context.streaming = True
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
                 run_context,
@@ -885,7 +885,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
-            response = await call_model(req_ctx.model, request_context=req_ctx, run_context=run_context)
+            response = await model_request(req_ctx.model, request_context=req_ctx, run_context=run_context)
             _handler_response = response
             return response
 

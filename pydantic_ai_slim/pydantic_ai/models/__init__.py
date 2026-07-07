@@ -209,13 +209,17 @@ class ModelRequestContext:
     available (chain didn't run, or events weren't captured). Not user API.
     """
 
-    _streaming_requested: bool = field(default=False, init=False)
-    """Set by the agent loop when it expects to iterate the model response as a
-    stream (i.e. an `event_stream_handler` was passed or the capability chain
-    overrides `wrap_run_event_stream`). Durable-execution capabilities read this
-    to decide whether to route through the streaming activity/step/task (which
-    fires the chain inside the boundary and buffers events for replay) or the
-    non-streaming one. Not user API.
+    streaming: bool = field(default=False, init=False)
+    """Whether the agent loop expects to iterate the model response as a stream.
+
+    Set when an `event_stream_handler` was passed or the capability chain overrides
+    `wrap_run_event_stream`. There is no separate `before_model_request_stream` hook —
+    streaming and non-streaming requests share the same hooks — so this field is how a
+    hook can tell them apart. Durable-execution capabilities, for example, read it to
+    route the request through their streaming activity/step/task (which fires the
+    chain inside the boundary and buffers events for replay) rather than the
+    non-streaming one. Read-only from hooks: reassigning it doesn't change how the
+    loop consumes the response.
     """
 
 

@@ -26,9 +26,9 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
-    call_model,
+    model_request,
     disable_threads,
-    open_model_stream,
+    model_request_stream,
     process_event_stream,
 )
 from pydantic_ai.exceptions import UserError
@@ -285,7 +285,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            return await call_model(model_for_request, request_context=request_context, run_context=run_context)
+            return await model_request(model_for_request, request_context=request_context, run_context=run_context)
 
         request_activity.__annotations__['deps'] = deps_type | None
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
@@ -302,7 +302,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            async with open_model_stream(
+            async with model_request_stream(
                 model_for_request, request_context=request_context, run_context=run_context
             ) as streamed_response:
                 # Fire the capability chain's wrap_run_event_stream hooks against
@@ -374,7 +374,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         """All Temporal activities registered by this capability.
 
         Register these with the Temporal worker, either directly or via
-        `DurabilityPlugin`.
+        `AgentPlugin`.
         """
         return self._temporal_activities
 
@@ -520,7 +520,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # time handler that needs to fire inside the activity. The streaming
         # activity fires the chain against live events inside the boundary and
         # buffers events for replay through any per-run handler on the workflow side.
-        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
+        if request_context.streaming or self._event_stream_handler is not None:
             activity_config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,

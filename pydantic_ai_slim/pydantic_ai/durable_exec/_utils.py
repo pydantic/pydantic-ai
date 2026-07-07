@@ -15,7 +15,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic_ai._agent_graph import call_model, open_model_stream
+from pydantic_ai._agent_graph import model_request, model_request_stream
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
@@ -24,9 +24,9 @@ from pydantic_ai.tools import RunContext
 
 __all__ = [
     'StreamedActivityResult',
-    'call_model',
+    'model_request',
     'disable_threads',
-    'open_model_stream',
+    'model_request_stream',
     'process_event_stream',
 ]
 

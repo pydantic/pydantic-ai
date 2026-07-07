@@ -17,7 +17,12 @@ from pydantic_ai.capabilities.abstract import (
     WrapRunHandler,
 )
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, call_model, open_model_stream, process_event_stream
+from pydantic_ai.durable_exec._utils import (
+    StreamedActivityResult,
+    model_request,
+    model_request_stream,
+    process_event_stream,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -137,7 +142,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            return await call_model(model, request_context=request_context, run_context=run_context)
+            return await model_request(model, request_context=request_context, run_context=run_context)
 
         bound._request_step = request_step
 
@@ -154,7 +159,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            async with open_model_stream(
+            async with model_request_stream(
                 model, request_context=request_context, run_context=run_context
             ) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
@@ -308,7 +313,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         # time handler that needs to fire inside the step. The streaming step
         # fires the chain against live events inside the boundary and buffers
         # events for replay through any per-run handler on the workflow side.
-        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
+        if request_context.streaming or self._event_stream_handler is not None:
             result: StreamedActivityResult = await self._request_stream_step(
                 request_context.messages,
                 request_context.model_settings,

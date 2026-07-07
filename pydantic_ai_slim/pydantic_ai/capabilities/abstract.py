@@ -381,7 +381,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Per-request *swapping* of an already-resolved `Model` is a separate concern
         and lives in [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
         which receives a [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]
-        whose `.model` field can be reassigned.
+        whose `.model` field can be reassigned. *Sourcing* a model for an agent that
+        doesn't have one at all (no agent default, no run/override value) is also out
+        of scope: this hook only fires when a string is already in play — providing
+        one where none exists is a job for run-spec contribution, not model resolution.
 
         Composition follows first-non-None-wins in user-supplied order, so the
         first capability in the `capabilities=[...]` list gets first crack at a
