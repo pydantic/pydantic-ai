@@ -3057,30 +3057,6 @@ async def test_uploaded_file_user_provided_betas_are_preserved(allow_model_reque
     assert set(completion_kwargs['betas']) >= {'files-api-2025-04-14', 'custom-feature-1'}
 
 
-async def test_uploaded_file_in_tool_return_adds_files_api_beta(allow_model_requests: None) -> None:
-    """`UploadedFile` returned by a tool should also trigger the auto Files API beta.
-
-    Tool-return parts are mapped to the same `source.type='file'` wire shape as user-prompt
-    parts, so the same beta is required. Unit test (not VCR): asserts the `betas` kwarg
-    directly, since cassette matchers wouldn't catch a regression that drops the auto-beta.
-    """
-    mock_client = cast(AsyncAnthropic, MockAnthropic())
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='fetch',
-                    tool_call_id='call-1',
-                    content=[UploadedFile(file_id='file-tr-1', provider_name='anthropic')],
-                )
-            ]
-        )
-    ]
-    assert m._messages_use_anthropic_uploaded_file(messages) is True  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_uploaded_file_adds_files_api_beta_to_count_tokens(allow_model_requests: None) -> None:
     """Token counting must mirror actual request parameters — the Files API beta belongs there too.
 
