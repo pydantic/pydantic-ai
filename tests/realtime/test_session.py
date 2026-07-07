@@ -14,8 +14,6 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    AudioWithTranscriptPart,
-    AudioWithTranscriptPartDelta,
     BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -25,6 +23,8 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -146,17 +146,17 @@ async def test_assistant_transcript_partials_then_final() -> None:
     events = [e async for e in session]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=AudioWithTranscriptPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta='Hi ')),
-            PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta='there')),
-            PartEndEvent(index=0, part=AudioWithTranscriptPart(speaker='assistant', transcript='Hi there')),
+            PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hi ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='there')),
+            PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
             TurnComplete(),
         ]
     )
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='Hi there')],
+                parts=[SpeechPart(speaker='assistant', transcript='Hi there')],
                 model_name='m',
                 timestamp=IsDatetime(),
             )
@@ -171,9 +171,9 @@ async def test_assistant_transcript_final_only() -> None:
     events = [e async for e in session]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=AudioWithTranscriptPart(speaker='assistant', transcript='')),
-            PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta='Hello world')),
-            PartEndEvent(index=0, part=AudioWithTranscriptPart(speaker='assistant', transcript='Hello world')),
+            PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hello world')),
+            PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
             TurnComplete(),
         ]
     )
@@ -187,14 +187,14 @@ async def test_user_transcript_final_becomes_request() -> None:
     events = [e async for e in session]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=AudioWithTranscriptPart(speaker='user', transcript='')),
-            PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta='what is ')),
-            PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta='the weather')),
-            PartEndEvent(index=0, part=AudioWithTranscriptPart(speaker='user', transcript='what is the weather')),
+            PartStartEvent(index=0, part=SpeechPart(speaker='user', transcript='')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='what is ')),
+            PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='the weather')),
+            PartEndEvent(index=0, part=SpeechPart(speaker='user', transcript='what is the weather')),
         ]
     )
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='what is the weather')])]
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='what is the weather')])]
     )
 
 
@@ -209,7 +209,7 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='hi')],
+                parts=[SpeechPart(speaker='assistant', transcript='hi')],
                 model_name='m',
                 timestamp=IsDatetime(),
             )
@@ -233,7 +233,7 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='the answer is ')],
+                parts=[SpeechPart(speaker='assistant', transcript='the answer is ')],
                 model_name='m',
                 timestamp=IsDatetime(),
             )
@@ -281,7 +281,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
     # History mirrors a classic tool-call round: user request, tool-call response, tool result, answer.
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript="what's the weather in Paris")]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript="what's the weather in Paris")]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc_1')],
                 model_name='m',
@@ -295,7 +295,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
                 ]
             ),
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript="It's sunny in Paris")],
+                parts=[SpeechPart(speaker='assistant', transcript="It's sunny in Paris")],
                 model_name='m',
                 timestamp=IsDatetime(),
             ),
@@ -735,7 +735,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
         [
             ModelResponse(
                 parts=[
-                    AudioWithTranscriptPart(
+                    SpeechPart(
                         speaker='assistant',
                         transcript='hi',
                         audio=BinaryContent(data=b'\x00\x01\x02\x03', media_type='audio/pcm'),
@@ -759,7 +759,7 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
         [
             ModelRequest(
                 parts=[
-                    AudioWithTranscriptPart(
+                    SpeechPart(
                         speaker='user',
                         transcript='hello',
                         audio=BinaryContent(data=b'\xaa\xbb\xcc', media_type='audio/pcm'),
@@ -779,7 +779,7 @@ async def test_empty_assistant_turn_produces_no_response() -> None:
     assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
     # The finalized part carries no transcript and no audio, so it isn't recorded.
     end = next(e for e in events if isinstance(e, PartEndEvent))
-    assert isinstance(end.part, AudioWithTranscriptPart) and end.part.transcript is None and end.part.audio is None
+    assert isinstance(end.part, SpeechPart) and end.part.transcript is None and end.part.audio is None
     assert session.new_messages() == []
 
 
@@ -791,7 +791,7 @@ async def test_empty_input_transcript_produces_no_request() -> None:
     events = [e async for e in session]
     assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartEndEvent']
     end = next(e for e in events if isinstance(e, PartEndEvent))
-    assert isinstance(end.part, AudioWithTranscriptPart) and end.part.transcript is None
+    assert isinstance(end.part, SpeechPart) and end.part.transcript is None
     assert session.new_messages() == []
 
 
@@ -801,7 +801,7 @@ async def test_transcript_only_default_drops_audio() -> None:
     _ = [e async for e in session]
     response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
-    assert isinstance(response.parts[0], AudioWithTranscriptPart)
+    assert isinstance(response.parts[0], SpeechPart)
     assert response.parts[0].audio is None
 
 
@@ -817,7 +817,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
         [
             ModelRequest(parts=[UserPromptPart(content='earlier', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='reply')],
+                parts=[SpeechPart(speaker='assistant', transcript='reply')],
                 model_name='m',
                 timestamp=IsDatetime(),
             ),
@@ -826,7 +826,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='reply')],
+                parts=[SpeechPart(speaker='assistant', transcript='reply')],
                 model_name='m',
                 timestamp=IsDatetime(),
             )
@@ -866,9 +866,9 @@ async def test_handoff_to_standard_agent_run() -> None:
     assert result.output == snapshot('seen 3 messages')
     assert result.all_messages()[:2] == snapshot(
         [
-            ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='hello')]),
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')]),
             ModelResponse(
-                parts=[AudioWithTranscriptPart(speaker='assistant', transcript='hi there')],
+                parts=[SpeechPart(speaker='assistant', transcript='hi there')],
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
             ),
@@ -935,7 +935,7 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
         _ = [e async for e in session]
         response = session.new_messages()[0]
     assert isinstance(response, ModelResponse)
-    assert isinstance(response.parts[0], AudioWithTranscriptPart)
+    assert isinstance(response.parts[0], SpeechPart)
     assert response.parts[0].audio == BinaryContent(data=b'\x07', media_type='audio/pcm')
 
 

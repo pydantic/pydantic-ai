@@ -17,7 +17,6 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -32,6 +31,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1030,7 +1030,7 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
-                    elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                         pass
                     else:
@@ -1623,7 +1623,7 @@ def _content_model_response(
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
-        elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+        elif isinstance(item, SpeechPart):  # pragma: no cover
             # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
             part = None
         else:

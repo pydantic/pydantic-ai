@@ -19,7 +19,6 @@ from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_ca
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -35,6 +34,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -557,7 +557,7 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
-                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
                         # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:

@@ -49,17 +49,16 @@ from ._base import (
     RealtimeModel,
     ReconnectPolicy,
 )
-from .openai import (
-    OpenAIRealtimeConnection,
-    ServerVAD,
-    _expect_event,  # pyright: ignore[reportPrivateUsage]
-    _realtime_websocket_url,  # pyright: ignore[reportPrivateUsage]
-    _seed_items,  # pyright: ignore[reportPrivateUsage]
-    _tool_choice_config,  # pyright: ignore[reportPrivateUsage]
-    _tool_def_to_openai,  # pyright: ignore[reportPrivateUsage]
-    _turn_detection_config,  # pyright: ignore[reportPrivateUsage]
+from ._openai_protocol import (
+    expect_event,
     map_event as _map_openai_event,
+    realtime_websocket_url,
+    seed_items,
+    tool_choice_config,
+    tool_def_to_openai,
+    turn_detection_config,
 )
+from .openai import OpenAIRealtimeConnection, ServerVAD
 
 if TYPE_CHECKING:
     from ..providers.xai import XaiProvider
@@ -174,19 +173,19 @@ class XaiRealtimeModel(RealtimeModel):
             audio_input['transcription'] = {'model': self.input_transcription_model}
         config: dict[str, Any] = {
             'instructions': instructions,
-            'turn_detection': _turn_detection_config(self.turn_detection),
+            'turn_detection': turn_detection_config(self.turn_detection),
             'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
         }
         if self.voice:
             config['voice'] = self.voice
         if tools:
-            config['tools'] = [_tool_def_to_openai(t) for t in tools]
+            config['tools'] = [tool_def_to_openai(t) for t in tools]
         if model_settings:
             if (max_tokens := model_settings.get('max_tokens')) is not None:
                 config['max_output_tokens'] = max_tokens
             if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
                 config['parallel_tool_calls'] = parallel_tool_calls
-            if (tool_choice := _tool_choice_config(model_settings.get('tool_choice'))) is not None:
+            if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
                 config['tool_choice'] = tool_choice
         return config
 
@@ -206,7 +205,7 @@ class XaiRealtimeModel(RealtimeModel):
                 f'{", ".join(type(t).__name__ for t in native_tools)}).'
             )
         # The `model` query parameter is required: without it the server silently falls back to a default.
-        url = f'{_realtime_websocket_url(self._provider.base_url)}?model={self.model}'
+        url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._api_key}'}
         session_config = self._session_config(instructions, tools, model_settings)
 
@@ -223,16 +222,16 @@ class XaiRealtimeModel(RealtimeModel):
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.created', timeout=self.handshake_timeout)
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
-            await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
             return ws
 
         try:
             ws = await dial()
             # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
             # re-seed: server state is lost on drop and a `Reconnected` starts a fresh turn.
-            for item in _seed_items(messages or ()):
+            for item in seed_items(messages or ()):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield XaiRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
         finally:

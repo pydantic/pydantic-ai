@@ -18,12 +18,12 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    AudioWithTranscriptPart,
     BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    SpeechPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -74,7 +74,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert isinstance(response, ModelResponse)
     assert response.model_name == _MODEL
     part = response.parts[0]
-    assert isinstance(part, AudioWithTranscriptPart)
+    assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
     assert part.transcript == snapshot('Hello there.')
     assert isinstance(part.audio, BinaryContent)
@@ -134,7 +134,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     final = messages[3]
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
-    assert isinstance(final_part, AudioWithTranscriptPart)
+    assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
 
 
@@ -168,7 +168,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     reply = messages[-1]
     assert isinstance(reply, ModelResponse)
     reply_part = reply.parts[0]
-    assert isinstance(reply_part, AudioWithTranscriptPart)
+    assert isinstance(reply_part, SpeechPart)
     transcript = (reply_part.transcript or '').lower()
     assert 'alice' in transcript and 'teal' in transcript
 

@@ -12,7 +12,6 @@ from pydantic_ai.exceptions import ModelAPIError
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    AudioWithTranscriptPart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -24,6 +23,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -298,7 +298,7 @@ class CohereModel(Model[AsyncClientV2]):
                         item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
-                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
                         # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:
@@ -386,7 +386,7 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                 pass
             else:

@@ -11,8 +11,6 @@ from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
-    AudioWithTranscriptPart,
-    AudioWithTranscriptPartDelta,
     CompactionPart,
     FilePart,
     FinalResultEvent,
@@ -25,6 +23,8 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -355,7 +355,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case CompactionPart():  # pragma: no cover
                 async for e in self.handle_compaction(part):
                     yield e
-            case AudioWithTranscriptPart():  # pragma: no cover
+            case SpeechPart():  # pragma: no cover
                 # Realtime audio parts don't flow through UI event streams.
                 pass
 
@@ -385,7 +385,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPartDelta():
                 async for e in self.handle_tool_call_delta(delta):
                     yield e
-            case AudioWithTranscriptPartDelta():  # pragma: no cover
+            case SpeechPartDelta():  # pragma: no cover
                 # Realtime audio deltas don't flow through UI event streams.
                 pass
 
@@ -423,7 +423,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
-            case AudioWithTranscriptPart():  # pragma: no cover
+            case SpeechPart():  # pragma: no cover
                 # Realtime audio parts don't flow through UI event streams.
                 pass
 

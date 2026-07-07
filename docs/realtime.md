@@ -74,7 +74,7 @@ Grok Voice supports cancellation-based barge-in but not output truncation (see
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import AudioWithTranscriptPart, AudioWithTranscriptPartDelta
+from pydantic_ai.messages import SpeechPart, SpeechPartDelta
 from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -92,9 +92,9 @@ async def main():
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
         async for event in session:
             match event:
-                case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if chunk:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
                     speaker.play(chunk)
-                case PartEndEvent(part=AudioWithTranscriptPart(speaker='assistant', transcript=transcript)):
+                case PartEndEvent(part=SpeechPart(speaker='assistant', transcript=transcript)):
                     print('assistant:', transcript)
 ```
 
@@ -114,13 +114,13 @@ A session speaks the same event vocabulary as a standard streamed agent run: ite
 [`pydantic_ai.messages`][pydantic_ai.messages] for content, plus realtime control-plane events.
 
 Spoken content (both the user's and the model's) streams as an
-[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart] (distinguished by
+[`SpeechPart`][pydantic_ai.messages.SpeechPart] (distinguished by
 `speaker`), assembled through the standard part events:
 
 | Event | Meaning |
 | --- | --- |
-| [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — an `AudioWithTranscriptPart` (assistant or user) or a `ToolCallPart`. |
-| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`AudioWithTranscriptPartDelta`][pydantic_ai.messages.AudioWithTranscriptPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text. |
+| [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — a `SpeechPart` (assistant or user) or a `ToolCallPart`. |
+| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text. |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A part completed; `part.transcript` holds the full transcript (and retained `audio`, per `audio_retention`). |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and its `ToolReturnPart` result was sent back to the model. |
@@ -145,7 +145,7 @@ A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMe
 rest of the framework: seed a session from an earlier conversation, and hand a finished session off
 to a text [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] for summarization, structured
 extraction, or follow-up. Spoken turns are recorded as
-[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s; everything else is the
+[`SpeechPart`][pydantic_ai.messages.SpeechPart]s; everything else is the
 ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] /
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] shape, including tool calls and results.
 
@@ -189,7 +189,7 @@ replayed to the provider as initial conversation items, but audio is not (see
 By default only transcripts are kept on the history parts. Pass
 `audio_retention=` to [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] to also retain
 the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent]) on the
-`AudioWithTranscriptPart`s, at the cost of memory:
+`SpeechPart`s, at the cost of memory:
 
 | [`audio_retention`][pydantic_ai.realtime.AudioRetention] | Retains |
 | --- | --- |

@@ -14,8 +14,6 @@ from opentelemetry.trace import Span, SpanKind
 from .._instrumentation import response_attributes, safe_to_json
 from ..exceptions import UsageLimitExceeded, UserError
 from ..messages import (
-    AudioWithTranscriptPart,
-    AudioWithTranscriptPartDelta,
     BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -26,6 +24,8 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -128,7 +128,7 @@ class RealtimeSession:
 
     - assistant speech becomes [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
       [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
-      events carrying an [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]
+      events carrying an [`SpeechPart`][pydantic_ai.messages.SpeechPart]
       (`speaker='assistant'`), finalized into a [`ModelResponse`][pydantic_ai.messages.ModelResponse]
       at the end of the turn;
     - user speech becomes the same part events with `speaker='user'`, finalized into a
@@ -200,13 +200,13 @@ class RealtimeSession:
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
         self._pending_response_usage = RequestUsage()
-        self._active_assistant: AudioWithTranscriptPart | None = None
+        self._active_assistant: SpeechPart | None = None
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
 
         # In-flight user request being assembled from input-transcript events.
-        self._active_user: AudioWithTranscriptPart | None = None
+        self._active_user: SpeechPart | None = None
         self._user_transcript = ''
         self._input_audio = bytearray()
 
@@ -300,7 +300,7 @@ class RealtimeSession:
         if self._active_assistant is not None:
             return []
         self._ensure_chat_span()
-        part = AudioWithTranscriptPart(speaker='assistant', transcript='')
+        part = SpeechPart(speaker='assistant', transcript='')
         self._active_assistant = part
         self._active_assistant_index = len(self._response_parts)
         self._assistant_transcript = ''
@@ -315,7 +315,7 @@ class RealtimeSession:
             events.append(
                 PartDeltaEvent(
                     index=self._active_assistant_index,
-                    delta=AudioWithTranscriptPartDelta(transcript_delta=appended),
+                    delta=SpeechPartDelta(transcript_delta=appended),
                 )
             )
         return events
@@ -324,9 +324,7 @@ class RealtimeSession:
         events = self._ensure_active_assistant()
         if self._retain_output:
             self._output_audio.extend(data)
-        events.append(
-            PartDeltaEvent(index=self._active_assistant_index, delta=AudioWithTranscriptPartDelta(audio_chunk=data))
-        )
+        events.append(PartDeltaEvent(index=self._active_assistant_index, delta=SpeechPartDelta(audio_chunk=data)))
         return events
 
     def _finalize_assistant_part(self) -> list[RealtimeSessionEvent]:
@@ -427,7 +425,7 @@ class RealtimeSession:
     def _handle_input_transcript(self, text: str, is_final: bool) -> list[RealtimeSessionEvent]:
         events: list[RealtimeSessionEvent] = []
         if self._active_user is None:
-            part = AudioWithTranscriptPart(speaker='user', transcript='')
+            part = SpeechPart(speaker='user', transcript='')
             self._active_user = part
             self._user_transcript = ''
             events.append(PartStartEvent(index=0, part=part))
@@ -435,7 +433,7 @@ class RealtimeSession:
         assert self._active_user is not None
         self._active_user = replace(self._active_user, transcript=self._user_transcript)
         if appended:
-            events.append(PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta=appended)))
+            events.append(PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta=appended)))
         if is_final:
             events.extend(self._finalize_user())
         return events

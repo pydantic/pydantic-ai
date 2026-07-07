@@ -25,8 +25,6 @@ import logfire
 
 from pydantic_ai import Agent
 from pydantic_ai.realtime import (
-    AudioWithTranscriptPart,
-    AudioWithTranscriptPartDelta,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -34,6 +32,8 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeSessionEvent,
     SessionError,
+    SpeechPart,
+    SpeechPartDelta,
     SpeechStarted,
 )
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -108,21 +108,15 @@ async def handle_event(
 ) -> bool:
     """Handle one session event; return `True` to stop the session."""
     match event:
-        case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if (
-            chunk
-        ):
+        case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
             play_queue.put_nowait(chunk)
         case SpeechStarted():
             # Barge-in: drop buffered audio locally and cancel the model's turn.
             drain(play_queue)
             await session.interrupt()
-        case PartEndEvent(
-            part=AudioWithTranscriptPart(speaker='user', transcript=transcript)
-        ):
+        case PartEndEvent(part=SpeechPart(speaker='user', transcript=transcript)):
             print(f'you: {transcript}')
-        case PartEndEvent(
-            part=AudioWithTranscriptPart(speaker='assistant', transcript=transcript)
-        ):
+        case PartEndEvent(part=SpeechPart(speaker='assistant', transcript=transcript)):
             print(f'assistant: {transcript}')
         case FunctionToolCallEvent(part=call):
             print(f'[calling {call.tool_name}]')

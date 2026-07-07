@@ -218,13 +218,13 @@ For voice models that stream audio over a persistent connection (OpenAI Realtime
 `agent.realtime_session()` instead of `run()`. It reuses the agent's tools and instructions and runs
 the tool loop for you. Stream input with `send_audio`/`send_text`/`send_image`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
-`PartDeltaEvent` / `PartEndEvent` carrying `AudioWithTranscriptPart`s and `ToolCallPart`s, plus
+`PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`SpeechStarted`,
 `TurnComplete`, ...).
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import AudioWithTranscriptPart, AudioWithTranscriptPartDelta
+from pydantic_ai.messages import SpeechPart, SpeechPartDelta
 from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -236,9 +236,9 @@ async def main(microphone_chunk: bytes):
         await session.send_audio(microphone_chunk)  # PCM16 bytes
         async for event in session:
             match event:
-                case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if chunk:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
                     ...  # play audio out
-                case PartEndEvent(part=AudioWithTranscriptPart(speaker='user', transcript=t)):
+                case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
                     print('user said:', t)
 
     # A session builds ordinary ModelMessage history: hand it off to a text agent.

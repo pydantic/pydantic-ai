@@ -32,9 +32,9 @@ except ImportError as _import_error:
 
 from ..exceptions import UserError
 from ..messages import (
-    AudioWithTranscriptPart,
     ModelMessage,
     ModelRequest,
+    SpeechPart,
     TextPart,
     UserPromptPart,
 )
@@ -148,14 +148,14 @@ def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | 
             for req_part in message.parts:
                 if isinstance(req_part, UserPromptPart) and (text := _user_prompt_text(req_part)):
                     texts.append(text)
-                elif isinstance(req_part, AudioWithTranscriptPart) and req_part.transcript:
+                elif isinstance(req_part, SpeechPart) and req_part.transcript:
                     texts.append(req_part.transcript)
             role = 'user'
         else:
             for resp_part in message.parts:
                 if isinstance(resp_part, TextPart) and resp_part.content:
                     texts.append(resp_part.content)
-                elif isinstance(resp_part, AudioWithTranscriptPart) and resp_part.transcript:
+                elif isinstance(resp_part, SpeechPart) and resp_part.transcript:
                     texts.append(resp_part.transcript)
             role = 'model'
         if texts:

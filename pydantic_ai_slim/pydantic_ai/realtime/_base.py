@@ -42,7 +42,7 @@ AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'inp
 - `'output'`: also retain the model's spoken audio.
 - `'both'`: retain both sides' audio.
 
-Retained audio is stored on the [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]'s
+Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'s
 `audio` as raw PCM [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Alignment between retained
 audio and its transcript is approximate.
 """
@@ -336,7 +336,7 @@ This is the provider-facing vocabulary: providers translate their wire protocol 
 #
 # A session translates the low-level codec events into the shared message/part event vocabulary from
 # `pydantic_ai.messages`: `AudioDelta`/`Transcript`/`InputTranscript` become `PartStartEvent` /
-# `PartDeltaEvent` / `PartEndEvent` for `AudioWithTranscriptPart`s, and `ToolCall` becomes a
+# `PartDeltaEvent` / `PartEndEvent` for `SpeechPart`s, and `ToolCall` becomes a
 # `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
 # execution. The remaining control-plane events pass through unchanged.
 
@@ -361,7 +361,7 @@ RealtimeSessionEvent = TypeAliasType(
 
 Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
-events (carrying [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s and
+events (carrying [`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as realtime

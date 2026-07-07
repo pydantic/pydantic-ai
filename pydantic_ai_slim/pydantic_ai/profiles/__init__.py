@@ -75,7 +75,7 @@ class ModelProfile(TypedDict, total=False):
     supports_audio_input: bool
     """Whether the model supports audio in user messages. Default: `False`.
 
-    Used when converting `AudioWithTranscriptPart`s from realtime session history in
+    Used when converting `SpeechPart`s from realtime session history in
     `Model.prepare_messages`: if `True`, retained audio is sent to the model as `BinaryContent`;
     otherwise the transcript text is used.
     """

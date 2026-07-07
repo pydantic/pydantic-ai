@@ -17,7 +17,6 @@ from ..capabilities.x_search import XSearch as XSearch  # re-export for backward
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -34,6 +33,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -371,7 +371,7 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                 pass
             else:
@@ -438,7 +438,7 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
                 pass
-            elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(item, SpeechPart):  # pragma: no cover
                 # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                 pass
             else:

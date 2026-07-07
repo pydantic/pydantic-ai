@@ -28,7 +28,6 @@ except ImportError as _import_error:
 
 from pydantic_ai import (
     AudioUrl,
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -45,6 +44,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1094,7 +1094,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                     ],
                                 }
                             )
-                    elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                         pass
                     else:

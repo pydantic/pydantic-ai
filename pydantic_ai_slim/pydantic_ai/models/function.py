@@ -16,7 +16,6 @@ from .._instrumentation import get_instructions
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..messages import (
-    AudioWithTranscriptPart,
     BinaryContent,
     CompactionPart,
     FilePart,
@@ -27,6 +26,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -401,7 +401,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                elif isinstance(part, SpeechPart):  # pragma: no cover
                     # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                     pass
                 else:
@@ -420,7 +420,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
-                elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+                elif isinstance(part, SpeechPart):  # pragma: no cover
                     # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                     pass
                 else:

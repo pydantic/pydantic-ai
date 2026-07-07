@@ -31,7 +31,6 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
-    AudioWithTranscriptPart,
     BaseToolCallPart,
     BinaryImage,
     FilePart,
@@ -48,6 +47,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -406,16 +406,14 @@ class Model(ABC, Generic[InterfaceClient]):
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
-        `AudioWithTranscriptPart`s from realtime session history into `UserPromptPart`s /
+        `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        messages = _convert_audio_with_transcript_parts(
-            messages, include_audio=self.profile.get('supports_audio_input', False)
-        )
+        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
             from .._tool_search import synthesize_local_tool_search_messages
@@ -1359,8 +1357,8 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
 
 
-def _convert_audio_with_transcript_parts(messages: list[ModelMessage], *, include_audio: bool) -> list[ModelMessage]:
-    """Convert `AudioWithTranscriptPart`s from realtime session history into parts any model can consume.
+def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) -> list[ModelMessage]:
+    """Convert `SpeechPart`s from realtime session history into parts any model can consume.
 
     User-speaker parts become `UserPromptPart`s carrying the retained audio (when `include_audio` is
     `True` and audio was retained) or the transcript text; assistant-speaker parts become `TextPart`s
@@ -1368,7 +1366,7 @@ def _convert_audio_with_transcript_parts(messages: list[ModelMessage], *, includ
     parts. Returns the original list when nothing changed so the identity check in `_make_request`
     can skip the redundant `_clean_message_history` pass.
     """
-    if not any(isinstance(part, AudioWithTranscriptPart) for message in messages for part in message.parts):
+    if not any(isinstance(part, SpeechPart) for message in messages for part in message.parts):
         return messages
 
     new_messages: list[ModelMessage] = []
@@ -1376,7 +1374,7 @@ def _convert_audio_with_transcript_parts(messages: list[ModelMessage], *, includ
         if isinstance(message, ModelRequest):
             request_parts: list[ModelRequestPart] = []
             for part in message.parts:
-                if isinstance(part, AudioWithTranscriptPart):
+                if isinstance(part, SpeechPart):
                     if include_audio and part.audio is not None:
                         request_parts.append(UserPromptPart(content=[part.audio]))
                     elif part.transcript:
@@ -1389,7 +1387,7 @@ def _convert_audio_with_transcript_parts(messages: list[ModelMessage], *, includ
         else:
             response_parts: list[ModelResponsePart] = []
             for part in message.parts:
-                if isinstance(part, AudioWithTranscriptPart):
+                if isinstance(part, SpeechPart):
                     if part.transcript:
                         response_parts.append(TextPart(content=part.transcript))
                     # Assistant audio without a transcript has nothing to send.

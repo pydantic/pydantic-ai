@@ -36,6 +36,7 @@ from pydantic_ai.realtime import (
     TurnComplete,
     openai as rt_openai,
 )
+from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
 from pydantic_ai.realtime.openai import (
     OpenAIRealtimeConnection,
     OpenAIRealtimeModel,
@@ -486,9 +487,9 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.anyio
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.messages import (
-        AudioWithTranscriptPart,
         ModelRequest,
         ModelResponse,
+        SpeechPart,
         SystemPromptPart,
         TextPart,
         ToolCallPart,
@@ -500,8 +501,8 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     history = [
         ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
         ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
-        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
-        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='spoken question')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
     model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x', messages=history):
@@ -964,11 +965,11 @@ async def test_connect_rejects_native_tools() -> None:
 
 def test_realtime_websocket_url_derivation() -> None:
     # The default OpenAI HTTP base URL maps to the documented realtime WebSocket URL.
-    assert rt_openai._realtime_websocket_url('https://api.openai.com/v1/') == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+    assert realtime_websocket_url('https://api.openai.com/v1/') == 'wss://api.openai.com/v1/realtime'
     # A custom (e.g. self-hosted, non-TLS) base URL keeps its host/path and swaps the scheme.
-    assert rt_openai._realtime_websocket_url('http://localhost:8000/v1') == 'ws://localhost:8000/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+    assert realtime_websocket_url('http://localhost:8000/v1') == 'ws://localhost:8000/v1/realtime'
     # A base URL with neither scheme is left untouched apart from the appended path.
-    assert rt_openai._realtime_websocket_url('localhost:8000/v1') == 'localhost:8000/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+    assert realtime_websocket_url('localhost:8000/v1') == 'localhost:8000/v1/realtime'
 
 
 def test_default_provider_is_openai() -> None:

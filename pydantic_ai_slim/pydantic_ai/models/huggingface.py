@@ -14,7 +14,6 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -30,6 +29,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -407,7 +407,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
-                    elif isinstance(item, AudioWithTranscriptPart):  # pragma: no cover
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
                         # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
                         pass
                     else:
@@ -490,7 +490,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
                 pass
             else:

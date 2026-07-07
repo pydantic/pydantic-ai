@@ -16,7 +16,6 @@ from .. import _utils
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
-    AudioWithTranscriptPart,
     CompactionPart,
     FilePart,
     ModelMessage,
@@ -27,6 +26,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -371,11 +371,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
-                # NOTE: There's no way to reach this part of the code, since `AudioWithTranscriptPart`s are converted in `Model.prepare_messages`.
-                assert False, (
-                    'This should be unreachable — `AudioWithTranscriptPart`s are converted in `Model.prepare_messages`.'
-                )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since `SpeechPart`s are converted in `Model.prepare_messages`.
+                assert False, 'This should be unreachable — `SpeechPart`s are converted in `Model.prepare_messages`.'
             else:
                 assert_never(part)
 

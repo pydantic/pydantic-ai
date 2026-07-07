@@ -76,7 +76,7 @@ session. The session translates codec events into the shared vocabulary from
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] /
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] (carrying
-[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s and
+[`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as the

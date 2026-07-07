@@ -493,9 +493,9 @@ async def test_connect_streams_events() -> None:
 
 async def test_connect_seeds_message_history() -> None:
     from pydantic_ai.messages import (
-        AudioWithTranscriptPart,
         ModelRequest,
         ModelResponse,
+        SpeechPart,
         SystemPromptPart,
         TextPart,
         ToolCallPart,
@@ -507,8 +507,8 @@ async def test_connect_seeds_message_history() -> None:
     history = [
         ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
         ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
-        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
-        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='spoken question')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
     model = _model(session)
     async with model.connect(instructions='x', messages=history) as conn:

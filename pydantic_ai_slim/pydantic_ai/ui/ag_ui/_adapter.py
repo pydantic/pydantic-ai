@@ -21,7 +21,6 @@ from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
-    AudioWithTranscriptPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -35,6 +34,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -680,7 +680,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
@@ -807,7 +807,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in AG-UI
-            elif isinstance(part, AudioWithTranscriptPart):  # pragma: no cover
+            elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)

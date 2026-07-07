@@ -15,13 +15,13 @@ into the shared message/part event vocabulary from [`pydantic_ai.messages`][pyda
 """
 
 from ..messages import (
-    AudioWithTranscriptPart,
-    AudioWithTranscriptPartDelta,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
 )
 from ._base import (
     AudioDelta,
@@ -60,8 +60,8 @@ from ._session import RealtimeSession, ToolRunner
 
 __all__ = (
     # Shared message/part events (re-exported from `pydantic_ai.messages`) that a session yields.
-    'AudioWithTranscriptPart',
-    'AudioWithTranscriptPartDelta',
+    'SpeechPart',
+    'SpeechPartDelta',
     'FunctionToolCallEvent',
     'FunctionToolResultEvent',
     'PartDeltaEvent',
