@@ -866,7 +866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         if isinstance(item, UploadedFile) and item.provider_name == self.system:
                             return True
                 elif isinstance(part, ToolReturnPart):
-                    for item in part.content_items(mode='str'):
+                    for item in part.content_items(mode='raw'):
                         if isinstance(item, UploadedFile) and item.provider_name == self.system:
                             return True
         return False
