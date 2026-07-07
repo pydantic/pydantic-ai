@@ -70,6 +70,7 @@ OnCompleteFunc: TypeAlias = (
 )
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specific events."""
 
+
 @dataclass
 class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """Base class for UI event stream transformers.
