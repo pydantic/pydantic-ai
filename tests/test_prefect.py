@@ -1447,9 +1447,24 @@ async def test_repeated_run_hits_cache():
     )
 
     prompt = f'What is 2+2? {uuid.uuid4()}'
-    await prefect_agent.run(prompt)
-    await prefect_agent.run(prompt)
+    result1 = await prefect_agent.run(prompt)
+    result2 = await prefect_agent.run(prompt)
     assert call_count == 1
+
+    # A replayed response must keep the run/conversation that produced it. If the cached payload
+    # were re-stamped with the replaying run's IDs, provider server-side state guards (e.g. OpenAI
+    # `openai_conversation_id='auto'`) would treat another conversation's response as their own and
+    # continue its provider-side conversation.
+    response1 = result1.all_messages()[-1]
+    response2 = result2.all_messages()[-1]
+    assert isinstance(response1, ModelResponse) and isinstance(response2, ModelResponse)
+    assert response1.run_id is not None
+    assert response1.conversation_id is not None
+    assert response2.run_id == response1.run_id
+    assert response2.conversation_id == response1.conversation_id
+    request2 = result2.all_messages()[0]
+    assert request2.run_id is not None
+    assert response2.run_id != request2.run_id
 
 
 # Test custom model settings
