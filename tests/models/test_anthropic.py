@@ -2975,7 +2975,7 @@ async def test_files_api_beta_added_only_for_anthropic_uploaded_file(
     await agent.run(content)
 
     # `betas` may be absent entirely (NOT_GIVEN/OMIT) when no betas are required.
-    betas = get_mock_chat_completion_kwargs(mock_client)[0].get('betas') or []
+    betas: list[str] = get_mock_chat_completion_kwargs(mock_client)[0].get('betas') or []
     assert ('files-api-2025-04-14' in betas) is expect_beta
 
 
