@@ -28,7 +28,7 @@ class UsageBase:
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
     ] = 0
-    """Number of input/prompt tokens."""
+    """Number of input/prompt tokens, including both cached and uncached tokens."""
 
     cache_write_tokens: int = 0
     """Number of tokens written to the cache."""
@@ -286,6 +286,10 @@ class UsageLimits:
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop
     protection that cumulative limits provide.
+
+    Note that `input_tokens` (and therefore this limit) includes cached-prefix tokens,
+    normalized consistently across providers: a request served largely from cache still
+    counts its full context size toward this limit. This caps context size, not cache-miss cost.
 
     Set `count_tokens_before_request=True` to enforce this preemptively; otherwise the
     request is sent before the limit is checked, so the oversized request is still
