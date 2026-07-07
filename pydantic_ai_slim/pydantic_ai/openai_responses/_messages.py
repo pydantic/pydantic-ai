@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from typing_extensions import assert_never
+
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -16,7 +18,14 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from .types import FunctionCall, InputMessage, MessageContent, ResponsesInputItem, ResponsesRequest
+from .types import (
+    FunctionCall,
+    FunctionCallOutput,
+    InputMessage,
+    MessageContent,
+    ResponsesInputItem,
+    ResponsesRequest,
+)
 
 
 class OrphanedFunctionCallOutputError(ValueError):
@@ -72,7 +81,7 @@ def load_messages(request: ResponsesRequest) -> list[ModelMessage]:
         elif isinstance(item, FunctionCall):
             tool_names[item.call_id] = item.name
             add_response_part(ToolCallPart(tool_name=item.name, args=item.arguments, tool_call_id=item.call_id))
-        else:
+        elif isinstance(item, FunctionCallOutput):
             if item.call_id not in tool_names:
                 raise OrphanedFunctionCallOutputError(item.call_id)
             add_request_part(
@@ -82,5 +91,7 @@ def load_messages(request: ResponsesRequest) -> list[ModelMessage]:
                     tool_call_id=item.call_id,
                 )
             )
+        else:
+            assert_never(item)  # pragma: no cover
 
     return messages
