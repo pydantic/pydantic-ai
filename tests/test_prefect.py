@@ -83,7 +83,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsSameStr, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1455,16 +1455,17 @@ async def test_repeated_run_hits_cache():
     # were re-stamped with the replaying run's IDs, provider server-side state guards (e.g. OpenAI
     # `openai_conversation_id='auto'`) would treat another conversation's response as their own and
     # continue its provider-side conversation.
-    response1 = result1.all_messages()[-1]
-    response2 = result2.all_messages()[-1]
-    assert isinstance(response1, ModelResponse) and isinstance(response2, ModelResponse)
-    assert response1.run_id is not None
-    assert response1.conversation_id is not None
-    assert response2.run_id == response1.run_id
-    assert response2.conversation_id == response1.conversation_id
+    response1, response2 = result1.all_messages()[-1], result2.all_messages()[-1]
+    assert [response1.run_id, response1.conversation_id, response2.run_id, response2.conversation_id] == [
+        (producing_run_id := IsSameStr()),
+        (producing_conversation_id := IsSameStr()),
+        producing_run_id,
+        producing_conversation_id,
+    ]
+    # The replay belongs to a different run: run 2's own request carries its own fresh `run_id`.
     request2 = result2.all_messages()[0]
-    assert request2.run_id is not None
-    assert response2.run_id != request2.run_id
+    assert request2.run_id == IsStr()
+    assert request2.run_id != response2.run_id
 
 
 # Test custom model settings
