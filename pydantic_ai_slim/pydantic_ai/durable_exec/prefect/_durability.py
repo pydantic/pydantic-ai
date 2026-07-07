@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -68,10 +68,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         tool_task_config: TaskConfig | None = None,
         tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
-        prefectify_toolset_func: Callable[
-            [AbstractToolset[AgentDepsT], TaskConfig, TaskConfig, dict[str, TaskConfig | None]],
-            AbstractToolset[AgentDepsT],
-        ] = _default_prefectify_toolset,
     ):
         """Create a PrefectDurability capability.
 
@@ -84,12 +80,10 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             tool_task_config: Default Prefect task config for tool call tasks.
             tool_task_config_by_name: Per-tool task configs keyed by tool name.
             event_stream_handler_task_config: Prefect task config for event handler tasks.
-            prefectify_toolset_func: Custom function for wrapping leaf toolsets.
         """
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._event_stream_handler = event_stream_handler
-        self._prefectify_toolset_func = prefectify_toolset_func
 
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
@@ -253,7 +247,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         """Wrap leaf toolsets as Prefect tasks."""
 
         def prefectify(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            wrapped = self._prefectify_toolset_func(
+            wrapped = _default_prefectify_toolset(
                 ts,
                 self._mcp_task_config,
                 self._tool_task_config,

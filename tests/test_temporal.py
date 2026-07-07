@@ -5379,22 +5379,12 @@ def test_durability_non_temporal_wrapper_toolset_not_in_registry():
 
 def test_durability_get_wrapper_toolset_returns_none():
     """get_wrapper_toolset returns None when _temporal_toolsets_by_id is empty."""
-    # Use a no-op temporalize_toolset_func so no toolsets get wrapped
-    agent = Agent(
-        _durability_fn_model,
-        name='no_wrap_test',
-        capabilities=[
-            TemporalDurability(
-                temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type, agent: ts,
-            )
-        ],
-    )
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-    assert len(bound._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
+    # An unbound capability has an empty registry — `for_agent` is what populates it.
+    durability = TemporalDurability()
+    assert len(durability._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
 
-    dummy_toolset = FunctionToolset(id='dummy')
-    assert bound.get_wrapper_toolset(dummy_toolset) is None
+    dummy_toolset = FunctionToolset[object](id='dummy')
+    assert durability.get_wrapper_toolset(dummy_toolset) is None
 
 
 # --- get_wrapper_toolset swap returns unchanged toolset ---

@@ -4,7 +4,7 @@ import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -96,24 +96,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         provider_factory: Callable[[str], Provider[Any]] | None = None,
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        temporalize_toolset_func: Callable[
-            [
-                AbstractToolset[AgentDepsT],
-                str,
-                ActivityConfig,
-                dict[str, ActivityConfig | Literal[False]],
-                type[AgentDepsT],
-                type[TemporalRunContext[AgentDepsT]],
-                AbstractAgent[AgentDepsT, Any] | None,
-            ],
-            AbstractToolset[AgentDepsT],
-        ] = _default_temporalize_toolset,
     ):
         """Create a TemporalDurability capability.
 
@@ -132,7 +120,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 `agent.override(model=...)`. Lets a workflow accept arbitrary
                 model strings without pre-registering each one in `models=`.
             deps_type: The type of the agent's dependencies, needed for Temporal
-                serialization of activity parameters.
+                serialization of activity parameters. Defaults to the agent's own
+                `deps_type`, discovered when the capability binds via `for_agent()`.
             event_stream_handler: Optional handler for streaming events. When set,
                 model requests use a streaming activity that invokes this handler
                 inside the activity.
@@ -144,8 +133,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
-            temporalize_toolset_func: Custom function for wrapping leaf toolsets.
-                Defaults to the built-in `temporalize_toolset`.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -165,7 +152,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self._extra_models = dict(models) if models else {}
         self._provider_factory = provider_factory
         self._deps_type = deps_type
-        self._temporalize_toolset_func = temporalize_toolset_func
 
         # Normalize activity config
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
@@ -257,6 +243,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         agent.root_capability.apply(_collect_class)
         bound._bound_capability_classes = frozenset(bound_classes)
 
+        # Discover the deps type from the agent unless explicitly configured.
+        if bound._deps_type is None:
+            bound._deps_type = cast('type[AgentDepsT]', agent.deps_type)
+
         # Register activities on the bound copy
         bound._temporal_toolsets_by_id = {}
         bound._temporal_activities = []
@@ -267,6 +257,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Register all Temporal activities for model requests, event streaming, and toolsets."""
         activity_name_prefix = f'agent__{self.name}'
+        assert self._deps_type is not None  # set by `for_agent` before activities are registered
         deps_type = self._deps_type
         run_context_type = self.run_context_type
         event_stream_handler = self._event_stream_handler
@@ -328,6 +319,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 toolset,
                 activity_name_prefix=activity_name_prefix,
                 activities=activities,
+                deps_type=deps_type,
             )
 
         self._temporal_activities = activities
@@ -338,6 +330,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         *,
         activity_name_prefix: str,
         activities: list[Callable[..., Any]],
+        deps_type: type[AgentDepsT],
     ) -> None:
         """Wrap each leaf toolset in a Temporal wrapper and collect activities."""
 
@@ -350,12 +343,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                     "The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            wrapped = self._temporalize_toolset_func(
+            wrapped = _default_temporalize_toolset(
                 ts,
                 activity_name_prefix,
                 {**self.activity_config, **self._toolset_activity_config.get(ts_id, {})},
                 {},  # per-tool config comes from tool metadata on the capability path
-                self._deps_type,
+                deps_type,
                 self.run_context_type,
                 self._agent,
             )
