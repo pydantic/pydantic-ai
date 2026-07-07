@@ -8825,6 +8825,55 @@ async def test_event_stream_usage_chunk_emitted_for_non_empty_usage():
     ]
 
 
+async def test_sdk_version_5_does_not_emit_usage_chunk():
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=40),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(
+                    input_tokens=40,
+                    cache_read_tokens=8,
+                    output_tokens=12,
+                    details={'reasoning_tokens': 5},
+                ),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
+
+
 async def test_event_stream_usage_chunk_skipped_for_empty_usage():
     async def event_generator():
         yield ModelResponseStartEvent(
@@ -8853,6 +8902,50 @@ async def test_event_stream_usage_chunk_skipped_for_empty_usage():
     assert events == [
         {'type': 'start'},
         {'type': 'start-step'},
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
+
+
+async def test_event_stream_usage_chunk_details_only():
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(parts=[], usage=RequestUsage(), model_name='test', provider_name='test')
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(details={'reasoning_tokens': 5}),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {
+            'type': 'data-usage',
+            'data': {'details': {'reasoning_tokens': 5}},
+            'transient': True,
+        },
         {'type': 'finish-step'},
         {'type': 'finish'},
         '[DONE]',
