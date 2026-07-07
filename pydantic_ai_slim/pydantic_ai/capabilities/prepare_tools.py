@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
+from .. import _utils
 from .abstract import AbstractCapability
 
 
@@ -13,10 +14,9 @@ from .abstract import AbstractCapability
 class PrepareTools(AbstractCapability[AgentDepsT]):
     """Capability that filters or modifies function tool definitions using a callable.
 
-    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability —
-    sugar for the agent-level `prepare_tools=` constructor argument, which injects this
-    capability automatically. Filters/modifies **function** tools only; for output tools
-    use [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
+    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability.
+    Filters/modifies **function** tools only; for output tools use
+    [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
 
     ```python
     from pydantic_ai import Agent, RunContext
@@ -25,8 +25,8 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
 
 
     async def hide_admin_tools(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+        ctx: RunContext, tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
         return [td for td in tool_defs if not td.name.startswith('admin_')]
 
 
@@ -50,7 +50,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
     Mirrors [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] for
     [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry`/`ctx.max_retries` reflect
-    the **output** retry budget (`max_result_retries`), matching the output hook lifecycle.
+    the **output** retry budget (`max_output_retries`), matching the output hook lifecycle.
 
     ```python
     from pydantic_ai import Agent, RunContext
@@ -60,8 +60,8 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
 
     async def only_after_first_step(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+        ctx: RunContext, tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
         return tool_defs if ctx.run_step > 0 else []
 
 
@@ -90,9 +90,9 @@ async def _call_prepare_func(
     ctx: RunContext[AgentDepsT],
     tool_defs: list[ToolDefinition],
 ) -> list[ToolDefinition]:
-    # Just sync/async + `None` normalization — `PreparedToolset.get_tools` validates that
-    # the result didn't add or rename tools when these capabilities' hooks dispatch through it.
+    # `PreparedToolset.get_tools` validates that the result didn't add or rename tools
+    # when these capabilities' hooks dispatch through it.
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
-    return list(result or [])
+    return _utils.check_tools_prepare_func_result(result, prepare_func)

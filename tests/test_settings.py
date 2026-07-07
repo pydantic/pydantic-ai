@@ -16,7 +16,7 @@ def settings(request: pytest.FixtureRequest) -> tuple[type[ModelSettings], str]:
         module = importlib.import_module(f'pydantic_ai.models.{prefix_cls_name}')
     except ImportError:  # pragma: lax no cover
         pytest.skip(f'{prefix_cls_name} is not installed')
-    capitalized_prefix = prefix_cls_name.capitalize().replace('Openai', 'OpenAI')
+    capitalized_prefix = prefix_cls_name.capitalize().replace('Openai', 'OpenAIChat')
     cls = getattr(module, capitalized_prefix + 'ModelSettings')
     return cls, request.param
 

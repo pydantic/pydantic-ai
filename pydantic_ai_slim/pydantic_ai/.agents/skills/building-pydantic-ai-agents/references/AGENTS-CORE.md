@@ -9,12 +9,15 @@ from pydantic_ai import Agent
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
+    name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
 ```
+
+Pass an explicit `name=` to each agent: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict), which matters once more than one agent runs in the same app.
 
 ## Structured Output with Pydantic Models
 
@@ -31,7 +34,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', name='city_location_agent', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 ```
@@ -50,7 +53,7 @@ Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app s
 ```python
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=str)
+agent = Agent('openai:gpt-5.2', name='greeting_agent', deps_type=str)
 
 
 @agent.instructions
@@ -98,7 +101,7 @@ Examples:
 
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
-- `google-gla:gemini-3-pro-preview`
+- `google:gemini-3-pro-preview`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
@@ -120,10 +123,10 @@ from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='streaming_agent')
 
 
-async def stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
+async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
             print(f'Calling {event.part.tool_name}...')
@@ -148,7 +151,7 @@ fallback = FallbackModel(
     AnthropicModel('claude-sonnet-4-6'),
 )
 
-agent = Agent(fallback)
+agent = Agent(fallback, name='fallback_agent')
 ```
 
 Good defaults:

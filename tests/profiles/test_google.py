@@ -189,21 +189,33 @@ def test_model_profile_gemini_2():
     """Gemini 2.x models should have proper profile settings."""
     profile = google_model_profile('gemini-2.0-flash')
     assert profile is not None
-    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
-    assert profile.supports_json_schema_output is True
+    assert profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert profile.get('supports_json_schema_output', False) is True
 
 
 def test_model_profile_gemini_3():
-    """Gemini 3.x models should support native output with builtin tools."""
+    """Gemini 3.x models support tool combination AND server-side tool invocations.
+
+    The two flags happen to flip on together for Gemini 3+ but are separately named so future
+    models that gain one capability without the other don't force a model-name proxy flag.
+    """
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
-    assert profile.google_supports_native_output_with_builtin_tools is True  # type: ignore
+    assert profile.get('google_supports_tool_combination', False) is True
+    assert profile.get('google_supports_server_side_tool_invocations', False) is True
+
+
+def test_model_profile_gemini_2_disables_tool_combination_capabilities():
+    profile = google_model_profile('gemini-2.5-flash')
+    assert profile is not None
+    assert profile.get('google_supports_tool_combination', False) is False
+    assert profile.get('google_supports_server_side_tool_invocations', False) is False
 
 
 def test_model_profile_image_model():
     """Image models should have limited capabilities."""
     profile = google_model_profile('gemini-2.0-flash-image')
     assert profile is not None
-    assert profile.supports_image_output is True
-    assert profile.supports_json_schema_output is False
-    assert profile.supports_tools is False
+    assert profile.get('supports_image_output', False) is True
+    assert profile.get('supports_json_schema_output', False) is False
+    assert profile.get('supports_tools', True) is False
