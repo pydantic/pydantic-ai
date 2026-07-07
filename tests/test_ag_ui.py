@@ -28,7 +28,9 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -3565,6 +3567,46 @@ async def test_event_stream_back_to_back_text():
                 'threadId': thread_id,
                 'runId': run_id,
                 'outcome': {'type': 'success'},
+            },
+        ]
+    )
+
+
+async def test_event_stream_ignores_model_response_lifecycle_events():
+    async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+        yield ModelResponseEndEvent(response=ModelResponse(parts=[TextPart(content='Hello')]))
+
+    run_input = create_input(UserMessage(id='msg_1', content='Say hello'))
+    event_stream = AGUIEventStream(run_input=run_input, ag_ui_version='0.1.10')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
             },
         ]
     )
