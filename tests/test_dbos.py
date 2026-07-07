@@ -843,6 +843,19 @@ async def test_dbos_agent():
     assert toolsets[4] == complex_agent.toolsets[3]
 
 
+def test_dbos_model_connect_not_supported():
+    assert isinstance(simple_dbos_agent.model, DBOSModel)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
+            'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+        ),
+    ):
+        simple_dbos_agent.model.connect()
+
+
 async def test_dbos_agent_run(allow_model_requests: None, dbos: DBOS):
     # Note: this runs as a DBOS workflow because we automatically wrap the run function.
     result = await simple_dbos_agent.run('What is the capital of Mexico?')

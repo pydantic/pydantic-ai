@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -123,6 +123,12 @@ class TemporalModel(WrapperModel):
 
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
             request_stream_activity
+        )
+
+    def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise UserError(
+            'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
+            'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
         )
 
     @property

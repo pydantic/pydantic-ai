@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
@@ -689,6 +690,19 @@ async def test_prefect_agent():
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
     assert external_toolset.id == 'external'
+
+
+def test_prefect_model_connect_not_supported():
+    assert isinstance(simple_prefect_agent.model, PrefectModel)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'WebSocket mode is not supported with Prefect: model requests run inside tasks where a connection opened '
+            'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+        ),
+    ):
+        simple_prefect_agent.model.connect()
 
 
 def test_prefect_wrapper_visit_and_replace():

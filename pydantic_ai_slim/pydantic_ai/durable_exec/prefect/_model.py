@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, NoReturn
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -12,6 +12,7 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -73,6 +74,12 @@ class PrefectModel(WrapperModel):
             return response
 
         self._wrapped_request_stream = request_stream_task
+
+    def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise UserError(
+            'WebSocket mode is not supported with Prefect: model requests run inside tasks where a connection opened '
+            'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+        )
 
     async def request(
         self,

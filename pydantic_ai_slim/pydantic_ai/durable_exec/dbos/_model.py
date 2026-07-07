@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, NoReturn
 
 from dbos import DBOS
 
@@ -11,6 +11,7 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -78,6 +79,12 @@ class DBOSModel(WrapperModel):
             return streamed_response.get()
 
         self._dbos_wrapped_request_stream_step = wrapped_request_stream_step
+
+    def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise UserError(
+            'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
+            'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+        )
 
     async def request(
         self,
