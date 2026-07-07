@@ -52,11 +52,23 @@ only "looks risky" in the diff is not a finding.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+First narrow to regression-labelled issues with a tight, server-side filter —
+the `/search/issues` endpoint is blocked by the firewall proxy and there are no
+`mcp__github__*` tools, but the `?labels=` filter on the issue-list endpoint is
+allowed. This covers both prior `[regression-detector]` findings and human-filed
+regression reports:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[regression-detector]" OR "regression"
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=regression&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "regression" and the affected symbol:
+
+```
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
 ```
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
@@ -91,3 +103,8 @@ test that passes on `OLD` and fails on `NEW`, with both outputs captured.
 >
 > ## Evidence
 > - [Captured outputs for both versions; `path:line` of the change]
+>
+> ## Adversarial review
+> - **Reproduced on OLD and NEW:** [commands + real outputs for both versions]
+> - **Change was NOT intentional:** [found the commit/PR that changed it and confirmed it wasn't a deliberate behavior change — the #1 reason regression reports get rejected]
+> - **Existing tests checked:** [NEW-version tests read; none assert the new behavior as intended]

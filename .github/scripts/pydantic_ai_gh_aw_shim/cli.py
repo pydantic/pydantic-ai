@@ -154,9 +154,15 @@ INSTRUCTIONS = (
     'pyright. Prefer `uv run pytest <test_file>` over a bare `pytest` call; '
     'uv handles the virtual env automatically.\n\n'
     '## GitHub issue search\n\n'
-    '`gh issue list --search` returns HTTP 403 via the AWF firewall proxy. '
-    'Use the MCP tools instead: '
-    '`mcp__github__search_issues(query="repo:pydantic/pydantic-ai <keywords>")`.'
+    'The GitHub toolset runs in gh-proxy mode: there are NO `mcp__github__*` '
+    'tools, and the /search/issues endpoint (`gh issue list --search`, '
+    '`gh search issues`) returns HTTP 403 via the AWF firewall proxy. The '
+    'issue-list endpoint IS allowed, including its server-side `?labels=` '
+    'filter. When the sweep files under a dedicated label, prefer a narrow label '
+    "query (`gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' "
+    "--jq '.[] | select(.pull_request == null) | {number, title}'`); if it has no "
+    'dedicated label or the filter is inconclusive, widen to a full `--paginate` '
+    'open-issue scan.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.

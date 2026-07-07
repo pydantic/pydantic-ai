@@ -25,6 +25,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[roundtrip-sweep] "
+    labels: [roundtrip-sweep]
     close-older-key: "[roundtrip-sweep]"
     close-older-issues: false
     expires: 7d
@@ -35,6 +36,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/adversarial-review.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md

@@ -62,12 +62,22 @@ be triggered by code you wrote and observed to fail.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+First check this sweep's own prior findings with a tight, server-side label
+filter — the `/search/issues` endpoint is blocked by the firewall proxy and
+there are no `mcp__github__*` tools, but the `?labels=` filter on the
+issue-list endpoint is allowed:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-mapping-sweep]" OR "[bug-hunter]"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <chosen-provider>
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=provider-mapping-sweep&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for your chosen provider name (and the `[bug-hunter]` prefix):
+
+```
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
 ```
 
 If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
@@ -109,3 +119,9 @@ the impact is cosmetic. One well-evidenced issue beats several weak ones.
 >
 > ## Evidence
 > - [SDK type / docs reference showing the correct shape; `path:line` refs]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real captured output]
+> - **Existing tests checked:** [tests read; none assert the current behavior, and the fix doesn't break them]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision / same in other providers]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
