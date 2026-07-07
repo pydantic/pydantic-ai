@@ -1027,6 +1027,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 finish_reason='content_filter',
+                provider_cost=provider_details.get('cost'),
             )
 
         items: list[ModelResponsePart] = []
@@ -1070,6 +1071,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=self._map_finish_reason(choice.finish_reason),
+            provider_cost=provider_details.get('cost') if provider_details is not None else None,
         )
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:

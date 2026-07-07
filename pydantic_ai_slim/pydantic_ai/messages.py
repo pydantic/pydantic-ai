@@ -2267,6 +2267,12 @@ class ModelResponse:
     state: ModelResponseState = 'complete'
     """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
 
+    provider_cost: float | None = None
+    """The cost of the response.
+    
+    This is the cost of the response as reported by the provider.
+    """
+
     @property
     def text(self) -> str | None:
         """Get the text in the response."""
