@@ -3337,12 +3337,6 @@ ModelResponseStreamEvent = Annotated[
 ]
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
-ModelResponseLifecycleEvent = Annotated[
-    ModelResponseStartEvent | ModelResponseEndEvent, pydantic.Discriminator('event_kind')
-]
-"""An event describing the lifecycle of a model response stream."""
-
-
 @dataclass(repr=False)
 class ToolCallEvent:
     """Base class for events emitted when a tool call is about to be invoked.
@@ -3436,7 +3430,7 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | ModelResponseLifecycleEvent | HandleResponseEvent,
+    ModelResponseStreamEvent | ModelResponseStartEvent | ModelResponseEndEvent | HandleResponseEvent,
     pydantic.Discriminator('event_kind'),
 ]
-"""An event in the agent stream: model response lifecycle events, model response stream events, and response-handling events."""
+"""An event in the agent stream: model response events, model response stream events, and response-handling events."""
