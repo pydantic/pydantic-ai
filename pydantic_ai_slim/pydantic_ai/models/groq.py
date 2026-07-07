@@ -932,5 +932,5 @@ def _map_executed_tool(
                 return call_part, None
         else:
             return call_part, return_part
-    else:  # pragma: no cover
+    else:
         return None, None
