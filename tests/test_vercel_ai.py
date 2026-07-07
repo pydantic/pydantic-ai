@@ -121,8 +121,14 @@ with try_import() as starlette_import_successful:
     )
 
 with try_import() as openai_import_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_tool_call import Function
+
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message
 
 
 pytestmark = [
@@ -1661,6 +1667,78 @@ async def test_event_stream_back_to_back_text():
             {'type': 'text-end', 'id': message_id},
             {'type': 'finish-step'},
             {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
+async def test_non_streamed_response_translates(allow_model_requests: None):
+    """A non-streamed response (`openai_disable_streaming`) translates to Vercel AI chunks.
+
+    The model returns a text-plus-tool-call response and a final text response, but with streaming
+    disabled each is replayed as whole parts with no deltas (see
+    `tests/models/test_openai.py::test_disable_streaming_events`). This drives a real agent run
+    through the Vercel AI adapter to verify text, tool call, tool result, and final text all produce
+    the expected chunks.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content='Let me check the weather for you.',
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1',
+                        function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(ChatCompletionMessage(content='It is sunny in Mexico City.', role='assistant')),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(responses)))
+    agent = Agent(model=model, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='What is the weather in Mexico City?')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (message_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Let me check the weather for you.', 'id': message_id},
+            {'type': 'text-end', 'id': message_id},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'get_weather'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{"city": "Mexico City"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_1',
+                'toolName': 'get_weather',
+                'input': {'city': 'Mexico City'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_1', 'output': 'sunny in Mexico City'},
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (message_id_2 := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'It is sunny in Mexico City.', 'id': message_id_2},
+            {'type': 'text-end', 'id': message_id_2},
+            {'type': 'message-metadata', 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}}},
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'stop'},
             '[DONE]',
         ]
     )
