@@ -301,6 +301,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     writer_profile = provider.model_profile('us.writer.palmyra-x4-v1:0')
     assert isinstance(writer_profile, dict)
     assert writer_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    assert writer_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
     # Writer requires a `toolResult` to be alone in its turn, and doesn't support tool choice forcing,
     # a leading assistant turn, or structured output — all of which stay at their (falsy) defaults.
     assert writer_profile.get('bedrock_tool_result_colocatable_content') == frozenset()

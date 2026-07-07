@@ -48,6 +48,8 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
+from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
+
 with try_import() as anthropic_imports:
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
@@ -673,6 +675,7 @@ def test_bedrock_writer_palmyra():
     assert _normalize(profile) == snapshot(
         {
             'supported_native_tools': frozenset(),
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supports_tool_result_status': False,
         }

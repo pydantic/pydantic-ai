@@ -446,6 +446,7 @@ def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Writer Palmyra model used via Bedrock."""
     return BedrockModelProfile(
         supported_native_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
         # Writer Palmyra on Bedrock requires a `toolResult` to be alone in its user message; it rejects
         # any co-located text or attachment block (like Llama and Mistral). Verified live against
         # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See #6081.
