@@ -2938,70 +2938,45 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
         )
 
 
-async def test_uploaded_file_adds_files_api_beta_for_text_doc(allow_model_requests: None) -> None:
-    """Anthropic `UploadedFile` (document) should auto-attach `files-api-2025-04-14` to request betas.
+@pytest.mark.parametrize(
+    'content,expect_beta',
+    [
+        pytest.param(
+            ['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')],
+            True,
+            id='document',
+        ),
+        pytest.param(
+            [
+                'Describe this image',
+                UploadedFile(file_id='file-img123', provider_name='anthropic', media_type='image/png'),
+            ],
+            True,
+            id='image',
+        ),
+        pytest.param('hello', False, id='no-file'),
+    ],
+)
+async def test_files_api_beta_added_only_for_anthropic_uploaded_file(
+    content: str | list[Any], expect_beta: bool, allow_model_requests: None
+) -> None:
+    """Anthropic attaches `files-api-2025-04-14` iff the request carries an Anthropic `UploadedFile`.
 
-    Unit test (not VCR): cassette matchers don't pin the `betas` kwarg on the request body, so
-    a regression that drops the auto-beta would still match an existing cassette and pass green.
-    Asserting the kwarg directly on the mock client is what catches the regression.
+    Unit test (not VCR): cassette matchers don't pin the `betas` kwarg, so a regression that added or
+    dropped the auto-beta would still replay green. We assert the kwarg on the mock client directly.
+    The `no-file` case guards the proxy/compatible-provider path where the Anthropic-only header must
+    not leak.
     """
-    c = completion_message(
-        [BetaTextBlock(text='ok', type='text')],
-        usage=BetaUsage(input_tokens=5, output_tokens=2),
-    )
+    c = completion_message([BetaTextBlock(text='ok', type='text')], usage=BetaUsage(input_tokens=3, output_tokens=1))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+    await agent.run(content)
 
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'files-api-2025-04-14' in completion_kwargs['betas']
-
-
-async def test_uploaded_file_adds_files_api_beta_for_image(allow_model_requests: None) -> None:
-    """Anthropic `UploadedFile` with an image media type should auto-attach the Files API beta.
-
-    Unit test (not VCR): same rationale as the text-doc test — cassette matchers don't
-    distinguish between `betas` lists.
-    """
-    c = completion_message(
-        [BetaTextBlock(text='ok', type='text')],
-        usage=BetaUsage(input_tokens=5, output_tokens=2),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    await agent.run(
-        ['Describe this image', UploadedFile(file_id='file-img123', provider_name='anthropic', media_type='image/png')]
-    )
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'files-api-2025-04-14' in completion_kwargs['betas']
-
-
-async def test_no_uploaded_file_does_not_add_files_api_beta(allow_model_requests: None) -> None:
-    """Plain text-only requests must not include `files-api-2025-04-14`.
-
-    Regression guard for the proxy/compatible-provider case: the Anthropic-only beta header
-    must only be attached when the wire shape actually requires it. Unit test for the same
-    cassette-matcher reason as the positive cases.
-    """
-    c = completion_message(
-        [BetaTextBlock(text='hi', type='text')],
-        usage=BetaUsage(input_tokens=3, output_tokens=1),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    await agent.run('hello')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     # `betas` may be absent entirely (NOT_GIVEN/OMIT) when no betas are required.
-    betas: list[str] = completion_kwargs.get('betas') or []
-    assert 'files-api-2025-04-14' not in betas
+    betas = get_mock_chat_completion_kwargs(mock_client)[0].get('betas') or []
+    assert ('files-api-2025-04-14' in betas) is expect_beta
 
 
 async def test_uploaded_file_for_other_provider_does_not_add_anthropic_files_api_beta(
