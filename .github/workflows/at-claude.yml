@@ -35,6 +35,7 @@ jobs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
       pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
+      pr_base_sha: ${{ steps.pr-info.outputs.pr_base_sha }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -44,6 +45,7 @@ jobs:
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
           echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
           echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
+          echo "pr_base_sha=$(echo "$PR_DATA" | jq -r '.base.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,8 +93,11 @@ jobs:
     if: needs.get-pr-info.outputs.is_fork == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Least privilege: on forks Claude may only read code and comment (see the
+    # restricted --allowedTools below — no push / pr create), so this job runs
+    # with read-only `contents`. It never gets write access to repository code.
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
       id-token: write
@@ -107,15 +112,22 @@ jobs:
           persist-credentials: false
 
       - name: Check for modified config files
+        # Compare the exact immutable SHAs captured in get-pr-info (and checked
+        # out above) rather than the live PR head. Using `gh pr diff` would read
+        # whatever the PR points at now, so a force-push after get-pr-info could
+        # slip a modified CLAUDE.md/AGENTS.md past this guard while different
+        # code is what actually runs (TOCTOU). Pinning to BASE_SHA...HEAD_SHA
+        # ties the check to the code Claude will see.
         run: |
-          PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
-          CHANGED=$(gh pr diff "$PR_NUMBER" --name-only --repo ${{ github.repository }})
+          CHANGED=$(gh api --paginate "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" --jq '.files[].filename')
           if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping for security."
             exit 1
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ needs.get-pr-info.outputs.pr_base_sha }}
+          HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
 
       - name: Install bubblewrap
         run: sudo apt-get install -y bubblewrap
