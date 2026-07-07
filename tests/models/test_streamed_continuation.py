@@ -477,6 +477,22 @@ async def test_resume_from_trailing_suspended_history(stream: bool) -> None:
     assert calls == snapshot(['before', 'after'])
 
 
+async def test_new_prompt_after_trailing_suspended_history_errors() -> None:
+    """A new prompt on top of a suspended-ending history is rejected, not silently started as a fresh turn.
+
+    Falling through to a new request would abandon the paused turn and leak the provider's server-side
+    job; the caller must resume it (run with the suspended history and no new prompt) first.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2),
+    ]
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('done')])))  # pragma: no cover
+
+    with pytest.raises(UserError, match='ends in a suspended response'):
+        await agent.run('new prompt', message_history=history)
+
+
 async def test_error_on_first_streamed_segment_propagates() -> None:
     """An error raised while iterating the first streamed segment surfaces cleanly out of the node."""
 

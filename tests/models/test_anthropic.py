@@ -11691,7 +11691,11 @@ async def test_anthropic_service_tier_mapping(
 async def test_pause_turn_continues_run(allow_model_requests: None):
     c1 = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     c1.stop_reason = 'pause_turn'
-    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=7, output_tokens=3))
+    # A real `pause_turn` continuation appends new content under a fresh response id, so give the
+    # segments distinct ids (they accumulate rather than replace) and distinct usage (so the merged
+    # total exercises the sum, not a single segment's value).
+    c2.id = '456'
 
     mock_client = MockAnthropic.create_mock([c1, c2])
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -11699,7 +11703,8 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
 
     result = await agent.run('test prompt')
 
-    assert result.output == 'final'
+    # Both segments' text is retained (accumulate), and the merged usage sums the two.
+    assert result.output == 'pausedfinal'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -11709,14 +11714,14 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='final')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                parts=[TextPart(content='paused'), TextPart(content='final')],
+                usage=RequestUsage(input_tokens=17, output_tokens=8, details={'input_tokens': 17, 'output_tokens': 8}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
+                provider_response_id='456',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),

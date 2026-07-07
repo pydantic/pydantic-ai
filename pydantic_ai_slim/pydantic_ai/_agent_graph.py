@@ -441,6 +441,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if not instruction_parts:
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                elif last_message.state == 'suspended':
+                    # A new prompt on top of a suspended turn would abandon it, leaking the provider's
+                    # server-side job (e.g. an OpenAI background run). Resume it first (run with this
+                    # history and no new prompt) before starting a new turn.
+                    raise exceptions.UserError(
+                        'Cannot provide a new user prompt when the message history ends in a suspended response. '
+                        'Resume it by running the agent with this message history and no new prompt.'
+                    )
                 elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
