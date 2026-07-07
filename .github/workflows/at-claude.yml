@@ -118,9 +118,15 @@ jobs:
         # slip a modified CLAUDE.md/AGENTS.md past this guard while different
         # code is what actually runs (TOCTOU). Pinning to BASE_SHA...HEAD_SHA
         # ties the check to the code Claude will see.
+        #
+        # Use the diff media type, not the compare JSON: the JSON `.files` array
+        # is capped at 300 entries (and `--paginate` only pages commits, not
+        # files), so a >300-file PR could hide an agent-config edit. The diff
+        # emits a `diff --git a/<old> b/<new>` header for every changed file,
+        # including renames, so matching those lines cannot miss a path.
         run: |
-          CHANGED=$(gh api --paginate "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" --jq '.files[].filename')
-          if echo "$CHANGED" | grep -qiE '(^|/)AGENTS\.md$|(^|/)CLAUDE\.md$|(^|/)\.claude/'; then
+          CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
+          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping for security."
             exit 1
           fi
