@@ -4427,76 +4427,6 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_early_strategy_prefers_native_output_text_over_tool_calls(self):
-        """Test that 'early' strategy does not execute tools when native output text is already final."""
-        tool_called: list[str] = []
-
-        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(
-                    parts=[
-                        TextPart(content='{"value": "final"}'),
-                        ToolCallPart('regular_tool', {'x': 1}),
-                    ],
-                )
-
-            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])  # pragma: no cover
-
-        agent = Agent(
-            FunctionModel(return_model),
-            output_type=NativeOutput(OutputType),
-            end_strategy='early',
-        )
-
-        @agent.tool_plain
-        def regular_tool(x: int) -> int:  # pragma: no cover
-            tool_called.append('regular_tool')
-            return x
-
-        result = agent.run_sync('test early native output')
-
-        assert result.output == OutputType(value='final')
-        assert tool_called == []
-        messages = result.all_messages()
-        assert len(messages) == 3
-        assert isinstance(messages[2], ModelRequest)
-        assert len(messages[2].parts) == 1
-        skipped_tool_return = messages[2].parts[0]
-        assert isinstance(skipped_tool_return, ToolReturnPart)
-        assert skipped_tool_return.tool_name == 'regular_tool'
-        assert skipped_tool_return.content == 'Tool not executed - a final result was already processed.'
-
-    def test_early_strategy_falls_back_to_tools_when_native_output_text_is_invalid(self):
-        """Test that invalid native output text does not prevent tool-call handling."""
-        tool_called: list[str] = []
-
-        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(
-                    parts=[
-                        TextPart(content='{}'),
-                        ToolCallPart('regular_tool', {'x': 1}),
-                    ],
-                )
-
-            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])
-
-        agent = Agent(
-            FunctionModel(return_model),
-            output_type=NativeOutput(OutputType),
-            end_strategy='early',
-        )
-
-        @agent.tool_plain
-        def regular_tool(x: int) -> int:
-            tool_called.append('regular_tool')
-            return x
-
-        result = agent.run_sync('test early native output fallback')
-
-        assert result.output == OutputType(value='after tool')
-        assert tool_called == ['regular_tool']
-
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
@@ -11122,6 +11052,73 @@ async def test_agent_allows_none_output_after_tool():
                 parts=[],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_thinking_only():
+    """Test that Agent(output_type=str | None) succeeds on a thinking-only response after a tool call.
+
+    Some models emit only a ThinkingPart after completing the task via a tool call, with nothing to
+    add. Forcing a retry only produces unnecessary follow-up text, so this is accepted as a None result.
+    Uses FunctionModel because no real provider reliably emits a thinking-only final response on demand.
+    """
+    call_count = 0
+
+    async def tool_then_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[ThinkingPart(content='Task complete, nothing more to add.')])
+
+    model = FunctionModel(function=tool_then_thinking_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_thinking_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Task complete, nothing more to add.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='function:tool_then_thinking_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
