@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -256,11 +256,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if allow_partial or _has_text_part_after(message.parts, index):
+                        if allow_partial or _utils.has_text_part_after(message.parts, index):
                             # Text parts before a built-in tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
                             # If the native tool pair trails all text, it is provider metadata for
                             # the already-streamed output and should not erase that output.
+                            # Partial validation always resets: mid-stream, a pair that trails the
+                            # text *so far* is indistinguishable from one interrupting it, and
+                            # clearing pre-tool text from partials while a native tool call runs
+                            # is established behavior (pinned for Anthropic web search).
                             text = ''
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
@@ -335,6 +339,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
+                    if separator_pending:
+                        # Providers that stream text under a constant vendor ID resume the
+                        # pre-tool `TextPart` as deltas instead of starting a new part.
+                        yield '\n\n', event.index
+                        separator_pending = False
                     last_text_index = event.index
                     yield event.delta.content_delta, event.index
                 elif (
@@ -974,10 +983,6 @@ def _get_usage_checking_stream_response(
         return _usage_checking_iterator()
     else:
         return aiter(stream_response)
-
-
-def _has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
-    return any(isinstance(part, _messages.TextPart) for part in parts[index + 1 :])
 
 
 def _get_deferred_tool_requests(

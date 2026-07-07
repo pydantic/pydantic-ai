@@ -36,6 +36,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -9579,6 +9581,56 @@ async def test_thinking_only_response_retry_with_tool_output():
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('trailing_text', 'expected_output'),
+    [
+        pytest.param(None, 'answer so far', id='trailing-native-pair-keeps-prior-text'),
+        pytest.param('post-tool answer', 'post-tool answer', id='later-text-resets-text-before-native-pair'),
+    ],
+)
+async def test_thinking_only_response_recovery_with_native_tool_parts(trailing_text: str | None, expected_output: str):
+    """History recovery applies the same trailing-native-pair rule as live responses: text is only
+    treated as pre-tool thoughts (and discarded) when more text follows the native tool call."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            parts: list[ModelResponsePart] = [
+                TextPart(content='answer so far'),
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['query']},
+                    tool_call_id='web-search-call',
+                    provider_name='function',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                    tool_call_id='web-search-call',
+                    provider_name='function',
+                ),
+            ]
+            if trailing_text is not None:
+                parts.append(TextPart(content=trailing_text))
+            parts.append(ToolCallPart(tool_name='save_progress', args='{"data": "test"}'))
+            return ModelResponse(parts=parts)
+        else:
+            return ModelResponse(parts=[ThinkingPart(content='Nothing more to say.')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def save_progress(data: str) -> str:
+        return 'saved'
+
+    result = await agent.run('Hello')
+
+    assert result.output == expected_output
 
 
 async def test_thinking_only_response_backward_looking_recovery():

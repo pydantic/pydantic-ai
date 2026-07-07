@@ -17,6 +17,7 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Sequence,
 )
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -818,6 +819,18 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
+    """Whether any `TextPart` follows `parts[index]`.
+
+    Distinguishes a native tool pair that interrupts the text (the text before it is pre-tool
+    thoughts, not output) from one that trails all text (e.g. Google grounding metadata for the
+    answer that already streamed).
+    """
+    from . import messages
+
+    return any(isinstance(part, messages.TextPart) for part in parts[index + 1 :])
 
 
 def is_text_like_media_type(media_type: str) -> bool:

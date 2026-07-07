@@ -1448,10 +1448,8 @@ class GeminiStreamedResponse(StreamedResponse):
                 elif self._pending_grounding_returns:
                     # Fill every reserved native tool return from the (aggregate) `grounding_metadata`,
                     # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
-                    # under its reserved slot. This relies on the grounding arriving on a chunk that also
-                    # carries a text part (as Gemini does today) so the `candidate.content.parts` guard above
-                    # doesn't `continue` past it; on a hypothetical part-less grounding chunk the fill would be
-                    # deferred to the end-of-stream flush below, surfacing the return ungrounded.
+                    # under its reserved slot. Part-less chunks flow through here too (`parts` is just
+                    # empty), so grounding that arrives on its own chunk still fills the reserved returns.
                     still_pending: list[NativeToolReturnPart] = []
                     for pending in self._pending_grounding_returns:
                         if _fill_native_tool_return_from_grounding(pending, candidate.grounding_metadata):

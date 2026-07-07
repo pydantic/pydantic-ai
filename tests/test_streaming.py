@@ -58,7 +58,7 @@ from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
@@ -3496,6 +3496,75 @@ def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None,
         _tool_manager=ToolManager(toolset=MagicMock()),
         _root_capability=CombinedCapability([]),
     )
+
+
+def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
+    return [
+        {
+            2 * n: NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['query']},
+                tool_call_id=f'web-search-call-{n}',
+                provider_name='function',
+            )
+        },
+        {
+            2 * n + 1: NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                tool_call_id=f'web-search-call-{n}',
+                provider_name='function',
+            )
+        },
+    ]
+
+
+async def test_agent_stream_text_separator_when_text_resumes_as_deltas() -> None:
+    """Providers that stream text under a constant vendor ID (e.g. xAI, Groq, `FunctionModel`) resume
+    the pre-tool `TextPart` as deltas after a native tool pair rather than starting a new part, so the
+    deferred separator must be flushed on the delta branch too, not only on a new `TextPart` start.
+    (The missing separator between the first two chunks predates the deferral: text accumulated before
+    `stream_text` starts is replayed without arming the separator at all.)
+    """
+
+    async def stream_function(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
+        yield 'first'
+        for part in _native_pair_parts(1):
+            yield part
+        yield 'second'
+        for part in _native_pair_parts(2):
+            yield part
+        yield 'third'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    async with agent.run_stream('hello') as result:
+        deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+
+    assert deltas == snapshot(['first', 'second', '\n\n', 'third'])
+
+
+async def test_agent_stream_output_with_trailing_native_pair() -> None:
+    """Partial outputs reset while a native tool pair streams in (mid-stream, a pair trailing the
+    text so far is indistinguishable from one interrupting it, and clearing pre-tool text from
+    partials is pinned for Anthropic web search), but the final output keeps the answer the pair
+    trails (e.g. Google grounding metadata arriving after the streamed answer)."""
+
+    async def stream_function(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
+        yield 'answer'
+        for part in _native_pair_parts(1):
+            yield part
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    async with agent.run_stream('hello') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert outputs == snapshot(['answer', '', '', 'answer'])
 
 
 def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:

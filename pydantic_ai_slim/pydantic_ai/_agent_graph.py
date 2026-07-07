@@ -19,7 +19,13 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
+from pydantic_ai._utils import (
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    has_text_part_after,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
@@ -1263,7 +1269,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if _has_text_part_after(self.model_response.parts, index):
+                        if has_text_part_after(self.model_response.parts, index):
                             # Text parts before a native tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
                             # If the native tool pair trails all text, it is provider metadata for
@@ -1406,7 +1412,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if _has_text_part_after(message.parts, index):  # pragma: no cover
+                        if has_text_part_after(message.parts, index):
                             # Text parts before a built-in tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
                             text = ''
@@ -1708,10 +1714,6 @@ def _narrow_tool_call_parts(
         else:
             new_parts.append(part)
     return replace(response, parts=new_parts) if changed else response
-
-
-def _has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
-    return any(isinstance(part, _messages.TextPart) for part in parts[index + 1 :])
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
