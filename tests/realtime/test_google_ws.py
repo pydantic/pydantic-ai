@@ -1,0 +1,186 @@
+"""Cassette-backed tests for the Gemini Live provider, exercising the real WebSocket protocol.
+
+These complement the network-free `test_google.py` unit tests: the fakes there pin event mapping and
+send logic cheaply, while these replay recorded provider frames end-to-end through
+[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to prove the real protocol —
+the streamed part events, the tool round-trip, and message-history seeding. Gemini Live runs over the
+`google-genai` SDK's WebSocket, which the cassette engine patches at `google.genai.live.ws_connect`.
+Recorded once against the live API with `--record-mode=rewrite`, then replayed offline forever.
+"""
+
+from __future__ import annotations as _annotations
+
+from typing import Any
+
+import anyio
+import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    AudioWithTranscriptPart,
+    BinaryContent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.realtime import RealtimeCapabilities, TurnComplete
+
+from ..conftest import IsDatetime, IsStr, try_import
+from .ws_cassettes import RealtimeCassette
+from .ws_helpers import collapse_event_types, sent_frames_containing
+
+with try_import() as imports_successful:
+    from pydantic_ai.providers import Provider
+    from pydantic_ai.realtime.google import GoogleRealtimeModel
+
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
+]
+
+# The Gemini Developer API only exposes the native-audio Live model to the recording key, and it only
+# produces audio output — so every scenario below runs audio-out (transcripts drive the assertions).
+_MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
+
+
+async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A text-in turn yields streamed audio+transcript parts and a classic-shaped history."""
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model, audio_retention='output') as session:
+        await session.send_text('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:
+                events.append(event)
+                if isinstance(event, TurnComplete):
+                    break
+
+    messages = session.all_messages()
+    assert collapse_event_types(events) == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
+    )
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
+    response = messages[1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == _MODEL
+    part = response.parts[0]
+    assert isinstance(part, AudioWithTranscriptPart)
+    assert part.speaker == 'assistant'
+    assert part.transcript == snapshot('Hello there.')
+    assert isinstance(part.audio, BinaryContent)
+    assert part.audio.media_type == 'audio/pcm'
+    assert len(part.audio.data) > 0
+
+
+async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A tool call is executed by the session and its result folded back into a classic-shaped history."""
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model) as session:
+        await session.send_text('What is the weather in London?')
+        with anyio.fail_after(30):
+            async for event in session:
+                events.append(event)
+                if isinstance(event, TurnComplete):
+                    break
+
+    call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert len(call_events) == 1
+    assert call_events[0].part.tool_name == 'get_weather'
+    assert call_events[0].part.args_as_dict() == {'city': 'London'}
+    assert len(result_events) == 1
+    assert isinstance(result_events[0].part, ToolReturnPart)
+    assert result_events[0].part.content == 'It is foggy and 12 degrees in London.'
+
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    assert messages[0] == ModelRequest(
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())]
+    )
+    tool_response = messages[1]
+    assert isinstance(tool_response, ModelResponse)
+    assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
+    tool_return = messages[2]
+    assert isinstance(tool_return, ModelRequest)
+    assert tool_return.parts == [
+        ToolReturnPart(
+            tool_name='get_weather',
+            content='It is foggy and 12 degrees in London.',
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+        )
+    ]
+    final = messages[3]
+    assert isinstance(final, ModelResponse)
+    final_part = final.parts[0]
+    assert isinstance(final_part, AudioWithTranscriptPart)
+    assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
+
+
+async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """Seeded prior turns are sent on the wire and reflected in the model's reply."""
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent()
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Alice and my favorite color is teal.')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you, Alice!')]),
+    ]
+
+    events: list[Any] = []
+    async with agent.realtime_session(model=model, message_history=history) as session:
+        await session.send_text('What is my name and favorite color?')
+        with anyio.fail_after(30):
+            async for event in session:
+                events.append(event)
+                if isinstance(event, TurnComplete):
+                    break
+
+    # The seeded turns were sent on the wire as inactive context (a `client_content` frame).
+    assert sent_frames_containing(cassette, 'My name is Alice')
+    assert sent_frames_containing(cassette, 'Nice to meet you')
+
+    # `all_messages()` carries the seeded history ahead of this session's turns.
+    messages = session.all_messages()
+    assert messages[:2] == history
+    reply = messages[-1]
+    assert isinstance(reply, ModelResponse)
+    reply_part = reply.parts[0]
+    assert isinstance(reply_part, AudioWithTranscriptPart)
+    transcript = (reply_part.transcript or '').lower()
+    assert 'alice' in transcript and 'teal' in transcript
+
+
+def test_capabilities_allow_seeding() -> None:
+    """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
+
+    Kept as a plain unit assertion (not a cassette test) because it pins an intrinsic capability flag
+    that a recording wouldn't protect. Gemini Live has no manual turn control or server-side
+    interruption (automatic VAD only).
+    """
+    caps = GoogleRealtimeModel().capabilities
+    assert caps == RealtimeCapabilities(
+        image_input=True, manual_turn_control=False, interruption=False, session_seeding=True
+    )
