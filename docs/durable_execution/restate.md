@@ -53,7 +53,7 @@ Any Pydantic AI agent can be made durable by wrapping it with `RestateAgent` fro
 Install the Restate SDK:
 
 ```bash
-pip/uv-add pydantic-ai restate_sdk[serde]
+pip/uv-add pydantic-ai "restate_sdk[serde]"
 ```
 
 Here is a complete example of a durable Pydantic AI agent with Restate:
@@ -70,7 +70,7 @@ weather_agent = Agent(  # (1)!
 
 
 @weather_agent.tool()
-async def get_weather(_run_ctx: RunContext[None], city: str) -> dict:
+async def get_weather(_run_ctx: RunContext, city: str) -> dict:
     """Get the current weather for a given city."""
 
     # Do durable tool steps using the Restate context

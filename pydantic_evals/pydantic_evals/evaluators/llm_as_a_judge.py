@@ -12,7 +12,9 @@ from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
+    'GEvalOutput',
     'GradingOutput',
+    'judge_g_eval',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
@@ -132,14 +134,14 @@ _judge_input_output_expected_agent = Agent(
         Examples:
 
         <Input>What color is the sky?</Input>
-        <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
+        <ExpectedOutput>Blue</ExpectedOutput>
         <Rubric>The output is consistent with the expected output but doesn't have to match exactly</Rubric>
         {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
         <Input>How many legs does a spider have?</Input>
-        <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
+        <ExpectedOutput>8</ExpectedOutput>
         <Rubric>The output is factually consistent with the expected output</Rubric>
         {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
         """
@@ -179,13 +181,13 @@ _judge_output_expected_agent = Agent(
 
         Examples:
 
-        <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
+        <ExpectedOutput>Blue</ExpectedOutput>
         <Rubric>The output should be a shade of the expected output color</Rubric>
         {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
-        <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
+        <ExpectedOutput>8</ExpectedOutput>
         <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
         {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
         """
@@ -263,16 +265,114 @@ def _build_prompt(
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
-    """Build a prompt that includes input, output, expected output, and rubric."""
+    """Build a prompt that includes input, output, expected output, and rubric.
+
+    Sections are emitted in the same order the judge agents' system-prompt few-shot
+    examples demonstrate — `Input → Output → ExpectedOutput → Rubric`, matching the
+    `judge_input_output_expected` naming — so the runtime prompt matches the format the
+    model was primed with and the rubric (the instruction) comes last, after all the
+    context it applies to.
+    """
     sections: list[str | UserContent] = []
     if inputs is not None:
         sections.extend(_make_section(inputs, 'Input'))
 
     sections.extend(_make_section(output, 'Output'))
-    sections.extend(_make_section(rubric, 'Rubric'))
 
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
+
+    sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
+
+
+class GEvalOutput(BaseModel):
+    """The output of a G-Eval grading operation.
+
+    G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
+    integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
+    """
+
+    reason: str
+    score: int
+
+
+_judge_g_eval_agent = Agent(
+    name='judge_g_eval',
+    system_prompt=dedent(
+        """
+        You are a rigorous evaluator scoring LLM outputs using the G-Eval framework.
+
+        Follow the evaluation steps exactly, then return a JSON object with this structure:
+        {"reason": string, "score": integer}
+
+        - `reason`: a concise chain-of-thought summary of how you applied the evaluation steps.
+        - `score`: a single integer within the score range specified in the prompt.
+
+        Do not include any other keys or prose outside the JSON object.
+        """
+    ),
+    output_type=GEvalOutput,
+)
+
+
+async def judge_g_eval(
+    output: Any,
+    criteria: str,
+    evaluation_steps: Sequence[str],
+    score_range: tuple[int, int] = (1, 5),
+    inputs: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GEvalOutput:
+    """Judge an output using a G-Eval style chain-of-thought prompt.
+
+    This is a simplified implementation of G-Eval (Liu et al., 2023, "G-Eval: NLG Evaluation using
+    GPT-4 with Better Human Alignment"). The original paper computes an expectation over the
+    distribution of score tokens using log-probs. We skip that step and simply ask the model for
+    a direct integer score. This keeps the evaluator provider-agnostic at the cost of some
+    correlation with human judgments.
+
+    Args:
+        output: The output being evaluated.
+        criteria: The aspect being evaluated (e.g. "coherence", "fluency").
+        evaluation_steps: Explicit chain-of-thought steps the judge should follow.
+        score_range: Inclusive `(min, max)` integer score range.
+        inputs: Optional inputs/context to show alongside the output.
+        model: The model to use. If not specified, the default judge model is used.
+        model_settings: Optional model settings.
+
+    Returns:
+        A [`GEvalOutput`][pydantic_evals.evaluators.llm_as_a_judge.GEvalOutput] containing
+        the judge's reasoning and integer score.
+
+    Raises:
+        ValueError: If `score_range` is invalid, `evaluation_steps` is empty, or the judge
+            returns a score outside the range.
+    """
+    if score_range[0] >= score_range[1]:
+        raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
+    if not evaluation_steps:
+        raise ValueError('`evaluation_steps` must contain at least one step')
+
+    numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
+    rubric = '\n'.join(
+        [
+            f'Evaluation criteria: {criteria}',
+            '',
+            'Evaluation steps (apply each step in order):',
+            numbered_steps,
+            '',
+            f'Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,',
+            f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
+        ]
+    )
+    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
+    result = (
+        await _judge_g_eval_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+    if not score_range[0] <= result.score <= score_range[1]:
+        raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
+    return result

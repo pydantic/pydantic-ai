@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
@@ -40,7 +42,7 @@ async def test_download_item_raises_user_error_with_unsupported_protocol(
 
 
 async def test_download_item_raises_user_error_with_youtube_url() -> None:
-    with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
+    with pytest.raises(UserError, match=re.escape('Downloading YouTube videos is not supported.')):
         _ = await download_item(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), data_format='bytes')
 
 

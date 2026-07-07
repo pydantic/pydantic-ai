@@ -10,14 +10,16 @@ from pydantic_ai.tools import RunContext
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
+AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
+    By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `partial_output`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available.
+
+    The `capabilities` registry is intentionally excluded: it holds live capability objects (toolsets, hooks, callables) that aren't serializable across the activity boundary, like `tool_manager`. As a result `available_capability_ids` (which reads `capabilities`) is unavailable inside an activity, while `available_tool_names` still works via its `discovered_tool_names` fallback.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
     """
 
@@ -58,6 +60,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'run_step': ctx.run_step,
             'partial_output': ctx.partial_output,
             'usage': ctx.usage,
+            'loaded_capability_ids': ctx.loaded_capability_ids,
+            'discovered_tool_names': ctx.discovered_tool_names,
+            'capability_loaded': ctx.capability_loaded,
         }
 
     @classmethod

@@ -49,7 +49,7 @@ class LogfirePlugin(SimplePlugin):
         if self.metrics:
             logfire_config = logfire.config
             token = logfire_config.token
-            if logfire_config.send_to_logfire and token is not None and logfire_config.metrics is not False:
+            if logfire_config.send_to_logfire and isinstance(token, str) and logfire_config.metrics is not False:
                 base_url = logfire_config.advanced.generate_base_url(token)
                 metrics_url = base_url + '/v1/metrics'
                 headers = {'Authorization': f'Bearer {token}'}

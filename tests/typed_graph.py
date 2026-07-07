@@ -1,79 +1,17 @@
+"""Static-typing checks for the `pydantic_graph` builder API.
+
+This file is not executed by pytest; it's checked by `pyright` and exists to
+catch regressions in the public typing of [`GraphBuilder`][pydantic_graph.GraphBuilder]
+and [`Graph`][pydantic_graph.Graph].
+"""
+
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from typing_extensions import assert_type
 
-from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
-from pydantic_graph.persistence import BaseStatePersistence
-
-
-@dataclass
-class Float2String(BaseNode):
-    input_data: float
-
-    async def run(self, ctx: GraphRunContext) -> String2Length:
-        return String2Length(str(self.input_data))
-
-
-@dataclass
-class String2Length(BaseNode):
-    input_data: str
-
-    async def run(self, ctx: GraphRunContext) -> Double:
-        return Double(len(self.input_data))
-
-
-@dataclass
-class X:
-    v: int
-
-
-@dataclass
-class Double(BaseNode[None, None, X]):
-    input_data: int
-
-    async def run(self, ctx: GraphRunContext) -> String2Length | End[X]:
-        if self.input_data == 7:
-            return String2Length('x' * 21)
-        else:
-            return End(X(self.input_data * 2))
-
-
-def use_double(node: BaseNode[None, None, X]) -> None:
-    """Shoe that `Double` is valid as a `BaseNode[None, int, X]`."""
-    print(node)
-
-
-use_double(Double(1))
-
-
-g1 = Graph[None, None, X](
-    nodes=(
-        Float2String,
-        String2Length,
-        Double,
-    )
-)
-assert_type(g1, Graph[None, None, X])
-
-
-g2 = Graph(nodes=(Double,))
-assert_type(g2, Graph[None, None, X])
-
-g3 = Graph(
-    nodes=(
-        Float2String,
-        String2Length,
-        Double,
-    )
-)
-# because String2Length came before Double, the output type is Any
-assert_type(g3, Graph[None, None, X])
-
-Graph[None, bytes](nodes=(Float2String, String2Length, Double))  # type: ignore[arg-type]
-Graph[None, str](nodes=[Double])  # type: ignore[list-item]
+from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext, StepContext
 
 
 @dataclass
@@ -86,59 +24,95 @@ class MyDeps:
     y: str
 
 
+# `GraphBuilder` is generic in (StateT, DepsT, InputT, OutputT), in that order.
+g1 = GraphBuilder(state_type=MyState, deps_type=MyDeps, input_type=str, output_type=int)
+assert_type(g1, GraphBuilder[MyState, MyDeps, str, int])
+
+g1_graph = g1.build(validate_graph_structure=False)
+assert_type(g1_graph, Graph[MyState, MyDeps, str, int])
+
+
+# Defaults: all four type parameters default to `None`.
+g2 = GraphBuilder()
+assert_type(g2, GraphBuilder[None, None, None, None])
+assert_type(g2.build(validate_graph_structure=False), Graph[None, None, None, None])
+
+
+# Partial parameterization is allowed; unspecified params fall back to `None`.
+g3 = GraphBuilder(input_type=int, output_type=str)
+assert_type(g3, GraphBuilder[None, None, int, str])
+
+
+async def run_graph_returns_output_type() -> None:
+    graph = GraphBuilder(state_type=MyState, deps_type=MyDeps, input_type=int, output_type=str).build(
+        validate_graph_structure=False
+    )
+    result = await graph.run(state=MyState(x=1), deps=MyDeps(y='y'), inputs=5)
+    assert_type(result, str)
+
+
+def run_sync_returns_output_type() -> None:
+    graph = GraphBuilder(state_type=MyState, deps_type=MyDeps, input_type=int, output_type=str).build(
+        validate_graph_structure=False
+    )
+    result = graph.run_sync(state=MyState(x=1), deps=MyDeps(y='y'), inputs=5)
+    assert_type(result, str)
+
+
+async def run_graph_rejects_wrong_state() -> None:
+    graph = GraphBuilder(state_type=MyState, output_type=str).build(validate_graph_structure=False)
+    # state=... must match `state_type`; passing a `str` where `MyState` is expected should error.
+    await graph.run(state='not a MyState', inputs=None)  # type: ignore[arg-type]
+
+
+async def run_graph_rejects_wrong_deps() -> None:
+    graph = GraphBuilder(deps_type=MyDeps, output_type=str).build(validate_graph_structure=False)
+    await graph.run(deps=42, inputs=None)  # type: ignore[arg-type]
+
+
+async def run_graph_rejects_wrong_inputs() -> None:
+    graph = GraphBuilder(input_type=int, output_type=str).build(validate_graph_structure=False)
+    await graph.run(inputs='not an int')  # type: ignore[arg-type]
+
+
+# `BaseNode` subclasses parameterized by state/deps/run-end types still type-check.
 @dataclass
-class A(BaseNode[MyState, MyDeps]):
-    async def run(self, ctx: GraphRunContext[MyState, MyDeps]) -> B:
+class StartingNode(BaseNode[MyState, MyDeps, int]):
+    async def run(self, ctx: GraphRunContext[MyState, MyDeps]) -> SecondNode:
         assert ctx.state.x == 1
         assert ctx.deps.y == 'y'
-        return B()
+        return SecondNode()
 
 
 @dataclass
-class B(BaseNode[MyState, MyDeps, int]):
+class SecondNode(BaseNode[MyState, MyDeps, int]):
     async def run(self, ctx: GraphRunContext[MyState, MyDeps]) -> End[int]:
         return End(42)
 
 
-g4 = Graph[MyState, MyDeps, int](nodes=(A, B))
-assert_type(g4, Graph[MyState, MyDeps, int])
-
-g5 = Graph(nodes=(A, B))
-assert_type(g5, Graph[MyState, MyDeps, int])
-
-
-def run_g5() -> None:
-    g5.run_sync(A())  # pyright: ignore[reportArgumentType]
-    g5.run_sync(A(), state=MyState(x=1))  # pyright: ignore[reportArgumentType]
-    g5.run_sync(A(), deps=MyDeps(y='y'))  # pyright: ignore[reportArgumentType]
-    result = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
-    assert_type(result.output, int)
+# A `BaseNode` typed for one (State, Deps) pair should be assignable to the
+# corresponding `BaseNode[...]` annotation.
+def use_starting_node(node: BaseNode[MyState, MyDeps, int]) -> None:
+    print(node)
 
 
-def run_g6() -> None:
-    result = g5.run_sync(A(), state=MyState(x=1), deps=MyDeps(y='y'))
-    assert_type(result.output, int)
-    assert_type(result.persistence, BaseStatePersistence[MyState, int])
+use_starting_node(StartingNode())
 
 
-p = FullStatePersistence()
-assert_type(p, FullStatePersistence[Any, Any])
+# Step functions are typed via `StepContext` and their input/output types
+# flow through the graph builder.
+async def step_returns_output_type() -> None:
+    g = GraphBuilder(state_type=MyState, deps_type=MyDeps, input_type=int, output_type=str)
 
+    @g.step
+    async def to_str(ctx: StepContext[MyState, MyDeps, int]) -> str:
+        assert_type(ctx.inputs, int)
+        assert_type(ctx.state, MyState)
+        assert_type(ctx.deps, MyDeps)
+        return str(ctx.inputs)
 
-def run_persistence_any() -> None:
-    p = FullStatePersistence()
-    result = g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))
-    assert_type(result.output, int)
-    assert_type(p, FullStatePersistence[Any, Any])
-
-
-def run_persistence_right() -> None:
-    p = FullStatePersistence[MyState, int]()
-    result = g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))
-    assert_type(result.output, int)
-    assert_type(p, FullStatePersistence[MyState, int])
-
-
-def run_persistence_wrong() -> None:
-    p = FullStatePersistence[str, int]()
-    g5.run_sync(A(), persistence=p, state=MyState(x=1), deps=MyDeps(y='y'))  # type: ignore[arg-type]
+    g.add(g.edge_from(g.start_node).to(to_str), g.edge_from(to_str).to(g.end_node))
+    graph = g.build()
+    assert_type(graph, Graph[MyState, MyDeps, int, str])
+    result = await graph.run(state=MyState(x=1), deps=MyDeps(y='y'), inputs=5)
+    assert_type(result, str)

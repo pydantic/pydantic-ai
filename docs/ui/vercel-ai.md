@@ -124,6 +124,26 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+### Files from client-side tools
+
+Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a shape in its output that matches one of Pydantic AI's [multimodal content types](../input.md#image-audio-video-document-input); Pydantic AI deserializes it into that type (via the same `ToolReturnContent` discriminator used for round-tripping) before the run continues. Use the type's snake_case field names — these are validated as Pydantic AI models, not Vercel-cased payloads, so `media_type` deserializes but `mediaType` stays an opaque dict. Three shapes are supported:
+
+- **Inline bytes** — a [`BinaryContent`][pydantic_ai.messages.BinaryContent] shape, `{ kind: 'binary', media_type: 'image/png', data: <bytes> }` (image media types become [`BinaryImage`][pydantic_ai.messages.BinaryImage]). The `data` field accepts a base64 string, or the raw byte shapes a JavaScript frontend produces when it forwards a `Uint8Array` or Node `Buffer` through `JSON.stringify` without encoding it first (`{ "0": 137, "1": 80, ... }` or `{ "type": "Buffer", "data": [137, 80, ...] }`) — all normalized to bytes at the wire boundary, so a client-side tool can return binary data without base64-encoding it by hand.
+- **A file URL** — a [`FileUrl`][pydantic_ai.messages.FileUrl] shape such as `{ kind: 'image-url', url: 'https://...' }` or `{ kind: 'document-url', url: 'https://...' }`. This is often more efficient than inlining the bytes, since only the reference crosses the wire and the provider fetches the file directly — a good fit when the file already lives at a URL the frontend trusts. The URL is honored only if its scheme passes the adapter's [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] allowlist (`http`/`https` by default); see the [trust model](#trust-model).
+- **A provider-hosted file** — an [`UploadedFile`][pydantic_ai.messages.UploadedFile] shape, `{ kind: 'uploaded-file', file_id: 'file-123', provider_name: 'openai' }`, referencing a file already uploaded to the provider's storage. Honored only when [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is `True`, since the server resolves it against the provider's file API using its own credentials.
+
+## Message metadata
+
+[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores it on the way back.
+
+When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
+
+`UIMessage.metadata` is fully client-controlled, so only `timestamp` is round-tripped: server-side fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
+
+## Trust model
+
+Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls.
+
 ## Tool Approval
 
 !!! note
@@ -146,3 +166,42 @@ When `sdk_version=6`, the adapter will:
 3. Emit `tool-output-denied` chunks for rejected tools
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
+
+Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
+
+## Tool input validation
+
+`tool-input-available` is emitted **after** the agent has validated the call against the tool's schema and any custom [`args_validator`](../tools-advanced.md#args-validator), so the chunk only fires once the args are known to be acceptable. The chunk's `input` field carries the raw arguments the model emitted.
+
+When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the retry prompt that will be sent back to the model. The agent will retry the call (subject to the tool's `retries` setting) and emit a new `tool-input-(available|error)` for each attempt.
+
+## System prompts and instructions
+
+Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
+
+The rest of this section only matters if you use `system_prompt`. If you only use `instructions`, there's nothing to configure — they're always applied regardless of the frontend message history.
+
+For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]:
+
+- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any system message sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is reinjected at the head of the first request via the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+- `'client'`: the frontend owns the system prompt. Frontend system messages are preserved as-is, and the agent's configured `system_prompt` is not injected — the caller is fully responsible for sending it on every turn if desired. To opt into fallback-to-configured behavior, add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to your agent.
+
+```python {title="vercel_ai_client_managed_system_prompt.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('openai:gpt-5.2')
+
+app = FastAPI()
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(
+        request, agent=agent, manage_system_prompt='client'
+    )
+```

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
@@ -8,6 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -48,7 +48,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     """
 
     tools: dict[str, Tool[Any]]
-    max_retries: int
+    max_retries: int | None
     timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
@@ -61,7 +61,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -80,6 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+                If `None`, inherits the agent's default retry count at runtime.
                 Applies to all tools, unless overridden when adding a tool.
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
@@ -93,14 +94,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide tools from the model until discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
@@ -127,13 +129,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
         if instructions is not None:
-            if isinstance(instructions, str) or callable(instructions):
-                instructions = [instructions]
-            for instruction in instructions:
-                if isinstance(instruction, str):
-                    self._instructions.append(instruction)
-                else:
-                    self._instructions.append(SystemPromptRunner(instruction))
+            self._instructions.extend(prepare_instructions(instructions))
 
         self.tools = {}
         for tool in tools:
@@ -246,7 +242,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -265,15 +262,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            # TODO(v2): Remove this deprecation fallback
-            #  and let takes_ctx=True propagate, which will raise a runtime error
-            #  in function_schema if the function doesn't accept RunContext.
-
-            # Is the func actually taking RunContext or is it a plain function in disguise?
-
-            tool = self.add_function(
+            self.add_function(
                 func=func_,
-                takes_ctx=None,
+                takes_ctx=True,
                 name=name,
                 description=description,
                 retries=retries,
@@ -290,13 +281,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
-            if not tool.function_schema.takes_ctx:
-                warnings.warn(
-                    'Passing a function without `RunContext` to `FunctionToolset.tool()` is deprecated, use `tool_plain()` instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
@@ -382,7 +366,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             name: The name of the tool, defaults to the function name.
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the toolset's default retries,
-                which defaults to 1.
+                which defaults to the agent's default.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -402,7 +386,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -528,7 +513,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -590,7 +576,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None:
+        if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
@@ -614,6 +600,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            if max_retries is None:
+                max_retries = ctx.max_retries
             run_context = replace(
                 ctx,
                 tool_name=original_name,
