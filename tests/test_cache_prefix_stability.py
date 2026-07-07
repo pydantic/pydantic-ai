@@ -27,10 +27,12 @@ from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.ui.ag_ui import AGUIAdapter
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 from .conftest import try_import
+
+with try_import() as ag_ui_imports_successful:
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -63,7 +65,14 @@ def _ag_ui_roundtrip_0_1_10(history: list[ModelMessage]) -> list[ModelMessage]:
 @pytest.mark.skipif(not openai_imports_successful, reason='openai not installed')
 @pytest.mark.parametrize(
     'roundtrip',
-    [pytest.param(_vercel_roundtrip, id='vercel'), pytest.param(_ag_ui_roundtrip_latest, id='ag_ui')],
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed'),
+        ),
+    ],
 )
 async def test_openai_tool_call_roundtrip_wire_stable(
     allow_model_requests: None,
@@ -96,7 +105,14 @@ async def test_openai_tool_call_roundtrip_wire_stable(
 @pytest.mark.skipif(not anthropic_imports_successful, reason='anthropic not installed')
 @pytest.mark.parametrize(
     'roundtrip',
-    [pytest.param(_vercel_roundtrip, id='vercel'), pytest.param(_ag_ui_roundtrip_latest, id='ag_ui-0_1_13')],
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui-0_1_13',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed'),
+        ),
+    ],
 )
 async def test_anthropic_thinking_roundtrip_wire_stable(
     allow_model_requests: None,
@@ -119,6 +135,7 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
 
 
 @pytest.mark.skipif(not anthropic_imports_successful, reason='anthropic not installed')
+@pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed')
 async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
     allow_model_requests: None,
     anthropic_api_key: str,
