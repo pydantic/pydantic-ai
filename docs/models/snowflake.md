@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[snowflake]"
 
 [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api) serves Claude, GPT, Llama, Mistral, DeepSeek, and Snowflake's own models through a REST API hosted in your Snowflake account, so data never leaves the Snowflake security perimeter.
 
-To use it, you need your [Snowflake account identifier](https://docs.snowflake.com/en/user-guide/admin-account-identifier) (e.g. `myorg-myaccount`) and a token: a [programmatic access token](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens) (PAT), OAuth token, or key-pair JWT.
+To use it, you need your [Snowflake account identifier](https://docs.snowflake.com/en/user-guide/admin-account-identifier) (e.g. `myorg-myaccount`) and a token: a [programmatic access token](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens) (PAT), OAuth token, or key-pair JWT. The role the request runs as — the role a PAT is restricted to, or otherwise your user's default role — must have the `SNOWFLAKE.CORTEX_USER` database role, which is [granted to `PUBLIC` by default](https://docs.snowflake.com/en/user-guide/snowflake-cortex/aisql#required-privileges).
 
 For a list of available models, see the [Cortex REST API documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api). [Fine-tuned models](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-finetuning) can be referenced as `database.schema.model`.
 
@@ -103,3 +103,6 @@ agent = Agent(
 ```
 
 On OpenAI models, use the unified `thinking` setting or [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
+
+!!! note
+    Claude requires `temperature` to be exactly 1 when thinking is enabled, but Cortex applies a different default when the request doesn't specify one, so `SnowflakeModel` sets `temperature` to 1 automatically when reasoning is enabled and you haven't set it explicitly.

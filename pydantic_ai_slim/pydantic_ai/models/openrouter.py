@@ -384,8 +384,7 @@ class _ReasoningText(_BaseReasoningDetail, frozen=True):
 _OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
 
 
-def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
-    provider_name = 'openrouter'
+def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail, provider_name: str = 'openrouter') -> ThinkingPart:
     provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
     if isinstance(reasoning, _ReasoningText):
         return ThinkingPart(

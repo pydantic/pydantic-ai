@@ -318,6 +318,8 @@ agent = Agent(model, model_settings=settings)
 
 On OpenAI models, use the unified `thinking` setting or [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
 
+Claude requires `temperature` to be exactly 1 when thinking is enabled, but Cortex applies a different default when the request doesn't specify one, so `SnowflakeModel` sets `temperature` to 1 automatically when reasoning is enabled and you haven't set it explicitly.
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.

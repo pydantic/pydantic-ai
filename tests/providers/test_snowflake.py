@@ -60,6 +60,21 @@ def test_snowflake_provider_need_token(env: TestEnv) -> None:
         SnowflakeProvider(account='myorg-myaccount')
 
 
+@pytest.mark.parametrize(
+    'account',
+    [
+        'myorg-myaccount',
+        'myorg-myaccount.snowflakecomputing.com',
+        'https://myorg-myaccount.snowflakecomputing.com',
+        'https://myorg-myaccount.snowflakecomputing.com/',
+    ],
+)
+def test_snowflake_provider_account_normalization(account: str) -> None:
+    """Account values that include more than the bare identifier are normalized."""
+    provider = SnowflakeProvider(account=account, token='pat')
+    assert provider.base_url == 'https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1'
+
+
 def test_snowflake_provider_base_url_override(env: TestEnv) -> None:
     """A custom `base_url` (e.g. private connectivity) does not require an account."""
     env.remove('SNOWFLAKE_ACCOUNT')

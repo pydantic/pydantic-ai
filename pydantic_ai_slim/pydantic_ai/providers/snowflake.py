@@ -25,6 +25,23 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+class SnowflakeModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with `SnowflakeModel`.
+
+    ALL FIELDS MUST BE `snowflake_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    snowflake_supports_reasoning: bool
+    """Whether the model supports the OpenRouter-style `reasoning` request object (Claude models)."""
+
+    snowflake_reasoning_requires_temperature_1: bool
+    """Whether the model requires `temperature` to be exactly 1 when reasoning is enabled.
+
+    Cortex applies a non-1 default temperature server-side, so `SnowflakeModel` sets `temperature`
+    explicitly when reasoning is enabled and the user didn't set it.
+    """
+
+
 class SnowflakeProvider(Provider[AsyncOpenAI]):
     """Provider for [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api).
 
@@ -68,10 +85,12 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
             # Claude models only support `json_schema` as the response format type, and thinking
             # is requested with an OpenRouter-style `reasoning` object (see `SnowflakeModel`).
             cortex_profile.update(
-                OpenAIModelProfile(
+                SnowflakeModelProfile(
                     supports_json_schema_output=True,
                     supports_json_object_output=False,
                     supports_thinking=True,
+                    snowflake_supports_reasoning=True,
+                    snowflake_reasoning_requires_temperature_1=True,
                 )
             )
         elif not model_name.startswith('openai-'):
@@ -150,6 +169,9 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
                     'Set the `SNOWFLAKE_ACCOUNT` environment variable or pass it via `SnowflakeProvider(account=...)`'
                     ' to use the Snowflake provider.'
                 )
+            # Be resilient to values that include more than the bare account identifier,
+            # like `myorg-myaccount.snowflakecomputing.com` or a full URL.
+            account = account.removeprefix('https://').removesuffix('/').removesuffix('.snowflakecomputing.com')
             base_url = f'https://{account}.snowflakecomputing.com/api/v2/cortex/v1'
         self._base_url = base_url
 
