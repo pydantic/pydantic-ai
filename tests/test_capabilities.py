@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -112,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, message, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -741,7 +742,6 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
                         'gateway/anthropic:claude-sonnet-5',
-                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -874,7 +874,7 @@ def test_model_json_schema_with_capabilities():
                         'groq:openai/gpt-oss-safeguard-20b',
                         'groq:playai-tts',
                         'groq:playai-tts-arabic',
-                        'groq:qwen/qwen-3-32b',
+                        'groq:qwen/qwen3-32b',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -913,6 +913,10 @@ def test_model_json_schema_with_capabilities():
                         'mistral:mistral-moderation-latest',
                         'mistral:mistral-small-latest',
                         'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-k2.5',
+                        'moonshotai:kimi-k2.6',
+                        'moonshotai:kimi-k2.7-code',
+                        'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -921,6 +925,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:moonshot-v1-32k-vision-preview',
                         'moonshotai:moonshot-v1-8k',
                         'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-auto',
                         'openai-chat:computer-use-preview',
                         'openai-chat:computer-use-preview-2025-03-11',
                         'openai-chat:gpt-3.5-turbo',
@@ -2065,6 +2070,22 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_from_file_empty_yaml_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got NoneType'):
+        AgentSpec.from_file(spec_path)
+
+
+def test_from_file_json_array_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('[{"model": "test"}]', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got list'):
+        AgentSpec.from_file(spec_path)
+
+
 def test_agent_from_file_yaml(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
@@ -2118,6 +2139,50 @@ def test_to_file_json(tmp_path: str):
 
     # Schema file should be generated
     schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_yaml_with_absolute_schema_path(tmp_path: Path):
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    content = spec_path.read_text(encoding='utf-8')
+    assert content.startswith('# yaml-language-server: $schema=agent_schema.json')
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_external_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_dir = tmp_path / 'specs'
+    schema_dir = tmp_path / 'schemas'
+    spec_dir.mkdir()
+    schema_dir.mkdir()
+    spec_path = spec_dir / 'agent.json'
+    schema_path = schema_dir / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == str(schema_path)
     assert schema_path.exists()
 
 
@@ -3192,14 +3257,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {
-                                    'name': 'lookup_refund_policy',
-                                    'description': 'Look up the refund policy for an order.',
-                                }
-                            ]
-                        },
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
                         tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
@@ -3214,7 +3272,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=88, output_tokens=16),
+                usage=RequestUsage(input_tokens=79, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3241,7 +3299,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=94, output_tokens=23),
+                usage=RequestUsage(input_tokens=85, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3445,8 +3503,8 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
 
     def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
         call_ids: list[str] = []
-        for message in messages:
-            for part in message.parts:
+        for msg in messages:
+            for part in msg.parts:
                 if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
                     call_ids.append(part.tool_call_id)
         return call_ids
@@ -4104,7 +4162,7 @@ def test_infer_fmt_unknown_extension():
     """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
     from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
 
-    with pytest.raises(ValueError, match="Could not infer format for filename 'agent.txt'"):
+    with pytest.raises(ValueError, match=re.escape("Could not infer format for filename 'agent.txt'")):
         _infer_fmt(Path('agent.txt'), None)
 
 
@@ -11015,8 +11073,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         ]
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            first_request = messages[0]
-            assert isinstance(first_request, ModelRequest)
+            first_request = message(messages, ModelRequest)
             first_request_instructions.append(first_request.instructions)
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
@@ -19445,11 +19502,11 @@ def test_deferred_tool_requests_build_results_validates_ids():
     )
 
     # Mis-routed ID: tool-result provided for something in the approvals list.
-    with pytest.raises(ValueError, match='calls.*not in.*DeferredToolRequests.calls'):
+    with pytest.raises(ValueError, match=r'calls.*not in.*DeferredToolRequests.calls'):
         requests.build_results(calls={'approval_1': 'oops'})
 
     # Unknown ID entirely.
-    with pytest.raises(ValueError, match='approvals.*not in.*DeferredToolRequests.approvals'):
+    with pytest.raises(ValueError, match=r'approvals.*not in.*DeferredToolRequests.approvals'):
         requests.build_results(approvals={'unknown_id': True})
 
     # Happy path still works.

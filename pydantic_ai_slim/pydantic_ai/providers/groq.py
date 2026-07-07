@@ -84,17 +84,17 @@ class GroqProvider(Provider[AsyncGroq]):
                 profile = profile_func(family_name)
                 break
 
-        # The generic family profiles above don't know which models Groq exposes reasoning controls
-        # for (e.g. `qwen/qwen3-*` reasons, but the generic Qwen profile doesn't flag it), so overlay
-        # Groq's own reasoning flags. Starting from the Groq profile keeps the `groq_`-prefixed flags
-        # that `GroqModel` reads at request time.
-        # Invariant: the family profile's *non-default* values win over the Groq base, so a Groq family
-        # profile must never claim reasoning support (`supports_thinking` / `thinking_always_enabled`)
-        # for a model Groq doesn't actually expose reasoning controls for — it would silently override
-        # the Groq base and reintroduce the mismatch this overlay fixes.
+        # The generic family profiles above don't know Groq's serving specifics for reasoning
+        # (e.g. `qwen/qwen3-*` reasons, and Groq's `openai/gpt-oss-*` reasons, but the generic Qwen/OpenAI
+        # profiles flag them differently or not at all). Groq is authoritative here, so the Groq profile's
+        # reasoning flags override the family profile — it's layered *after* it. The family profile still
+        # provides all its other (non-`groq_`, non-reasoning) traits, which the Groq profile doesn't touch.
+        # Maintenance contract: because this makes `groq_model_profile`'s reasoning detection authoritative,
+        # its `is_reasoning_model` list must stay complete for every Groq-served reasoning model — a model the
+        # list misses would have any family-profile `supports_thinking=True` overridden to `False` here.
         return merge_profile(
-            groq_model_profile(model_name),
             profile,
+            groq_model_profile(model_name),
             ModelProfile(supports_inline_system_prompts=True),
         )
 

@@ -47,6 +47,8 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
 from ._inline_snapshot import Builder, Custom, customize
 
+T = TypeVar('T')
+
 __all__ = (
     'IsDatetime',
     'IsFloat',
@@ -61,6 +63,8 @@ __all__ = (
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
     'remove_schema_descriptions',
+    'message',
+    'message_part',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -74,15 +78,11 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
-    from typing import TypeVar
-
     from pluggy import Result
     from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
-
-    T = TypeVar('T')
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -687,14 +687,25 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     return bin_content
 
 
-# Opaque 3-byte payload for roundtrip / serialization tests where the bytes are never decoded by a
-# model and assertions only check structure (e.g. `IsStr()` on base64): keeps inline-snapshot diffs
-# small and avoids CI errors that explode when failure traces include large base64 payloads. When the
-# model has to actually see the content (e.g. VCR tests against provider APIs), use the KB-scale
-# session fixtures above (`image_content`, `audio_content`, `video_content`).
+# `tiny_*` fixtures: opaque 3-byte payloads for roundtrip / serialization tests where the bytes
+# are never decoded by a model and assertions only check structure (e.g. `IsStr()` on base64).
+# Prefer these whenever a real, decodable image is not required: keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads.
+# When the model has to actually see the content (e.g. VCR tests against provider APIs), use
+# the KB-scale session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
 @pytest.fixture
 def tiny_audio() -> BinaryContent:
     return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
 
 
 os.environ.pop('OPENAI_BASE_URL', None)
@@ -1057,6 +1068,23 @@ def iter_message_parts(
             for part in msg.parts:
                 if isinstance(part, part_type):
                     yield part
+
+
+def message(messages: Sequence[ModelMessage], message_type: type[T], *, index: int = 0) -> T:
+    """Return `messages[index]`, asserting it is an instance of `message_type`."""
+    msg = messages[index]
+    assert isinstance(msg, message_type)
+    return msg
+
+
+def message_part(
+    messages: Sequence[ModelMessage], part_type: type[T], *, message_index: int = 0, part_index: int = 0
+) -> T:
+    """Return `messages[message_index].parts[part_index]`, asserting it is an instance of `part_type`."""
+    msg = messages[message_index]
+    part = msg.parts[part_index]
+    assert isinstance(part, part_type)
+    return part
 
 
 # endregion
