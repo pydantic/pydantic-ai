@@ -18,13 +18,13 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
 )
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     model_request,
     model_request_stream,
     process_event_stream,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings

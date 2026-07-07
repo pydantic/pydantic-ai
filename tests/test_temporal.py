@@ -100,7 +100,6 @@ try:
 
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
-        AgentPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,

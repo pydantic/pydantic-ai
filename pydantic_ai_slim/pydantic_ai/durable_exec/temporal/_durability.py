@@ -26,8 +26,8 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
-    model_request,
     disable_threads,
+    model_request,
     model_request_stream,
     process_event_stream,
 )
