@@ -1923,6 +1923,15 @@ class AudioWithTranscriptPart:
     part_kind: Literal['audio-with-transcript'] = 'audio-with-transcript'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @property
+    def content(self) -> str:
+        """The transcript, or an empty string if transcription was unavailable.
+
+        Mirrors [`TextPart.content`][pydantic_ai.messages.TextPart.content] so code that renders
+        message parts generically can treat spoken content like text.
+        """
+        return self.transcript or ''
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         if self.transcript is not None:

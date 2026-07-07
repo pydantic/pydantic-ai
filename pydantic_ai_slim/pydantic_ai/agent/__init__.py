@@ -61,7 +61,7 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -2739,6 +2739,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if extra_capabilities
             else self._root_capability
         )
+
+        # Resolve instrumentation the same way `iter` does: inject an `Instrumentation` capability
+        # (outermost) so tool spans flow through `ToolManager.handle_call`'s `wrap_tool_execute`
+        # hook — the single, canonical source of tool spans — instead of the session hand-making
+        # its own. A realtime model is a `RealtimeModel`, never an `InstrumentedModel` (a different
+        # ABC), so there's no wrapped model to unwrap. If the user already supplied an
+        # `Instrumentation` capability (agent- or call-level), it wins and injection is skipped,
+        # mirroring the classic precedence: explicit capability over `instrument=`-derived settings.
+        instrumentation_settings = self._resolve_instrumentation_settings()
+        if instrumentation_settings is not None and not has_capability_type([effective_capability], InstrumentationCap):
+            effective_capability = CombinedCapability(
+                [InstrumentationCap(settings=instrumentation_settings), effective_capability]
+            )
+
+        # The session-level `realtime` span and per-response `chat` spans are still hand-managed by
+        # `RealtimeSession` (there are no realtime capability hooks yet to hang them on — those move
+        # onto exchange-level capability hooks when they land). Until then, drive them from the same
+        # settings as the tool spans: the explicit capability's when the user supplied one, else the
+        # `instrument=`-derived settings picked up by the injected capability above.
+        session_instrumentation = find_capability([effective_capability], InstrumentationCap)
+        session_instrumentation_settings = (
+            session_instrumentation.settings if session_instrumentation is not None else None
+        )
+
         run_capability = await effective_capability.for_run(run_context)
         run_context.capabilities = _build_run_capabilities(run_capability)
         run_context.metadata = self._get_metadata(run_context, metadata)
@@ -2813,7 +2837,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     connection,
                     tool_runner,
                     background_tools=background_tools or set(),
-                    instrumentation=self._resolve_instrumentation_settings(),
+                    instrumentation=session_instrumentation_settings,
                     model_name=model.model_name,
                     agent_name=self.name,
                     usage=run_context.usage,

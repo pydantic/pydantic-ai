@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from graphlib import CycleError, TopologicalSorter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UserError
 
@@ -191,3 +191,18 @@ def has_capability_type(
 ) -> bool:
     """Check whether any leaf in a capability list/tree is an instance of the given type."""
     return any(isinstance(leaf, cap_type) for cap in capabilities for leaf in collect_leaves(cap))
+
+
+CapabilityT = TypeVar('CapabilityT', bound=AbstractCapability[Any])
+
+
+def find_capability(
+    capabilities: Sequence[AbstractCapability[Any]],
+    cap_type: type[CapabilityT],
+) -> CapabilityT | None:
+    """Return the first leaf in a capability list/tree that is an instance of `cap_type`, else `None`."""
+    for cap in capabilities:
+        for leaf in collect_leaves(cap):
+            if isinstance(leaf, cap_type):
+                return leaf
+    return None

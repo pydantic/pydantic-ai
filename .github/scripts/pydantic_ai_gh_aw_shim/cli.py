@@ -56,7 +56,6 @@ from pydantic_ai.capabilities import NativeTool, ProcessEventStream, ProcessHist
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    AudioWithTranscriptPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -220,8 +219,6 @@ def _part_text(part: MessagePart) -> str:
     """Best-effort text rendering of any pydantic-ai message part."""
     if isinstance(part, (ToolCallPart, NativeToolCallPart, ToolSearchCallPart, NativeToolSearchCallPart)):
         return f'{part.tool_name}({part.args_as_dict()!r})'
-    if isinstance(part, AudioWithTranscriptPart):
-        return part.transcript or ''
     return str(part.content)
 
 
