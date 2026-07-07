@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelAPIError, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     from pydantic_ai.models.openai import (
-        _WS_CONNECTION,  # pyright: ignore[reportPrivateUsage]
+        _WS_SESSIONS,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
@@ -37,7 +37,7 @@ pytestmark = [
 
 @pytest.fixture
 def openai_model(openai_api_key: str, allow_model_requests: None) -> OpenAIResponsesModel:
-    """Bare model for lifecycle tests — patches websockets.connect to yield a stub."""
+    """Bare model for lifecycle tests: patches websockets.connect to yield a stub."""
     return OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
 
@@ -85,14 +85,16 @@ class _StubConnect:
 
 async def test_connect_lifecycle(openai_model: OpenAIResponsesModel) -> None:
     """ContextVar is set inside connect(), cleared after exit, and connect() yields the model."""
-    assert _WS_CONNECTION.get() is None
+    assert _WS_SESSIONS.get() is None
 
     with patch('websockets.asyncio.client.connect', _StubConnect):
         async with openai_model.connect() as connected_model:
             assert connected_model is openai_model
-            assert _WS_CONNECTION.get() is not None
+            sessions = _WS_SESSIONS.get()
+            assert sessions is not None
+            assert id(openai_model) in sessions
 
-    assert _WS_CONNECTION.get() is None
+    assert _WS_SESSIONS.get() is None
 
 
 async def test_connect_parallel_separate_connections(openai_model: OpenAIResponsesModel) -> None:
@@ -101,8 +103,9 @@ async def test_connect_parallel_separate_connections(openai_model: OpenAIRespons
 
     async def capture_connection(model: OpenAIResponsesModel) -> None:
         async with model.connect():
-            conn = _WS_CONNECTION.get()
-            connections_seen.append(id(conn))
+            sessions = _WS_SESSIONS.get()
+            assert sessions is not None
+            connections_seen.append(id(sessions[id(model)].connection))
             await asyncio.sleep(0.01)
 
     with patch('websockets.asyncio.client.connect', _StubConnect):
@@ -116,7 +119,7 @@ async def test_connect_parallel_separate_connections(openai_model: OpenAIRespons
 
 async def test_no_connect_uses_http(openai_model: OpenAIResponsesModel) -> None:
     """Without connect(), ContextVar is None — requests go through HTTP path."""
-    assert _WS_CONNECTION.get() is None
+    assert _WS_SESSIONS.get() is None
 
 
 async def test_ws_request_after_disconnect(openai_model: OpenAIResponsesModel) -> None:
@@ -125,16 +128,16 @@ async def test_ws_request_after_disconnect(openai_model: OpenAIResponsesModel) -
         async with openai_model.connect():
             pass
 
-    assert _WS_CONNECTION.get() is None
+    assert _WS_SESSIONS.get() is None
 
 
 async def test_ws_concurrent_requests_error(openai_model: OpenAIResponsesModel) -> None:
-    """Parallel agent.run() on the same model in the same connect() raises RuntimeError."""
+    """Parallel agent.run() on the same model in the same connect() raises UserError."""
     agent: Agent[None, str] = Agent(openai_model)
 
     with patch('websockets.asyncio.client.connect', _StubConnect):
         async with openai_model.connect():
-            with pytest.raises(RuntimeError, match='already handling a request'):
+            with pytest.raises(UserError, match='already handling a request'):
                 await asyncio.gather(
                     agent.run('Hello'),
                     agent.run('World'),
@@ -277,14 +280,15 @@ async def test_ws_connection_closed_before_terminal_streaming(openai_ws_model: O
 
 @pytest.mark.ws_cassette
 async def test_ws_stream_cancel(openai_ws_model: OpenAIResponsesModel) -> None:
-    """Cancelling a streamed WebSocket run closes the underlying `_ws_send_stream` async generator."""
+    """Cancelling a streamed WebSocket run raises because WebSocket mode has no cancel event."""
     agent: Agent[None, str] = Agent(openai_ws_model)
 
     async with openai_ws_model.connect():
         async with agent.run_stream('Say "hello" and nothing else.') as result:
             async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 break
-            await result.cancel()
+            with pytest.raises(NotImplementedError, match='Stream cancellation is not supported in WebSocket mode'):
+                await result.cancel()
             assert result.cancelled
 
 
