@@ -439,6 +439,7 @@ async def test_event_stream_file():
 
 
 async def test_handle_event_ignores_unregistered_event_types():
+    """Cover the defensive `case _` arm that no public event type reaches."""
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     event_stream = DummyUIEventStream(run_input=request)
     unregistered_event: Any = object()
