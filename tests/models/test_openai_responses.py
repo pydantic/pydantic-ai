@@ -9957,7 +9957,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='',
+                        content='Let me think about this... The answer is 4.',
                         id='rs_123',
                         provider_name='openai',
                         provider_details={'raw_content': ['Let me think about this...', 'The answer is 4.']},
@@ -10148,7 +10148,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='',
+                        content='The user asks: "What is 2+2?" They expect a straightforward answer: 4. Just answer 4.',
                         id='rs_tmp_2kbe7x16sax',
                         provider_name='openrouter',
                         provider_details={
@@ -10294,7 +10294,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='',
+                        content='Raw CoT step 1 Raw CoT step 2',
                         id='rs_123',
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
@@ -10331,7 +10331,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='',
+                        content='Raw CoT step 1 Raw CoT step 2',
                         id='rs_123',
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
@@ -10400,7 +10400,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='',
+                        content='Raw CoT step 1 Raw CoT step 2',
                         id='rs_123',
                         provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},

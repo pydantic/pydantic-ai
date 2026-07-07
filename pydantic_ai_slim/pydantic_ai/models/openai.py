@@ -2002,9 +2002,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         signature = None
                         provider_details = {}
                 elif signature or provider_details:
+                    # When there are no summaries but there is raw CoT content
+                    # (e.g. from gpt-oss models, vLLM, or litellm bridge), use
+                    # the raw content text as the ThinkingPart content so it is
+                    # visible to consumers, not just stored in provider_details.
+                    raw_content_text = ' '.join(raw_content) if raw_content else ''
                     items.append(
                         ThinkingPart(
-                            content='',
+                            content=raw_content_text,
                             id=item.id,
                             signature=signature,
                             provider_name=self.system,
@@ -3699,9 +3704,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield event
 
                 elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
-                    # Handle raw CoT from gpt-oss models using callback pattern
+                    # Handle raw CoT from gpt-oss models and OpenAI-compatible providers
+                    # (e.g. vLLM, LM Studio, litellm bridge) that use `reasoning_text` events
+                    # instead of `reasoning_summary_text` events.
                     for event in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=chunk.item_id,
+                        content=chunk.delta,
                         id=chunk.item_id,
                         provider_name=self.provider_name,
                         provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
