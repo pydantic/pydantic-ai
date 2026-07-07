@@ -47,18 +47,16 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
 
 def cost_from_provider_details(response: ModelResponse) -> Decimal | None:
     """Try to get the cost from the provider details."""
-    # if provider_details := response.provider_details:
-    #     # For openrouter
-    #     if (cost := provider_details.get('cost')) is not None:
-    #         return Decimal(str(cost))
+    if provider_details := response.provider_details:
+        # For Pydantic AI Gateway  only, unfortunate that it is aware of gateway specific logic here
+        if (usage := provider_details.get('usage')) and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')):
+            if (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None:
+                return Decimal(str(cost_estimate))
 
-    #     # For gateway
-    #     if (usage := provider_details.get('usage')) and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')):
-    #         if (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None:
-    #             return Decimal(str(cost_estimate))
-    # return None
-
-    return Decimal(str(response.provider_cost)) if response.provider_cost else None
+        # For every other provider we can just extract the cost from the provider cost and make the models themselves populate it while processing provider_details
+        # In this case we do it in OpenAI because OpenRouter uses OpenAI
+        return Decimal(str(response.provider_cost)) if response.provider_cost else None
+    return None
 
 
 def calculate_price_for_usage(
