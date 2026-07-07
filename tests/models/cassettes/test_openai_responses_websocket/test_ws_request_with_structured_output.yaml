@@ -7,7 +7,6 @@ interactions:
     - role: user
       content: Tell me about Paris.
     model: gpt-4o-mini
-    stream: true
     tool_choice: required
     tools:
     - name: final_result

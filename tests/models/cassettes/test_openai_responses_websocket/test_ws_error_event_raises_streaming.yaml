@@ -10,7 +10,8 @@ interactions:
 - direction: received
   data:
     type: error
-    code: server_error
+    code: null
     message: The server had an error while processing your request.
     param: null
     sequence_number: 0
+synthetic: true

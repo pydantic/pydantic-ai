@@ -7,7 +7,6 @@ interactions:
     - role: user
       content: Say "hello" and nothing else.
     model: gpt-4o-mini
-    stream: true
 - direction: received
   data:
     type: response.created

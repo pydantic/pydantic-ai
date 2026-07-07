@@ -7,7 +7,6 @@ interactions:
     - role: user
       content: What is the temperature in Paris?
     model: gpt-4o-mini
-    stream: true
     tool_choice: auto
     tools:
     - name: get_temperature
@@ -285,7 +284,6 @@ interactions:
       call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
       output: 25°C in Paris
     model: gpt-4o-mini
-    stream: true
     tool_choice: auto
     tools:
     - name: get_temperature

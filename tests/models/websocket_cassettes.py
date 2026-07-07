@@ -15,15 +15,18 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     import yaml
-    from websockets.exceptions import ConnectionClosedOK
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+    from websockets.frames import Close
+
+CassetteDirection = Literal['sent', 'received', 'closed']
 
 
 @dataclass
 class CassetteInteraction:
-    """A single WebSocket frame (sent or received)."""
+    """A single WebSocket frame or close event."""
 
-    direction: Literal['sent', 'received']
-    data: dict[str, Any]
+    direction: CassetteDirection
+    data: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 @dataclass
@@ -31,6 +34,7 @@ class WebSocketCassette:
     """Ordered list of WebSocket interactions."""
 
     version: int = 1
+    synthetic: bool = False
     interactions: list[CassetteInteraction] = field(default_factory=list[CassetteInteraction])
 
     @classmethod
@@ -38,9 +42,10 @@ class WebSocketCassette:
         raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
         raw_interactions: list[dict[str, Any]] = raw.get('interactions', [])
         interactions: list[CassetteInteraction] = [
-            CassetteInteraction(direction=item['direction'], data=item['data']) for item in raw_interactions
+            CassetteInteraction(direction=item['direction'], data=item.get('data', {})) for item in raw_interactions
         ]
-        return cls(version=raw.get('version', 1), interactions=interactions)
+        # Synthetic cassettes exercise protocol paths that cannot be recorded on demand.
+        return cls(version=raw.get('version', 1), synthetic=raw.get('synthetic', False), interactions=interactions)
 
     def dump(self, path: Path) -> None:  # pragma: no cover
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +53,8 @@ class WebSocketCassette:
             'version': self.version,
             'interactions': [{'direction': i.direction, 'data': i.data} for i in self.interactions],
         }
+        if self.synthetic:
+            data['synthetic'] = True
         path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
             encoding='utf-8',
@@ -79,47 +86,53 @@ class ReplayWebSocket:
     """Replays pre-recorded 'received' messages from a cassette."""
 
     def __init__(self, cassette: WebSocketCassette) -> None:
-        self._received = [i.data for i in cassette.interactions if i.direction == 'received']
-        self._pos = 0
+        self._sent = [i.data for i in cassette.interactions if i.direction == 'sent']
+        self._received = [i for i in cassette.interactions if i.direction in ('received', 'closed')]
+        self._sent_pos = 0
+        self._received_pos = 0
 
-    async def send(self, message: str) -> None:
-        pass
+    async def send(self, message: str | bytes) -> None:
+        actual = json.loads(message.decode('utf-8') if isinstance(message, bytes) else message)
+        if self._sent_pos >= len(self._sent):
+            raise AssertionError(f'Unexpected WebSocket send:\n{json.dumps(actual, indent=2, sort_keys=True)}')
 
-    async def recv(self, *, decode: bool | None = None) -> str | bytes:
-        if self._pos >= len(self._received):
+        expected = self._sent[self._sent_pos]
+        self._sent_pos += 1
+        if actual != expected:
+            raise AssertionError(
+                'WebSocket sent frame does not match cassette.\n'
+                f'Expected:\n{json.dumps(expected, indent=2, sort_keys=True)}\n'
+                f'Actual:\n{json.dumps(actual, indent=2, sort_keys=True)}'
+            )
+
+    async def recv(self, *, decode: bool | None = False) -> bytes:
+        if self._received_pos >= len(self._received):
             raise ConnectionClosedOK(None, None)
-        data = self._received[self._pos]
-        self._pos += 1
-        text = json.dumps(data)
-        if decode is False:
-            return text.encode('utf-8')
-        return text
-
-    def __aiter__(self) -> ReplayWebSocket:
-        return self
-
-    async def __anext__(self) -> str:
-        try:
-            result = await self.recv()
-        except ConnectionClosedOK:
-            raise StopAsyncIteration
-        if isinstance(result, bytes):
-            return result.decode('utf-8')
-        return result
+        interaction = self._received[self._received_pos]
+        self._received_pos += 1
+        if interaction.direction == 'closed':
+            code = interaction.data.get('code', 1011)
+            reason = interaction.data.get('reason', '')
+            raise ConnectionClosedError(
+                Close(code if isinstance(code, int) else 1011, reason if isinstance(reason, str) else ''),
+                None,
+            )
+        return json.dumps(interaction.data).encode('utf-8')
 
     async def close(self, *, code: int = 1000, reason: str = '') -> None:
         pass
 
 
-class RecordingWebSocket:
+class RecordingWebSocket:  # pragma: no cover
     """Wraps a real WebSocket connection, recording all frames to a cassette."""
 
     def __init__(self, ws: Any, cassette: WebSocketCassette) -> None:
         self._ws = ws
         self._cassette = cassette
 
-    async def send(self, message: str) -> None:
-        self._cassette.interactions.append(CassetteInteraction(direction='sent', data=json.loads(message)))
+    async def send(self, message: str | bytes) -> None:
+        text = message.decode('utf-8') if isinstance(message, bytes) else message
+        self._cassette.interactions.append(CassetteInteraction(direction='sent', data=json.loads(text)))
         await self._ws.send(message)
 
     async def recv(self, **kwargs: Any) -> str | bytes:
@@ -127,15 +140,6 @@ class RecordingWebSocket:
         text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
         self._cassette.interactions.append(CassetteInteraction(direction='received', data=json.loads(text)))
         return raw
-
-    def __aiter__(self) -> RecordingWebSocket:
-        return self
-
-    async def __anext__(self) -> str | bytes:
-        try:
-            return await self.recv()
-        except (ConnectionError, StopAsyncIteration):
-            raise StopAsyncIteration
 
     async def close(self, *, code: int = 1000, reason: str = '') -> None:
         await self._ws.close(code=code, reason=reason)

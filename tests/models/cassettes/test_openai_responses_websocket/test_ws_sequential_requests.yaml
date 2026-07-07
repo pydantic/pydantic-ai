@@ -7,7 +7,6 @@ interactions:
     - role: user
       content: Say "first"
     model: gpt-4o-mini
-    stream: true
 - direction: received
   data:
     type: response.created
@@ -239,7 +238,6 @@ interactions:
     - role: user
       content: Say "second"
     model: gpt-4o-mini
-    stream: true
 - direction: received
   data:
     type: response.created
