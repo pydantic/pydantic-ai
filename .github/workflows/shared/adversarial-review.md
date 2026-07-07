@@ -27,10 +27,13 @@ An issue that omits it is incomplete — noop instead.
 
 2. **Existing tests don't already bless the behavior.** Grep the suite for the
    symbol / code path and **read** the nearest tests. If a passing test already
-   asserts the current behavior — or your proposed fix would change or break any
-   existing test — the behavior is intentional → noop. (Past reports proposed
-   one-line "fixes" that broke a dozen adapter/serialization tests asserting the
-   opposite on purpose.)
+   asserts the current behavior, the behavior is intentional → noop. (Past
+   reports proposed one-line "fixes" that broke a dozen adapter/serialization
+   tests asserting the opposite on purpose.) A fix that would merely require
+   *updating* tests is not, by itself, proof of intent — real fixes often update
+   a stale test — but it raises the bar: read every test the fix would touch and
+   noop if any of them asserts the current behavior deliberately (an explicit
+   comment/docstring, or the same expectation repeated across several tests).
 
 3. **Ruled out "by design."** Check for: a nearby comment/docstring explaining
    the choice, the provider profile, a maintainer decision in a linked issue/PR,

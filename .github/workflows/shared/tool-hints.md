@@ -30,7 +30,7 @@ proxied `gh` CLI, including its server-side `?labels=` filter. When this sweep
 files under a dedicated label, prefer a narrow label query over listing
 everything:
 
-```
+```bash
 gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' \
   --jq '.[] | select(.pull_request == null) | {number, title}'
 ```
@@ -38,7 +38,7 @@ gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100
 If this sweep has no dedicated label, or the label filter is inconclusive, widen
 to a full open-issue scan:
 
-```
+```bash
 gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
   --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
 ```
