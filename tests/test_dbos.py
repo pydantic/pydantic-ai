@@ -80,6 +80,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
+from pydantic_ai.capabilities import Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -2231,6 +2232,31 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     # The capability should have stored a DBOS wrapper keyed by the toolset id
     assert 'my_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
     assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dbos_durability_wraps_capability_contributed_mcp_toolset(dbos: DBOS) -> None:
+    """MCP toolsets contributed by other capabilities are wrapped as DBOS steps too.
+
+    Durability capabilities are in the `innermost` ordering tier, so `Agent.__init__` binds
+    them only after every other capability's contributed toolsets have been extracted into
+    `agent.toolsets`. Without that two-phase binding, this toolset would be invisible to
+    `for_agent` and run un-checkpointed inside the DBOS workflow.
+    """
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='cap_mcp', init_timeout=20
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_cap_mcp',
+        capabilities=[Toolset(mcp_toolset), DBOSDurability()],
+    )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+
+    assert 'cap_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._dbos_toolsets_by_id['cap_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:

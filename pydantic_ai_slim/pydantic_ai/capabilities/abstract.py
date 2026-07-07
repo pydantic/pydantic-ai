@@ -269,6 +269,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `get_model_settings()`, so the returned instance's own contributions
         feed into the agent's initial configuration on equal footing).
 
+        The exception is capabilities in the `innermost` ordering tier (see
+        [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]),
+        i.e. durability capabilities: they bind in a second phase, after the other
+        capabilities' contributed toolsets have been extracted, so `agent.toolsets`
+        is complete when their `for_agent` wraps it. The flip side is that
+        `innermost` capabilities can't contribute toolsets of their own.
+
         Override to discover agent configuration and return a bound instance.
         Default: return `self` (no agent-specific setup needed).
         """

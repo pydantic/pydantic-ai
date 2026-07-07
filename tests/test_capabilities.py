@@ -11300,7 +11300,7 @@ async def test_wrapper_capability_delegates_resolve_model_id():
     resolved = TestModel()
 
     @dataclass
-    class ResolverCap(AbstractCapability[None]):
+    class ResolverCap(AbstractCapability[Any]):
         def resolve_model_id(self, model_id: str, *, agent: Any) -> Any:
             return resolved if model_id == 'magic' else None
 
@@ -13330,6 +13330,59 @@ def test_ordering_wrapped_by():
 
     combined = CombinedCapability([WrappedByACap(), PlainCapA()])
     assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
+
+
+def test_innermost_binds_after_capability_toolsets():
+    """`innermost` capabilities bind after other capabilities' toolsets are extracted.
+
+    Durability capabilities (the `innermost` tier) wrap `agent.toolsets` in their `for_agent`,
+    so `Agent.__init__` binds them in a second phase, after toolsets contributed by other
+    capabilities (e.g. `Capability(tools=...)`) have been extracted and are visible on the
+    agent. Binding everything in one phase would leave those toolsets invisible to durability
+    and running unwrapped (non-deterministically) inside durable workflows.
+    """
+    seen_tool_names: set[str] = set()
+
+    @dataclass
+    class RecordingInnermostCap(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> RecordingInnermostCap:
+            for toolset in agent.toolsets:
+                toolset.apply(
+                    lambda leaf: seen_tool_names.update(leaf.tools) if isinstance(leaf, FunctionToolset) else None
+                )
+            # Return a bound copy, like durability capabilities do.
+            return replace(self)
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    def greet() -> str:
+        return 'hi'  # pragma: no cover
+
+    original = RecordingInnermostCap()
+    agent = Agent('test', capabilities=[Capability(tools=[greet]), original])
+    assert seen_tool_names == {'greet'}
+    # The bound copy replaced the original in the agent's capability chain.
+    assert not any(cap is original for cap in agent.root_capability.capabilities)
+    assert any(isinstance(cap, RecordingInnermostCap) for cap in agent.root_capability.capabilities)
+
+
+def test_combined_capability_for_agent_binds_children():
+    """`CombinedCapability.for_agent` rebinds children that return new bound instances."""
+
+    @dataclass
+    class BindingCap(AbstractCapability[Any]):
+        bound: bool = False
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> BindingCap:
+            return replace(self, bound=True)
+
+    combined = CombinedCapability([BindingCap(), PlainCapA()])
+    agent = Agent('test')
+    bound = combined.for_agent(agent)
+    assert bound is not combined
+    assert isinstance(bound.capabilities[0], BindingCap)
+    assert bound.capabilities[0].bound is True
 
 
 def test_ordering_requires_present():

@@ -34,7 +34,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities import Instrumentation, Toolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1497,6 +1497,28 @@ def test_prefect_durability_idempotent_for_agent() -> None:
     # Re-binding another PrefectDurability should leave agent.run untouched.
     PrefectDurability().for_agent(agent)
     assert agent.run is first_run
+
+
+def test_prefect_durability_wraps_capability_contributed_toolsets() -> None:
+    """Toolsets contributed by other capabilities are wrapped as Prefect tasks too.
+
+    Durability capabilities are in the `innermost` ordering tier, so `Agent.__init__` binds
+    them only after every other capability's contributed toolsets have been extracted into
+    `agent.toolsets`. Without that two-phase binding, this toolset would be invisible to
+    `for_agent` and its tools would run untracked inside the Prefect flow.
+    """
+
+    def greet() -> str:
+        return 'hi'  # pragma: no cover
+
+    agent = Agent(
+        _durability_fn_model,
+        name='prefect_cap_toolset',
+        capabilities=[Toolset(FunctionToolset([greet], id='cap_tools')), PrefectDurability()],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert 'cap_tools' in bound._prefect_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])

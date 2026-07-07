@@ -53,6 +53,7 @@ from ..capabilities import AbstractCapability, AgentCapability, CombinedCapabili
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -526,16 +527,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
-        # Let capabilities bind to this agent (discover model, name, toolsets, etc.)
-        self._root_capability = self._root_capability.for_agent(self)
-
-        # Extract capability-contributed configuration (after for_agent so caps can provide toolsets etc.)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
-        self._cap_native_tools = list(self._root_capability.get_native_tools())
-        self._cap_model_settings = self._root_capability.get_model_settings()
+        # Let capabilities bind to this agent (discover model, name, toolsets, etc.).
+        # Binding happens in two phases: capabilities in the `innermost` ordering tier
+        # (i.e. durability capabilities) wrap all of the agent's toolsets in their
+        # `for_agent`, so they only bind after every other capability has bound and had
+        # its contributed toolsets extracted into `self._cap_toolsets` (and thereby
+        # `self.toolsets`). The flip side is that `innermost` capabilities can't
+        # contribute toolsets of their own.
+        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
         cap_toolset = self._root_capability.get_toolset()
         if cap_toolset is not None:
             self._cap_toolsets = [cap_toolset]
+        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
+
+        # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_native_tools = list(self._root_capability.get_native_tools())
+        self._cap_model_settings = self._root_capability.get_model_settings()
 
     @overload
     @classmethod

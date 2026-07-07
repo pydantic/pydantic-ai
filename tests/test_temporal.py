@@ -59,7 +59,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessEventStream, ProcessHistory, Toolset
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -86,7 +86,7 @@ from ._inline_snapshot import snapshot
 
 try:
     import temporalio.api.common.v1
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
@@ -6846,3 +6846,67 @@ async def test_durability_run_in_workflow_with_runtime_external_toolset(allow_mo
         assert output == DeferredToolRequests(
             calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
         )
+
+
+# --- Capability-contributed toolsets ---
+
+
+def _durability_call_where_am_i(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(parts=[ToolCallPart('where_am_i', {}, tool_call_id='call-1')])
+
+
+def where_am_i() -> str:
+    return 'activity' if activity.in_activity() else 'workflow'
+
+
+_durability_cap_toolset_agent = Agent(
+    FunctionModel(_durability_call_where_am_i),
+    name='durability_cap_toolset_agent',
+    capabilities=[
+        Toolset(FunctionToolset([where_am_i], id='cap_tools')),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityCapabilityToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _durability_cap_toolset_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_temporalizes_capability_contributed_toolsets(allow_model_requests: None, client: Client):
+    """Toolsets contributed by other capabilities run as Temporal activities.
+
+    Durability capabilities are in the `innermost` ordering tier, so `Agent.__init__` binds
+    them only after every other capability's contributed toolsets have been extracted into
+    `agent.toolsets`. Without that two-phase binding, the `Toolset(...)` capability's tools
+    would be invisible to `for_agent` and run unwrapped (non-deterministically) inside the
+    workflow instead of in an activity.
+    """
+    durability = TemporalDurability.from_agent(_durability_cap_toolset_agent)
+    assert durability is not None
+    assert 'agent__durability_cap_toolset_agent__toolset__cap_tools__call_tool' in [
+        ActivityDefinition.must_from_callable(act).name  # pyright: ignore[reportUnknownMemberType]
+        for act in durability.temporal_activities
+    ]
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityCapabilityToolsetWorkflow],
+        plugins=[AgentPlugin(_durability_cap_toolset_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityCapabilityToolsetWorkflow.run,
+            args=['Where does the tool run?'],
+            id=DurabilityCapabilityToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'activity'
