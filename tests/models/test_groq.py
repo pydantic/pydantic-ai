@@ -5972,22 +5972,23 @@ async def test_stream_cancel(allow_model_requests: None):
     )
 
 
-async def test_groq_web_search_tool_domain_filters(allow_model_requests: None):
-    """WebSearchTool.allowed_domains and blocked_domains are forwarded to the Groq API as search_settings."""
-    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
-    captured: dict[str, Any] = {}
+async def test_groq_web_search_tool_domain_filters(allow_model_requests: None, groq_api_key: str, vcr: Any):
+    """`WebSearchTool` domain filters are forwarded to the Groq API as `search_settings`.
 
-    class CapturingMockGroq(MockGroq):
-        async def chat_completions_create(self, *_args: Any, stream: bool = False, **kwargs: Any) -> Any:
-            captured.update(kwargs)
-            return c
-
-    mock_client = cast(AsyncGroq, CapturingMockGroq(completions=c))
-    m = GroqModel('compound-beta', provider=GroqProvider(groq_client=mock_client))
+    Asserts against the recorded request body rather than the response: the cassette matcher isn't
+    sensitive to the body, so a regression that dropped the filters would still replay green. Recorded
+    against the real `compound-beta` endpoint to confirm it accepts `search_settings`.
+    """
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(
-        m, capabilities=[NativeTool(WebSearchTool(allowed_domains=['example.com'], blocked_domains=['bad.com']))]
+        m,
+        capabilities=[NativeTool(WebSearchTool(allowed_domains=['python.org'], blocked_domains=['w3schools.com']))],
     )
-    result = await agent.run('test')
 
-    assert result.output == 'ok'
-    assert captured.get('search_settings') == {'include_domains': ['example.com'], 'exclude_domains': ['bad.com']}
+    result = await agent.run('What is the latest stable version of Python?')
+
+    assert isinstance(result.output, str)
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['search_settings'] == snapshot(
+        {'include_domains': ['python.org'], 'exclude_domains': ['w3schools.com']}
+    )
