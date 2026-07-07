@@ -133,7 +133,7 @@ constraint-dependencies = [
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
     "pyjwt>=2.13.0",
-    "torch>=2.10.0",
+    "torch>=2.12.1",
 ]
 
 [dependency-groups]
