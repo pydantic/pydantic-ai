@@ -43,6 +43,7 @@ from ...messages import (
     VideoUrl,
     narrow_message_parts,
     parse_tool_kind,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
@@ -105,6 +106,12 @@ if TYPE_CHECKING:
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+
+_MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
+    'image': ImageUrl,
+    'video': VideoUrl,
+    'audio': AudioUrl,
+}
 
 
 def _generate_message_id(
@@ -306,6 +313,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # already does, #5571/#5772): it carries only the requester's own request params and is
                         # dict-validated by the constructors below.
                         vendor_metadata = provider_meta.get('vendor_metadata')
+                        force_download = provider_meta.get('force_download', False)
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
@@ -321,24 +329,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
-                                media_type_prefix = part.media_type.split('/', 1)[0]
-                                match media_type_prefix:
-                                    case 'image':
-                                        file = ImageUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
-                                        )
-                                    case 'video':
-                                        file = VideoUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
-                                        )
-                                    case 'audio':
-                                        file = AudioUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
-                                        )
-                                    case _:
-                                        file = DocumentUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
-                                        )
+                                url_type = _MEDIA_PREFIX_TO_URL_TYPE.get(part.media_type.split('/', 1)[0], DocumentUrl)
+                                file = url_type(
+                                    url=part.url,
+                                    media_type=part.media_type,
+                                    force_download=force_download,
+                                    vendor_metadata=vendor_metadata,
+                                )
                         else:
                             # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
                             # Reconstruct through the constructor so a malformed client value is rejected
@@ -496,11 +493,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = (
+                                    raw_output = (
                                         part.output
                                         if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
                                         else None
                                     )
+                                    output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     NativeToolReturnPart(
@@ -534,7 +532,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=part.output,
+                                        content=_validate_tool_output(part.output),
                                         tool_kind=tool_kind,
                                     )
                                 )
@@ -1014,8 +1012,11 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                         url=item.url,
                         media_type=item.media_type,
                         # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
-                        # Google `video_metadata`); see `FileUrl.vendor_metadata`.
-                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                        # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
+                        provider_metadata=dump_provider_metadata(
+                            force_download=item.force_download or None,
+                            vendor_metadata=item.vendor_metadata,
+                        ),
                     )
                 )
             elif isinstance(item, UploadedFile):
@@ -1043,6 +1044,65 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _validate_tool_output(output: Any) -> Any:
+    """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
+
+    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. JS-serialized
+    binary shapes are coerced to `bytes` first (see `_coerce_js_binary_data`).
+    """
+    return tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+
+
+def _coerce_js_binary_data(value: Any) -> Any:
+    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+
+    This is what lets a Vercel AI [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage)
+    (resolved server-side as an external/deferred tool call) return a file — an image, say — by putting a
+    `{kind: 'binary', media_type: ..., data: ...}` shape in its output, without base64-encoding the bytes
+    by hand. `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
+    `{'type': 'Buffer', 'data': [N, ...]}`; pydantic's bytes validator rejects both, so we normalize them
+    (and pass base64 strings through untouched) at the wire boundary before validation. A file the agent
+    itself produced round-trips as base64 and never hits these shapes.
+    """
+    if isinstance(value, list):
+        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
+    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
+    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
+    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
+        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
+    return coerced
+
+
+def _js_binary_to_bytes(data: Any) -> Any:
+    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values.
+
+    Any shape that isn't a canonical, in-range byte sequence is passed through unchanged so that
+    `tool_return_content_ta` surfaces a clean `ValidationError`, rather than this helper raising
+    `KeyError`/`ValueError` on malformed client input.
+    """
+    if not isinstance(data, dict):
+        return data
+    mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
+    # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
+    if mapping.get('type') == 'Buffer':
+        buf_data: Any = mapping.get('data')
+        if isinstance(buf_data, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
+            return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
+    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`. Require canonical contiguous keys
+    # (`'0'..'n-1'`) so non-canonical keys like `'00'` pass through instead of raising `KeyError`.
+    if mapping and all(str(i) in mapping for i in range(len(mapping))):
+        values: list[Any] = [mapping[str(i)] for i in range(len(mapping))]
+        if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
+            return bytes(values)
+    return data  # pyright: ignore[reportUnknownVariableType]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

@@ -115,8 +115,12 @@ issue, or if it looks only partially fixed, skip it.
    After all subagents complete:
    - Aggregate all subagent JSON responses
    - Build shortlist = all `CANDIDATE` + `NEEDS_COMMENT_CHECK`
-   - For shortlist only, query comments/timeline as needed using MCP GitHub
-     tools to confirm or reject closure confidence
+   - For shortlist only, fetch comments live to confirm or reject closure
+     confidence — comments are NOT in the prefetched corpus. Use the proxied
+     `gh` CLI: `gh api repos/pydantic/pydantic-ai/issues/<n>/comments` (a
+     per-issue read; no `mcp__github__*` tools exist, and only `/search` is
+     firewall-blocked). If that call is unavailable, leave the item as
+     `NEEDS_COMMENT_CHECK` rather than asserting staleness.
    - If comment evidence weakens confidence, downgrade to `SKIP`
 
 4. **Build final close-candidate set**
@@ -193,10 +197,12 @@ candidates is far more valuable than a long report full of maybes.
 
 ### Deduplication — mandatory BEFORE filing
 
-Search for existing stale-finder reports that might overlap this run:
+Search the prefetched local corpus for existing stale-finder reports that might
+overlap this run — grep the on-disk issue list for the `[stale-finder]` title
+prefix (no live GitHub call needed):
 
 ```
-mcp__github__search_issues: repo:pydantic/pydantic-ai is:issue is:open "[stale-finder]"
+grep -F '[stale-finder]' /tmp/gh-aw/agent/open-issues.tsv
 ```
 
 Do not skip this run just because a previous report exists. You are reviewing
@@ -210,11 +216,15 @@ the full corpus every run. If no candidates qualify this run, call
 - Read files in large ranges (500+ lines per call). Do NOT read 30–80 lines at
   a time.
 - Use the native `Grep` and `Glob` tools for codebase search.
-- The `gh` CLI is blocked by the AWF firewall proxy — use MCP GitHub tools
-  (`mcp__github__search_issues`, `mcp__github__get_issue`, etc.) for all GitHub
-  API calls from within the agent.
-- First pass triage is local-only from disk. Use MCP GitHub tools only for
-  second-pass validation of shortlisted candidates.
+- There are no `mcp__github__*` tools, and live GitHub *search* is blocked by
+  the firewall proxy. Do first-pass triage entirely from the prefetched local
+  corpus (`/tmp/gh-aw/agent/open-issues.tsv` and `issues/all/{number}.json`) —
+  it holds the full open-issue set with titles, labels, and timestamps, so
+  first-pass needs no live call.
+- The corpus does NOT include comments. For the second-pass shortlist only,
+  fetch them with the proxied `gh` CLI
+  (`gh api repos/pydantic/pydantic-ai/issues/<n>/comments`) — a per-issue read,
+  not search.
 
 ---
 
