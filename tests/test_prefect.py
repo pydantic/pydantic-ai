@@ -89,11 +89,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    # This suite was skipped for months due to a `httpcore.PoolTimeout` hang (#3929): vcrpy's
-    # old httpcore stub wrapped the temp Prefect server's localhost connections and never
-    # released them back to the pool. vcrpy 8.2 replaced the httpcore stub with an httpx
-    # transport stub that closes the real response stream, fixing the leak. Requires
-    # prefect>=3.7.5 for the temp server to work with fastapi>=0.137 (PrefectHQ/prefect#22277).
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
