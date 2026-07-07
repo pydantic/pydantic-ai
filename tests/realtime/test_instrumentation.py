@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.realtime import (
+    AudioDelta,
     InputTranscript,
     RealtimeConnection,
     RealtimeEvent,
@@ -42,7 +43,9 @@ class _Connection(RealtimeConnection):
             yield event
 
 
-def _settings(*, include_content: bool = True) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
+def _settings(
+    *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
+) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
     pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -51,7 +54,12 @@ def _settings(*, include_content: bool = True) -> tuple[InstrumentationSettings,
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return InstrumentationSettings(tracer_provider=provider, include_content=include_content), exporter
+    settings = InstrumentationSettings(
+        tracer_provider=provider,
+        include_content=include_content,
+        use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
+    )
+    return settings, exporter
 
 
 async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -186,6 +194,38 @@ async def test_session_span_without_model_or_usage() -> None:
     assert 'gen_ai.usage.input_tokens' not in sess.attributes  # zero usage → no token attribute / metric
     # An empty turn produces no assistant `ModelResponse`, so no `chat` span is opened.
     assert not [s for s in exporter.get_finished_spans() if s.name.startswith('chat')]
+
+
+async def test_chat_span_closed_for_contentless_response() -> None:
+    # Audio with no transcript opens a `chat` span (first content) but finalizes with no response
+    # parts, so the span closes without attaching messages.
+    settings, exporter = _settings()
+    conn = _Connection([AudioDelta(data=b'\x00\x01'), TurnComplete()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = [e async for e in session]
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
+    assert chat.attributes is not None
+    assert 'gen_ai.output.messages' not in chat.attributes
+
+
+async def test_session_usage_without_aggregated_attribute_names() -> None:
+    # With `use_aggregated_usage_attribute_names=False`, cumulative session usage stays under the
+    # standard `gen_ai.usage.*` namespace instead of the aggregated one.
+    settings, exporter = _settings(use_aggregated_usage_attribute_names=False)
+    conn = _Connection(
+        [
+            InputTranscript(text='hi', is_final=True),
+            Transcript(text='hello'),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnComplete(),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = [e async for e in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.usage.input_tokens'] == 10
+    assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
 
 
 async def test_chat_span_matches_instrumented_model_shape() -> None:

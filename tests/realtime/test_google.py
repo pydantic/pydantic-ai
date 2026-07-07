@@ -140,6 +140,19 @@ def test_map_usage_full_and_empty() -> None:
     assert rt_google._map_usage(genai_types.UsageMetadata()) == RequestUsage()  # pyright: ignore[reportPrivateUsage]
 
 
+def test_single_ws_user_agent_noop_without_duplicate() -> None:
+    # A client whose headers hold fewer than two `user-agent` entries needs no reconciliation: the
+    # context manager yields without touching them. A real `GoogleProvider` always adds a capitalized
+    # duplicate, so this defensive branch can't be reached through `connect` — hence a direct unit test.
+    from types import SimpleNamespace
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
+    with rt_google._single_ws_user_agent(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        assert headers == {'user-agent': 'solo'}
+    assert headers == {'user-agent': 'solo'}
+
+
 # --- provider resolution & capabilities --------------------------------------
 
 
@@ -512,6 +525,24 @@ async def test_connect_seeds_message_history() -> None:
         ('user', ['spoken question']),
         ('model', ['spoken answer']),
     ]
+
+
+async def test_connect_seed_drops_non_text_and_textless_turns() -> None:
+    # A list-content user prompt is projected to its text (multimodal parts dropped); a response with
+    # no projectable text (only a tool call) yields no turn at all.
+    from pydantic_ai.messages import ImageUrl, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+
+    session = _RecordingSession([[_turn('hi')]])
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png'), 'describe this'])]),
+        ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')]),
+    ]
+    model = _model(session)
+    async with model.connect(instructions='x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    turns = session.client_content[0]['turns']
+    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('user', ['describe this'])]
 
 
 async def test_connect_wires_reconnect_only_with_resumption() -> None:

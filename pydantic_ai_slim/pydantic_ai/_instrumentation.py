@@ -230,6 +230,8 @@ class _FinishModelRequestSpan(Protocol):
     """
 
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,

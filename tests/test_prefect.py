@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
@@ -40,6 +40,7 @@ from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeCapabilities, RealtimeConnection, RealtimeModel, RealtimeSession
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -861,6 +862,43 @@ async def test_realtime_session_in_flow() -> None:
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             async with simple_prefect_agent.realtime_session(model=cast('Any', object())):
                 pass  # pragma: no cover
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def capabilities(self) -> RealtimeCapabilities:
+        return RealtimeCapabilities(image_input=True, manual_turn_control=True, interruption=True, session_seeding=True)
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        instructions: str,
+        tools: Any = None,
+        native_tools: Any = None,
+        model_settings: Any = None,
+        messages: Any = None,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_realtime_session_outside_flow() -> None:
+    """Outside a flow, the session is delegated to the wrapped agent."""
+    async with simple_prefect_agent.realtime_session(model=_FakeRealtimeModel()) as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:

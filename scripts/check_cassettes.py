@@ -84,6 +84,12 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
     return cassette_names
 
 
+# Cassette subdirectories that aren't backed by `pytest.mark.vcr`, so this VCR-oriented check can't
+# match them to a test. The realtime WebSocket tests replay through a custom engine (`ws_cassettes.py`)
+# rather than pytest-recording, so their cassettes are validated there instead.
+_NON_VCR_CASSETTE_DIRS = frozenset({'test_openai_ws', 'test_google_ws'})
+
+
 def get_all_cassettes() -> dict[str, set[str]]:
     """Return {test_file_stem: set of cassette names (without .yaml)}."""
     cassettes: dict[str, set[str]] = {}
@@ -92,7 +98,7 @@ def get_all_cassettes() -> dict[str, set[str]]:
         if not cassette_dir.is_dir():
             continue
         for subdir in cassette_dir.iterdir():
-            if subdir.is_dir():
+            if subdir.is_dir() and subdir.name not in _NON_VCR_CASSETTE_DIRS:
                 test_stem = subdir.name
                 # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
                 cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}

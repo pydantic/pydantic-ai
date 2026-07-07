@@ -724,6 +724,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
         and event.delta.provider_details
         and 'annotations' in event.delta.provider_details
     )
+    assert isinstance(annotation_event, PartDeltaEvent)
+    assert isinstance(annotation_event.delta, TextPartDelta)
     assert annotation_event.delta.provider_details == snapshot(
         {
             'annotations': [

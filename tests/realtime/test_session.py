@@ -92,9 +92,7 @@ class FakeRealtimeConnection(RealtimeConnection):
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
-    def __init__(
-        self, connection: FakeRealtimeConnection, *, capabilities: RealtimeCapabilities | None = None
-    ) -> None:
+    def __init__(self, connection: FakeRealtimeConnection, *, capabilities: RealtimeCapabilities | None = None) -> None:
         self._connection = connection
         self._capabilities = capabilities or RealtimeCapabilities(
             image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
@@ -755,6 +753,31 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
             )
         ]
     )
+
+
+async def test_empty_assistant_turn_produces_no_response() -> None:
+    # Audio with no transcript and no retention leaves the assistant part contentless, so the turn
+    # finalizes without appending a `ModelResponse`.
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnComplete()])
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    events = [e async for e in session]
+    assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
+    # The finalized part carries no transcript and no audio, so it isn't recorded.
+    end = next(e for e in events if isinstance(e, PartEndEvent))
+    assert isinstance(end.part, AudioWithTranscriptPart) and end.part.transcript is None and end.part.audio is None
+    assert session.new_messages() == []
+
+
+async def test_empty_input_transcript_produces_no_request() -> None:
+    # A final input transcript that carries no text leaves the user part contentless, so nothing is
+    # appended to history.
+    conn = FakeRealtimeConnection([InputTranscript(text='', is_final=True)])
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    events = [e async for e in session]
+    assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartEndEvent']
+    end = next(e for e in events if isinstance(e, PartEndEvent))
+    assert isinstance(end.part, AudioWithTranscriptPart) and end.part.transcript is None
+    assert session.new_messages() == []
 
 
 async def test_transcript_only_default_drops_audio() -> None:

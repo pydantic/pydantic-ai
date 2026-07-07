@@ -40,11 +40,13 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 try:
     import sounddevice
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'This example needs the `sounddevice` package for microphone and speaker access. '
-        'Install it with `pip install sounddevice`.'
-    ) from e
+except (ImportError, OSError) as e:  # pragma: no cover
+    # `sounddevice` needs the PortAudio system library, which raises `OSError` (not `ImportError`)
+    # when missing — e.g. on headless CI. Defer the failure to `main()` so the module still imports.
+    sounddevice = None
+    _sounddevice_error: Exception | None = e
+else:
+    _sounddevice_error = None
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -138,6 +140,13 @@ async def stream_mic(session: RealtimeSession, mic_queue: asyncio.Queue[bytes]) 
 
 
 async def main():
+    if sounddevice is None:  # pragma: no cover
+        raise ImportError(
+            'This example needs the `sounddevice` package for microphone and speaker access. '
+            'Install it with `pip install sounddevice`. '
+            'On Linux you also need the PortAudio system library (`apt install libportaudio2`).'
+        ) from _sounddevice_error
+
     loop = asyncio.get_running_loop()
     mic_queue: asyncio.Queue[bytes] = asyncio.Queue()
     play_queue: queue.Queue[bytes] = queue.Queue()

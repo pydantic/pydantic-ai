@@ -518,6 +518,24 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
+async def test_connect_seeds_multimodal_user_prompt_as_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A `UserPromptPart` with list content is projected to its text, dropping the multimodal parts.
+    from pydantic_ai.messages import ImageUrl, ModelRequest, UserPromptPart
+
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png'), 'describe this'])])
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime')
+    async with model.connect(instructions='x', messages=history):
+        pass
+    items = [json.loads(frame) for frame in ws.sent[1:]]
+    assert [(i['item']['role'], i['item']['content'][0]) for i in items] == [
+        ('user', {'type': 'input_text', 'text': 'describe this'}),
+    ]
+
+
 @pytest.mark.anyio
 async def test_connection_send_audio() -> None:
     ws = FakeWebSocket([])
@@ -949,6 +967,8 @@ def test_realtime_websocket_url_derivation() -> None:
     assert rt_openai._realtime_websocket_url('https://api.openai.com/v1/') == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
     # A custom (e.g. self-hosted, non-TLS) base URL keeps its host/path and swaps the scheme.
     assert rt_openai._realtime_websocket_url('http://localhost:8000/v1') == 'ws://localhost:8000/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+    # A base URL with neither scheme is left untouched apart from the appended path.
+    assert rt_openai._realtime_websocket_url('localhost:8000/v1') == 'localhost:8000/v1/realtime'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_default_provider_is_openai() -> None:
@@ -967,7 +987,9 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
     ws = FakeWebSocket([_created(), _updated()])
     fake_connect = FakeConnect(ws)
     monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
-    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(base_url='https://proxy.example/v1', api_key='k'))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=OpenAIProvider(base_url='https://proxy.example/v1', api_key='k')
+    )
     async with model.connect(instructions='x'):
         pass
     assert fake_connect.url == 'wss://proxy.example/v1/realtime?model=gpt-realtime'

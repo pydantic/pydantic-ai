@@ -54,7 +54,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     async with agent.realtime_session(model=model, audio_retention='output') as session:
         await session.send_text('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
                 events.append(event)
                 if isinstance(event, TurnComplete):
                     break
@@ -92,7 +92,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     async with agent.realtime_session(model=model) as session:
         await session.send_text('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
                 events.append(event)
                 if isinstance(event, TurnComplete):
                     break
@@ -148,7 +148,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     async with agent.realtime_session(model=model, message_history=history) as session:
         await session.send_text('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
                 events.append(event)
                 if isinstance(event, TurnComplete):
                     break

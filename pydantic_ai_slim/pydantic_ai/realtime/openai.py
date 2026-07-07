@@ -87,6 +87,7 @@ def _realtime_websocket_url(base_url: str) -> str:
         url = 'ws://' + url[len('http://') :]
     return f'{url}/realtime'
 
+
 # The OpenAI event names differ between the GA and beta realtime surfaces; accept both.
 _AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
 _AUDIO_TRANSCRIPT_DELTA_TYPES = frozenset({'response.output_audio_transcript.delta', 'response.audio_transcript.delta'})

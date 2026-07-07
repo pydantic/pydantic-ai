@@ -286,9 +286,7 @@ class RealtimeSession:
     def _require_capability(self, supported: bool, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
         if not supported:
-            raise UserError(
-                f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.'
-            )
+            raise UserError(f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.')
 
     # --- history assembly -------------------------------------------------------------------------
 
