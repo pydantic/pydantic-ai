@@ -280,6 +280,15 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
     )
 
 
+# On Gemini 3+ Web Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts, but
+# the response holds only a `search_suggestions` HTML widget — the source URLs arrive in `grounding_metadata`
+# (in streaming, chunks later). Pre-Gemini-3 models send no explicit parts at all, so the pair is
+# reconstructed from the metadata after the text. These pin both paths at the part/event level.
+# Unit, not VCR: the cassette matcher is body-insensitive, and the streaming cross-chunk assembly is
+# asserted at the event level, which VCR can't reach (the structured-output VCR tests pin the explicit-parts
+# paths end to end on a real Gemini 3 recording).
+
+
 def _generate_stream_response(
     response_id: str,
     *,
@@ -486,42 +495,6 @@ async def test_gemini_streamed_response_web_search_grounding_metadata_does_not_t
     assert ''.join(deltas) == stream.response.text
 
 
-async def test_gemini_streamed_response_web_search_sources_are_extractable():
-    streamed_response = _gemini_streamed_response_from_chunks(
-        [
-            _generate_stream_response('stream-1', parts=[{'text': 'Use the docs.'}]),
-            _generate_stream_response(
-                'stream-2',
-                grounding_metadata={
-                    'webSearchQueries': ['Pydantic AI source extraction'],
-                    'groundingChunks': [
-                        {'web': {'uri': 'https://ai.pydantic.dev/native-tools/', 'title': 'Native tools'}}
-                    ],
-                },
-                finish_reason=GoogleFinishReason.STOP,
-            ),
-        ],
-    )
-
-    async for _ in streamed_response:
-        pass
-
-    sources: list[tuple[str, str]] = []
-    for call_part, return_part in streamed_response.get().native_tool_calls:
-        assert call_part.tool_name == WebSearchTool.kind
-
-        content = return_part.content
-        assert isinstance(content, list)
-        for source in cast('list[dict[str, object]]', content):
-            uri = source['uri']
-            title = source['title']
-            assert isinstance(uri, str)
-            assert isinstance(title, str)
-            sources.append((uri, title))
-
-    assert sources == snapshot([('https://ai.pydantic.dev/native-tools/', 'Native tools')])
-
-
 async def test_gemini_streamed_response_web_search_grounding_metadata_reconstructed_once():
     """Grounding metadata repeated on a trailing chunk must not emit a duplicate web-search pair."""
     streamed_response = _gemini_streamed_response_from_chunks(
@@ -578,8 +551,7 @@ async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web
 
     streamed_response = _gemini_streamed_response_from_chunks(chunks)
 
-    async for _ in streamed_response:
-        pass
+    events = [event async for event in streamed_response]
 
     response = streamed_response.get()
     assert response.parts == snapshot(
@@ -601,26 +573,15 @@ async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web
             ),
         ]
     )
-    assert response.native_tool_calls == snapshot(
-        [
-            (
-                NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'queries': ['explicit query']},
-                    tool_call_id='web-search-call-1',
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}],
-                    tool_call_id='web-search-call-1',
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                    provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
-                ),
-            )
-        ]
-    )
+    # The reserved return emits a single deferred `PartStartEvent`, already grounded — never the
+    # ungrounded widget followed by a filled duplicate.
+    return_starts = [
+        e.part for e in events if isinstance(e, PartStartEvent) and isinstance(e.part, NativeToolReturnPart)
+    ]
+    assert len(return_starts) == 1
+    assert return_starts[0].content == [
+        {'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}
+    ]
 
 
 def test_fill_web_search_return_preserves_raw_tool_response_once_filled():
@@ -692,16 +653,16 @@ async def test_gemini_streamed_response_with_explicit_web_fetch_parts():
     streamed_response = _gemini_streamed_response_from_chunks(
         [
             _generate_stream_response('stream-1', parts=[{'text': 'Fetched.'}]),
+            _generate_stream_response('stream-2', parts=_EXPLICIT_WEB_FETCH_PARTS),
             _generate_stream_response(
-                'stream-2',
-                parts=_EXPLICIT_WEB_FETCH_PARTS,
+                'stream-3',
+                parts=[{'text': 'After.'}],
                 finish_reason=GoogleFinishReason.STOP,
             ),
         ],
     )
 
-    async for _ in streamed_response:
-        pass
+    events = [event async for event in streamed_response]
 
     response = streamed_response.get()
     assert response.parts == snapshot(
@@ -720,7 +681,13 @@ async def test_gemini_streamed_response_with_explicit_web_fetch_parts():
                 timestamp=IsDatetime(),
                 provider_name='google',
             ),
+            TextPart(content='After.'),
         ]
+    )
+    # The return's `PartStartEvent` is emitted as it arrives, ahead of the following text — it is
+    # not reserved and flushed at end of stream like a grounding-awaiting return would be.
+    assert [type(e.part).__name__ for e in events if isinstance(e, PartStartEvent)] == snapshot(
+        ['TextPart', 'NativeToolCallPart', 'NativeToolReturnPart', 'TextPart']
     )
 
 
