@@ -215,6 +215,10 @@ def _map_ws_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=f'WebSocket connection closed: {e}') from e
     except WebSocketException as e:
         raise ModelAPIError(model_name=model_name, message=f'WebSocket error: {e}') from e
+    except (OSError, TimeoutError) as e:
+        # `websockets.connect` raises `OSError` for DNS/connection failures and `TimeoutError`
+        # when the handshake exceeds its `open_timeout`; neither is a `WebSocketException`.
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {e}') from e
 
 
 __all__ = (
@@ -1849,9 +1853,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         same connection raise `UserError`; use one `connect()` context per concurrent agent
         run. OpenAI limits WebSocket connections to 60 minutes.
 
-        If a response is cancelled or fails before completion, the connection state is
-        unknown. Later requests on the same connection raise `UserError` until you exit and
-        re-enter `connect()`.
+        If a request is cancelled, a stream is abandoned before its terminal event, or the
+        server sends an `error` event, unread events may remain on the connection and its
+        state is unknown. Later requests on the same connection raise `UserError` until you
+        exit and re-enter `connect()`. A response that finishes with a terminal event,
+        including `response.failed` and `response.incomplete`, leaves the connection usable.
 
         Per-request `timeout`, `extra_headers`, and `extra_body` model settings are not
         supported over WebSocket and are ignored. Pass `extra_headers` here to set handshake
@@ -1871,6 +1877,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         result2 = await agent.run('Hello')     # back to HTTP
         ```
         """
+        try:
+            import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        except ImportError as _e:
+            raise ImportError(
+                'Please install `websockets` to use WebSocket mode, '
+                'you can use the OpenAI SDK `realtime` optional group — `pip install "openai[realtime]"`'
+            ) from _e
+
         check_allow_model_requests()
         connection_manager = self.client.responses.connect(
             extra_query=extra_query or {},
@@ -2301,6 +2315,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # Copy before dropping unsupported params: the settings dict may be the caller's own,
+        # and this method is also used by `count_tokens`, which must not mutate it.
+        model_settings = cast(OpenAIResponsesModelSettings, dict(model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
 
@@ -2415,22 +2432,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
         session.in_use = True
 
-    async def _ws_create(
-        self,
-        connection: AsyncResponsesConnection,
-        messages: list[ModelRequest | ModelResponse],
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> None:
-        """Send a `response.create` over the WebSocket connection using the shared param builder."""
-        profile = self.profile
-        request_params = await self._build_responses_request_params(
-            messages,
-            model_settings,
-            model_request_parameters,
-            profile,
-        )
-
+    async def _ws_create(self, connection: AsyncResponsesConnection, request_params: _ResponsesRequestParams) -> None:
+        """Send a `response.create` over the WebSocket connection using prebuilt request params."""
         # `stream`/`background` are HTTP transport fields that the WebSocket protocol doesn't use:
         # a WebSocket connection always streams events back. See OpenAI's WebSocket-mode guide.
         await connection.response.create(
@@ -2466,11 +2469,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response:
         """Send a request over WS and collect events until completion, returning the final Response."""
+        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
+        # message part or a failed file download) leaves the connection untouched, so it must not
+        # poison the session.
+        request_params = await self._build_responses_request_params(
+            messages, model_settings, model_request_parameters, self.profile
+        )
         self._ws_acquire(session)
         clean = False
         try:
             with _map_ws_errors(self.model_name):
-                await self._ws_create(session.connection, messages, model_settings, model_request_parameters)
+                await self._ws_create(session.connection, request_params)
 
                 async for event in session.connection:
                     if isinstance(
@@ -2500,11 +2509,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[responses.ResponseStreamEvent, None]:
         """Send a request over WS and yield events until a terminal event."""
+        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
+        # message part or a failed file download) leaves the connection untouched, so it must not
+        # poison the session.
+        request_params = await self._build_responses_request_params(
+            messages, model_settings, model_request_parameters, self.profile
+        )
         self._ws_acquire(session)
         clean = False
         try:
             with _map_ws_errors(self.model_name):
-                await self._ws_create(session.connection, messages, model_settings, model_request_parameters)
+                await self._ws_create(session.connection, request_params)
 
                 async for event in session.connection:
                     if isinstance(event, responses.ResponseErrorEvent):
