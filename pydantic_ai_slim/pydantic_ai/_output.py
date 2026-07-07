@@ -70,6 +70,7 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+_STR_TYPE_ADAPTER = TypeAdapter(str)
 
 
 def _build_output_handlers(
@@ -307,20 +308,208 @@ async def run_stop_run_output(
     output: Any,
     *,
     run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT],
+    schema: OutputSchema[Any],
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
 ) -> Any:
-    """Validate an already-constructed output value from `StopRun` and run output validators.
+    """Validate a semantic output value from `StopRun` and run the normal output pipeline.
 
-    Unlike the text/structured/image output paths there is nothing to parse: the value is
-    already the agent's output type, so it is passed through the same output validators
-    (`@agent.output_validator`) that a model-produced output would run through, then returned.
+    Unlike model-produced output, `StopRun` receives the semantic value the caller wants to
+    use as final output, not the provider-facing transport shape. For example, use `StopRun(1)`
+    for `output_type=int`, not `StopRun({'response': 1})`.
 
-    An output validator raising `ModelRetry` propagates as an error rather than triggering a
-    model retry: the run is being stopped, so there is no further model request to retry against.
+    The value is still validated/coerced against the agent's output type, passed through output
+    validate/process hooks, output functions, and output validators. Validation errors and
+    `ModelRetry` propagate rather than triggering a model retry: the run is being stopped, so
+    there is no further model request to retry against.
     """
-    for validator in output_validators:
-        output = await validator.validate(output, run_context)
+    if output is None and schema.allows_none:
+        return await run_none_process_hooks(
+            capability=capability,
+            run_context=run_context,
+            schema=schema,
+            wrap_validation_errors=False,
+            output_validators=output_validators,
+        )
+
+    if isinstance(output, _messages.BinaryImage) and schema.allows_image:
+        return await run_image_process_hooks(
+            output,
+            capability=capability,
+            run_context=run_context,
+            schema=schema,
+            wrap_validation_errors=False,
+            output_validators=output_validators,
+        )
+
+    processor, mode = _stop_run_output_processor(output, schema=schema, run_context=run_context)
+    return await _run_semantic_output_with_hooks(
+        processor,
+        output=output,
+        run_context=run_context,
+        capability=capability,
+        schema=schema,
+        mode=mode,
+        output_validators=output_validators,
+    )
+
+
+def _stop_run_output_processor(
+    output: Any,
+    *,
+    schema: OutputSchema[Any],
+    run_context: RunContext[AgentDepsT],
+) -> tuple[BaseOutputProcessor[Any], OutputMode | None]:
+    if schema.text_processor is not None and schema.mode != 'tool':
+        return schema.text_processor, None
+
+    if schema.text_processor is not None:
+        try:
+            _validate_semantic_stop_run_output(schema.text_processor, output, run_context=run_context)
+        except (TypeError, ValueError, ValidationError):
+            pass
+        else:
+            return schema.text_processor, None
+
+    if schema.toolset is not None:
+        return _select_stop_run_output_tool_processor(output, schema=schema, run_context=run_context), 'tool'
+
+    if schema.text_processor is not None:
+        return schema.text_processor, None
+
+    raise ValueError('`StopRun` output does not match the agent output type.')
+
+
+def _select_stop_run_output_tool_processor(
+    output: Any,
+    *,
+    schema: OutputSchema[Any],
+    run_context: RunContext[AgentDepsT],
+) -> BaseOutputProcessor[Any]:
+    assert schema.toolset is not None
+    matches: list[tuple[str, BaseOutputProcessor[Any]]] = []
+    first_error: Exception | None = None
+    for tool_name, processor in schema.toolset.processors.items():
+        try:
+            _validate_semantic_stop_run_output(processor, output, run_context=run_context)
+        except (TypeError, ValueError, ValidationError) as e:
+            if first_error is None:
+                first_error = e
+        else:
+            matches.append((tool_name, processor))
+
+    if len(matches) == 1:
+        return matches[0][1]
+    if len(matches) > 1:
+        tool_names = ', '.join(repr(tool_name) for tool_name, _ in matches)
+        raise ValueError(f'`StopRun` output matches multiple output tools: {tool_names}.')
+    if first_error is not None:
+        raise first_error
+    raise ValueError('`StopRun` output does not match any output tool.')
+
+
+async def _run_semantic_output_with_hooks(
+    processor: BaseOutputProcessor[Any],
+    *,
+    output: Any,
+    run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT],
+    schema: OutputSchema[Any],
+    mode: OutputMode | None,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]],
+) -> Any:
+    output_context = processor.get_output_context(schema, mode=mode)
+    state: Any = None
+
+    async def do_validate(output: Any) -> Any:
+        nonlocal state
+        semantic, state = _validate_semantic_stop_run_output(processor, output, run_context=run_context)
+        return semantic
+
+    async def do_process(output: Any) -> Any:
+        result = await processor.hook_execute(
+            output,
+            state,
+            run_context=run_context,
+            wrap_validation_errors=False,
+        )
+        for validator in output_validators:
+            result = await validator.validate(result, run_context)
+        return result
+
+    if isinstance(processor, BaseObjectOutputProcessor):
+        validated = await run_output_validate_hooks(
+            capability,
+            run_context=run_context,
+            output_context=output_context,
+            output=output,
+            do_validate=do_validate,
+            wrap_validation_errors=False,
+        )
+    else:
+        validated, state = _validate_semantic_stop_run_output(processor, output, run_context=run_context)
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=validated,
+        do_process=do_process,
+        wrap_validation_errors=False,
+    )
+
+
+def _validate_semantic_stop_run_output(
+    processor: BaseOutputProcessor[Any],
+    output: Any,
+    *,
+    run_context: RunContext[AgentDepsT],
+) -> tuple[Any, Any]:
+    if isinstance(processor, ObjectOutputProcessor):
+        return processor.hook_validate(
+            _raw_output_from_semantic_value(processor, output),
+            run_context=run_context,
+        )
+    if isinstance(processor, UnionOutputProcessor):
+        return _validate_union_semantic_stop_run_output(processor, output, run_context=run_context)
+    if isinstance(processor, TextOutputProcessor):
+        return _STR_TYPE_ADAPTER.validate_python(output), None
+    return output, None
+
+
+def _raw_output_from_semantic_value(processor: ObjectOutputProcessor[Any], output: Any) -> Any:
+    if (key := processor.hook_unwrap_key) is not None:
+        return {key: output}
     return output
+
+
+def _validate_union_semantic_stop_run_output(
+    processor: UnionOutputProcessor[Any],
+    output: Any,
+    *,
+    run_context: RunContext[AgentDepsT],
+) -> tuple[Any, str]:
+    matches: list[_UnionValidatedOutput] = []
+    first_error: Exception | None = None
+
+    for kind, inner in processor._processors.items():  # pyright: ignore[reportPrivateUsage]
+        try:
+            semantic, _ = _validate_semantic_stop_run_output(inner, output, run_context=run_context)
+        except (TypeError, ValueError, ValidationError) as e:
+            if first_error is None:
+                first_error = e
+        else:
+            matches.append(_UnionValidatedOutput(kind=kind, data=semantic))
+
+    if len(matches) == 1:
+        match = matches[0]
+        return match.data, match.kind
+    if len(matches) > 1:
+        kinds = ', '.join(repr(match.kind) for match in matches)
+        raise ValueError(f'`StopRun` output matches multiple output types: {kinds}.')
+    if first_error is not None:
+        raise first_error
+    raise ValueError('`StopRun` output does not match any output type.')
 
 
 async def run_output_with_hooks(
