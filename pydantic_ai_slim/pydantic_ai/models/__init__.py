@@ -984,9 +984,7 @@ class CompletedStreamedResponse(StreamedResponse):
             self._event_iterator = self._iter_buffered(self._events)
         return self._event_iterator
 
-    async def _iter_buffered(
-        self, events: list[ModelResponseStreamEvent]
-    ) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
         for event in events:
             if isinstance(event, PartStartEvent):
                 self._parts_manager.handle_part(vendor_part_id=None, part=event.part)
