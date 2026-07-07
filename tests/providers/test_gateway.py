@@ -73,6 +73,8 @@ async def test_init_with_http_client():
 
 
 async def test_init_with_http_client_preserves_existing_event_hooks():
+    # Unit (not VCR): this checks local HTTPX hook merging by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise hook ordering or preservation.
     async def existing_request_hook(request: httpx.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
@@ -96,6 +98,8 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
 
 
 async def test_init_with_http_client_replaces_existing_gateway_hook():
+    # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise Gateway hook deduplication.
     async def existing_request_hook(request: httpx.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
