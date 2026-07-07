@@ -126,6 +126,80 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
 
+### WebSocket mode
+
+[OpenAI's WebSocket mode](https://developers.openai.com/api/docs/guides/websocket-mode) keeps a persistent connection to the Responses API. In Pydantic AI, requests made by the model instance that opened the context are routed over that connection while inside [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect], instead of using one HTTP request per model turn. This lowers per-request overhead for multi-turn agent runs.
+
+WebSocket mode requires the `websockets` package, available from the OpenAI realtime extra:
+
+```bash
+pip install 'openai[realtime]'
+uv add 'openai[realtime]'
+```
+
+Use `connect()` around the runs that should use the persistent connection. Requests outside the context use HTTP:
+
+```python {title="openai_responses_websocket.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model)
+
+
+async def main():
+    async with model.connect():
+        result = await agent.run('Summarize our release notes')
+        print(result.output)
+
+    http_result = await agent.run('Draft a follow-up announcement')
+    print(http_result.output)
+
+
+asyncio.run(main())
+```
+
+WebSocket mode has a few constraints:
+
+- A connection supports one in-flight response at a time. Concurrent runs on the same connection raise [`UserError`][pydantic_ai.exceptions.UserError]. For parallel runs, enter one `connect()` context per run:
+
+    ```python {title="openai_responses_websocket_parallel.py" test="skip"}
+    import asyncio
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    model = OpenAIResponsesModel('gpt-5.2')
+    agent = Agent(model)
+
+
+    async def run_prompt(prompt: str) -> str:
+        async with model.connect():
+            result = await agent.run(prompt)
+            return result.output
+
+
+    async def main():
+        summary, announcement = await asyncio.gather(
+            run_prompt('Summarize our release notes'),
+            run_prompt('Draft a follow-up announcement'),
+        )
+        print(summary)
+        print(announcement)
+
+
+    asyncio.run(main())
+    ```
+
+- OpenAI closes WebSocket connections after 60 minutes. Re-enter `connect()` to get a new connection.
+- Cancelling or abandoning a streamed response mid-flight leaves the connection in an unknown state. Subsequent requests in that context raise [`UserError`][pydantic_ai.exceptions.UserError]. [`result.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] is not supported over WebSocket.
+- The `timeout`, `extra_headers`, and `extra_body` model settings apply to HTTP requests only and are ignored over WebSocket. Use `connect(extra_headers=...)` to set handshake headers.
+- Only the model instance that opened the connection uses it. Other models inside the context use HTTP.
+- WebSocket mode is not supported with [durable execution](../durable_execution/overview.md), including Temporal, DBOS, and Prefect. Calling `connect()` there raises [`UserError`][pydantic_ai.exceptions.UserError].
+- WebSocket mode works with providers whose endpoint implements OpenAI's WebSocket mode. This includes OpenAI itself and [Azure OpenAI](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/websockets); other OpenAI-compatible providers only work if they implement the same protocol.
+
 ### Native tools
 
 The Responses API has native tools that you can use instead of building your own:

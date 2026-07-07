@@ -1994,7 +1994,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if session := self._ws_session():
             # Unlike the HTTP path, there's no `ModelResponse` short-circuit here: the Azure content-filter
-            # recovery only applies to Azure OpenAI, and WebSocket mode connects to OpenAI directly.
+            # recovery inspects an `APIStatusError`, which HTTP transport raises but WebSocket mode does not
+            # (failures arrive as `error` events instead).
             response = await self._ws_send_request(session, messages, settings, model_request_parameters)
             return self._process_response(response, settings, model_request_parameters)
 
