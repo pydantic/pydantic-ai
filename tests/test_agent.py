@@ -10708,6 +10708,60 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     )
 
 
+@pytest.mark.parametrize('instrument', [False, True])
+def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrument: bool):
+    """Native tools that only materialize in `for_run` (here from a capability function) are
+    preserved under `override(native_tools=...)`, which replaces only the agent's baseline tools.
+
+    With `instrument=True`, the Instrumentation capability joins the resolved layers as part of
+    the baseline, and must not be attributed to the preserved per-run layer.
+
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
+    """
+    model = TestModel()
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+    agent.instrument = instrument
+
+    def dynamic_cap(ctx: RunContext) -> AbstractCapability:
+        return NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))
+
+    with (
+        agent.override(native_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello', capabilities=[dynamic_cap])
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
+    )
+
+
+async def test_agent_capability_for_run_called_once_per_run():
+    """`AbstractCapability.for_run` is documented as called once per run and may have per-run
+    side effects, so agent-level and run-level capabilities must each be resolved exactly once —
+    including when `for_run` returns a fresh instance for per-run state isolation.
+
+    Unit test rather than VCR: resolution counts are internal and wouldn't show up in any
+    request payload a cassette could pin.
+    """
+    for_run_calls: dict[str, int] = {}
+
+    class CountingCapability(AbstractCapability):
+        def __init__(self, name: str):
+            self.name = name
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            for_run_calls[self.name] = for_run_calls.get(self.name, 0) + 1
+            return CountingCapability(self.name)
+
+    agent = Agent(TestModel(), capabilities=[CountingCapability('agent')])
+    await agent.run('Hello', capabilities=[CountingCapability('run')])
+
+    assert for_run_calls == {'agent': 1, 'run': 1}
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover
