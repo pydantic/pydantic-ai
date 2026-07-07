@@ -57,7 +57,7 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
-    from pydantic_ai.realtime import RealtimeModel, RealtimeSession
+    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeSession
 
 
 T = TypeVar('T')
@@ -1533,6 +1533,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         background_tools: set[str] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 

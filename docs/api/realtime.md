@@ -23,11 +23,14 @@ graph LR
 
 A [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] opens a
 [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] (the provider-specific transport).
-A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] wraps that connection and adds automatic
-tool execution: it intercepts each [`ToolCall`][pydantic_ai.realtime.ToolCall], runs it, sends the
-[`ToolResult`][pydantic_ai.realtime.ToolResult] back, and emits
-[`ToolCallStarted`][pydantic_ai.realtime.ToolCallStarted] /
-[`ToolCallCompleted`][pydantic_ai.realtime.ToolCallCompleted] bookends. Tools listed in
+A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] wraps that connection: it translates the
+low-level codec events into the shared message/part event vocabulary from
+[`pydantic_ai.messages`][pydantic_ai.messages], builds ordinary
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] history, and executes tools automatically —
+intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sending the
+[`ToolResult`][pydantic_ai.realtime.ToolResult] back, and emitting a
+[`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Tools listed in
 `background_tools` run concurrently so the model can keep speaking while they work.
 
 ## Overview
@@ -52,7 +55,8 @@ control verbs — [`CommitAudio`][pydantic_ai.realtime.CommitAudio],
 [`CancelResponse`][pydantic_ai.realtime.CancelResponse],
 [`TruncateOutput`][pydantic_ai.realtime.TruncateOutput].
 
-**Connection events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a connection:
+**Connection events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], the low-level codec
+vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.AudioDelta],
 [`Transcript`][pydantic_ai.realtime.Transcript],
 [`InputTranscript`][pydantic_ai.realtime.InputTranscript],
@@ -60,15 +64,24 @@ control verbs — [`CommitAudio`][pydantic_ai.realtime.CommitAudio],
 [`TurnComplete`][pydantic_ai.realtime.TurnComplete],
 [`SpeechStarted`][pydantic_ai.realtime.SpeechStarted],
 [`SpeechStopped`][pydantic_ai.realtime.SpeechStopped],
-[`Usage`][pydantic_ai.realtime.Usage],
+[`SessionUsage`][pydantic_ai.realtime.SessionUsage],
 [`RateLimits`][pydantic_ai.realtime.RateLimits],
 [`Reconnected`][pydantic_ai.realtime.Reconnected],
+[`Sources`][pydantic_ai.realtime.Sources],
 [`SessionError`][pydantic_ai.realtime.SessionError].
 
 **Session events** — [`RealtimeSessionEvent`][pydantic_ai.realtime.RealtimeSessionEvent], yielded by a
-session: the connection events above, with `ToolCall` replaced by
-[`ToolCallStarted`][pydantic_ai.realtime.ToolCallStarted] and
-[`ToolCallCompleted`][pydantic_ai.realtime.ToolCallCompleted].
+session. The session translates codec events into the shared vocabulary from
+[`pydantic_ai.messages`][pydantic_ai.messages]: content streams as
+[`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
+[`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] /
+[`PartEndEvent`][pydantic_ai.messages.PartEndEvent] (carrying
+[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s and
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
+[`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as the
+control-plane events above (`TurnComplete`, `SpeechStarted`, `SpeechStopped`, `SessionUsage`,
+`RateLimits`, `Reconnected`, `Sources`, `SessionError`).
 
 ::: pydantic_ai.realtime
 

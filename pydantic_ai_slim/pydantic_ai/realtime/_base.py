@@ -14,16 +14,39 @@ from __future__ import annotations as _annotations
 import asyncio
 import random
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+from typing import Literal
 
 from typing_extensions import Protocol, TypeAliasType
 
+from ..messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+)
 from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+
+AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input', 'output', 'both'])
+"""How much audio a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] retains in its history.
+
+- `'transcript_only'` (default): keep only transcripts; drop all audio bytes.
+- `'input'`: also retain the user's spoken audio.
+- `'output'`: also retain the model's spoken audio.
+- `'both'`: retain both sides' audio.
+
+Retained audio is stored on the [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]'s
+`audio` as raw PCM [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Alignment between retained
+audio and its transcript is approximate.
+"""
+
 
 # Input content types (fed into the connection via `send`).
 
@@ -165,6 +188,9 @@ class TurnComplete:
     interrupted: bool = False
     """Whether the turn ended because it was cancelled (e.g. the user barged in)."""
 
+    event_kind: Literal['turn_complete'] = 'turn_complete'
+    """Event type identifier, used as a discriminator."""
+
 
 @dataclass
 class SpeechStarted:
@@ -174,6 +200,9 @@ class SpeechStarted:
     in-progress turn is being interrupted.
     """
 
+    event_kind: Literal['speech_started'] = 'speech_started'
+    """Event type identifier, used as a discriminator."""
+
 
 @dataclass
 class SpeechStopped:
@@ -182,13 +211,19 @@ class SpeechStopped:
     Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
     """
 
+    event_kind: Literal['speech_stopped'] = 'speech_stopped'
+    """Event type identifier, used as a discriminator."""
+
 
 @dataclass
-class Usage:
+class SessionUsage:
     """Token usage reported by the provider for a completed model response."""
 
     usage: RequestUsage
     """Normalized token usage for the response, ready to accumulate into a `RunUsage`."""
+
+    event_kind: Literal['session_usage'] = 'session_usage'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass
@@ -212,6 +247,9 @@ class RateLimits:
     limits: list[RateLimit]
     """The reported rate limits."""
 
+    event_kind: Literal['rate_limits'] = 'rate_limits'
+    """Event type identifier, used as a discriminator."""
+
 
 @dataclass
 class Reconnected:
@@ -220,6 +258,9 @@ class Reconnected:
     Session configuration (instructions, tools, voice, ...) is restored, but server-side conversation
     state (the audio buffer and prior turns) is not — treat it as the start of a fresh turn.
     """
+
+    event_kind: Literal['reconnected'] = 'reconnected'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass
@@ -234,6 +275,9 @@ class SessionError:
     """Provider error code, if any."""
     recoverable: bool = True
     """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
+
+    event_kind: Literal['session_error'] = 'session_error'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass
@@ -260,47 +304,69 @@ class Sources:
     queries: list[str] = field(default_factory=list[str])
     """Search queries the model issued, if the provider reported them."""
 
+    event_kind: Literal['sources'] = 'sources'
+    """Event type identifier, used as a discriminator."""
+
 
 RealtimeEvent = TypeAliasType(
     'RealtimeEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | Sources | SessionError',
+    AudioDelta
+    | Transcript
+    | InputTranscript
+    | ToolCall
+    | TurnComplete
+    | SpeechStarted
+    | SpeechStopped
+    | SessionUsage
+    | RateLimits
+    | Reconnected
+    | Sources
+    | SessionError,
 )
-"""Union of events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]."""
+"""Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].
+
+This is the provider-facing vocabulary: providers translate their wire protocol into these events, and
+[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] translates them again into the shared
+[`RealtimeSessionEvent`][pydantic_ai.realtime.RealtimeSessionEvent] vocabulary while building
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] history.
+"""
 
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
 #
-# A session replaces raw `ToolCall` events with `ToolCallStarted` / `ToolCallCompleted`
-# bookends around its own tool execution; everything else passes through unchanged.
-
-
-@dataclass
-class ToolCallStarted:
-    """The session has begun executing a tool call."""
-
-    tool_name: str
-    """Name of the tool being executed."""
-    tool_call_id: str
-    """Identifier of the originating `ToolCall`."""
-
-
-@dataclass
-class ToolCallCompleted:
-    """The session has finished executing a tool call and sent the result to the model."""
-
-    tool_name: str
-    """Name of the tool that was executed."""
-    tool_call_id: str
-    """Identifier of the originating `ToolCall`."""
-    result: str
-    """The tool's output that was sent back to the model."""
+# A session translates the low-level codec events into the shared message/part event vocabulary from
+# `pydantic_ai.messages`: `AudioDelta`/`Transcript`/`InputTranscript` become `PartStartEvent` /
+# `PartDeltaEvent` / `PartEndEvent` for `AudioWithTranscriptPart`s, and `ToolCall` becomes a
+# `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
+# execution. The remaining control-plane events pass through unchanged.
 
 
 RealtimeSessionEvent = TypeAliasType(
     'RealtimeSessionEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | Sources | SessionError',
+    PartStartEvent
+    | PartDeltaEvent
+    | PartEndEvent
+    | FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | TurnComplete
+    | SpeechStarted
+    | SpeechStopped
+    | SessionUsage
+    | RateLimits
+    | Reconnected
+    | Sources
+    | SessionError,
 )
-"""Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]."""
+"""Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
+
+Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
+[`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
+events (carrying [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]s and
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
+[`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as realtime
+control-plane events.
+"""
 
 
 class RealtimeConnection(ABC):
@@ -342,6 +408,7 @@ class RealtimeModel(ABC):
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
+        messages: Sequence[ModelMessage] | None = None,
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         """Open a connection to the realtime model.
 
@@ -351,6 +418,9 @@ class RealtimeModel(ABC):
             native_tools: Provider-native tools (e.g. [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool])
                 the model runs server-side. Providers raise `UserError` for ones they don't support.
             model_settings: Optional provider-specific settings.
+            messages: Optional prior conversation to seed the session with, projected to the provider's
+                initial conversation items. Only text/transcript content is seeded (v1): audio is not
+                replayed. Providers degrade gracefully, dropping content they can't project.
 
         Returns:
             An async context manager yielding a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].

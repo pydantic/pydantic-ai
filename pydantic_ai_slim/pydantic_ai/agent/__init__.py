@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import RealtimeModel, RealtimeSession
+    from ..realtime import AudioRetention, RealtimeModel, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -2633,6 +2633,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         background_tools: set[str] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -2641,10 +2643,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         This mirrors [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]
         for the parameters that map to a long-lived, bidirectional session. Parameters that are
-        specific to the request-response graph — `output_type`, `message_history`, `conversation_id`
-        (as history), `retries`, `event_stream_handler`, `deferred_tool_results` — do not apply;
-        structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
-        realtime docs). Of the `capabilities` lifecycle, only the **tool** hooks (`prepare_tools`,
+        specific to the request-response graph — `output_type`, `conversation_id` (as history),
+        `retries`, `event_stream_handler`, `deferred_tool_results` — do not apply; structured output
+        should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the realtime docs). Of the
+        `capabilities` lifecycle, only the **tool** hooks (`prepare_tools`,
         `before`/`after`/`wrap` `tool_validate`, and `before`/`after`/`wrap`/`on_error` `tool_execute`)
         run, since the session validates and executes tools but has no model-request/graph/output
         stages.
@@ -2690,6 +2692,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             background_tools: Names of tools that should run concurrently in the background while the
                 model keeps responding, rather than blocking until they finish. The result is sent
                 back once ready, mirroring firing off a subagent and continuing in the meantime.
+            message_history: Prior conversation to seed the session with. It is projected to the
+                provider's initial conversation items (text/transcript only — audio is not replayed)
+                and included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
+                (but not `new_messages()`). Hand off from a prior session or a standard
+                [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
+            audio_retention: How much spoken audio the session retains in its history, on top of
+                transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
+                [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
         """
         from ..realtime import RealtimeSession
 
@@ -2774,6 +2784,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tool_defs,
                 native_tools=native_tools,
                 model_settings=model_settings,
+                messages=message_history,
             ) as connection:
                 yield RealtimeSession(
                     connection,
@@ -2784,6 +2795,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     agent_name=self.name,
                     usage=run_context.usage,
                     usage_limits=usage_limits,
+                    audio_retention=audio_retention,
+                    message_history=message_history,
                 )
 
     async def __aenter__(self) -> Self:

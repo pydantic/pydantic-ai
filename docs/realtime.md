@@ -49,7 +49,8 @@ session, and natively accepts **live video frames** sent as
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.realtime import AudioDelta, Transcript
+from pydantic_ai.messages import AudioWithTranscriptPart, AudioWithTranscriptPartDelta
+from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -65,10 +66,11 @@ async def main():
     async with agent.realtime_session(model=model) as session:
         await session.send_audio(microphone_chunk)  # PCM16 audio bytes
         async for event in session:
-            if isinstance(event, AudioDelta):
-                speaker.play(event.data)
-            elif isinstance(event, Transcript) and event.is_final:
-                print('assistant:', event.text)
+            match event:
+                case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if chunk:
+                    speaker.play(chunk)
+                case PartEndEvent(part=AudioWithTranscriptPart(speaker='assistant', transcript=transcript)):
+                    print('assistant:', transcript)
 ```
 
 You stream content in with the session's `send_*` helpers and consume events by iterating the
@@ -82,23 +84,43 @@ session:
 
 ## Events
 
-Iterating a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields:
+A session speaks the same event vocabulary as a standard streamed agent run: iterating a
+[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields the shared message/part events from
+[`pydantic_ai.messages`][pydantic_ai.messages] for content, plus realtime control-plane events.
+
+Spoken content (both the user's and the model's) streams as an
+[`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart] (distinguished by
+`speaker`), assembled through the standard part events:
 
 | Event | Meaning |
 | --- | --- |
-| [`AudioDelta`][pydantic_ai.realtime.AudioDelta] | A chunk of the model's audio output. |
-| [`Transcript`][pydantic_ai.realtime.Transcript] | Transcription of the model's speech / its text output (`is_final` marks the end of a turn). |
-| [`InputTranscript`][pydantic_ai.realtime.InputTranscript] | Transcription of the user's speech (streamed; `is_final` marks the completed turn). |
+| [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] | A new part started — an `AudioWithTranscriptPart` (assistant or user) or a `ToolCallPart`. |
+| [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | An [`AudioWithTranscriptPartDelta`][pydantic_ai.messages.AudioWithTranscriptPartDelta]: `audio_chunk` for playback and/or `transcript_delta` for incremental text. |
+| [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A part completed; `part.transcript` holds the full transcript (and retained `audio`, per `audio_retention`). |
+| [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | The session began executing a tool the model requested (carries the `ToolCallPart`). |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | The tool finished and its `ToolReturnPart` result was sent back to the model. |
+
+The remaining realtime control-plane events:
+
+| Event | Meaning |
+| --- | --- |
 | [`SpeechStarted`][pydantic_ai.realtime.SpeechStarted] | The provider detected the user started speaking (barge-in). |
 | [`SpeechStopped`][pydantic_ai.realtime.SpeechStopped] | The user stopped speaking; the model is about to respond. |
-| [`ToolCallStarted`][pydantic_ai.realtime.ToolCallStarted] | The session began executing a tool the model requested. |
-| [`ToolCallCompleted`][pydantic_ai.realtime.ToolCallCompleted] | The tool finished and its result was sent back to the model. |
 | [`TurnComplete`][pydantic_ai.realtime.TurnComplete] | The model finished a turn (`interrupted=True` if the user barged in). |
-| [`Usage`][pydantic_ai.realtime.Usage] | Token usage for a completed model response (see [Usage and cost](#usage-and-cost)). |
+| [`SessionUsage`][pydantic_ai.realtime.SessionUsage] | Token usage for a completed model response (see [Usage and cost](#usage-and-cost)). |
 | [`RateLimits`][pydantic_ai.realtime.RateLimits] | An updated rate-limit snapshot from the provider. |
 | [`Reconnected`][pydantic_ai.realtime.Reconnected] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
 | [`Sources`][pydantic_ai.realtime.Sources] | Web pages the model grounded its answer on, when using a built-in web tool (see [Built-in tools](#built-in-tools-web-search)). |
 | [`SessionError`][pydantic_ai.realtime.SessionError] | The provider reported an error (`recoverable=False` means the connection dropped). |
+
+The session accumulates ordinary [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as the
+conversation proceeds. [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
+(seeded history plus this session) and
+[`session.new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] (this session only)
+return snapshots you can hand off to a standard [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
+Pass `message_history=` to `realtime_session` to seed a session from a prior conversation (text
+projection only — audio is not replayed), and `audio_retention=` to keep spoken audio bytes on the
+history parts (see [`AudioRetention`][pydantic_ai.realtime.AudioRetention]).
 
 ## Configuring the session
 
@@ -214,7 +236,8 @@ model keeps quiet when nothing changed.
 ## Tool calling
 
 Tools registered on the agent are offered to the realtime model. When the model calls one, the
-session emits `ToolCallStarted`, runs the tool, sends the result back, and emits `ToolCallCompleted`.
+session emits a [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool,
+sends the result back, and emits a [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent].
 A result is always returned to the model, even when the arguments fail to parse or the tool raises,
 so the conversation never stalls.
 
@@ -292,7 +315,7 @@ The session accumulates token usage as the model responds. Read it from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage] — a
 [`RunUsage`][pydantic_ai.usage.RunUsage] with input/output tokens (including audio and cached
 breakdowns) and tool-call counts. Each completed response is also surfaced as a
-[`Usage`][pydantic_ai.realtime.Usage] event, and providers may emit
+[`SessionUsage`][pydantic_ai.realtime.SessionUsage] event, and providers may emit
 [`RateLimits`][pydantic_ai.realtime.RateLimits] snapshots.
 
 ```python {test="skip" lint="skip"}
@@ -382,12 +405,14 @@ ones that are specific to the request-response graph (faking them would be misle
 | `capabilities` | ⚠️ **tool-lifecycle hooks only** — `prepare_tools` and `before`/`after`/`wrap`/`on_error` `tool_execute`. The session executes tools but has no model-request/graph/output stages, so those hooks (and deferred loading / capability toolsets) don't run |
 | `usage`, `usage_limits` | ✅ accumulate / enforce (token + tool-call limits; see [Usage and cost](#usage-and-cost)) |
 | `metadata`, `conversation_id` | ✅ set on the `RunContext` (and telemetry span) for tools/correlation |
+| `message_history` | ✅ seeds the session (text/transcript projection; audio not replayed) and is included in `all_messages()` |
 | `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
-| `message_history` / `conversation_id` (as history) | ❌ conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
+| `conversation_id` (as history) | ❌ live conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
 | `user_prompt` | ❌ stream input with `send_audio` / `send_text` / `send_image` instead |
 | `retries`, `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 
-Realtime-only: `background_tools` (run a tool concurrently while the model keeps talking).
+Realtime-only: `background_tools` (run a tool concurrently while the model keeps talking) and
+`audio_retention` (keep spoken audio bytes on the history parts).
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel

@@ -15,10 +15,10 @@ from pydantic_ai.realtime import (
     RealtimeEvent,
     RealtimeInput,
     RealtimeSession,
+    SessionUsage,
     ToolCall,
     Transcript,
     TurnComplete,
-    Usage,
 )
 from pydantic_ai.usage import RequestUsage
 
@@ -88,12 +88,13 @@ async def test_nested_agent_run_nests_under_session_span() -> None:
 
 
 async def test_session_captures_transcript_messages() -> None:
+    # The session span reuses the shared message → gen_ai serialization on the finalized history:
+    # the user request lands as an input message, the assistant response as an output message.
     settings, exporter = _settings()
     conn = _Connection(
         [
             InputTranscript(text='hello there', is_final=True),
             Transcript(text='hi, how can I help?', is_final=True),
-            InputTranscript(text='par', is_final=False),  # non-final → not captured
             TurnComplete(),
         ]
     )
@@ -125,7 +126,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            Usage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             TurnComplete(),
         ]
     )

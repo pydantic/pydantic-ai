@@ -29,7 +29,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
-    from ..realtime import RealtimeModel, RealtimeSession
+    from ..realtime import AudioRetention, RealtimeModel, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -304,6 +304,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         background_tools: set[str] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime session on the wrapped agent. See [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session]."""
         async with self.wrapped.realtime_session(
@@ -318,6 +320,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             conversation_id=conversation_id,
             background_tools=background_tools,
+            message_history=message_history,
+            audio_retention=audio_retention,
         ) as session:
             yield session
 

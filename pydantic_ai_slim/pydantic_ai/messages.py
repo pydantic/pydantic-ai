@@ -2457,21 +2457,7 @@ class ModelResponse:
                     _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
                 )
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
-                if isinstance(part, NativeToolCallPart):
-                    call_part['builtin'] = True
-                if part.otel_metadata:
-                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
-                        call_part['code_arg_name'] = code_arg_name
-                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
-                        call_part['code_arg_language'] = code_arg_language
-                if settings.include_content and part.args is not None:
-                    if isinstance(part.args, str):
-                        call_part['arguments'] = part.args
-                    else:
-                        call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
-
-                parts.append(call_part)
+                parts.append(_tool_call_otel_part(part, settings))
             elif isinstance(part, NativeToolReturnPart):
                 return_part = _otel_messages.ToolCallResponsePart(
                     type='tool_call_response',
@@ -2483,12 +2469,32 @@ class ModelResponse:
                     return_part['result'] = serialize_any(part.content)
 
                 parts.append(return_part)
+            elif isinstance(part, AudioWithTranscriptPart):
+                parts.extend(part.otel_message_parts(settings))
             elif isinstance(part, CompactionPart):
                 # Compaction parts don't map to standard OTel message part types
                 pass
         return parts
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_call_otel_part(part: BaseToolCallPart, settings: InstrumentationSettings) -> _otel_messages.ToolCallPart:
+    """Convert a tool-call part to its OTel `ToolCallPart`, including native/code metadata and arguments."""
+    call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+    if isinstance(part, NativeToolCallPart):
+        call_part['builtin'] = True
+    if part.otel_metadata:
+        if code_arg_name := part.otel_metadata.get('code_arg_name'):
+            call_part['code_arg_name'] = code_arg_name
+        if code_arg_language := part.otel_metadata.get('code_arg_language'):
+            call_part['code_arg_language'] = code_arg_language
+    if settings.include_content and part.args is not None:
+        if isinstance(part.args, str):
+            call_part['arguments'] = part.args
+        else:
+            call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
+    return call_part
 
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]

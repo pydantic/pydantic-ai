@@ -17,6 +17,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     Reconnected,
     SessionError,
+    SessionUsage,
     Sources,
     SpeechStarted,
     TextInput,
@@ -24,7 +25,6 @@ from pydantic_ai.realtime import (
     ToolResult,
     Transcript,
     TurnComplete,
-    Usage,
     WebSource,
 )
 from pydantic_ai.settings import ModelSettings
@@ -343,7 +343,7 @@ def test_map_tool_call_and_usage() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         ToolCall(tool_call_id='c1', tool_name='calc', args=json.dumps({'x': 1})),
-        Usage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
+        SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
 
 
@@ -452,6 +452,43 @@ async def test_connect_streams_events(monkeypatch: pytest.MonkeyPatch) -> None:
         TurnComplete(interrupted=False),
         Transcript(text='bye', is_final=True),
         TurnComplete(interrupted=False),
+    ]
+
+
+async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai.messages import (
+        AudioWithTranscriptPart,
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
+
+    session = _RecordingSession([[_turn('hi')]])
+    _patch_client(monkeypatch, session)
+
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
+        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
+    ]
+    model = GoogleRealtimeModel(api_key='k')
+    async with model.connect(instructions='x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    # A single seed batch of context turns, sent without `turn_complete` so the model doesn't respond.
+    # System parts and tool calls are dropped (text/transcript projection only).
+    seeded = session.client_content[0]
+    assert seeded['turn_complete'] is False
+    turns = seeded['turns']
+    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [
+        ('user', ['earlier question']),
+        ('model', ['earlier answer']),
+        ('user', ['spoken question']),
+        ('model', ['spoken answer']),
     ]
 
 

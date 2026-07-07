@@ -7,11 +7,26 @@ request-response pattern of the standard [`Model`][pydantic_ai.models.Model] int
 The provider-agnostic ABCs and event types live here; concrete providers live in submodules
 (e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
 [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session].
+
+A session translates the low-level codec events (the connection-facing `RealtimeEvent` vocabulary)
+into the shared message/part event vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages]
+([`PartStartEvent`][pydantic_ai.messages.PartStartEvent], [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent],
+...), re-exported here for convenience, plus the realtime control-plane events defined below.
 """
 
+from ..messages import (
+    AudioWithTranscriptPart,
+    AudioWithTranscriptPartDelta,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+)
 from ._base import (
     AudioDelta,
     AudioInput,
+    AudioRetention,
     CancelResponse,
     ClearAudio,
     CommitAudio,
@@ -27,25 +42,33 @@ from ._base import (
     RealtimeSessionEvent,
     Reconnected,
     SessionError,
+    SessionUsage,
     Sources,
     SpeechStarted,
     SpeechStopped,
     TextInput,
     ToolCall,
-    ToolCallCompleted,
-    ToolCallStarted,
     ToolResult,
     Transcript,
     TruncateOutput,
     TurnComplete,
-    Usage,
     WebSource,
 )
 from ._session import RealtimeSession, ToolRunner
 
 __all__ = (
+    # Shared message/part events (re-exported from `pydantic_ai.messages`) that a session yields.
+    'AudioWithTranscriptPart',
+    'AudioWithTranscriptPartDelta',
+    'FunctionToolCallEvent',
+    'FunctionToolResultEvent',
+    'PartDeltaEvent',
+    'PartEndEvent',
+    'PartStartEvent',
+    # Realtime codec events, control-plane events, inputs, and ABCs.
     'AudioDelta',
     'AudioInput',
+    'AudioRetention',
     'CancelResponse',
     'ClearAudio',
     'CommitAudio',
@@ -62,18 +85,16 @@ __all__ = (
     'RealtimeSessionEvent',
     'Reconnected',
     'SessionError',
+    'SessionUsage',
     'Sources',
     'SpeechStarted',
     'SpeechStopped',
     'TextInput',
     'ToolCall',
-    'ToolCallCompleted',
-    'ToolCallStarted',
     'ToolResult',
     'ToolRunner',
     'Transcript',
     'TruncateOutput',
     'TurnComplete',
-    'Usage',
     'WebSource',
 )

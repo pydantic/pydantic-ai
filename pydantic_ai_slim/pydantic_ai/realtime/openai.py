@@ -15,7 +15,7 @@ import base64
 import json
 import os
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -30,6 +30,13 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from ..exceptions import UserError
+from ..messages import (
+    AudioWithTranscriptPart,
+    ModelMessage,
+    ModelRequest,
+    TextPart,
+    UserPromptPart,
+)
 from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings, ToolChoice
 from ..tools import ToolDefinition
@@ -51,6 +58,7 @@ from ._base import (
     RealtimeModel,
     Reconnected,
     SessionError,
+    SessionUsage,
     SpeechStarted,
     SpeechStopped,
     TextInput,
@@ -59,7 +67,6 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnComplete,
-    Usage,
     reconnect_with_backoff,
 )
 
@@ -83,6 +90,43 @@ def _tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     if tool.description:
         result['description'] = tool.description
     return result
+
+
+def _user_prompt_text(part: UserPromptPart) -> str:
+    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item for item in part.content if isinstance(item, str))
+
+
+def _seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
+    """Project prior conversation to OpenAI `conversation.item.create` items (text/transcript only, v1).
+
+    User prompts and user-spoken transcripts become `input_text` user items; assistant text and
+    assistant-spoken transcripts become `text` assistant items. `SystemPromptPart`s are skipped (the
+    `instructions` session field covers system-level guidance), and tool calls/results are skipped —
+    seeding a `function_call_output` without its originating call item is invalid, and full tool-round
+    replay is out of scope for v1. Content that can't be projected is dropped rather than erroring.
+    """
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for req_part in message.parts:
+                if isinstance(req_part, UserPromptPart) and (text := _user_prompt_text(req_part)):
+                    items.append(_message_item('user', 'input_text', text))
+                elif isinstance(req_part, AudioWithTranscriptPart) and req_part.transcript:
+                    items.append(_message_item('user', 'input_text', req_part.transcript))
+        else:
+            for resp_part in message.parts:
+                if isinstance(resp_part, TextPart) and resp_part.content:
+                    items.append(_message_item('assistant', 'text', resp_part.content))
+                elif isinstance(resp_part, AudioWithTranscriptPart) and resp_part.transcript:
+                    items.append(_message_item('assistant', 'text', resp_part.transcript))
+    return items
+
+
+def _message_item(role: str, content_type: str, text: str) -> dict[str, Any]:
+    return {'type': 'message', 'role': role, 'content': [{'type': content_type, 'text': text}]}
 
 
 def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:
@@ -412,7 +456,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # so the session accounts for all tokens, then defer a pending response if needed.
             usage = _map_usage(_obj(data.get('response')))
             if usage is not None:
-                events.append(Usage(usage=usage))
+                events.append(SessionUsage(usage=usage))
             if self._pending_response:
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so
@@ -621,6 +665,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
+        messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         if native_tools:
             raise UserError(
@@ -652,6 +697,10 @@ class OpenAIRealtimeModel(RealtimeModel):
 
         try:
             ws = await dial()
+            # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
+            # re-seed: server state is lost on drop and a `Reconnected` starts a fresh turn.
+            for item in _seed_items(messages or ()):
+                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
         finally:
             if cm is not None:

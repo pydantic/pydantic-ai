@@ -16,7 +16,7 @@ Application Default Credentials when `vertexai=True` (useful where org policy di
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -31,6 +31,13 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from ..exceptions import UserError
+from ..messages import (
+    AudioWithTranscriptPart,
+    ModelMessage,
+    ModelRequest,
+    TextPart,
+    UserPromptPart,
+)
 from ..native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -46,6 +53,7 @@ from ._base import (
     RealtimeModel,
     Reconnected,
     SessionError,
+    SessionUsage,
     Sources,
     SpeechStarted,
     TextInput,
@@ -53,7 +61,6 @@ from ._base import (
     ToolResult,
     Transcript,
     TurnComplete,
-    Usage,
     WebSource,
     reconnect_with_backoff,
 )
@@ -133,6 +140,43 @@ _TURN_COVERAGE = {
     'all_input': genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
+
+
+def _user_prompt_text(part: UserPromptPart) -> str:
+    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item for item in part.content if isinstance(item, str))
+
+
+def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | genai_types.ContentDict]:
+    """Project prior conversation to Gemini `Content` turns (text/transcript only, v1).
+
+    User prompts and user-spoken transcripts become `user` turns; assistant text and assistant-spoken
+    transcripts become `model` turns. `SystemPromptPart`s are skipped (`system_instruction` covers
+    system-level guidance) and tool calls/results are skipped (full tool-round replay is out of scope
+    for v1). Content that can't be projected is dropped rather than erroring.
+    """
+    turns: list[genai_types.Content | genai_types.ContentDict] = []
+    for message in messages:
+        texts: list[str] = []
+        if isinstance(message, ModelRequest):
+            for req_part in message.parts:
+                if isinstance(req_part, UserPromptPart) and (text := _user_prompt_text(req_part)):
+                    texts.append(text)
+                elif isinstance(req_part, AudioWithTranscriptPart) and req_part.transcript:
+                    texts.append(req_part.transcript)
+            role = 'user'
+        else:
+            for resp_part in message.parts:
+                if isinstance(resp_part, TextPart) and resp_part.content:
+                    texts.append(resp_part.content)
+                elif isinstance(resp_part, AudioWithTranscriptPart) and resp_part.transcript:
+                    texts.append(resp_part.transcript)
+            role = 'model'
+        if texts:
+            turns.append(genai_types.Content(role=role, parts=[genai_types.Part(text=t) for t in texts]))
+    return turns
 
 
 def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
@@ -395,6 +439,7 @@ class GoogleRealtimeModel(RealtimeModel):
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
+        messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._client()
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
@@ -419,6 +464,11 @@ class GoogleRealtimeModel(RealtimeModel):
 
         try:
             session = await dial(None)
+            # Seed prior conversation once, after the initial connect, as inactive context turns (no
+            # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
+            # resumption restores server state, and a `Reconnected` starts a fresh turn.
+            if turns := _seed_turns(messages or ()):
+                await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,
                 dial=dial if reconnectable else None,
@@ -558,7 +608,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._tool_calls[call_id] = (name, call.id)
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.usage_metadata is not None:
-            events.append(Usage(usage=_map_usage(message.usage_metadata)))
+            events.append(SessionUsage(usage=_map_usage(message.usage_metadata)))
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

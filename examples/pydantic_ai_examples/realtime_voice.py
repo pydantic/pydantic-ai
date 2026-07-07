@@ -24,15 +24,16 @@ import logfire
 
 from pydantic_ai import Agent
 from pydantic_ai.realtime import (
-    AudioDelta,
-    InputTranscript,
+    AudioWithTranscriptPart,
+    AudioWithTranscriptPartDelta,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
     RealtimeSession,
     RealtimeSessionEvent,
     SessionError,
     SpeechStarted,
-    ToolCallCompleted,
-    ToolCallStarted,
-    Transcript,
 )
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -100,23 +101,30 @@ async def handle_event(
     play_queue: queue.Queue[bytes],
 ) -> bool:
     """Handle one session event; return `True` to stop the session."""
-    if isinstance(event, AudioDelta):
-        play_queue.put_nowait(event.data)
-    elif isinstance(event, SpeechStarted):
-        # Barge-in: drop buffered audio locally and cancel the model's turn.
-        drain(play_queue)
-        await session.interrupt()
-    elif isinstance(event, InputTranscript) and event.is_final:
-        print(f'you: {event.text}')
-    elif isinstance(event, Transcript) and event.is_final:
-        print(f'assistant: {event.text}')
-    elif isinstance(event, ToolCallStarted):
-        print(f'[calling {event.tool_name}]')
-    elif isinstance(event, ToolCallCompleted):
-        print(f'[{event.tool_name} returned: {event.result}]')
-    elif isinstance(event, SessionError):
-        print(f'error: {event.message}')
-        return not event.recoverable
+    match event:
+        case PartDeltaEvent(delta=AudioWithTranscriptPartDelta(audio_chunk=chunk)) if (
+            chunk
+        ):
+            play_queue.put_nowait(chunk)
+        case SpeechStarted():
+            # Barge-in: drop buffered audio locally and cancel the model's turn.
+            drain(play_queue)
+            await session.interrupt()
+        case PartEndEvent(
+            part=AudioWithTranscriptPart(speaker='user', transcript=transcript)
+        ):
+            print(f'you: {transcript}')
+        case PartEndEvent(
+            part=AudioWithTranscriptPart(speaker='assistant', transcript=transcript)
+        ):
+            print(f'assistant: {transcript}')
+        case FunctionToolCallEvent(part=call):
+            print(f'[calling {call.tool_name}]')
+        case FunctionToolResultEvent(part=result):
+            print(f'[{result.tool_name} returned: {result.content}]')
+        case SessionError(message=message, recoverable=recoverable):
+            print(f'error: {message}')
+            return not recoverable
     return False
 
 

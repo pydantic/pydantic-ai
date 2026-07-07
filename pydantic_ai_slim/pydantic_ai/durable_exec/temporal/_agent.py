@@ -48,7 +48,7 @@ from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
-    from pydantic_ai.realtime import RealtimeModel, RealtimeSession
+    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeSession
 
 
 @dataclass
@@ -1117,6 +1117,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         background_tools: set[str] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
         if workflow.in_workflow():
             raise UserError(
@@ -1135,6 +1137,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             conversation_id=conversation_id,
             background_tools=background_tools,
+            message_history=message_history,
+            audio_retention=audio_retention,
         ) as session:
             yield session
 

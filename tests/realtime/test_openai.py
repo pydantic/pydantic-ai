@@ -24,6 +24,7 @@ from pydantic_ai.realtime import (
     RateLimits,
     Reconnected,
     SessionError,
+    SessionUsage,
     SpeechStarted,
     SpeechStopped,
     TextInput,
@@ -32,7 +33,6 @@ from pydantic_ai.realtime import (
     Transcript,
     TruncateOutput,
     TurnComplete,
-    Usage,
     openai as rt_openai,
 )
 from pydantic_ai.realtime.openai import (
@@ -480,6 +480,41 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.anyio
+async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai.messages import (
+        AudioWithTranscriptPart,
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
+
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer'), ToolCallPart(tool_name='t', args='{}')]),
+        ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
+        ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    async with model.connect(instructions='x', messages=history):
+        pass
+
+    # After the `session.update` handshake frame, one `conversation.item.create` per projected item.
+    # System parts and tool calls are dropped (text/transcript projection only).
+    items = [json.loads(frame) for frame in ws.sent[1:]]
+    assert [(i['type'], i['item']['role'], i['item']['content'][0]) for i in items] == [
+        ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'earlier question'}),
+        ('conversation.item.create', 'assistant', {'type': 'text', 'text': 'earlier answer'}),
+        ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'spoken question'}),
+        ('conversation.item.create', 'assistant', {'type': 'text', 'text': 'spoken answer'}),
+    ]
+
+
+@pytest.mark.anyio
 async def test_connection_send_audio() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -581,7 +616,10 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
-    assert events == [Usage(usage=RequestUsage(input_tokens=3, output_tokens=2)), TurnComplete(interrupted=False)]
+    assert events == [
+        SessionUsage(usage=RequestUsage(input_tokens=3, output_tokens=2)),
+        TurnComplete(interrupted=False),
+    ]
 
 
 @pytest.mark.anyio
@@ -596,7 +634,7 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
     # function-call-only → no TurnComplete, but usage is still surfaced
-    assert events == [Usage(usage=RequestUsage(output_tokens=5))]
+    assert events == [SessionUsage(usage=RequestUsage(output_tokens=5))]
 
 
 class DroppingWebSocket(FakeWebSocket):

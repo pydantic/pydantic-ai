@@ -4,36 +4,60 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import pydantic_core
 from opentelemetry.trace import Span, SpanKind
 
+from .._instrumentation import safe_to_json
 from ..exceptions import UsageLimitExceeded
-from ..usage import RunUsage, UsageLimits
+from ..messages import (
+    AudioWithTranscriptPart,
+    AudioWithTranscriptPartDelta,
+    BinaryContent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
+    AudioDelta,
     AudioInput,
+    AudioRetention,
     CancelResponse,
     ClearAudio,
     CommitAudio,
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RateLimits,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeSessionEvent,
+    Reconnected,
     SessionError,
+    SessionUsage,
+    Sources,
+    SpeechStarted,
+    SpeechStopped,
     TextInput,
     ToolCall,
-    ToolCallCompleted,
-    ToolCallStarted,
     ToolResult,
     Transcript,
     TruncateOutput,
-    Usage,
+    TurnComplete,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +65,10 @@ if TYPE_CHECKING:
 
 ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 """Async callable executing a tool given its name, parsed arguments, and call id; returns the string result."""
+
+# Realtime providers stream raw PCM audio; there's no container to carry a richer media type, so
+# retained audio is tagged as `audio/pcm`.
+_PCM_MEDIA_TYPE = 'audio/pcm'
 
 
 def _as_event(item: object) -> RealtimeSessionEvent:
@@ -50,13 +78,19 @@ def _as_event(item: object) -> RealtimeSessionEvent:
     return cast('RealtimeSessionEvent', item)
 
 
-def _transcript_message(event: RealtimeSessionEvent) -> dict[str, Any] | None:
-    """Map a final transcript event to an OpenTelemetry GenAI message, or `None` for anything else."""
-    if isinstance(event, InputTranscript) and event.is_final and event.text:
-        return {'role': 'user', 'parts': [{'type': 'text', 'content': event.text}]}
-    if isinstance(event, Transcript) and event.is_final and event.text:
-        return {'role': 'assistant', 'parts': [{'type': 'text', 'content': event.text}]}
-    return None
+def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
+    """Fold a transcript event's `text` into the running transcript, returning `(new_accumulated, appended)`.
+
+    Providers deliver transcripts two different ways: as incremental deltas (each event carries a new
+    piece) or as a single final event carrying the full text. Both are handled by one rule: if `text`
+    extends what we already have (the accumulated transcript is a prefix of it), it is a cumulative/full
+    update and only the new suffix is appended; otherwise `text` is an incremental piece appended as-is.
+    The second element is the newly appended text (empty when a final event merely repeats the deltas),
+    suitable for a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent].
+    """
+    if accumulated and text.startswith(accumulated):
+        return text, text[len(accumulated) :]
+    return accumulated + text, text
 
 
 def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -77,11 +111,25 @@ def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
 
 
 class RealtimeSession:
-    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] and auto-executes tool calls.
+    """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection], building message history and auto-executing tools.
 
-    When iterating, a `ToolCall` from the connection is intercepted: a `ToolCallStarted` is emitted,
-    the tool runs via `tool_runner`, its result is sent back to the model as a `ToolResult`, and a
-    `ToolCallCompleted` is emitted. Every other event passes through unchanged.
+    The session translates the connection's low-level codec events into the shared message/part event
+    vocabulary from [`pydantic_ai.messages`][pydantic_ai.messages] and accumulates ordinary
+    [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as the conversation proceeds, so a
+    session can hand off to [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] via
+    [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages]:
+
+    - assistant speech becomes [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
+      [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
+      events carrying an [`AudioWithTranscriptPart`][pydantic_ai.messages.AudioWithTranscriptPart]
+      (`speaker='assistant'`), finalized into a [`ModelResponse`][pydantic_ai.messages.ModelResponse]
+      at the end of the turn;
+    - user speech becomes the same part events with `speaker='user'`, finalized into a
+      [`ModelRequest`][pydantic_ai.messages.ModelRequest];
+    - a tool call becomes a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] (start/end) plus a
+      [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] when execution starts and a
+      [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] carrying a
+      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when it completes.
 
     Tools execute in one of two modes:
 
@@ -91,8 +139,14 @@ class RealtimeSession:
       streaming the model's events (so it can keep speaking) and sends the result back once it is
       ready, mirroring firing off a subagent and continuing work while it runs.
 
-    A `ToolResult` is always sent for every `ToolCall`, even when argument parsing or the tool itself
-    fails, so the model never stalls waiting on a result.
+    A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is always sent for every tool call, even
+    when argument parsing or the tool itself fails, so the model never stalls waiting on a result.
+
+    History is accumulated in the order events are reported, which is authoritative for turn-by-turn
+    speech but approximate at the edges: a background tool's result lands in history whenever it
+    finishes (so it may follow later assistant/user turns rather than sit right after its call), and
+    user transcripts that a provider reports asynchronously are ordered as received. Synchronous tool
+    calls and ordinary turns mirror a classic [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] history.
     """
 
     def __init__(
@@ -106,6 +160,8 @@ class RealtimeSession:
         agent_name: str | None = None,
         usage: RunUsage | None = None,
         usage_limits: UsageLimits | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
@@ -114,12 +170,47 @@ class RealtimeSession:
         self._model_name = model_name
         self._agent_name = agent_name
         self._usage_limits = usage_limits
+        self._audio_retention = audio_retention
+        self._retain_input = audio_retention in ('input', 'both')
+        self._retain_output = audio_retention in ('output', 'both')
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
         Pass `usage` to [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
+
+        # History: `_seeded` is the conversation the session was opened with (surfaced by
+        # `all_messages` only); `_history` is what happened during this session (surfaced by both).
+        self._seeded: list[ModelMessage] = list(message_history or [])
+        self._history: list[ModelMessage] = []
+
+        # In-flight assistant response being assembled. Parts finalize into `_response_parts`, which
+        # becomes a `ModelResponse` at the turn boundary (or when a tool call splits the turn).
+        self._response_parts: list[ModelResponsePart] = []
+        self._pending_response_usage = RequestUsage()
+        self._active_assistant: AudioWithTranscriptPart | None = None
+        self._active_assistant_index = 0
+        self._assistant_transcript = ''
+        self._output_audio = bytearray()
+
+        # In-flight user request being assembled from input-transcript events.
+        self._active_user: AudioWithTranscriptPart | None = None
+        self._user_transcript = ''
+        self._input_audio = bytearray()
+
+    def all_messages(self) -> list[ModelMessage]:
+        """A snapshot of the full conversation: the seeded history plus everything from this session.
+
+        Returns a copy, so the result doesn't change as the session continues. Feed it into
+        [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
+        conversation off to a standard agent run.
+        """
+        return [*self._seeded, *self._history]
+
+    def new_messages(self) -> list[ModelMessage]:
+        """A snapshot of the messages created during this session (excluding the seeded history)."""
+        return list(self._history)
 
     async def send(self, content: RealtimeInput) -> None:
         """Feed content into the underlying connection."""
@@ -128,10 +219,15 @@ class RealtimeSession:
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
         await self._connection.send(AudioInput(data=data))
+        if self._retain_input:
+            # Buffer the raw input so the finalized user turn can retain it. Alignment with the
+            # transcript is approximate (see `audio_retention`).
+            self._input_audio.extend(data)
 
     async def send_text(self, text: str) -> None:
         """Send a complete text turn to the model."""
         await self._connection.send(TextInput(text=text))
+        self._history.append(ModelRequest(parts=[UserPromptPart(content=text)]))
 
     async def send_image(self, data: bytes, *, mime_type: str = 'image/jpeg') -> None:
         """Send an image frame as conversation context (e.g. a video frame)."""
@@ -170,6 +266,188 @@ class RealtimeSession:
             await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
         await self._connection.send(CancelResponse())
 
+    # --- history assembly -------------------------------------------------------------------------
+
+    def _ensure_active_assistant(self) -> list[RealtimeSessionEvent]:
+        """Start an assistant audio+transcript part if one isn't already in flight."""
+        if self._active_assistant is not None:
+            return []
+        part = AudioWithTranscriptPart(speaker='assistant', transcript='')
+        self._active_assistant = part
+        self._active_assistant_index = len(self._response_parts)
+        self._assistant_transcript = ''
+        return [PartStartEvent(index=self._active_assistant_index, part=part)]
+
+    def _handle_assistant_transcript(self, text: str) -> list[RealtimeSessionEvent]:
+        events = self._ensure_active_assistant()
+        assert self._active_assistant is not None
+        self._assistant_transcript, appended = _accumulate_transcript(self._assistant_transcript, text)
+        self._active_assistant = replace(self._active_assistant, transcript=self._assistant_transcript)
+        if appended:
+            events.append(
+                PartDeltaEvent(
+                    index=self._active_assistant_index,
+                    delta=AudioWithTranscriptPartDelta(transcript_delta=appended),
+                )
+            )
+        return events
+
+    def _handle_assistant_audio(self, data: bytes) -> list[RealtimeSessionEvent]:
+        events = self._ensure_active_assistant()
+        if self._retain_output:
+            self._output_audio.extend(data)
+        events.append(
+            PartDeltaEvent(index=self._active_assistant_index, delta=AudioWithTranscriptPartDelta(audio_chunk=data))
+        )
+        return events
+
+    def _finalize_assistant_part(self) -> list[RealtimeSessionEvent]:
+        """End the in-flight assistant part, appending it to the current response if it has content."""
+        if self._active_assistant is None:
+            return []
+        part = self._active_assistant
+        if part.transcript == '':
+            part = replace(part, transcript=None)
+        if self._retain_output and self._output_audio:
+            part = replace(part, audio=BinaryContent(data=bytes(self._output_audio), media_type=_PCM_MEDIA_TYPE))
+        index = self._active_assistant_index
+        self._active_assistant = None
+        self._assistant_transcript = ''
+        self._output_audio.clear()
+        if part.has_content():
+            self._response_parts.append(part)
+        return [PartEndEvent(index=index, part=part)]
+
+    def _finalize_response(self) -> None:
+        """Finalize the current assistant response's parts into a `ModelResponse` in history."""
+        if self._response_parts:
+            self._history.append(
+                ModelResponse(
+                    parts=self._response_parts,
+                    usage=self._pending_response_usage,
+                    model_name=self._model_name,
+                )
+            )
+        self._response_parts = []
+        self._pending_response_usage = RequestUsage()
+
+    def _handle_turn_complete(self, event: RealtimeSessionEvent) -> list[RealtimeSessionEvent]:
+        events = self._finalize_assistant_part()
+        self._finalize_response()
+        events.append(event)
+        return events
+
+    def _handle_tool_call_part(self, call_part: ToolCallPart) -> list[RealtimeSessionEvent]:
+        """Fold a tool call into the current response and close it out (its result follows in a request)."""
+        events = self._finalize_assistant_part()
+        index = len(self._response_parts)
+        events.append(PartStartEvent(index=index, part=call_part))
+        events.append(PartEndEvent(index=index, part=call_part))
+        self._response_parts.append(call_part)
+        self._finalize_response()
+        return events
+
+    def _complete_tool_call(self, call_part: ToolCallPart, result: str) -> list[RealtimeSessionEvent]:
+        return_part = ToolReturnPart(tool_name=call_part.tool_name, content=result, tool_call_id=call_part.tool_call_id)
+        self._history.append(ModelRequest(parts=[return_part]))
+        return [FunctionToolResultEvent(part=return_part)]
+
+    def _handle_input_transcript(self, text: str, is_final: bool) -> list[RealtimeSessionEvent]:
+        events: list[RealtimeSessionEvent] = []
+        if self._active_user is None:
+            part = AudioWithTranscriptPart(speaker='user', transcript='')
+            self._active_user = part
+            self._user_transcript = ''
+            events.append(PartStartEvent(index=0, part=part))
+        self._user_transcript, appended = _accumulate_transcript(self._user_transcript, text)
+        assert self._active_user is not None
+        self._active_user = replace(self._active_user, transcript=self._user_transcript)
+        if appended:
+            events.append(PartDeltaEvent(index=0, delta=AudioWithTranscriptPartDelta(transcript_delta=appended)))
+        if is_final:
+            events.extend(self._finalize_user())
+        return events
+
+    def _finalize_user(self) -> list[RealtimeSessionEvent]:
+        if self._active_user is None:
+            return []  # pragma: no cover
+        part = self._active_user
+        if part.transcript == '':
+            part = replace(part, transcript=None)
+        if self._retain_input and self._input_audio:
+            part = replace(part, audio=BinaryContent(data=bytes(self._input_audio), media_type=_PCM_MEDIA_TYPE))
+        self._active_user = None
+        self._user_transcript = ''
+        self._input_audio.clear()
+        if part.has_content():
+            self._history.append(ModelRequest(parts=[part]))
+        return [PartEndEvent(index=0, part=part)]
+
+    def _translate_event(self, event: RealtimeEvent) -> list[RealtimeSessionEvent]:
+        """Translate a low-level codec event into shared session events, building history as a side effect.
+
+        Tool calls and usage are handled in `_handle_pump_event` (they interact with the queue and
+        tool execution); everything else routes through here.
+        """
+        if isinstance(event, AudioDelta):
+            return self._handle_assistant_audio(event.data)
+        if isinstance(event, Transcript):
+            # `is_final` doesn't end the part — the turn ends on `TurnComplete`; a final transcript just
+            # carries the full text, which `_accumulate_transcript` reconciles against the deltas.
+            return self._handle_assistant_transcript(event.text)
+        if isinstance(event, InputTranscript):
+            return self._handle_input_transcript(event.text, event.is_final)
+        if isinstance(event, TurnComplete):
+            return self._handle_turn_complete(event)
+        # The remaining control-plane events pass through unchanged. (`ToolCall` and `SessionUsage`
+        # never reach here — `_handle_pump_event` handles them before delegating.)
+        assert isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError))
+        return [event]
+
+    # --- instrumentation --------------------------------------------------------------------------
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
+        settings = self._instrumentation
+        if settings is None:
+            async for event in self._stream():
+                yield event
+            return
+        # Open a session-level span; tool spans created in the pump task inherit it through the
+        # OpenTelemetry context that `asyncio.create_task` copies.
+        attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
+        if self._model_name:
+            attributes['gen_ai.request.model'] = self._model_name
+        if self._agent_name:
+            attributes['gen_ai.agent.name'] = self._agent_name
+        span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
+        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+            try:
+                async for event in self._stream():
+                    yield event
+            finally:
+                self._finalize_span(settings, span, attributes)
+
+    def _finalize_span(self, settings: InstrumentationSettings, span: Span, base_attributes: dict[str, Any]) -> None:
+        """Attach cumulative usage and the conversation transcript (as gen_ai messages) to the session span."""
+        span.set_attributes(self.usage.opentelemetry_attributes())
+        if settings.include_content:
+            # Reuse the same message → gen_ai serialization the instrumented model uses. User/tool
+            # requests land as input messages; assistant responses as output messages.
+            requests: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelRequest)]
+            responses: list[ModelMessage] = [m for m in self._history if isinstance(m, ModelResponse)]
+            if requests:
+                span.set_attribute(
+                    'gen_ai.input.messages', safe_to_json(settings.messages_to_otel_messages(requests)).decode()
+                )
+            if responses:
+                span.set_attribute(
+                    'gen_ai.output.messages', safe_to_json(settings.messages_to_otel_messages(responses)).decode()
+                )
+        for token_type in ('input', 'output'):
+            tokens: int = getattr(self.usage, f'{token_type}_tokens')
+            if tokens:
+                settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
+
     async def _run_tool(self, call: ToolCall) -> str:
         settings = self._instrumentation
         if settings is None:
@@ -202,52 +480,7 @@ class RealtimeSession:
         await self._connection.send(ToolResult(tool_call_id=call.tool_call_id, output=result))
         return result
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
-        settings = self._instrumentation
-        if settings is None:
-            async for event in self._stream():
-                yield event
-            return
-        # Open a session-level span; tool spans created in the pump task inherit it through the
-        # OpenTelemetry context that `asyncio.create_task` copies.
-        attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
-        if self._model_name:
-            attributes['gen_ai.request.model'] = self._model_name
-        if self._agent_name:
-            attributes['gen_ai.agent.name'] = self._agent_name
-        span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
-        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
-            # The conversation transcript, captured turn-by-turn so it lands on the span as messages.
-            # User input and model output are kept separate to match the GenAI semantic conventions.
-            input_messages: list[dict[str, Any]] = []
-            output_messages: list[dict[str, Any]] = []
-            try:
-                async for event in self._stream():
-                    if settings.include_content and (message := _transcript_message(event)) is not None:
-                        bucket = output_messages if message['role'] == 'assistant' else input_messages
-                        bucket.append(message)
-                    yield event
-            finally:
-                self._finalize_span(settings, span, attributes, input_messages, output_messages)
-
-    def _finalize_span(
-        self,
-        settings: InstrumentationSettings,
-        span: Span,
-        base_attributes: dict[str, Any],
-        input_messages: list[dict[str, Any]],
-        output_messages: list[dict[str, Any]],
-    ) -> None:
-        """Attach cumulative usage and the conversation transcript to the session span."""
-        span.set_attributes(self.usage.opentelemetry_attributes())
-        if input_messages:
-            span.set_attribute('gen_ai.input.messages', json.dumps(input_messages))
-        if output_messages:
-            span.set_attribute('gen_ai.output.messages', json.dumps(output_messages))
-        for token_type in ('input', 'output'):
-            tokens: int = getattr(self.usage, f'{token_type}_tokens')
-            if tokens:
-                settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
+    # --- streaming --------------------------------------------------------------------------------
 
     def _tool_call_limit_error(self) -> SessionError | None:
         """A non-recoverable `SessionError` if running one more tool would breach the limits, else `None`."""
@@ -270,7 +503,9 @@ class RealtimeSession:
             return SessionError(message=str(e), type='usage_limit_exceeded', recoverable=False)
         return None
 
-    async def _run_background_tool(self, call: ToolCall, queue: asyncio.Queue[RealtimeSessionEvent | object]) -> None:
+    async def _run_background_tool(
+        self, call: ToolCall, call_part: ToolCallPart, queue: asyncio.Queue[RealtimeSessionEvent | object]
+    ) -> None:
         """Run a background tool and feed its completion (or failure) back through the queue."""
         try:
             result = await self._run_tool(call)
@@ -280,7 +515,8 @@ class RealtimeSession:
             # completion that never arrives.
             await queue.put(e)
             return
-        await queue.put(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
+        for event in self._complete_tool_call(call_part, result):
+            await queue.put(event)
 
     async def _handle_pump_event(
         self,
@@ -294,24 +530,30 @@ class RealtimeSession:
                 await queue.put(limit_error)
                 return True
             self.usage.tool_calls += 1
-            await queue.put(ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id))
+            call_part = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
+            for out in self._handle_tool_call_part(call_part):
+                await queue.put(out)
+            await queue.put(FunctionToolCallEvent(part=call_part))
             if event.tool_name in self._background_tools:
-                task = asyncio.create_task(self._run_background_tool(event, queue))
+                task = asyncio.create_task(self._run_background_tool(event, call_part, queue))
                 background.add(task)
                 task.add_done_callback(background.discard)
             else:
                 result = await self._run_tool(event)
-                await queue.put(
-                    ToolCallCompleted(tool_name=event.tool_name, tool_call_id=event.tool_call_id, result=result)
-                )
+                for out in self._complete_tool_call(call_part, result):
+                    await queue.put(out)
             return False
-        if isinstance(event, Usage):
+        if isinstance(event, SessionUsage):
             self.usage.incr(event.usage)
             self.usage.requests += 1
+            self._pending_response_usage = self._pending_response_usage + event.usage
             if (limit_error := self._token_limit_error()) is not None:
                 await queue.put(limit_error)
                 return True
-        await queue.put(event)
+            await queue.put(event)
+            return False
+        for out in self._translate_event(event):
+            await queue.put(out)
         return False
 
     async def _stream(self) -> AsyncIterator[RealtimeSessionEvent]:
