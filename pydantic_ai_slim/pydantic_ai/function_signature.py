@@ -484,9 +484,10 @@ def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
 
     Per the JSON Schema spec, `True` and `False` are valid schemas anywhere a schema may
     appear (most commonly as `additionalProperties`, but also as a property value or an
-    `allOf`/`anyOf`/`oneOf`/`items`/`$defs` member). `True` permits any value and `False`
-    permits none; neither maps to a precise Python type here, so both collapse to an empty
-    schema, which the walker renders as `Any` — the practical fallback for the model.
+    `allOf`/`anyOf`/`oneOf`/`items`/`$defs` member). `True` (equivalent to `{}`) permits any
+    value; `False` permits none and is *not* equivalent to `{}`. Neither the "anything" nor
+    the "nothing" case maps to a precise Python type here, so we deliberately collapse both to
+    an empty schema, which the walker renders as `Any` — the practical fallback for the model.
     Non-bool nodes are returned unchanged.
 
     Called at every point where a nested node may be a raw schema, so no walker has to
@@ -687,7 +688,7 @@ def _type_list_to_expr(
 
 
 def _handle_union_schema(
-    schemas: list[dict[str, Any]],
+    schemas: list[dict[str, Any] | bool],
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
