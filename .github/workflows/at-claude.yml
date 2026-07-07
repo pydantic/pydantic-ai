@@ -103,16 +103,16 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - name: Checkout base repository
+      - name: Checkout trusted base repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ needs.get-pr-info.outputs.pr_base_sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Check for modified config files
         # Compare the exact immutable SHAs captured in get-pr-info rather than
-        # the live PR head. Using `gh pr diff` would read
+        # the live PR head, while keeping this job checked out to trusted base
+        # repository code. Using `gh pr diff` would read
         # whatever the PR points at now, so a force-push after get-pr-info could
         # slip a modified CLAUDE.md/AGENTS.md past this guard while different
         # code is what actually runs (TOCTOU). Pinning to BASE_SHA...HEAD_SHA
