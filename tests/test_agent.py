@@ -4427,6 +4427,58 @@ class TestMultipleToolCalls:
             ]
         )
 
+    def test_early_strategy_prefers_native_output_over_function_tools(self):
+        """NativeOutput + early should skip function tools when native output is already valid."""
+        tool_called: list[str] = []
+
+        class Answer(BaseModel):
+            answer: str
+
+        request_count = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(
+                            content=json.dumps(
+                                {'result': {'kind': 'Answer', 'data': {'answer': 'done'}}},
+                            ),
+                        ),
+                        ToolCallPart(
+                            tool_name='search',
+                            args={'q': 'x'},
+                            tool_call_id='call_1',
+                        ),
+                    ],
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {'result': {'kind': 'Answer', 'data': {'answer': 'done'}}},
+                        ),
+                    ),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=NativeOutput(Answer),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def search(q: str) -> str:  # pragma: no cover
+            tool_called.append(q)
+            return 'results'
+
+        result = agent.run_sync('test native early strategy')
+        assert result.output == Answer(answer='done')
+        assert tool_called == []
+
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []

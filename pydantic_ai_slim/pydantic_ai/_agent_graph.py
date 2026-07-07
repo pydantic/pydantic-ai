@@ -1290,6 +1290,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # and a tool call response, where the text response just indicates the tool call will happen.
                     alternatives: list[str] = []
                     if tool_calls:
+                        if (
+                            text
+                            and output_schema.mode == 'native'
+                            and ctx.deps.end_strategy == 'early'
+                            and (text_processor := output_schema.text_processor)
+                        ):
+                            try:
+                                self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                return
+                            except ToolRetryError:
+                                pass
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
                         return
