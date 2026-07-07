@@ -4,29 +4,24 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
-
-from typing_extensions import assert_never
 
 from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
-    BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
-    FileUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
-    MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -34,10 +29,11 @@ from ..messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturnPart,
-    UploadedFile,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -49,6 +45,14 @@ if TYPE_CHECKING:
 
 SSE_CONTENT_TYPE = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
+
+
+class _PendingToolCall(NamedTuple):
+    """A tool call that's been dispatched but not yet completed."""
+
+    kind: Literal['function', 'output']
+    tool_name: str
+
 
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
@@ -65,20 +69,6 @@ OnCompleteFunc: TypeAlias = (
     | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
 )
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specific events."""
-
-_EVENT_HANDLER_NAMES: tuple[tuple[type[Any], str], ...] = (
-    (ModelResponseStartEvent, 'handle_model_response_start'),
-    (ModelResponseEndEvent, 'handle_model_response_end'),
-    (PartStartEvent, 'handle_part_start'),
-    (PartDeltaEvent, 'handle_part_delta'),
-    (PartEndEvent, 'handle_part_end'),
-    (FinalResultEvent, 'handle_final_result'),
-    (FunctionToolCallEvent, 'handle_function_tool_call'),
-    (FunctionToolResultEvent, 'handle_function_tool_result'),
-    (AgentRunResultEvent, 'handle_run_result'),
-)
-"""Lookup table mapping native events to their handler methods."""
-
 
 @dataclass
 class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
@@ -99,8 +89,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     _result: AgentRunResult[OutputDataT] | None = None
     _final_result_event: FinalResultEvent | None = None
-    _pending_tool_calls: dict[str, str] = field(default_factory=dict[str, str])
-    """Function tool calls dispatched but not yet completed. Maps tool_call_id to tool_name."""
+    _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
+    """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -175,31 +165,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, ModelResponseStartEvent | PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
-                elif isinstance(event, FunctionToolCallEvent):
-                    self._pending_tool_calls[event.part.tool_call_id] = event.part.tool_name
+                elif isinstance(event, ToolCallEvent):
+                    tool_call_id = event.part.tool_call_id
+                    kind: Literal['function', 'output'] = (
+                        'output' if isinstance(event, OutputToolCallEvent) else 'function'
+                    )
+                    self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
+                    if kind == 'output':
+                        # The output tool call is now tracked in `_pending_tool_calls`,
+                        # so the `FinalResultEvent` backup used by the error path is no longer needed.
+                        self._final_result_event = None
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
-                    if (
-                        self._final_result_event
-                        and (tool_call_id := self._final_result_event.tool_call_id)
-                        and (tool_name := self._final_result_event.tool_name)
-                    ):
-                        async for e in self._turn_to('request'):
-                            yield e
-
-                        self._final_result_event = None
-                        # Ensure the stream does not end on a dangling tool call without a result.
-                        output_tool_result_event = FunctionToolResultEvent(
-                            result=ToolReturnPart(
-                                tool_call_id=tool_call_id,
-                                tool_name=tool_name,
-                                content='Final result processed.',
-                            )
-                        )
-                        async for e in self.handle_function_tool_result(output_tool_result_event):
-                            yield e
-
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 
@@ -217,13 +195,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
-                elif isinstance(event, FunctionToolResultEvent):
-                    tool_call_id = event.result.tool_call_id
+                elif isinstance(event, ToolResultEvent):
+                    tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
-
-                elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
-                    # These events were deprecated before this feature was introduced
-                    continue
 
                 async for e in self.handle_event(event):
                     yield e
@@ -231,29 +205,31 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # Close any pending tool calls before emitting the error,
             # so the UI doesn't show them as still running.
 
-            # Pending output-tool call (stored via FinalResultEvent on the success path)
+            # Pending output-tool call (stored via FinalResultEvent if the call event hasn't fired yet)
             if (
                 self._final_result_event
                 and (tool_call_id := self._final_result_event.tool_call_id)
                 and (tool_name := self._final_result_event.tool_name)
             ):
                 self._final_result_event = None
-                self._pending_tool_calls[tool_call_id] = tool_name
+                self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
-            # Pending function-tool calls
-            for tool_call_id, tool_name in self._pending_tool_calls.items():
+            # Pending tool calls
+            for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
                 async for e in self._turn_to('request'):
                     yield e
-                error_result_event = FunctionToolResultEvent(
-                    result=ToolReturnPart(
-                        tool_call_id=tool_call_id,
-                        tool_name=tool_name,
-                        content='Tool execution was interrupted by an error.',
-                        outcome='failed',
-                    )
+                error_part = ToolReturnPart(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    content='Tool execution was interrupted by an error.',
+                    outcome='failed',
                 )
-                async for e in self.handle_function_tool_result(error_result_event):
-                    yield e
+                if kind == 'output':
+                    async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):
+                        yield e
+                else:
+                    async for e in self.handle_function_tool_result(FunctionToolResultEvent(error_part)):
+                        yield e
             self._pending_tool_calls.clear()
 
             async for e in self.on_error(exc):
@@ -286,30 +262,62 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Transform a Pydantic AI event into one or more protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event type:
 
+        - [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] -> `handle_model_response_start`
+        - [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] -> `handle_model_response_end`
         - [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] -> [`handle_part_start()`][pydantic_ai.ui.UIEventStream.handle_part_start]
         - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
         - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
         - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
-        - [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] -> `handle_model_response_start`
-        - [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] -> `handle_model_response_end`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
+        - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
+        - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.
         """
-        for event_type, handler_name in _EVENT_HANDLER_NAMES:
-            if isinstance(event, event_type):
-                handler = cast(Callable[[Any], AsyncIterator[EventT]], getattr(self, handler_name))
-                async for e in handler(event):
+        match event:
+            case ModelResponseStartEvent():
+                async for e in self.handle_model_response_start(event):
                     yield e
-                return
+            case ModelResponseEndEvent():
+                async for e in self.handle_model_response_end(event):
+                    yield e
+            case PartStartEvent():
+                async for e in self.handle_part_start(event):
+                    yield e
+            case PartDeltaEvent():
+                async for e in self.handle_part_delta(event):
+                    yield e
+            case PartEndEvent():
+                async for e in self.handle_part_end(event):
+                    yield e
+            case FinalResultEvent():
+                async for e in self.handle_final_result(event):
+                    yield e
+            case FunctionToolCallEvent():
+                async for e in self.handle_function_tool_call(event):
+                    yield e
+            case FunctionToolResultEvent():
+                async for e in self.handle_function_tool_result(event):
+                    yield e
+            case OutputToolCallEvent():
+                async for e in self.handle_output_tool_call(event):
+                    yield e
+            case OutputToolResultEvent():
+                async for e in self.handle_output_tool_result(event):
+                    yield e
+            case AgentRunResultEvent():
+                async for e in self.handle_run_result(event):
+                    yield e
+            case _:
+                pass
 
     async def handle_model_response_start(self, event: ModelResponseStartEvent) -> AsyncIterator[EventT]:
         """Handle a `ModelResponseStartEvent`."""
@@ -329,8 +337,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_start()`][pydantic_ai.ui.UIEventStream.handle_text_start]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_start()`][pydantic_ai.ui.UIEventStream.handle_thinking_start]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_tool_call_start]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
-        - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
+        - [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
         - [`CompactionPart`][pydantic_ai.messages.CompactionPart] -> [`handle_compaction()`][pydantic_ai.ui.UIEventStream.handle_compaction]
 
@@ -352,10 +360,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_start(part):
                     yield e
-            case BuiltinToolReturnPart():
+            case NativeToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
             case FilePart():
@@ -400,7 +408,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_end()`][pydantic_ai.ui.UIEventStream.handle_text_end]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_end()`][pydantic_ai.ui.UIEventStream.handle_thinking_end]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_tool_call_end]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
 
         Subclasses are encouraged to override the individual `handle_*_end` methods rather than this one.
         If you need specific behavior for all part end events, make sure you call the super method.
@@ -420,10 +428,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+            case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -573,8 +581,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolCallPart` at start.
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolCallPart` at start.
 
         Args:
             part: The builtin tool call part.
@@ -582,8 +590,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle the end of a `BuiltinToolCallPart`.
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle the end of a `NativeToolCallPart`.
 
         Args:
             part: The builtin tool call part.
@@ -591,8 +599,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolReturnPart`.
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolReturnPart`.
 
         Args:
             part: The builtin tool return part.
@@ -645,6 +653,24 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[EventT]:
+        """Handle an `OutputToolCallEvent` (the model's "submit final answer" call).
+
+        Args:
+            event: The output tool call event.
+        """
+        return
+        yield  # Make this an async generator
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[EventT]:
+        """Handle an `OutputToolResultEvent` (the result of an output tool call).
+
+        Args:
+            event: The output tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:
         """Handle an `AgentRunResultEvent`.
 
@@ -653,19 +679,3 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return
         yield  # Make this an async generator
-
-
-def describe_file(file: MultiModalContent) -> str:
-    """Return a text placeholder for a file in tool results.
-
-    Used by event stream protocols (Vercel AI, AG-UI) that don't support
-    multimodal content in tool results natively.
-    """
-    if isinstance(file, FileUrl):
-        return f'[File: {file.url}]'
-    elif isinstance(file, BinaryContent):
-        return f'[File: {file.media_type}]'
-    elif isinstance(file, UploadedFile):
-        return f'[File: {file.file_id}]'
-    else:
-        assert_never(file)

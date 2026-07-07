@@ -1,8 +1,9 @@
-import asyncio
 import re
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timezone
-from unittest.mock import AsyncMock, patch
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -20,6 +21,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStreamEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -27,7 +29,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -47,6 +49,7 @@ async def test_model_request():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 
@@ -66,6 +69,7 @@ async def test_model_request_tool_call():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=2),
+            provider_name='test',
         )
     )
 
@@ -78,6 +82,7 @@ def test_model_request_sync():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 
@@ -148,10 +153,10 @@ def test_model_request_stream_sync_without_context_manager():
         _ = stream_cm.timestamp
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.get()
+        _ = stream_cm.response
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.usage()
+        _ = stream_cm.usage
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
         list(stream_cm)
@@ -161,33 +166,35 @@ def test_model_request_stream_sync_without_context_manager():
             break  # pragma: no cover
 
 
-def test_model_request_stream_sync_exception_in_stream():
-    """Test handling of exceptions raised during streaming."""
+def test_model_request_stream_sync_exception_on_enter():
+    """A failure entering the async stream surfaces when the context manager is entered."""
     async_stream_mock = AsyncMock()
     async_stream_mock.__aenter__ = AsyncMock(side_effect=ValueError('Stream error'))
 
     stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
 
-    with stream_sync:
+    with pytest.raises(ValueError, match='Stream error'):
+        with stream_sync:
+            pass  # pragma: no cover
+
+
+def test_model_request_stream_sync_exception_during_iteration():
+    """An error raised while streaming (after a successful enter) surfaces to the consumer."""
+
+    class FailingStream:
+        def __aiter__(self) -> 'FailingStream':
+            return self
+
+        async def __anext__(self) -> ModelResponseStreamEvent:
+            raise ValueError('Stream error')
+
+    @asynccontextmanager
+    async def failing_stream_cm() -> AsyncGenerator[StreamedResponse]:
+        yield cast(StreamedResponse, FailingStream())
+
+    with StreamedResponseSync(_async_stream_cm=failing_stream_cm()) as stream_sync:
         with pytest.raises(ValueError, match='Stream error'):
             list(stream_sync)
-
-
-def test_model_request_stream_sync_timeout():
-    """Test timeout when stream fails to initialize."""
-    async_stream_mock = AsyncMock()
-
-    async def slow_init():
-        await asyncio.sleep(0.1)
-
-    async_stream_mock.__aenter__ = AsyncMock(side_effect=slow_init)
-
-    stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
-
-    with patch('pydantic_ai.direct.STREAM_INITIALIZATION_TIMEOUT', 0.01):
-        with stream_sync:
-            with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
-                stream_sync.get()
 
 
 def test_model_request_stream_sync_intermediate_get():
@@ -195,11 +202,14 @@ def test_model_request_stream_sync_intermediate_get():
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
     with model_request_stream_sync('test', messages) as stream:
-        response = stream.get()
+        response = stream.response
         assert response is not None
 
-        usage = stream.usage()
+        usage = stream.usage
         assert usage is not None
+
+        assert stream.model_name == 'test'
+        assert stream.timestamp is not None
 
 
 @contextmanager

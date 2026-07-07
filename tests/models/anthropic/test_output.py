@@ -11,6 +11,7 @@ Test organization:
 
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated
 
@@ -43,6 +44,9 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
+    ),
 ]
 
 
@@ -265,7 +269,7 @@ def test_no_tools_native_output_strict_false(
 
     with pytest.raises(
         UserError,
-        match='Setting `strict=False` on `output_type=NativeOutput\\(\\.\\.\\.\\)` is not allowed for Anthropic models.',
+        match=r'Setting `strict=False` on `output_type=NativeOutput\(\.\.\.\)` is not allowed for Anthropic models.',
     ):
         agent.run_sync('Tell me about Rome')
 
@@ -346,7 +350,7 @@ def test_strict_none_tool_basemodel_output(
     agent = Agent(model, output_type=CityInfo)
 
     @agent.tool_plain
-    def get_timezone(city: str) -> str:  # pragma: no cover
+    def get_timezone(city: str) -> str:
         return 'UTC+10:00' if city == 'Sydney' else 'UTC+1:00'
 
     agent.run_sync('Give me info about Sydney including its timezone')
@@ -394,13 +398,18 @@ def test_strict_false_tool_native_output(
     """Tool with strict=False, NativeOutput → output_config."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model, output_type=NativeOutput(CityInfo))
+    tool_called = False
 
     @agent.tool_plain(strict=False)
     def get_currency(country: str) -> str:
+        nonlocal tool_called
+        tool_called = True
         return 'Mexican Peso (MXN)' if country == 'Mexico' else 'Unknown'
 
-    result = agent.run_sync('Give me details about Mexico City')
+    result = agent.run_sync('Give me details about Mexico City. Use available background tools where helpful.')
 
+    # Ensure the cassette keeps exercising the tool-result turn.
+    assert tool_called
     assert isinstance(result.output, CityInfo)
 
 
@@ -512,5 +521,5 @@ def test_unsupported_native_output_raises(
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         agent.run_sync('Tell me about Berlin')

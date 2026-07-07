@@ -16,7 +16,7 @@ def settings(request: pytest.FixtureRequest) -> tuple[type[ModelSettings], str]:
         module = importlib.import_module(f'pydantic_ai.models.{prefix_cls_name}')
     except ImportError:  # pragma: lax no cover
         pytest.skip(f'{prefix_cls_name} is not installed')
-    capitalized_prefix = prefix_cls_name.capitalize().replace('Openai', 'OpenAI')
+    capitalized_prefix = prefix_cls_name.capitalize().replace('Openai', 'OpenAIChat')
     cls = getattr(module, capitalized_prefix + 'ModelSettings')
     return cls, request.param
 
@@ -85,3 +85,23 @@ class TestMergeModelSettingsThinking:
     def test_merge_with_both_none(self):
         result = merge_model_settings(None, None)
         assert result is None
+
+
+class TestMergeModelSettingsServiceTier:
+    """merge_model_settings with unified service_tier field."""
+
+    def test_merge_service_tier_override(self):
+        base: ModelSettings = {'service_tier': 'default'}
+        overrides: ModelSettings = {'service_tier': 'priority'}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('service_tier') == 'priority'
+
+    def test_merge_preserves_non_service_tier_settings(self):
+        base: ModelSettings = {'max_tokens': 1000, 'temperature': 0.5}
+        overrides: ModelSettings = {'service_tier': 'flex'}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('max_tokens') == 1000
+        assert result.get('temperature') == 0.5
+        assert result.get('service_tier') == 'flex'

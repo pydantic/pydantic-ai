@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '458'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: 'Some context. Some context. Some context. Some context. Some context. Some context. Some context. Some context.
+            Some context. Some context. Some context. Some context. Some context. Some context. Some context. Some context.
+            Some context. Some context. Some context. Some context. '
+          type: text
+        - text: Summarize in one sentence.
+          type: text
+        role: user
+      model: openai/gpt-5-mini
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '3039'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The passage consists of the phrase "Some context" repeated many times as placeholder text.
+          reasoning: null
+          reasoning_details:
+          - data: gAAAAABqIyQ7ILg5uoZ-3weyz1PyI17vmGRxvBIPH055J7wpLwI68Uagj-fKd_M71nCDiSz2VdT4_gNSSovsNfZVEtcFt-xVbhXmJSIM_VnE0vgLIQknv_MUSBg4o4kgEdm1w4MTOYoDvV4F7_grxyWIhhMYJfG1y0dCYWVM4931tYN5jhNiY9r4CDlEgVb92wRNKBhEyokeAULlTKSYIt_5ag1ZvLSMCy20JXgpt3rIhtvF86bBmTwHUi4sINMDt3oFLsn6nwssLnkR5LMjOUme4RjOpQdkVRPrr5by0Ma713jrEtBEwxFTkJcquK5iP9B5ZoJ5flw4XWO9CXJO9U835AhVGe66CCUNwKhwuwVO_QY5qY7f9B9rhgDMPjrvS_zabaCXgbF-zt9RixuOx_JLwPp5TMskuyZquvdoa7PhnESRenwM-GNlDmxerVjLdU7C14jAZlNYitt9Oc-wBdgNrTdoDdXkAz8o_E8-KPC2C9jIrtrH4_7xnFkCxGTYY5aoi9IybnCubJd2DAnGuP4gEA8tCRS0svAM_NXoY4OOb_S8dcRe5gQCoy_K34PnFlGK3xUqhqbWzQtk-FGFLe5dWK4-jODpAJbzAlBWbeX4EPh20Aik1R0GFHtlXnPfcBCLJwcbtPUs69JP6xwdmdkGqgS7Zm3ADEYJZgtF0kNkXDN70S-11MCURr2LAZSEr_hSG5B7IRX1Yb5WcHZOU5NffnHw7VDiPnHHEEZIK9cY3Gp0KlyAVP2__vzH52-g5I2W0bMHfEEYd0uet_JqOfQ9oTJsWKMF-VXb2Ko3jOIdIVbRgeC-vFOrP2Ksu0vrOsfE1L--1L2rfMeHysZqNjk6yAN6B1gz3MNkCgh_PvC9Y8QJBqrwJ_GU9avBeyMutZIyr7pNnJtcQpagVN1YuV1rbfASLoOm48OdrwJXkcKx03MoVwC6j_iPBWvhHadFnlm6X5edmjB2-L2OSDRAMjCG-xPtQFNUw5kfo76aMf8RyTN1ZXqb4XS2s80gWLKyahmuRjOlkIwJ24OaxoCDs9FFTFijkwQmuZ740rCHevOrAvHnf1prL6ErlFylJEI7qhEMU54bBsw9AjBoZbh2yIX0QOMW68PCEHT4ksDaPQuveBN_1cPnzy1YnoHIr4lRgRySuXPij4R240ocWHWdBXERMSYBM_qk1k1UBcgGkyLpHaQvhjHQS2xjkuNjzAG6gHrcth5OH5BTqhRiXPqSt4WipCcGEEZjso_nGs5hUcQ_uKzFO2Q6XAB-Wu6SS_SVXACtZYZ5r_s0SkRaAavMcDyfSPiiiLPzYqIWdMjGfEt-mkYaAs-Kp_SwP8FDGfQsnYhGbIA0917O4rnNwz2vB5BsIOdvVIaC25zFw5A0Q1AjoJmgQVNzeoF80GsS7ONQQP625_6NKNTY9x0K3jX-mk6PQXmBMD-BCPkM_HAIiTKtvuT-5-sn_vE9Hte7btlOKsAj1kdqXLczuhhsXzB2RCHF1K-ZynjOH4E2DsrfIzfiM7-AeY03-5K9AxylgvLGgSiX_g1aKHZ_ghRH4iC3L6fQegGhwrXSw_vE7_gdwYejO3PzmqAnCP-OShlzzvbjN_JJ624WNBfGHvncrtER4m84_vun1toBCkm6-FQnVpdUrgRJJGk-z28QkVEL7z5I4ZpdspTSwAPdSP4HUio8Z-yFa2HhdLP9b2HxtMp69yT4qfktm_LYW8LjWp9ot1nnyYvjyqP98UZXZ1qNM0FSyGe9AnXJz71IusH2Sr6mm_8MqHpYn0JMNF883DvtGFcN-oRr-PFIo2ZE9ESFuRJC7ETPMUOAc8BnmOSnL1xfhvjq0q153S35ZdXoxY4TwuLd6Y3uWyuC5g9zZ3xKE9gdWZMKrcvDXooZ7w==
+            format: openai-responses-v1
+            id: rs_03f20f185dc3521b016a232439d9dc8193a10b3262cd8cd77b
+            index: 0
+            type: reasoning.encrypted
+          refusal: null
+          role: assistant
+        native_finish_reason: completed
+      created: 1780687929
+      id: gen-1780687929-N11vOR9p4zj9yq5Lb4ss
+      model: openai/gpt-5-mini-2025-08-07
+      object: chat.completion
+      provider: OpenAI
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 162
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 128
+        cost: 0.00034225
+        cost_details:
+          upstream_inference_completions_cost: 0.000324
+          upstream_inference_cost: 0.00034225
+          upstream_inference_prompt_cost: 1.825e-05
+        is_byok: false
+        prompt_tokens: 73
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 235
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -40,14 +40,15 @@ nav:
           - models/groq.md
           - models/huggingface.md
           - models/mistral.md
+          - models/ollama.md
           - models/openrouter.md
-          - models/outlines.md
+          - models/zai.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
           - toolsets.md
           - deferred-tools.md
-          - builtin-tools.md
+          - native-tools.md
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
@@ -57,7 +58,6 @@ nav:
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
-          - mcp/fastmcp-client.md
           - mcp/server.md
       - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md
@@ -78,9 +78,12 @@ nav:
           - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
+          - Standard Quality Metrics: evals/evaluators/standard-quality-metrics.md
+          - Third-Party Integrations: evals/evaluators/framework-integrations.md
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+          - Agentic: evals/evaluators/agentic.md
       - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
@@ -96,12 +99,12 @@ nav:
 
   - Pydantic Graph:
       - Overview: graph.md
-      - Beta API:
-          - Getting Started: graph/beta/index.md
-          - Steps: graph/beta/steps.md
-          - Joins & Reducers: graph/beta/joins.md
-          - Decisions: graph/beta/decisions.md
-          - Parallel Execution: graph/beta/parallel.md
+      - Graph Builder:
+          - Getting Started: graph/builder/index.md
+          - Steps: graph/builder/steps.md
+          - Joins & Reducers: graph/builder/joins.md
+          - Decisions: graph/builder/decisions.md
+          - Parallel Execution: graph/builder/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -111,11 +114,12 @@ nav:
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
           - Restate: durable_execution/restate.md
+          - Kitaru: durable_execution/kitaru.md
+          - Apache Airflow: durable_execution/airflow.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
-      - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
       - clai: cli.md
@@ -132,12 +136,12 @@ nav:
           - examples/sql-gen.md
           - examples/data-analyst.md
           - examples/rag.md
+          - examples/twelvelabs-video-agent.md
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
-          - examples/question-graph.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
@@ -145,9 +149,8 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
-          - api/builtin_tools.md
+          - api/native_tools.md
           - api/capabilities.md
           - api/common_tools.md
           - api/concurrency.md
@@ -174,10 +177,11 @@ nav:
           - api/models/instrumented.md
           - api/models/mcp-sampling.md
           - api/models/mistral.md
+          - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
-          - api/models/outlines.md
           - api/models/test.md
+          - api/models/zai.md
           - api/models/wrapper.md
           - api/output.md
           - api/profiles.md
@@ -197,25 +201,19 @@ nav:
           - api/pydantic_evals/evaluators.md
           - api/pydantic_evals/lifecycle.md
           - api/pydantic_evals/online.md
+          - api/pydantic_evals/online_capability.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
       - pydantic_graph:
-          - api/pydantic_graph/graph.md
-          - api/pydantic_graph/nodes.md
-          - api/pydantic_graph/persistence.md
-          - api/pydantic_graph/mermaid.md
+          - api/pydantic_graph/basenode.md
+          - api/pydantic_graph/graph_builder.md
+          - api/pydantic_graph/step.md
+          - api/pydantic_graph/join.md
+          - api/pydantic_graph/decision.md
+          - api/pydantic_graph/node.md
+          - api/pydantic_graph/util.md
           - api/pydantic_graph/exceptions.md
-          - Beta API:
-              - api/pydantic_graph/beta.md
-              - api/pydantic_graph/beta_graph.md
-              - api/pydantic_graph/beta_graph_builder.md
-              - api/pydantic_graph/beta_step.md
-              - api/pydantic_graph/beta_join.md
-              - api/pydantic_graph/beta_decision.md
-              - api/pydantic_graph/beta_node.md
-      - fasta2a:
-          - api/fasta2a.md
 
   - Project:
       - contributing.md
@@ -345,7 +343,7 @@ plugins:
           paths: [pydantic_ai_slim/pydantic_ai]
           options:
             docstring_options:
-              # pydantic_graph/beta/graph.py uses "Type Parameters:" sections to document Generic type params
+              # pydantic_graph/graph_builder.py uses "Type Parameters:" sections to document Generic type params
               # like StateT, OutputT, etc. Griffe can't extract these from Generic[T] base classes
               # (only from PEP 695 syntax), so we disable the validation warnings.
               warn_unknown_params: false
@@ -385,10 +383,9 @@ plugins:
           - troubleshooting.md
           - coding-agent-skills.md
         Concepts documentation:
-          - a2a.md
           - agent.md
           - agent-spec.md
-          - builtin-tools.md
+          - native-tools.md
           - capabilities.md
           - dependencies.md
           - deferred-tools.md

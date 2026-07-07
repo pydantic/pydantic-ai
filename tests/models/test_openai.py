@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -29,9 +30,12 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    PartDeltaEvent,
+    PartEndEvent,
     RetryPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -41,12 +45,15 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -54,7 +61,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -86,10 +93,9 @@ with try_import() as imports_successful:
         OpenAIChatModelSettings,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        OpenAISystemPromptRole,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -107,8 +113,10 @@ pytestmark = [
 
 
 def test_init():
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    provider = OpenAIProvider(api_key='foobar')
+    m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.base_url == 'https://api.openai.com/v1/'
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
 
@@ -160,20 +168,21 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -188,11 +197,13 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -207,6 +218,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -241,7 +253,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=2,
@@ -268,6 +280,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -281,6 +294,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -333,6 +347,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -353,6 +368,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -365,6 +381,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -434,6 +451,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -459,6 +477,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -472,6 +491,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -497,6 +517,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -510,6 +531,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -524,10 +546,11 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
     )
 
@@ -562,7 +585,39 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
+    """`run_stream_sync` must stream and complete against a real, recorded streaming model.
+
+    End-to-end coverage for the portal-based implementation (#3716, refs #3714, #5975): the whole
+    run -- including a tool call, so the agent graph crosses node boundaries -- executes on a single
+    dedicated event-loop thread, and text streams incrementally before `get_output()` returns the
+    final result. This path can't be exercised with `TestModel` or a mock client (no real async
+    stream), so it's a VCR test.
+
+    Note: the pre-portal implementation pumped the stream via repeated
+    `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
+    `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
+    straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a
+    live model); the OTel dangling-span symptom of the same root cause is covered by
+    `tests/test_logfire.py::test_run_stream_sync`.
+    """
+    model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_capital(country: str) -> str:
+        return 'London'
+
+    with agent.run_stream_sync('What is the capital of the UK? Use the tool, then answer.') as result:
+        chunks = [c for c in result.stream_text(debounce_by=None)]
+        output = result.get_output()
+
+    assert chunks
+    assert chunks[-1] == output
+    assert output == snapshot('The capital of the UK is London.')
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -584,24 +639,23 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o-123',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1',
-                        provider_details={
-                            'finish_reason': 'stop',
-                            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=6, output_tokens=3),
+                    model_name='gpt-4o-123',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='123',
+                    finish_reason='stop',
                 )
+            )
 
 
 def struc_chunk(
@@ -655,9 +709,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
@@ -792,7 +846,7 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
@@ -823,10 +877,21 @@ async def test_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
-@pytest.mark.filterwarnings('ignore:Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+async def test_none_choices(allow_model_requests: None):
+    # OpenAI-compatible providers can emit malformed chunks with `choices=null`; the openai SDK's
+    # loose constructor lets them through despite the typed-as-list field declaration.
+    bad_chunk = text_chunk('')
+    bad_chunk.choices = None  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client = MockOpenAI.create_mock_stream([bad_chunk, text_chunk('hello '), text_chunk('world')])
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
 async def test_system_prompt_role(
     allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
@@ -835,10 +900,9 @@ async def test_system_prompt_role(
 
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'gpt-4o', system_prompt_role=system_prompt_role, provider=OpenAIProvider(openai_client=mock_client)
-    )
-    assert m.system_prompt_role == system_prompt_role  # type: ignore[reportDeprecated]
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    assert m.profile.get('openai_system_prompt_role') == system_prompt_role
 
     agent = Agent(m, system_prompt='some instructions')
     result = await agent.run('hello')
@@ -857,6 +921,102 @@ async def test_system_prompt_role(
     ]
 
 
+async def test_merge_leading_system_messages(allow_model_requests: None) -> None:
+    """When `openai_chat_supports_multiple_system_messages=False`, consecutive system messages at the start are merged."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt\n\nextra static prompt\n\ndynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_single_system_message(allow_model_requests: None) -> None:
+    """With only one leading system message, the merge flag is a no-op."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='only one')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'only one', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_user_role_unchanged(allow_model_requests: None) -> None:
+    """When system prompts are sent as `user` role, the merge flag does not collapse them."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False,
+            openai_system_prompt_role='user',
+        ),
+    )
+    agent = Agent(m, system_prompt='static prompt')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'user'},
+        {'content': 'extra static prompt', 'role': 'user'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_disabled_by_default(allow_model_requests: None) -> None:
+    """Default behavior is preserved: multiple system messages are sent as separate messages."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'system'},
+        {'content': 'extra static prompt', 'role': 'system'},
+        {'content': 'dynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
 async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api_key: str):
     model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
@@ -866,13 +1026,10 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 
 
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
-    profile = ModelProfile(supports_tools=False)
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
-    )
-    profile = OpenAIModelProfile.from_profile(model.profile)
-    assert profile.openai_system_prompt_role == 'user'
-    assert profile.supports_tools is False
+    profile = OpenAIModelProfile(openai_system_prompt_role='user', supports_tools=False)
+    model = OpenAIChatModel('o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key))
+    assert model.profile.get('openai_system_prompt_role', None) == 'user'
+    assert model.profile.get('supports_tools', True) is False
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
@@ -881,9 +1038,8 @@ async def test_openai_o1_mini_system_role(
     system_prompt_role: Literal['system', 'developer'],
     openai_api_key: str,
 ) -> None:
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
-    )
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key), profile=profile)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
     with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
@@ -1009,7 +1165,7 @@ async def test_openai_audio_url_input(
     assert result.output == snapshot(
         'Yes, the phenomenon of the sun rising in the east and setting in the west is due to the rotation of the Earth. The Earth rotates on its axis from west to east, making the sun appear to rise on the eastern horizon and set in the west. This is a daily occurrence and has been a fundamental aspect of human observation and timekeeping throughout history.'
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=81,
             output_tokens=72,
@@ -1241,6 +1397,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
@@ -1265,6 +1422,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1279,6 +1437,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
@@ -1303,6 +1462,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1326,7 +1486,7 @@ async def test_audio_as_binary_content_input(
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=64,
             output_tokens=9,
@@ -1406,6 +1566,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1431,6 +1592,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 provider_response_id='chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1468,6 +1630,7 @@ Each of these interpretations would depend on the broader context in which this 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1502,6 +1665,7 @@ Each of these interpretations would depend on the broader context in which this 
                 provider_response_id='chatcmpl-D1Hu5C2mqc2CPw07SQa6U7Ki9PF7X',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1531,6 +1695,7 @@ async def test_yaml_document_url_input(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The `site_name` in the provided YAML configuration is `"Pydantic AI"`.')],
@@ -1552,6 +1717,7 @@ async def test_yaml_document_url_input(
                 provider_response_id='chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1703,7 +1869,7 @@ async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1723,7 +1889,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
@@ -1791,6 +1957,41 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
     assert result.output == IsStr()
 
 
+@pytest.mark.parametrize(
+    'supports_max_completion_tokens,sent_field,omitted_field',
+    [
+        (True, 'max_completion_tokens', 'max_tokens'),
+        (False, 'max_tokens', 'max_completion_tokens'),
+    ],
+)
+async def test_max_tokens_field_routed_by_profile(
+    allow_model_requests: None,
+    supports_max_completion_tokens: bool,
+    sent_field: str,
+    omitted_field: str,
+) -> None:
+    """The `max_tokens` setting maps to whichever API field the profile selects.
+
+    OpenAI (and o-series) use `max_completion_tokens`; many compatible providers (e.g. OpenRouter)
+    only accept `max_tokens`. This is a unit test rather than VCR because our cassette matchers ignore
+    the request body, so a VCR test would still pass green if `max_tokens` were routed to the wrong key.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=supports_max_completion_tokens),
+    )
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs[sent_field] == 100
+    assert omitted_field not in kwargs
+
+
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -1847,6 +2048,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Linux mascot, a penguin character.')],
@@ -1871,6 +2073,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1988,6 +2191,10 @@ def tool_with_datetime(x: datetime) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_decimal(x: Decimal) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -2092,6 +2299,52 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_decimal,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                    'type': 'string',
+                                },
+                            ]
+                        }
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_decimal,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'anyOf': [
+                                {'type': 'number'},
+                                {
+                                    'type': 'string',
+                                    'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
+                                },
+                            ]
+                        }
+                    },
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -2557,8 +2810,8 @@ async def test_strict_mode_cannot_infer_strict(
     # If the model profile says strict is not supported, we never pass strict
     await assert_strict(
         None,
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(
-            openai_model_profile('test-model')
+        profile=merge_profile(
+            OpenAIModelProfile(openai_supports_strict_tool_definition=False), openai_model_profile('test-model')
         ),
     )
 
@@ -2687,6 +2940,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -2711,6 +2965,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2741,6 +2996,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
@@ -2765,6 +3021,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2775,6 +3032,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
@@ -2799,6 +3057,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2817,6 +3076,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2849,6 +3109,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2869,6 +3130,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -2893,6 +3155,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2968,10 +3231,48 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
     ]
 
 
+async def test_openai_instructions_with_responses_logprobs_streaming(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'gpt-4o-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
+    async with agent.run_stream_events(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+    ) as event_stream:
+        events = [event async for event in event_stream]
+    logprob_events = [
+        event
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, TextPartDelta)
+        and event.delta.provider_details
+        and 'logprobs' in event.delta.provider_details
+    ]
+    assert len(logprob_events) > 0
+    first_logprob = cast(Any, logprob_events[0].delta).provider_details['logprobs']
+    assert isinstance(first_logprob, list)
+    assert all(isinstance(lp, dict) and 'token' in lp and 'logprob' in lp for lp in cast(list[Any], first_logprob))
+
+    part_end_events = [
+        event
+        for event in events
+        if isinstance(event, PartEndEvent)
+        and isinstance(event.part, TextPart)
+        and event.part.provider_details
+        and 'logprobs' in event.part.provider_details
+    ]
+    assert len(part_end_events) == 1
+    assert cast(Any, part_end_events[0].part).provider_details['logprobs'] == first_logprob
+
+
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     with pytest.raises(
@@ -2984,7 +3285,9 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     result = await agent.run('What day is today?')
@@ -2996,7 +3299,7 @@ async def test_openai_web_search_tool_with_user_location(allow_model_requests: N
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'}))],
     )
 
     result = await agent.run('What is the current temperature?')
@@ -3030,7 +3333,7 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 def test_openai_model_profile():
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    assert isinstance(m.profile, OpenAIModelProfile)
+    assert isinstance(m.profile, dict)
 
 
 def test_openai_model_profile_custom():
@@ -3039,29 +3342,32 @@ def test_openai_model_profile_custom():
         provider=OpenAIProvider(api_key='foobar'),
         profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer),
     )
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
-    assert isinstance(m.profile, OpenAIModelProfile)
-    assert m.profile.openai_supports_strict_tool_definition is False
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('openai_supports_strict_tool_definition', True) is False
 
 
-def test_openai_model_profile_function():
-    def model_profile(model_name: str) -> ModelProfile:
-        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
+def test_openai_model_profile_callable():
+    """The user `profile=` kwarg accepts a `Callable[[ModelProfile], ModelProfile]` that receives the resolved default and returns the final profile."""
 
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    def override(default: ModelProfile) -> ModelProfile:
+        return merge_profile(default, ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer))
 
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=override)
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
+
+    # The callable can also fully replace the default.
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=lambda _default: ModelProfile())
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_openai_model_profile_from_provider():
@@ -3073,15 +3379,16 @@ def test_openai_model_profile_from_provider():
             )
 
     m = OpenAIChatModel('gpt-4o', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel('gpt-4o-mini', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_model_profile_strict_not_supported():
+    model_settings = ModelSettings()
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
@@ -3090,7 +3397,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -3108,9 +3415,9 @@ def test_model_profile_strict_not_supported():
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -3193,6 +3500,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
@@ -3217,6 +3525,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3229,6 +3538,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3259,6 +3569,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3271,6 +3582,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3302,6 +3614,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3328,6 +3641,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3340,6 +3654,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
@@ -3364,6 +3679,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3398,6 +3714,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3424,6 +3741,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3436,6 +3754,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -3460,9 +3779,22 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_openai_responses_native_output_decimal_strict(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):
@@ -3496,6 +3828,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3522,6 +3855,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3534,6 +3868,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3562,6 +3897,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3594,6 +3930,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3620,6 +3957,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3632,6 +3970,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -3656,6 +3995,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3692,6 +4032,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3718,6 +4059,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3730,6 +4072,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3758,6 +4101,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3766,7 +4110,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
 async def test_valid_response(env: TestEnv, allow_model_requests: None):
     """VCR recording is of a valid response."""
     env.set('OPENAI_API_KEY', 'foobar')
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai-chat:gpt-4o')
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
@@ -3803,6 +4147,126 @@ async def test_text_response(allow_model_requests: None):
     )
 
 
+async def test_empty_response_skipped_in_history(allow_model_requests: None):
+    """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
+    message with `content=None`, which the Chat Completions API rejects with a 400 error.
+
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    that tells the model which kinds of output are valid, while relying on the model adapter to omit
+    the empty response from the API payload.
+    """
+    responses = [
+        completion_message(ChatCompletionMessage(content=None, role='assistant')),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the payload (no `content=None` assistant message that would
+    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert not any(message['role'] == 'assistant' for message in second_call_messages)
+    assert second_call_messages == [
+        {'content': 'hello', 'role': 'user'},
+        {
+            'role': 'user',
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+        },
+    ]
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello back')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize('send_mode', ['field', 'auto'])
+async def test_thinking_only_response_skipped_in_history(
+    allow_model_requests: None, send_mode: Literal['field', 'auto']
+):
+    """A thinking-only response has no Chat Completions-valid assistant payload.
+
+    Custom reasoning fields like `reasoning_content` do not satisfy Chat Completions'
+    requirement that assistant messages have `content` unless `tool_calls` is populated.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage.model_construct(
+                content=None, reasoning_content='Let me think about this...', role='assistant'
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'deepseek-reasoner',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=send_mode,
+        ),
+    )
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assistant_messages = [message for message in second_call_messages if message.get('role') == 'assistant']
+    assert assistant_messages == []
+
+
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
@@ -3814,8 +4278,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
@@ -3830,9 +4293,16 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.finish_reason == 'stop'
+
+
+async def test_openai_unified_service_tier(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    await agent.run('Hello', model_settings=ModelSettings(service_tier='flex'))
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'flex'
 
 
 async def test_service_tier_non_standard_value(allow_model_requests: None):
@@ -3848,7 +4318,9 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -3867,7 +4339,9 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -3957,14 +4431,6 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-def test_deprecated_openai_model(openai_api_key: str):
-    with pytest.warns(DeprecationWarning):
-        from pydantic_ai.models.openai import OpenAIModel  # type: ignore[reportDeprecated]
-
-        provider = OpenAIProvider(api_key=openai_api_key)
-        OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
-
-
 async def test_cache_point_filtering(allow_model_requests: None):
     """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
@@ -4026,6 +4492,16 @@ response\
     )
 
 
+def test_openai_send_back_thinking_field_requires_thinking_field():
+    """`openai_chat_send_back_thinking_parts='field'` requires `openai_chat_thinking_field` to be set."""
+    with pytest.raises(UserError, match='`openai_chat_thinking_field` must be set to a non-None value'):
+        OpenAIChatModel(
+            'foobar',
+            provider=OpenAIProvider(api_key='dummy'),
+            profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'),
+        )
+
+
 async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
@@ -4044,6 +4520,84 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
         {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
     )
+
+
+@pytest.mark.parametrize('thinking', [True, False])
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param('reasoning_content', id='deepseek'),
+        pytest.param('reasoning', id='openrouter'),
+        pytest.param('reasoning_content', id='moonshotai'),
+    ],
+)
+async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
+    allow_model_requests: None, thinking_field: str, thinking: bool
+):
+    """Regression test for #5829: deterministic per-CI guard for the wire mapping.
+
+    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn
+    with tool calls but no thinking. A `'field'`-mode provider (one that round-trips thinking in a
+    custom field) 400s if such a turn omits that field while the run is thinking, so it must be sent
+    empty when thinking is active and left off otherwise. Parametrized over the three providers that
+    use this mode — DeepSeek and MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to
+    pin that the backfill is field-name-agnostic (it reads `openai_chat_thinking_field`). The
+    real-API counterpart is `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    """
+    load_capability_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_load',
+                type='function',
+                function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
+            )
+        ],
+    )
+    roll_dice_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
+            )
+        ],
+    )
+    if thinking:
+        # The provider returns its reasoning in the profile's custom field; the model parses it into a
+        # `ThinkingPart`, which makes the run thinking-active so the synthetic turn gets backfilled.
+        setattr(load_capability_message, thinking_field, 'I should load the dice capability.')
+        setattr(roll_dice_message, thinking_field, 'Now I can roll.')
+    load_capability_turn = completion_message(load_capability_message)
+    roll_dice_turn = completion_message(roll_dice_message)
+    final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
+    mock = MockOpenAI.create_mock([load_capability_turn, roll_dice_turn, final_turn])
+    model = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=mock),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field=thinking_field,
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    def roll_dice() -> str:
+        return '4'
+
+    agent = Agent(model, capabilities=[Capability(id='DICE_ROLL', tools=[roll_dice], defer_loading=True)])
+    await agent.run('My guess is 4')
+
+    # The second request is the one made after `load_capability` returned; it carries the
+    # synthetic `search_tools` assistant turn that the load injected into history.
+    second_request_messages = get_mock_chat_completion_kwargs(mock)[1]['messages']
+    synthetic_turn = next(
+        message
+        for message in second_request_messages
+        if message.get('role') == 'assistant'
+        and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
+    )
+    assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
@@ -4223,6 +4777,43 @@ async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_mode
     assert mapped2 == snapshot({'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'})
 
 
+async def test_openai_non_string_reasoning_content_warns(allow_model_requests: None):
+    """Malformed OpenAI-compatible responses where `reasoning_content` is a dict (e.g. via a buggy gateway)
+    should not crash; they should emit a warning and be skipped."""
+    dict_reasoning = {'reasoningContent': {'reasoningText': {'text': '', 'signature': 'CoAI...'}}}
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content=dict_reasoning, role='assistant')
+    )
+    m = OpenAIChatModel('foobar', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+
+    with pytest.warns(UserWarning, match=r"Unexpected non-string value for 'reasoning_content': dict"):
+        resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    assert [p for p in resp.parts if isinstance(p, ThinkingPart)] == []
+
+
+async def test_openai_non_string_reasoning_content_warns_stream(allow_model_requests: None):
+    """Streaming equivalent: dict `reasoning_content` deltas should warn instead of crashing."""
+    dict_reasoning = {'reasoningContent': {'reasoningText': {'text': '', 'signature': 'CoAI...'}}}
+    stream = [
+        chunk([ChoiceDelta.model_construct(role='assistant', reasoning_content=dict_reasoning)]),
+        chunk([ChoiceDelta(content='response')]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    m = OpenAIChatModel('foobar', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match=r"Unexpected non-string value for 'reasoning_content': dict"):
+        async with agent.run_stream('') as result:
+            await result.get_output()
+
+    messages = result.all_messages()
+    response = next(m for m in messages if isinstance(m, ModelResponse))
+    assert [p for p in response.parts if isinstance(p, ThinkingPart)] == []
+
+
 async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests: None):
     """Test that auto mode falls back to tags when configured field doesn't match where reasoning comes from."""
     # Configure thinking_field as 'reasoning_content', but reasoning comes in 'reasoning'
@@ -4357,7 +4948,9 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'provider_response_id': None,
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )
@@ -4769,6 +5362,68 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     assert audio_part['input_audio']['format'] == 'mp3'
 
 
+async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
+    """OpenAI's `_support_tool_forcing` raises when the model profile disables tool forcing.
+
+    Goes via `direct.model_request` so the agent-level baseline validator is bypassed and
+    we actually exercise the OpenAI-specific error path.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: ModelSettings = {'tool_choice': 'required'}
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice='required' is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+
+async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model_requests: None):
+    """tuple-resolved forcing (e.g. `tool_choice=['x']` with extra tools) must also be checked against `_support_tool_forcing`.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
+    branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
+    profile, which would push an unsupported parameter to the API for models that have
+    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `('required', {chosen})` rather than collapsing to scalar `'required'`.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tools = [
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ToolDefinition(name='get_time', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ]
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True)
+
+    settings: ModelSettings = {'tool_choice': ['get_weather']}
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice=['get_weather'] is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+
 def test_transformer_adds_properties_to_object_schemas():
     """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
 
@@ -4805,7 +5460,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
     The final usage should equal the last chunk's usage, not the sum of all chunks.
-    We verify that usage is correctly updated at each step via stream_responses.
+    We verify that usage is correctly updated at each step via stream_response.
     """
     # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
     stream = [
@@ -4825,9 +5480,9 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
     async with agent.run_stream('', model_settings=settings) as result:
-        # Verify usage is updated at each step via stream_responses
+        # Verify usage is updated at each step via stream_response
         usage_at_each_step: list[RequestUsage] = []
-        async for response, _ in result.stream_responses(debounce_by=None):
+        async for response in result.stream_response(debounce_by=None):
             usage_at_each_step.append(response.usage)
 
         # Each step should have the cumulative usage from that chunk (not accumulated)
@@ -4844,7 +5499,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
 
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
 
 
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):
@@ -4893,3 +5548,41 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
