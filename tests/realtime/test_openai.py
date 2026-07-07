@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -215,7 +216,7 @@ def test_map_unknown_event_returns_none() -> None:
 
 
 def test_model_repr_hides_api_key() -> None:
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='super-secret')
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='super-secret'))
     assert 'super-secret' not in repr(model)
     assert model.model_name == 'gpt-realtime'
 
@@ -273,7 +274,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     fake_connect = FakeConnect(ws)
     monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
 
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', voice='alloy')
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'), voice='alloy')
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
 
     async with model.connect(instructions='Be nice', tools=tools) as conn:
@@ -386,7 +387,7 @@ async def test_connect_skips_unrelated_events_during_handshake(monkeypatch: pyte
     rate_limits = json.dumps({'type': 'rate_limits.updated'})
     ws = FakeWebSocket([rate_limits, _created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         assert [e async for e in conn] == []
 
@@ -396,7 +397,7 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
     error = json.dumps({'type': 'error', 'error': {'message': 'invalid model'}})
     ws = FakeWebSocket([error])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     with pytest.raises(RuntimeError, match='invalid model'):
         async with model.connect(instructions='x'):
             pass  # pragma: no cover
@@ -413,7 +414,7 @@ class HangingWebSocket(FakeWebSocket):
 async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = HangingWebSocket([])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', handshake_timeout=0.02)
+    model = OpenAIRealtimeModel('gpt-realtime', handshake_timeout=0.02)
     with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
         async with model.connect(instructions='x'):
             pass  # pragma: no cover
@@ -433,7 +434,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
             return False
 
     monkeypatch.setattr(rt_openai.websockets, 'connect', _FailingConnect())
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     with pytest.raises(ConnectionError, match='refused'):
         async with model.connect(instructions='x'):
             pass  # pragma: no cover
@@ -444,7 +445,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
     audio = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
     ws = FakeWebSocket([_created(), _updated(), b'\x00binary', audio])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert events == [AudioDelta(data=b'\x09')]
@@ -459,7 +460,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
     ws = FakeWebSocket([_created(), _updated(), bad_json, bad_audio, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['SessionError', 'SessionError', 'AudioDelta']
@@ -471,7 +472,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
 async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x'):
         pass
     session = json.loads(ws.sent[0])['session']
@@ -499,7 +500,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
         ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
     ]
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x', messages=history):
         pass
 
@@ -714,7 +715,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
 
@@ -884,7 +885,7 @@ async def _drain(conn: OpenAIRealtimeConnection) -> None:
 async def test_connect_tool_without_description(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})]
     async with model.connect(instructions='x', tools=tools):
         pass
@@ -896,7 +897,7 @@ async def test_connect_tool_without_description(monkeypatch: pytest.MonkeyPatch)
 async def test_connect_without_transcription_model_omits_transcription(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', input_audio_transcription_model='')
+    model = OpenAIRealtimeModel('gpt-realtime', input_audio_transcription_model='')
     async with model.connect(instructions='x'):
         pass
     assert 'transcription' not in json.loads(ws.sent[0])['session']['audio']['input']
@@ -906,7 +907,7 @@ async def test_connect_without_transcription_model_omits_transcription(monkeypat
 async def test_connect_applies_max_tokens_without_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x', model_settings=ModelSettings(max_tokens=256)):
         pass
     session = json.loads(ws.sent[0])['session']
@@ -920,7 +921,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
     ws = FakeWebSocket([_created(), _updated(), unmapped, done])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert events == [TurnComplete(interrupted=False)]
@@ -931,7 +932,59 @@ async def test_connect_rejects_native_tools() -> None:
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.native_tools import WebSearchTool
 
-    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime')
     with pytest.raises(UserError, match='native tools'):
         async with model.connect(instructions='x', native_tools=[WebSearchTool()]):
             pass  # pragma: no cover - connect raises before yielding
+
+
+# --- provider resolution & capabilities -------------------------------------------------------
+
+
+def test_realtime_websocket_url_derivation() -> None:
+    # The default OpenAI HTTP base URL maps to the documented realtime WebSocket URL.
+    assert rt_openai._realtime_websocket_url('https://api.openai.com/v1/') == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+    # A custom (e.g. self-hosted, non-TLS) base URL keeps its host/path and swaps the scheme.
+    assert rt_openai._realtime_websocket_url('http://localhost:8000/v1') == 'ws://localhost:8000/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_default_provider_is_openai() -> None:
+    model = OpenAIRealtimeModel('gpt-realtime')
+    assert model.client.api_key == 'mock-api-key'  # from the autouse OPENAI_API_KEY fixture
+
+
+def test_provider_instance_is_reused() -> None:
+    provider = OpenAIProvider(api_key='k')
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    assert model.client is provider.client
+
+
+@pytest.mark.anyio
+async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(base_url='https://proxy.example/v1', api_key='k'))
+    async with model.connect(instructions='x'):
+        pass
+    assert fake_connect.url == 'wss://proxy.example/v1/realtime?model=gpt-realtime'
+    assert fake_connect.headers == {'Authorization': 'Bearer k'}
+
+
+def test_azure_provider_is_rejected() -> None:
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.providers.azure import AzureProvider
+
+    provider = AzureProvider(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
+    with pytest.raises(UserError, match='Azure OpenAI is not supported'):
+        OpenAIRealtimeModel('gpt-realtime', provider=provider)
+
+
+def test_capabilities() -> None:
+    caps = OpenAIRealtimeModel('gpt-realtime').capabilities
+    assert (caps.image_input, caps.manual_turn_control, caps.interruption, caps.session_seeding) == (
+        True,
+        True,
+        True,
+        True,
+    )

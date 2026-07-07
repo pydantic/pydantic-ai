@@ -12,6 +12,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioWithTranscriptPart,
     AudioWithTranscriptPartDelta,
@@ -41,6 +42,7 @@ from pydantic_ai.realtime import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -90,8 +92,13 @@ class FakeRealtimeConnection(RealtimeConnection):
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
-    def __init__(self, connection: FakeRealtimeConnection) -> None:
+    def __init__(
+        self, connection: FakeRealtimeConnection, *, capabilities: RealtimeCapabilities | None = None
+    ) -> None:
         self._connection = connection
+        self._capabilities = capabilities or RealtimeCapabilities(
+            image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
+        )
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
@@ -101,6 +108,10 @@ class FakeRealtimeModel(RealtimeModel):
     @property
     def model_name(self) -> str:
         return 'fake-realtime'
+
+    @property
+    def capabilities(self) -> RealtimeCapabilities:
+        return self._capabilities
 
     @asynccontextmanager
     async def connect(
@@ -654,6 +665,37 @@ async def test_interrupt_without_audio_end_ms_only_cancels() -> None:
     assert conn.sent == [CancelResponse()]
 
 
+# --- capability guards: unsupported operations raise before sending -----------------------------
+
+
+async def test_manual_turn_control_guard() -> None:
+    # A model without manual turn control (e.g. Gemini Live) rejects push-to-talk verbs up front.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(manual_turn_control=False))
+    for method in (session.commit_audio, session.clear_audio, session.create_response):
+        with pytest.raises(UserError, match='does not support manual turn-taking'):
+            await method()
+    assert conn.sent == []  # nothing reached the connection
+
+
+async def test_interruption_guard() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(interruption=False))
+    with pytest.raises(UserError, match='does not support interruption'):
+        await session.truncate_output(100)
+    with pytest.raises(UserError, match='does not support interruption'):
+        await session.interrupt(audio_end_ms=100)
+    assert conn.sent == []
+
+
+async def test_image_input_guard() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(image_input=False))
+    with pytest.raises(UserError, match='does not support image input'):
+        await session.send_image(b'\xff\xd8')
+    assert conn.sent == []
+
+
 async def test_early_break_cancels_pump() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')])
     session = RealtimeSession(conn, _noop_runner)
@@ -835,6 +877,17 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
         _ = [e async for e in session]
         assert session.all_messages() == seed  # seeded into the session's history
     assert model.last_messages == seed  # forwarded to the provider for wire-level seeding
+
+
+async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None:
+    # A model that can't seed a session rejects `message_history` up front, before dialing.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn, capabilities=RealtimeCapabilities(session_seeding=False))
+    seed = [ModelRequest(parts=[UserPromptPart(content='earlier question')])]
+    with pytest.raises(UserError, match='does not support seeding a session'):
+        async with agent.realtime_session(model=model, message_history=seed):
+            pass  # pragma: no cover — enter raises before yielding
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:

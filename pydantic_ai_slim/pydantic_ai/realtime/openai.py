@@ -13,20 +13,20 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
-import os
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
 
 try:
     import websockets
+    from openai import AsyncOpenAI
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `websockets` package to use the OpenAI Realtime model, '
-        'you can use the `realtime` optional group - `pip install "pydantic-ai-slim[realtime]"`'
+        'Please install the `websockets` and `openai` packages to use the OpenAI Realtime model, '
+        'you can use the `realtime` and `openai` optional groups - `pip install "pydantic-ai-slim[realtime,openai]"`'
     ) from _import_error
 
 from ..exceptions import UserError
@@ -38,6 +38,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..native_tools import AbstractNativeTool
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ToolChoice
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -52,11 +53,13 @@ from ._base import (
     InputTranscript,
     RateLimit,
     RateLimits,
+    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     Reconnected,
+    ReconnectPolicy,
     SessionError,
     SessionUsage,
     SpeechStarted,
@@ -70,7 +73,19 @@ from ._base import (
     reconnect_with_backoff,
 )
 
-DEFAULT_REALTIME_URL = 'wss://api.openai.com/v1/realtime'
+
+def _realtime_websocket_url(base_url: str) -> str:
+    """Derive the realtime WebSocket URL from a provider's HTTP base URL.
+
+    Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
+    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`.
+    """
+    url = base_url.rstrip('/')
+    if url.startswith('https://'):
+        url = 'wss://' + url[len('https://') :]
+    elif url.startswith('http://'):
+        url = 'ws://' + url[len('http://') :]
+    return f'{url}/realtime'
 
 # The OpenAI event names differ between the GA and beta realtime surfaces; accept both.
 _AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
@@ -486,25 +501,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
 
 @dataclass
-class ReconnectPolicy:
-    """How to recover when the realtime WebSocket drops mid-session.
-
-    On a dropped connection the session is re-dialed and its configuration (instructions, tools,
-    voice, ...) re-applied, emitting a [`Reconnected`][pydantic_ai.realtime.Reconnected] event.
-    Server-side conversation state (the audio buffer and prior turns) is **not** restored.
-    """
-
-    max_attempts: int = 3
-    """Number of re-dial attempts before giving up with a non-recoverable `SessionError`."""
-    base_delay: float = 0.5
-    """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
-    max_delay: float = 30.0
-    """Maximum backoff delay in seconds."""
-    jitter: bool = True
-    """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
-
-
-@dataclass
 class ServerVAD:
     """Server-side voice activity detection — the default turn-taking mode.
 
@@ -585,10 +581,18 @@ def _tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
 class OpenAIRealtimeModel(RealtimeModel):
     """OpenAI Realtime API model.
 
+    Authentication, base URL, and the HTTP/WebSocket client come from a
+    [`Provider`][pydantic_ai.providers.Provider], mirroring [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+    Pass `provider='openai'` (the default) to read `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the
+    environment, or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] instance for a
+    custom key, base URL, or `httpx` client. The realtime WebSocket URL is derived from the provider's
+    base URL (e.g. `https://api.openai.com/v1/` → `wss://api.openai.com/v1/realtime`), so
+    OpenAI-compatible endpoints that expose a realtime API work too.
+
     Args:
         model: The model name, e.g. `gpt-realtime` or `gpt-4o-realtime-preview`.
-        api_key: OpenAI API key. Falls back to the `OPENAI_API_KEY` environment variable.
-        base_url: WebSocket base URL. Defaults to `wss://api.openai.com/v1/realtime`.
+        provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
+            Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
         voice: Voice for audio output, e.g. `alloy`, `echo`, or `shimmer`.
         input_audio_transcription_model: Model used to transcribe the user's audio input.
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
@@ -601,14 +605,13 @@ class OpenAIRealtimeModel(RealtimeModel):
             microphones. `None` disables it.
         output_modalities: The modalities the model may produce, `('audio',)` (default) or `('text',)`.
         output_speed: Playback speed multiplier for generated audio (0.25–1.5). `None` uses the default.
-        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.openai.ReconnectPolicy] to transparently
+        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionError` instead.
     """
 
     model: str = 'gpt-realtime'
-    api_key: str | None = field(default=None, repr=False)
-    base_url: str = DEFAULT_REALTIME_URL
+    provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     voice: str | None = None
     input_audio_transcription_model: str = 'whisper-1'
     handshake_timeout: float = 30.0
@@ -617,10 +620,35 @@ class OpenAIRealtimeModel(RealtimeModel):
     output_modalities: tuple[Literal['audio', 'text'], ...] = ('audio',)
     output_speed: float | None = None
     reconnect: ReconnectPolicy | None = None
+    _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
+
+    def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
+        if isinstance(provider, str):
+            provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
+        if provider.name == 'azure':
+            raise UserError(
+                'Azure OpenAI is not supported for realtime sessions: its realtime endpoint uses a '
+                'different URL and authentication scheme. Use the `openai` provider instead.'
+            )
+        self._provider = provider
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
+        return self._provider.client
 
     @property
     def model_name(self) -> str:
         return self.model
+
+    @property
+    def capabilities(self) -> RealtimeCapabilities:
+        return RealtimeCapabilities(
+            image_input=True,
+            manual_turn_control=True,
+            interruption=True,
+            session_seeding=True,
+        )
 
     def _session_config(
         self, instructions: str, tools: list[ToolDefinition] | None, model_settings: ModelSettings | None
@@ -672,9 +700,8 @@ class OpenAIRealtimeModel(RealtimeModel):
                 f'The OpenAI realtime provider does not support native tools yet (got '
                 f'{", ".join(type(t).__name__ for t in native_tools)}).'
             )
-        api_key = self.api_key or os.environ.get('OPENAI_API_KEY', '')
-        url = f'{self.base_url}?model={self.model}'
-        headers = {'Authorization': f'Bearer {api_key}'}
+        url = f'{_realtime_websocket_url(self._provider.base_url)}?model={self.model}'
+        headers = {'Authorization': f'Bearer {self._provider.client.api_key}'}
         session_config = self._session_config(instructions, tools, model_settings)
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection

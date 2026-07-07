@@ -34,10 +34,11 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai import errors as genai_errors, types as genai_types
+    from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 
     from pydantic_ai.models.google import GoogleModelSettings
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
         AutomaticVAD,
@@ -139,30 +140,30 @@ def test_map_usage_full_and_empty() -> None:
     assert rt_google._map_usage(genai_types.UsageMetadata()) == RequestUsage()  # pyright: ignore[reportPrivateUsage]
 
 
-# --- client construction -----------------------------------------------------
+# --- provider resolution & capabilities --------------------------------------
 
 
-def _capture_client(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    captured: dict[str, Any] = {}
-
-    def fake_client(**kwargs: Any) -> object:
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(rt_google, 'Client', fake_client)
-    return captured
+def test_default_provider_is_google() -> None:
+    # The default `'google'` provider reads GOOGLE_API_KEY (set to a placeholder by the autouse fixture).
+    model = GoogleRealtimeModel()
+    assert isinstance(model.client, Client)
 
 
-def test_client_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _capture_client(monkeypatch)
-    GoogleRealtimeModel(api_key='k')._client()  # pyright: ignore[reportPrivateUsage]
-    assert captured == {'api_key': 'k'}
+def test_provider_instance_is_reused() -> None:
+    provider = GoogleProvider(api_key='k')
+    model = GoogleRealtimeModel(provider=provider)
+    assert model.client is provider.client
 
 
-def test_client_uses_vertex(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _capture_client(monkeypatch)
-    GoogleRealtimeModel(vertexai=True, project='p', location='us-central1')._client()  # pyright: ignore[reportPrivateUsage]
-    assert captured == {'vertexai': True, 'project': 'p', 'location': 'us-central1'}
+def test_capabilities() -> None:
+    caps = GoogleRealtimeModel().capabilities
+    # Gemini Live has no manual turn control or server-side interruption (automatic VAD only).
+    assert (caps.image_input, caps.manual_turn_control, caps.interruption, caps.session_seeding) == (
+        True,
+        False,
+        False,
+        True,
+    )
 
 
 # --- config ------------------------------------------------------------------
@@ -406,10 +407,8 @@ def _turn(text: str) -> genai_types.LiveServerMessage:
     )
 
 
-def _patch_client(
-    monkeypatch: pytest.MonkeyPatch, session: _RecordingSession, captured: dict[str, Any] | None = None
-) -> None:
-    """Patch `rt_google.Client` so `.aio.live.connect(...)` yields `session` (recording `model`/`config`)."""
+def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = None) -> Client:
+    """A fake `google-genai` client whose `.aio.live.connect(...)` yields `session` (recording `model`/`config`)."""
 
     class _FakeConnect:
         async def __aenter__(self) -> _RecordingSession:
@@ -430,20 +429,23 @@ def _patch_client(
             self.live = _Live()
 
     class _Client:
-        def __init__(self, **kwargs: Any) -> None:
+        def __init__(self) -> None:
             self.aio = _Aio()
 
-    monkeypatch.setattr(rt_google, 'Client', _Client)
+    return cast('Client', _Client())
 
 
-async def test_connect_streams_events(monkeypatch: pytest.MonkeyPatch) -> None:
+def _model(session: _RecordingSession, captured: dict[str, Any] | None = None, **kwargs: Any) -> GoogleRealtimeModel:
+    """A `GoogleRealtimeModel` whose provider reuses a fake client backed by `session`."""
+    return GoogleRealtimeModel(provider=GoogleProvider(client=_fake_client(session, captured)), **kwargs)
+
+
+async def test_connect_streams_events() -> None:
     # Two turns: `receive()` yields one turn per call, so the connection must loop to serve both
     # (a single `receive()` would stop the session after the first reply).
     session = _RecordingSession([[_turn('hi')], [_turn('bye')]])
     captured: dict[str, Any] = {}
-    _patch_client(monkeypatch, session, captured)
-
-    model = GoogleRealtimeModel(api_key='k')
+    model = _model(session, captured)
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-live-2.5-flash'
@@ -455,7 +457,7 @@ async def test_connect_streams_events(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
-async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_connect_seeds_message_history() -> None:
     from pydantic_ai.messages import (
         AudioWithTranscriptPart,
         ModelRequest,
@@ -467,7 +469,6 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     session = _RecordingSession([[_turn('hi')]])
-    _patch_client(monkeypatch, session)
 
     history = [
         ModelRequest(parts=[SystemPromptPart(content='sys'), UserPromptPart(content='earlier question')]),
@@ -475,7 +476,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(parts=[AudioWithTranscriptPart(speaker='user', transcript='spoken question')]),
         ModelResponse(parts=[AudioWithTranscriptPart(speaker='assistant', transcript='spoken answer')]),
     ]
-    model = GoogleRealtimeModel(api_key='k')
+    model = _model(session)
     async with model.connect(instructions='x', messages=history) as conn:
         _ = [e async for e in conn]
 
@@ -492,14 +493,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
-async def test_connect_wires_reconnect_only_with_resumption(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_client(monkeypatch, _RecordingSession([[_turn('hi')]]))
+async def test_connect_wires_reconnect_only_with_resumption() -> None:
     # reconnect + session resumption → the connection can re-dial.
-    on = GoogleRealtimeModel(api_key='k', reconnect=ReconnectPolicy(), enable_session_resumption=True)
+    on = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy(), enable_session_resumption=True)
     async with on.connect(instructions='x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
     # reconnect without resumption would lose state → not wired.
-    off = GoogleRealtimeModel(api_key='k', reconnect=ReconnectPolicy())
+    off = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy())
     async with off.connect(instructions='x') as conn:
         assert conn._dial is None and conn._reconnect is None  # pyright: ignore[reportPrivateUsage]
 
@@ -683,7 +683,7 @@ async def test_reconnect_applies_jitter() -> None:
     assert isinstance(events[-1], SessionError)
 
 
-async def test_connect_reconnect_closes_previous_session(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_connect_reconnect_closes_previous_session() -> None:
     # End-to-end through `connect()`'s own dial: a reconnect must close the previous connection's
     # context manager before opening the next, so they don't accumulate.
     sessions = iter([_RecordingSession([]), _RecordingSession([[_turn('back')]])])
@@ -718,12 +718,11 @@ async def test_connect_reconnect_closes_previous_session(monkeypatch: pytest.Mon
             self.live = _Live()
 
     class _Client:
-        def __init__(self, **kwargs: Any) -> None:
+        def __init__(self) -> None:
             self.aio = _Aio()
 
-    monkeypatch.setattr(rt_google, 'Client', _Client)
     model = GoogleRealtimeModel(
-        api_key='k',
+        provider=GoogleProvider(client=cast('Client', _Client())),
         enable_session_resumption=True,
         reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False),
     )

@@ -19,7 +19,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Literal
 
-from typing_extensions import Protocol, TypeAliasType
+from typing_extensions import TypeAliasType
 
 from ..messages import (
     FunctionToolCallEvent,
@@ -369,6 +369,30 @@ control-plane events.
 """
 
 
+@dataclass(frozen=True)
+class RealtimeCapabilities:
+    """What a [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] supports.
+
+    A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] queries these flags to reject
+    unsupported operations with a clear error *before* sending them, rather than letting the provider
+    fail mid-session. Read them via [`RealtimeModel.capabilities`][pydantic_ai.realtime.RealtimeModel.capabilities];
+    each flag maps to the session methods a provider may not support.
+    """
+
+    image_input: bool = False
+    """Whether the model accepts image/video frames via [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]."""
+    manual_turn_control: bool = False
+    """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
+    [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
+    [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] (push-to-talk). When `False` the
+    provider only supports automatic voice activity detection."""
+    interruption: bool = False
+    """Whether the model supports server-side interruption — [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]
+    and [`truncate_output`][pydantic_ai.realtime.RealtimeSession.truncate_output]."""
+    session_seeding: bool = False
+    """Whether the model can seed a session with prior conversation (`message_history`)."""
+
+
 class RealtimeConnection(ABC):
     """A live connection to a realtime model.
 
@@ -433,17 +457,35 @@ class RealtimeModel(ABC):
         """The model name, e.g. `gpt-realtime`."""
         raise NotImplementedError
 
-
-class BackoffPolicy(Protocol):
-    """The backoff knobs shared by provider `ReconnectPolicy` types."""
-
-    max_attempts: int
-    base_delay: float
-    max_delay: float
-    jitter: bool
+    @property
+    @abstractmethod
+    def capabilities(self) -> RealtimeCapabilities:
+        """The operations this model supports, so a session can reject unsupported ones up front."""
+        raise NotImplementedError
 
 
-async def reconnect_with_backoff(policy: BackoffPolicy, attempt: Callable[[], Awaitable[bool]]) -> bool:
+@dataclass
+class ReconnectPolicy:
+    """How to recover when a realtime connection drops mid-session.
+
+    On a dropped connection the session is re-dialed and its configuration (instructions, tools,
+    voice, ...) re-applied, emitting a [`Reconnected`][pydantic_ai.realtime.Reconnected] event. What
+    server-side state survives depends on the provider: OpenAI Realtime starts a fresh turn (the audio
+    buffer and prior turns are lost), while Gemini Live restores conversation state when
+    `enable_session_resumption=True` (a prerequisite for reconnecting there).
+    """
+
+    max_attempts: int = 3
+    """Number of re-dial attempts before giving up with a non-recoverable `SessionError`."""
+    base_delay: float = 0.5
+    """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
+    max_delay: float = 30.0
+    """Maximum backoff delay in seconds."""
+    jitter: bool = True
+    """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
+
+
+async def reconnect_with_backoff(policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]]) -> bool:
     """Retry `attempt` with exponential backoff (and optional jitter) until it succeeds or attempts run out.
 
     `attempt` performs one provider-specific re-dial and returns whether it succeeded.

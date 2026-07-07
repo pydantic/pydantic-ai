@@ -87,13 +87,13 @@ control-plane events above (`TurnComplete`, `SpeechStarted`, `SpeechStopped`, `S
 
 ## OpenAI provider
 
-The OpenAI Realtime API provider. Requires the `realtime` optional group
-(`pip install "pydantic-ai-slim[realtime]"`).
+The OpenAI Realtime API provider. Requires the `realtime` and `openai` optional groups
+(`pip install "pydantic-ai-slim[realtime,openai]"`).
 
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] configures the session,
 including turn-taking via [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] /
 [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] (or `None` for push-to-talk) and resilience
-via [`ReconnectPolicy`][pydantic_ai.realtime.openai.ReconnectPolicy].
+via [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy].
 
 ::: pydantic_ai.realtime.openai
 
@@ -109,7 +109,7 @@ produces one response modality per session, and natively accepts live video fram
 fields — turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] plus
 `activity_handling`/`turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
 long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression], and resilience via
-session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.google.ReconnectPolicy]. Generation
+session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. Generation
 parameters are read from `model_settings`.
 
 ::: pydantic_ai.realtime.google

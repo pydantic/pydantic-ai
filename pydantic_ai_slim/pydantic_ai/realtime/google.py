@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
 
 try:
@@ -39,6 +39,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -47,11 +48,13 @@ from ._base import (
     AudioInput,
     ImageInput,
     InputTranscript,
+    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     Reconnected,
+    ReconnectPolicy,
     SessionError,
     SessionUsage,
     Sources,
@@ -101,25 +104,6 @@ class ContextCompression:
     """Compress once the context passes this many tokens; `None` uses the provider default."""
     target_tokens: int | None = None
     """Target size (in tokens) of the retained sliding window after compression."""
-
-
-@dataclass
-class ReconnectPolicy:
-    """How to recover when the Gemini Live connection drops mid-session.
-
-    Requires `enable_session_resumption=True`: the session is re-dialed with the latest resumption
-    handle, so the server restores conversation state and a [`Reconnected`][pydantic_ai.realtime.Reconnected]
-    event is emitted.
-    """
-
-    max_attempts: int = 3
-    """Number of re-dial attempts before giving up with a non-recoverable `SessionError`."""
-    base_delay: float = 0.5
-    """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
-    max_delay: float = 30.0
-    """Maximum backoff delay in seconds."""
-    jitter: bool = True
-    """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -245,10 +229,18 @@ class GoogleRealtimeModel(RealtimeModel):
     `google_thinking_config` / `google_video_resolution` are read from `model_settings` at connect time,
     consistent with the rest of pydantic-ai. The fields here cover session capabilities.
 
+    Authentication and the underlying `google-genai` client come from a
+    [`Provider`][pydantic_ai.providers.Provider], mirroring [`GoogleModel`][pydantic_ai.models.google.GoogleModel].
+    Pass `provider='google'` (the default) for the Gemini Developer API (reads `GOOGLE_API_KEY` /
+    `GEMINI_API_KEY`), `provider='google-cloud'` for Vertex AI (Application Default Credentials, useful
+    where org policy disallows API keys), or a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] /
+    [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instance for a custom
+    key, client, or region. Gemini Live is available on both surfaces.
+
     Args:
         model: The model name, e.g. `gemini-live-2.5-flash` or `gemini-live-2.5-flash-native-audio`.
-        api_key: Gemini API key (Gemini Developer API). Falls back to the `GOOGLE_API_KEY` /
-            `GEMINI_API_KEY` env variable. Ignored when `vertexai=True`.
+        provider: The provider to use for authentication and API access — `'google'` (Gemini Developer
+            API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
         voice: Prebuilt voice for audio output, e.g. `Puck`, `Charon`, or `Kore`.
         language_code: BCP-47 language for audio output, e.g. `en-US` or `pl-PL`.
         multi_speaker: Per-speaker voice assignment for multi-speaker output (overrides `voice`).
@@ -272,14 +264,10 @@ class GoogleRealtimeModel(RealtimeModel):
             `enable_session_resumption=True`. `None` (default) makes a drop end the stream.
         config_overrides: Raw keys merged last into the built `LiveConnectConfig`, an escape hatch for
             SDK options not yet modelled here.
-        vertexai: Use Vertex AI (Application Default Credentials) instead of the Gemini Developer API
-            (an API key). Useful where org policy disallows API keys.
-        project: Google Cloud project for Vertex AI; falls back to `GOOGLE_CLOUD_PROJECT`.
-        location: Google Cloud location for Vertex AI; falls back to `GOOGLE_CLOUD_LOCATION`.
     """
 
     model: str = 'gemini-live-2.5-flash'
-    api_key: str | None = field(default=None, repr=False)
+    provider: InitVar[Provider[Client] | str] = 'google'
     voice: str | None = None
     language_code: str | None = None
     multi_speaker: MultiSpeaker | None = None
@@ -296,18 +284,32 @@ class GoogleRealtimeModel(RealtimeModel):
     enable_session_resumption: bool = False
     reconnect: ReconnectPolicy | None = None
     config_overrides: dict[str, Any] | None = None
-    vertexai: bool = False
-    project: str | None = None
-    location: str | None = None
+    _provider: Provider[Client] = field(init=False, repr=False)
+
+    def __post_init__(self, provider: Provider[Client] | str) -> None:
+        if isinstance(provider, str):
+            provider = cast('Provider[Client]', infer_provider(provider))
+        self._provider = provider
+
+    @property
+    def client(self) -> Client:
+        """The underlying `google-genai` [`Client`][google.genai.Client] from the provider."""
+        return self._provider.client
 
     @property
     def model_name(self) -> str:
         return self.model
 
-    def _client(self) -> Client:
-        if self.vertexai:
-            return Client(vertexai=True, project=self.project, location=self.location)
-        return Client(api_key=self.api_key)
+    @property
+    def capabilities(self) -> RealtimeCapabilities:
+        # Gemini Live drives turns with automatic VAD only (no manual commit/create) and has no
+        # server-side response cancel/truncate, so `manual_turn_control` and `interruption` are off.
+        return RealtimeCapabilities(
+            image_input=True,
+            manual_turn_control=False,
+            interruption=False,
+            session_seeding=True,
+        )
 
     def _speech_config(self) -> genai_types.SpeechConfig | None:
         """Build the speech/voice config from `voice`, `multi_speaker`, and `language_code`.
@@ -441,7 +443,7 @@ class GoogleRealtimeModel(RealtimeModel):
         model_settings: ModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
-        client = self._client()
+        client = self._provider.client
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.
         reconnectable = self.reconnect is not None and self.enable_session_resumption

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pydantic_core
 from opentelemetry.trace import Span, SpanKind
 
-from .._instrumentation import safe_to_json
-from ..exceptions import UsageLimitExceeded
+from .._instrumentation import response_attributes, safe_to_json
+from ..exceptions import UsageLimitExceeded, UserError
 from ..messages import (
     AudioWithTranscriptPart,
     AudioWithTranscriptPartDelta,
@@ -42,6 +42,7 @@ from ._base import (
     ImageInput,
     InputTranscript,
     RateLimits,
+    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -69,6 +70,12 @@ ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 # Realtime providers stream raw PCM audio; there's no container to carry a richer media type, so
 # retained audio is tagged as `audio/pcm`.
 _PCM_MEDIA_TYPE = 'audio/pcm'
+
+# Fallback for a session created without a model's capabilities (e.g. directly, in tests): assume
+# everything is supported so no guard fires. Real sessions receive `model.capabilities`.
+_ALL_CAPABILITIES = RealtimeCapabilities(
+    image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
+)
 
 
 def _as_event(item: object) -> RealtimeSessionEvent:
@@ -162,11 +169,13 @@ class RealtimeSession:
         usage_limits: UsageLimits | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         message_history: Sequence[ModelMessage] | None = None,
+        capabilities: RealtimeCapabilities | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
         self._background_tools = frozenset(background_tools)
         self._instrumentation = instrumentation
+        self._capabilities = capabilities if capabilities is not None else _ALL_CAPABILITIES
         self._model_name = model_name
         self._agent_name = agent_name
         self._usage_limits = usage_limits
@@ -188,6 +197,8 @@ class RealtimeSession:
         # In-flight assistant response being assembled. Parts finalize into `_response_parts`, which
         # becomes a `ModelResponse` at the turn boundary (or when a tool call splits the turn).
         self._response_parts: list[ModelResponsePart] = []
+        # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
+        self._chat_span: Span | None = None
         self._pending_response_usage = RequestUsage()
         self._active_assistant: AudioWithTranscriptPart | None = None
         self._active_assistant_index = 0
@@ -231,22 +242,27 @@ class RealtimeSession:
 
     async def send_image(self, data: bytes, *, mime_type: str = 'image/jpeg') -> None:
         """Send an image frame as conversation context (e.g. a video frame)."""
+        self._require_capability(self._capabilities.image_input, 'send_image', 'image input')
         await self._connection.send(ImageInput(data=data, mime_type=mime_type))
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        self._require_capability(self._capabilities.manual_turn_control, 'commit_audio', 'manual turn-taking')
         await self._connection.send(CommitAudio())
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
+        self._require_capability(self._capabilities.manual_turn_control, 'clear_audio', 'manual turn-taking')
         await self._connection.send(ClearAudio())
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
+        self._require_capability(self._capabilities.manual_turn_control, 'create_response', 'manual turn-taking')
         await self._connection.send(CreateResponse())
 
     async def truncate_output(self, audio_end_ms: int) -> None:
         """Truncate the model's current audio output at `audio_end_ms` (see `TruncateOutput`)."""
+        self._require_capability(self._capabilities.interruption, 'truncate_output', 'interruption')
         await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
@@ -260,11 +276,19 @@ class RealtimeSession:
             audio_end_ms: Milliseconds of the current output audio that were actually played. When
                 given, the output item is truncated to this point before the response is cancelled.
         """
+        self._require_capability(self._capabilities.interruption, 'interrupt', 'interruption')
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op.
         if audio_end_ms is not None:
             await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
         await self._connection.send(CancelResponse())
+
+    def _require_capability(self, supported: bool, method: str, feature: str) -> None:
+        """Raise a clear `UserError` before sending when the model doesn't support `method`."""
+        if not supported:
+            raise UserError(
+                f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.'
+            )
 
     # --- history assembly -------------------------------------------------------------------------
 
@@ -272,6 +296,7 @@ class RealtimeSession:
         """Start an assistant audio+transcript part if one isn't already in flight."""
         if self._active_assistant is not None:
             return []
+        self._ensure_chat_span()
         part = AudioWithTranscriptPart(speaker='assistant', transcript='')
         self._active_assistant = part
         self._active_assistant_index = len(self._response_parts)
@@ -320,16 +345,59 @@ class RealtimeSession:
 
     def _finalize_response(self) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
+        response: ModelResponse | None = None
+        # The chat span's input is the history the response replied to, captured before we append it.
+        input_messages = self.all_messages()
         if self._response_parts:
-            self._history.append(
-                ModelResponse(
-                    parts=self._response_parts,
-                    usage=self._pending_response_usage,
-                    model_name=self._model_name,
-                )
+            response = ModelResponse(
+                parts=self._response_parts,
+                usage=self._pending_response_usage,
+                model_name=self._model_name,
             )
+            self._history.append(response)
+        self._end_chat_span(input_messages, response)
         self._response_parts = []
         self._pending_response_usage = RequestUsage()
+
+    def _ensure_chat_span(self) -> None:
+        """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
+
+        A realtime turn isn't a single request/response, so the honest lifetime of a `chat` span is one
+        assistant `ModelResponse`: it opens when that response's first content arrives (the first
+        assistant part or tool call) and closes in `_finalize_response`. Tool calls split a turn into
+        multiple responses (mirroring a classic run), so each response gets its own span. The span is
+        deliberately *not* entered as the current span: `execute_tool` spans run after the response is
+        finalized and stay siblings under the session span, matching the classic agent-run tree.
+
+        Attributes are limited to what a realtime session can report honestly. Omitted vs. the classic
+        `chat` span (`open_model_request_span`): `gen_ai.provider.name`/`gen_ai.system` and
+        `server.address`/`server.port` (the session has only a model name, no provider/base URL);
+        `model_request_parameters`, `gen_ai.tool.definitions`, and `gen_ai.request.*` settings (no
+        per-turn request parameters or settings); `operation.cost` (cost needs the provider). The
+        response-side `gen_ai.response.id`/`finish_reasons` are simply absent from realtime responses.
+        """
+        settings = self._instrumentation
+        if settings is None or self._chat_span is not None:
+            return
+        attributes: dict[str, Any] = {'gen_ai.operation.name': 'chat'}
+        if self._model_name:
+            attributes['gen_ai.request.model'] = self._model_name
+        name = f'chat {self._model_name}' if self._model_name else 'chat'
+        self._chat_span = settings.tracer.start_span(name, attributes=attributes, kind=SpanKind.CLIENT)
+
+    def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
+        """Close the current `chat` span, attaching per-turn messages and usage from `response`."""
+        settings = self._instrumentation
+        span = self._chat_span
+        if settings is None or span is None:
+            return
+        self._chat_span = None
+        if response is not None and span.is_recording():
+            # Reuse the exact message → gen_ai serialization and response-attribute helpers the
+            # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
+            settings.handle_messages(input_messages, response, span)
+            span.set_attributes(response_attributes(response, response.model_name or self._model_name))
+        span.end()
 
     def _handle_turn_complete(self, event: RealtimeSessionEvent) -> list[RealtimeSessionEvent]:
         events = self._finalize_assistant_part()
@@ -339,6 +407,7 @@ class RealtimeSession:
 
     def _handle_tool_call_part(self, call_part: ToolCallPart) -> list[RealtimeSessionEvent]:
         """Fold a tool call into the current response and close it out (its result follows in a request)."""
+        self._ensure_chat_span()
         events = self._finalize_assistant_part()
         index = len(self._response_parts)
         events.append(PartStartEvent(index=index, part=call_part))
@@ -429,7 +498,16 @@ class RealtimeSession:
 
     def _finalize_span(self, settings: InstrumentationSettings, span: Span, base_attributes: dict[str, Any]) -> None:
         """Attach cumulative usage and the conversation transcript (as gen_ai messages) to the session span."""
-        span.set_attributes(self.usage.opentelemetry_attributes())
+        # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
+        # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
+        # spans, which carry each response's usage under `gen_ai.usage.*`.
+        usage_attributes = self.usage.opentelemetry_attributes()
+        if settings.use_aggregated_usage_attribute_names:
+            usage_attributes = {
+                key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value
+                for key, value in usage_attributes.items()
+            }
+        span.set_attributes(usage_attributes)
         if settings.include_content:
             # Reuse the same message → gen_ai serialization the instrumented model uses. User/tool
             # requests land as input messages; assistant responses as output messages.

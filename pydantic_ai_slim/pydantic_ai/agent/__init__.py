@@ -2779,6 +2779,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return str(result.return_value)
                 return str(result)
 
+            model_capabilities = model.capabilities
+            if message_history and not model_capabilities.session_seeding:
+                raise exceptions.UserError(
+                    f'The {model.model_name!r} realtime model does not support seeding a session with '
+                    '`message_history`.'
+                )
+
             async with model.connect(
                 instructions=resolved_instructions,
                 tools=tool_defs,
@@ -2797,6 +2804,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     message_history=message_history,
+                    capabilities=model_capabilities,
                 )
 
     async def __aenter__(self) -> Self:

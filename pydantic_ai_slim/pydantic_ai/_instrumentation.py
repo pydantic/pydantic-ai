@@ -18,6 +18,7 @@ from pydantic_core import PydanticSerializationError, to_json
 from pydantic_graph._utils import get_traceparent
 
 if TYPE_CHECKING:
+    from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -176,6 +177,30 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
+def response_attributes(
+    response: ModelResponse,
+    response_model: AttributeValue | None,
+    price_calculation: PriceCalculation | None = None,
+) -> dict[str, AttributeValue]:
+    """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
+
+    Shared between the classic model-request span (`open_model_request_span`) and the realtime
+    session's per-turn `chat` span so the two paths report the same shape and can't drift.
+    `response_model` is set only when known (always the case for a classic request; a realtime
+    session may not know its model name).
+    """
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    if price_calculation is not None:
+        attributes['operation.cost'] = float(price_calculation.total_price)
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if response.finish_reason is not None:
+        attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+    return attributes
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
@@ -275,17 +300,7 @@ def open_model_request_span(
 
                 settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
 
-                attributes_to_set: dict[str, Any] = {
-                    **response.usage.opentelemetry_attributes(),
-                    'gen_ai.response.model': response_model,
-                }
-                if price_calculation is not None:
-                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-                if response.provider_response_id is not None:
-                    attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                if response.finish_reason is not None:
-                    attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
-                span.set_attributes(attributes_to_set)
+                span.set_attributes(response_attributes(response, response_model, price_calculation))
                 span.update_name(f'{operation} {request_model}')
 
             yield finish, prepared_request_context

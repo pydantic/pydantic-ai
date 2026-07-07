@@ -24,11 +24,17 @@ loop for you.
 ## Installation
 
 The OpenAI provider ([`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]) uses
-WebSockets, available via the `realtime` optional group:
+WebSockets plus the `openai` client, available via the `realtime` and `openai` optional groups:
 
 ```bash
-pip install "pydantic-ai-slim[realtime]"
+pip install "pydantic-ai-slim[realtime,openai]"
 ```
+
+Authentication, base URL, and HTTP client come from the `provider` argument, mirroring
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: pass `provider='openai'` (the
+default, reads `OPENAI_API_KEY`) or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
+instance for a custom key, base URL, or client. OpenAI-compatible endpoints that expose a realtime
+API work too; Azure OpenAI is not yet supported.
 
 The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
 the `google-genai` SDK, available via the `google` optional group:
@@ -175,7 +181,11 @@ model = GoogleRealtimeModel(
 | `context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
 | `enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](#reconnecting)) |
 | `config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
-| `vertexai`, `project`, `location` | Use Vertex AI / ADC instead of an API key |
+
+Authentication comes from the `provider` argument, mirroring
+[`GoogleModel`][pydantic_ai.models.google.GoogleModel]: pass `provider='google'` (the default,
+Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
+[`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client.
 
 ## Turn-taking and barge-in
 
@@ -359,12 +369,13 @@ logfire.instrument_pydantic_ai()
 ## Reconnecting
 
 A long-lived connection can drop. Pass a
-[`ReconnectPolicy`][pydantic_ai.realtime.openai.ReconnectPolicy] to transparently re-dial with
+[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently re-dial with
 exponential backoff, re-apply the session configuration, and emit a
 [`Reconnected`][pydantic_ai.realtime.Reconnected] event:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, ReconnectPolicy
+from pydantic_ai.realtime import ReconnectPolicy
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attempts=5))
 ```
@@ -377,11 +388,12 @@ app can restart the session itself.
 
 Gemini reconnects via **session resumption**, which *does* restore conversation state. Enable it with
 both `enable_session_resumption=True` and a
-[`ReconnectPolicy`][pydantic_ai.realtime.google.ReconnectPolicy] — the session re-dials from the
+[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] — the session re-dials from the
 latest resumption handle the server issued:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime.google import GoogleRealtimeModel, ReconnectPolicy
+from pydantic_ai.realtime import ReconnectPolicy
+from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 model = GoogleRealtimeModel(
     'gemini-live-2.5-flash',
