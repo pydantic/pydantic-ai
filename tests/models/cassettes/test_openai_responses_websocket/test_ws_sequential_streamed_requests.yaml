@@ -6,7 +6,7 @@ interactions:
     type: response.create
     input:
     - role: user
-      content: Say "hello" and nothing else.
+      content: Say "first"
     model: gpt-4o-mini
 - direction: received
   data:
@@ -121,7 +121,7 @@ interactions:
   data:
     type: response.output_text.delta
     content_index: 0
-    delta: Hello
+    delta: First
     item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
     logprobs: []
     obfuscation: PbgAQL1tC4p
@@ -145,7 +145,7 @@ interactions:
     logprobs: []
     output_index: 0
     sequence_number: 6
-    text: Hello.
+    text: First.
 - direction: received
   data:
     type: response.content_part.done
@@ -156,7 +156,7 @@ interactions:
       type: output_text
       annotations: []
       logprobs: []
-      text: Hello.
+      text: First.
     sequence_number: 7
 - direction: received
   data:
@@ -169,7 +169,7 @@ interactions:
       - type: output_text
         annotations: []
         logprobs: []
-        text: Hello.
+        text: First.
       role: assistant
     output_index: 0
     sequence_number: 8
@@ -198,7 +198,7 @@ interactions:
         - type: output_text
           annotations: []
           logprobs: []
-          text: Hello.
+          text: First.
         role: assistant
       parallel_tool_calls: true
       presence_penalty: 0.0
@@ -237,7 +237,7 @@ interactions:
     type: response.create
     input:
     - role: user
-      content: Say "hello" and nothing else.
+      content: Say "second"
     model: gpt-4o-mini
 - direction: received
   data:
@@ -352,7 +352,7 @@ interactions:
   data:
     type: response.output_text.delta
     content_index: 0
-    delta: Hello
+    delta: Second
     item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
     logprobs: []
     obfuscation: PbgAQL1tC4p
@@ -376,7 +376,7 @@ interactions:
     logprobs: []
     output_index: 0
     sequence_number: 6
-    text: Hello.
+    text: Second.
 - direction: received
   data:
     type: response.content_part.done
@@ -387,7 +387,7 @@ interactions:
       type: output_text
       annotations: []
       logprobs: []
-      text: Hello.
+      text: Second.
     sequence_number: 7
 - direction: received
   data:
@@ -400,7 +400,7 @@ interactions:
       - type: output_text
         annotations: []
         logprobs: []
-        text: Hello.
+        text: Second.
       role: assistant
     output_index: 0
     sequence_number: 8
@@ -429,7 +429,7 @@ interactions:
         - type: output_text
           annotations: []
           logprobs: []
-          text: Hello.
+          text: Second.
         role: assistant
       parallel_tool_calls: true
       presence_penalty: 0.0

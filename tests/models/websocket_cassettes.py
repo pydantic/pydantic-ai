@@ -105,6 +105,10 @@ class ReplayWebSocket:
                 f'Actual:\n{json.dumps(actual, indent=2, sort_keys=True)}'
             )
 
+    @property
+    def sent_frames_consumed(self) -> bool:
+        return self._sent_pos == len(self._sent)
+
     async def recv(self, *, decode: bool | None = False) -> bytes:
         if self._received_pos >= len(self._received):
             raise ConnectionClosedOK(None, None)
@@ -120,6 +124,25 @@ class ReplayWebSocket:
         return json.dumps(interaction.data).encode('utf-8')
 
     async def close(self, *, code: int = 1000, reason: str = '') -> None:
+        pass
+
+
+class ReplayConnect:
+    """Mimics `websockets.connect` as an awaitable and async context manager."""
+
+    def __init__(self, ws: ReplayWebSocket):
+        self._ws = ws
+
+    def __await__(self) -> Any:
+        async def _resolve() -> ReplayWebSocket:
+            return self._ws
+
+        return _resolve().__await__()
+
+    async def __aenter__(self) -> ReplayWebSocket:
+        return self._ws  # pragma: no cover
+
+    async def __aexit__(self, *args: Any) -> None:
         pass
 
 

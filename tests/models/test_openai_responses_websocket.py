@@ -10,21 +10,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelAPIError, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+    from websockets.datastructures import Headers
+    from websockets.exceptions import ConnectionClosedOK, InvalidStatus, WebSocketException
+    from websockets.http11 import Response
 
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .mock_openai import response_message
-    from .websocket_cassettes import ReplayWebSocket, WebSocketCassette
+    from .websocket_cassettes import ReplayConnect, ReplayWebSocket, WebSocketCassette
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai/websockets not installed'),
@@ -70,34 +72,17 @@ def _load_cassette(name: str) -> WebSocketCassette:
     return WebSocketCassette.load(_cassette_path(name))
 
 
-class _ReplayConnect:
-    """Mimics `websockets.connect` as an awaitable and async context manager."""
-
-    def __init__(self, ws: ReplayWebSocket):
-        self._ws = ws
-
-    def __await__(self) -> Any:
-        async def _resolve() -> ReplayWebSocket:
-            return self._ws
-
-        return _resolve().__await__()
-
-    async def __aenter__(self) -> ReplayWebSocket:
-        return self._ws  # pragma: no cover
-
-    async def __aexit__(self, *args: Any) -> None:
-        pass
-
-
 class _StubWebSocket:
     """Minimal stub that satisfies the SDK websocket interface."""
 
-    def __init__(self, sent_event: asyncio.Event | None = None) -> None:
+    def __init__(self, sent_event: asyncio.Event, send_exception: Exception | None = None) -> None:
         self._sent_event = sent_event
+        self._send_exception = send_exception
 
     async def send(self, data: str | bytes) -> None:
-        if self._sent_event is not None:
-            self._sent_event.set()
+        self._sent_event.set()
+        if self._send_exception is not None:
+            raise self._send_exception
 
     async def recv(self, *, decode: bool | None = False) -> bytes:
         await asyncio.sleep(3600)
@@ -150,8 +135,8 @@ async def test_connect_parallel_separate_connections(openai_model: OpenAIRespons
             served_by.append(self)
             await super().send(message)
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _ReplayConnect:
-        return _ReplayConnect(TrackingReplayWebSocket(_load_cassette('test_ws_simple_text_request.yaml')))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(TrackingReplayWebSocket(_load_cassette('test_ws_simple_text_request.yaml')))
 
     async def run_one() -> str:
         async with openai_model.connect():
@@ -167,10 +152,34 @@ async def test_connect_parallel_separate_connections(openai_model: OpenAIRespons
 
 async def test_no_connect_uses_http(openai_model: OpenAIResponsesModel) -> None:
     def fail_connect(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError('websocket connection should not be opened')
+        raise AssertionError('websocket connection should not be opened')  # pragma: no cover
 
     with patch('websockets.asyncio.client.connect', fail_connect):
         await _assert_uses_http(openai_model)
+
+
+async def test_ws_invalid_status_raises_model_http_error(openai_model: OpenAIResponsesModel) -> None:
+    response = Response(429, 'Too Many Requests', Headers(), body=b'too many requests')
+
+    def fake_connect(*args: Any, **kwargs: Any) -> Any:
+        raise InvalidStatus(response)
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        with pytest.raises(ModelHTTPError) as exc_info:
+            async with openai_model.connect():
+                pass  # pragma: no cover
+
+    assert exc_info.value.status_code == 429
+
+
+async def test_ws_os_error_handshake_raises_model_api_error(openai_model: OpenAIResponsesModel) -> None:
+    def fake_connect(*args: Any, **kwargs: Any) -> Any:
+        raise OSError('dns failure')
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        with pytest.raises(ModelAPIError, match='connection failed'):
+            async with openai_model.connect():
+                pass  # pragma: no cover
 
 
 async def test_connect_respects_allow_model_requests(openai_api_key: str) -> None:
@@ -199,11 +208,35 @@ async def test_ws_concurrent_requests_error(openai_model: OpenAIResponsesModel) 
                 await first
 
 
+async def test_ws_send_connection_closed_raises_model_api_error(openai_model: OpenAIResponsesModel) -> None:
+    agent: Agent[None, str] = Agent(openai_model)
+
+    def fake_connect(*args: Any, **kwargs: Any) -> _StubConnect:
+        return _StubConnect(_StubWebSocket(asyncio.Event(), ConnectionClosedOK(None, None)))
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            with pytest.raises(ModelAPIError, match='connection closed'):
+                await agent.run('Hello')
+
+
+async def test_ws_send_websocket_exception_raises_model_api_error(openai_model: OpenAIResponsesModel) -> None:
+    agent: Agent[None, str] = Agent(openai_model)
+
+    def fake_connect(*args: Any, **kwargs: Any) -> _StubConnect:
+        return _StubConnect(_StubWebSocket(asyncio.Event(), WebSocketException('boom')))
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            with pytest.raises(ModelAPIError, match='WebSocket error'):
+                await agent.run('Hello')
+
+
 async def test_ws_concurrent_streaming_requests_error(openai_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_model)
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _ReplayConnect:
-        return _ReplayConnect(ReplayWebSocket(_load_cassette('test_ws_streamed_text_request.yaml')))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(_load_cassette('test_ws_streamed_text_request.yaml')))
 
     with patch('websockets.asyncio.client.connect', fake_connect):
         async with openai_model.connect():
@@ -252,13 +285,13 @@ async def test_ws_sequential_streamed_requests(openai_ws_model: OpenAIResponsesM
     agent: Agent[None, str] = Agent(openai_ws_model)
 
     async with openai_ws_model.connect():
-        async with agent.run_stream(_HELLO_PROMPT) as result1:
+        async with agent.run_stream('Say "first"') as result1:
             output1 = await result1.get_output()
-        async with agent.run_stream(_HELLO_PROMPT) as result2:
+        async with agent.run_stream('Say "second"') as result2:
             output2 = await result2.get_output()
 
-    assert 'hello' in output1.lower()
-    assert 'hello' in output2.lower()
+    assert output1 == 'First.'
+    assert output2 == 'Second.'
 
 
 @pytest.mark.ws_cassette

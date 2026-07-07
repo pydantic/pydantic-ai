@@ -99,6 +99,20 @@ async def test_replay_send_mismatch_shows_expected_and_actual() -> None:
 
 
 @pytest.mark.anyio
+async def test_replay_send_unexpected_frame() -> None:
+    cassette = WebSocketCassette(
+        interactions=[
+            CassetteInteraction(direction='sent', data={'type': 'response.create', 'model': 'gpt-4o-mini'}),
+        ]
+    )
+    ws = ReplayWebSocket(cassette)
+
+    await ws.send('{"type": "response.create", "model": "gpt-4o-mini"}')
+    with pytest.raises(AssertionError, match='Unexpected WebSocket send'):
+        await ws.send('{"type": "response.create", "model": "gpt-4o-mini"}')
+
+
+@pytest.mark.anyio
 async def test_replay_recv_connection_closed() -> None:
     cassette = WebSocketCassette(interactions=[])
     ws = ReplayWebSocket(cassette)

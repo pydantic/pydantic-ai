@@ -22,6 +22,7 @@ with try_import() as imports_successful:
 
     from .websocket_cassettes import (
         RecordingWebSocket,
+        ReplayConnect,
         ReplayWebSocket,
         WebSocketCassette,
         ws_cassette_plan,
@@ -66,25 +67,6 @@ def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
         return cast(Any, request.config).getoption('record_mode')
     except (ValueError, AttributeError):  # pragma: no cover
         return None
-
-
-class _ReplayConnect:
-    """Mimics `websockets.connect` as an awaitable and async context manager."""
-
-    def __init__(self, ws: ReplayWebSocket):
-        self._ws = ws
-
-    def __await__(self) -> Any:
-        async def _resolve() -> ReplayWebSocket:
-            return self._ws
-
-        return _resolve().__await__()
-
-    async def __aenter__(self) -> ReplayWebSocket:
-        return self._ws  # pragma: no cover
-
-    async def __aexit__(self, *args: Any) -> None:
-        pass
 
 
 class _RecordingConnect:
@@ -139,9 +121,12 @@ def openai_ws_model(
         )
 
     cassette = WebSocketCassette.load(cassette_path) if plan == 'replay' else WebSocketCassette()
+    replay_websockets: list[ReplayWebSocket] = []
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _ReplayConnect:
-        return _ReplayConnect(ReplayWebSocket(cassette))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        ws = ReplayWebSocket(cassette)
+        replay_websockets.append(ws)
+        return ReplayConnect(ws)
 
     def recording_connect(*args: Any, **kwargs: Any) -> _RecordingConnect:  # pragma: no cover
         return _RecordingConnect(*args, **kwargs).with_cassette(cassette)
@@ -150,6 +135,9 @@ def openai_ws_model(
 
     with patch('websockets.asyncio.client.connect', mock_connect):
         yield OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    if plan == 'replay':
+        assert all(ws.sent_frames_consumed for ws in replay_websockets)
 
     if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):  # pragma: no cover
         cassette.dump(cassette_path)
