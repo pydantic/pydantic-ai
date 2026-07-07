@@ -94,6 +94,7 @@ class WebFetchLocalTool:
                 headers=request_headers,
                 allowed_domains=self.allowed_domains,
                 blocked_domains=self.blocked_domains,
+                warn_legacy_httpx_catch=False,
             )
         except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e

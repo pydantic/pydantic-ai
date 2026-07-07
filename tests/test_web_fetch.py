@@ -297,6 +297,7 @@ class TestWebFetchLocalTool:
             headers={'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'},
             allowed_domains=None,
             blocked_domains=None,
+            warn_legacy_httpx_catch=False,
         )
 
     async def test_safe_download_error_raises_model_retry(self):
