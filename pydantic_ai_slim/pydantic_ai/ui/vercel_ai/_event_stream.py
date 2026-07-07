@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import KW_ONLY, asdict, dataclass, field
-from typing import Any, Literal
+from dataclasses import KW_ONLY, dataclass, field
+from typing import Any, Literal, cast
 
+from pydantic import TypeAdapter
 from pydantic_core import to_json
 
 from ...messages import (
@@ -31,6 +32,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
+from ...usage import RequestUsage
 from .. import UIEventStream
 from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
@@ -76,15 +78,17 @@ __all__ = ['VercelAIEventStream']
 # See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
 VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 
+_REQUEST_USAGE_TA: TypeAdapter[RequestUsage] = TypeAdapter(RequestUsage)
+
 
 def _json_dumps(obj: Any) -> str:
     """Dump an object to JSON string."""
     return to_json(obj).decode('utf-8')
 
 
-def _usage_chunk_data(event: ModelResponseEndEvent) -> dict[str, Any] | None:
+def _usage_chunk_data(usage: RequestUsage) -> dict[str, Any] | None:
     """Serialize request usage for `data-usage` chunks."""
-    usage_data = {k: v for k, v in asdict(event.response.usage).items() if v not in (0, {}, None)}
+    usage_data = cast(dict[str, Any], _REQUEST_USAGE_TA.dump_python(usage, mode='json', exclude_defaults=True))
     return usage_data or None
 
 
@@ -168,7 +172,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield
 
     async def handle_model_response_end(self, event: ModelResponseEndEvent) -> AsyncIterator[BaseChunk]:
-        if self.sdk_version >= 6 and (usage_data := _usage_chunk_data(event)):
+        if self.sdk_version >= 6 and (usage_data := _usage_chunk_data(event.response.usage)):
             yield DataChunk(type='data-usage', data=usage_data, transient=True)
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
