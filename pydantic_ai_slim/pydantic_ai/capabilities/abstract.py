@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -290,6 +290,29 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these settings are registered up front but merge as an empty dict until the
         model calls the `load_capability` tool for this capability.
+        """
+        return None
+
+    def get_model(self) -> Model | KnownModelName | str | None:
+        """Return the model this capability supplies for the agent, or None.
+
+        This is the one way a capability can supply the `model` for an agent that has none, since
+        the model is resolved during run setup before any per-request hook fires. Return a
+        [`Model`][pydantic_ai.models.Model] instance or a model name string (e.g.
+        `'openai:gpt-5.2'`); strings flow through the same inference path as
+        [`Agent(model=...)`][pydantic_ai.Agent.__init__].
+
+        The first capability (in user order) that returns a non-None model wins, and its model slots
+        in below a call-site `run(model=...)`/`iter(model=...)` argument and a run-level `spec=`
+        model, but above the agent constructor's model. The resulting precedence, from highest to
+        lowest, is: `run()`/`iter()` argument > run `spec=` model > capability `get_model()` > agent
+        constructor. An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins
+        over all of these, matching its documented semantics.
+
+        Unlike most `get_*` hooks, this is called on the construction-time capability instances
+        (before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]) and receives no
+        [`RunContext`][pydantic_ai.tools.RunContext], because it runs during run setup before the
+        run exists. Return values must therefore not depend on per-run state.
         """
         return None
 

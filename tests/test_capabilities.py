@@ -82,7 +82,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
@@ -8528,6 +8528,129 @@ from-spec\
             result = await agent.run('hello', spec={'retries': {'tools': 5}})
 
         assert result.output == 'ok'
+
+
+@dataclass
+class _ModelCap(AbstractCapability):
+    """Test capability that supplies a model via `get_model()`."""
+
+    model: Model | KnownModelName | str | None = None
+
+    def get_model(self) -> Model | KnownModelName | str | None:
+        return self.model
+
+
+def _text_model(text: str) -> FunctionModel:
+    """A `FunctionModel` whose response text identifies which model handled the request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response(text)
+
+    return FunctionModel(model_fn)
+
+
+class TestGetModelHook:
+    """Capabilities can supply the agent's model via `get_model()`."""
+
+    async def test_model_less_agent_uses_capability_model(self):
+        """A capability can supply the model for an agent that has none (the headline case)."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='success (no tool calls)')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_model_less_agent_without_capability_model_raises(self):
+        """With no model anywhere (capability returns None), the usual missing-model error is raised."""
+        agent = Agent(None, capabilities=[_ModelCap(model=None)])
+
+        with pytest.raises(UserError, match='`model` must either be set on the agent or included when calling it'):
+            await agent.run('hello')
+
+    async def test_run_model_arg_beats_capability_model(self):
+        """A call-site `run(model=...)` wins over a capability-supplied model."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        result = await agent.run('hello', model=_text_model('from-run-arg'))
+        assert result.output == 'from-run-arg'
+
+    async def test_run_spec_model_beats_capability_model(self):
+        """A run-level `spec=` model wins over a capability-supplied model."""
+        agent = Agent(None, capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        result = await agent.run('hello', spec={'model': 'test'})
+        assert result.output == 'success (no tool calls)'
+
+    async def test_capability_model_beats_agent_constructor(self):
+        """A capability-supplied model wins over the agent constructor's model."""
+        agent = Agent(_text_model('from-constructor'), capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        result = await agent.run('hello')
+        assert result.output == 'from-capability'
+
+    async def test_override_model_beats_capability_model(self):
+        """`agent.override(model=...)` wins over a capability-supplied model, per its docs."""
+        agent = Agent(None, capabilities=[_ModelCap(model='test')])
+
+        with agent.override(model=_text_model('from-override')):
+            result = await agent.run('hello')
+        assert result.output == 'from-override'
+
+    async def test_first_non_none_capability_wins(self):
+        """The first capability (in user order) that returns a non-None model wins."""
+        agent = Agent(
+            None,
+            capabilities=[
+                _ModelCap(model=None),
+                _ModelCap(model=_text_model('from-second')),
+                _ModelCap(model=_text_model('from-third')),
+            ],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'from-second'
+
+    async def test_wrapper_capability_delegates(self):
+        """A `WrapperCapability` surfaces its wrapped leaf's model."""
+        agent = Agent(None, capabilities=[WrapperCapability(wrapped=_ModelCap(model='test'))])
+
+        result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+
+    async def test_combined_capability_delegates(self):
+        """A `CombinedCapability` surfaces its leaves' models in order (first non-None wins)."""
+        agent = Agent(
+            None,
+            capabilities=[CombinedCapability([_ModelCap(model=None), _ModelCap(model='test')])],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+
+    async def test_capability_returning_none_is_noop(self):
+        """A capability whose `get_model()` returns None (the default) leaves the agent model in place."""
+        agent = Agent(_text_model('from-agent'), capabilities=[_ModelCap(model=None)])
+
+        result = await agent.run('hello')
+        assert result.output == 'from-agent'
 
 
 class TestGetWrapperToolsetHook:

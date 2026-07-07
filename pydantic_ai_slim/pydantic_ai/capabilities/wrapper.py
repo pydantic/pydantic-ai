@@ -38,7 +38,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AgentModelSettings
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
@@ -106,6 +106,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
+
+    def get_model(self) -> Model | KnownModelName | str | None:
+        return self.wrapped.get_model()
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()

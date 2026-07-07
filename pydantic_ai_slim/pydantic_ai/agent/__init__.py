@@ -51,7 +51,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1059,6 +1059,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'budget) here, and `Agent(retries=...)` for tool retries.'
             )
 
+        # Resolve the root capability (override > agent default) up front: it's needed both for the
+        # capability-supplied model fallback below and for run-time capability assembly further down.
+        override_cap = self._override_root_capability.get()
+        base_capability = override_cap.value if override_cap is not None else self._root_capability
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
         effective_output_retries = retry_overrides.get('output')
@@ -1106,6 +1111,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
+
+        # Capability-supplied model: the first capability (in user order) that returns a model from
+        # `get_model()` provides it, slotting in below a call-site `model`/run `spec=` model (both
+        # already resolved into `model` above) and above the agent constructor default (the fallback
+        # in `_get_model`). This is what lets an agent with no model of its own run. `get_model()`
+        # runs here, at run setup before `for_run`, because the model must be resolved before the run.
+        if model is None:
+            for leaf in collect_leaves(base_capability):
+                if (capability_model := leaf.get_model()) is not None:
+                    model = capability_model
+                    break
 
         model_used = self._get_model(model)
         del model
@@ -1235,10 +1251,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
 
-        # Determine root capability: override > agent default
-        override_cap = self._override_root_capability.get()
-        base_capability = override_cap.value if override_cap is not None else self._root_capability
-
+        # `base_capability` (override > agent default) was resolved above for the model fallback.
         # Merge spec and run-time capabilities additively with the base capability
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
