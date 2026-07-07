@@ -5,10 +5,7 @@ status: new
 
 # Pydantic AI Gateway
 
-**[Pydantic AI Gateway](https://logfire.pydantic.dev/)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://logfire.pydantic.dev/). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
-
-!!! warning "Migrated to Pydantic Logfire"
-    The AI Gateway has moved from `gateway.pydantic.dev` to [Pydantic Logfire](https://logfire.pydantic.dev/). If you were using the standalone gateway, see [Pydantic AI Gateway is Moving to Pydantic Logfire](https://logfire.pydantic.dev/docs/gateway-migration/).
+**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://pydantic.dev/logfire). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
 Sign up at [logfire.pydantic.dev](https://logfire.pydantic.dev/).
 
@@ -417,11 +414,13 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ### Unable to calculate spend
 
-The gateway needs to know the cost of the request in order to provide insights about the spend, and to enforce spending limits.
-If it's unable to calculate the cost, it will return a 400 error with the message "Unable to calculate spend".
+The gateway needs to know the cost of a request in order to provide spend insights and enforce spending limits.
 
-When configuring a provider, you need to decide if you want the gateway to block
-the API key if it's unable to calculate the cost. If you choose to block the API key, any further requests using that API key will fail.
+Each provider has a **Require pricing data** toggle in its settings. When enabled (the default), the gateway rejects requests for models it has no pricing data for before forwarding them upstream. When disabled, those requests are allowed through, but their cost will not be tracked and they will not count toward spending limits.
 
-We are actively working on supporting more providers, and models.
-If you have a specific provider that you would like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or [open an issue on `genai-prices`](https://github.com/pydantic/genai-prices/issues/new).
+The rejection response depends on the provider type:
+
+- **Built-in providers** (Pydantic-managed): `404` with a message asking you to let us know on Slack so we can add the model.
+- **Custom providers** (your own API keys): `400` indicating that pricing data is required, with a hint to disable the toggle if you want the request through anyway.
+
+We are actively working on supporting more providers and models. If there's a specific provider or model you'd like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or [open an issue on `genai-prices`](https://github.com/pydantic/genai-prices/issues/new).

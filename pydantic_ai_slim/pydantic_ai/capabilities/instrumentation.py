@@ -12,15 +12,18 @@ from opentelemetry.trace import StatusCode
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
-    event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
     serialize_any,
+    time_to_first_chunk_ctx,
 )
+from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -62,8 +65,7 @@ class Instrumentation(AbstractCapability[Any]):
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
-    which uses the global `TracerProvider`/`LoggerProvider` (typically configured by
-    `logfire.configure()`)."""
+    which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
     # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
     # returns a shallow copy via `replace(self)` for per-run isolation. These fields
@@ -74,10 +76,16 @@ class Instrumentation(AbstractCapability[Any]):
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
+    _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
+    """Last formatted instructions sent to the model, or `UNSET` before the first request."""
+    _variable_instructions: bool = field(default=False, repr=False, init=False)
+    """Whether agent-level instructions varied across requests in this run."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
-        default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
+        default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
+        repr=False,
+        init=False,
     )
 
     def __post_init__(self) -> None:
@@ -91,10 +99,10 @@ class Instrumentation(AbstractCapability[Any]):
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
         Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`, `event_mode`,
-        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider`, `meter_provider`,
-        and `logger_provider` fields can't be expressed in YAML and default to the global
-        providers (typically configured via `logfire.configure()`).
+        kwargs (`include_binary_content`, `include_content`, `version`,
+        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
+        fields can't be expressed in YAML and default to the global providers (typically configured
+        via `logfire.configure()`).
 
         YAML form:
 
@@ -162,7 +170,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(result.output)).decode()
                         ),
                     )
 
@@ -191,30 +199,22 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         new_message_index = self._new_message_index
 
-        if settings.version == 1:
-            attrs: dict[str, Any] = {
-                'all_messages_events': to_json(
-                    [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                ).decode()
-            }
-        else:
-            last_instructions = get_instructions(message_history, self._last_model_request_parameters)
-            attrs = {
-                'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
-                **settings.system_instructions_attributes(last_instructions),
-            }
+        last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        attrs: dict[str, Any] = {
+            'pydantic_ai.all_messages': safe_to_json(
+                settings.messages_to_otel_messages(list(message_history))
+            ).decode(),
+            **settings.system_instructions_attributes(last_instructions),
+        }
 
-            if new_message_index > 0:
-                attrs['pydantic_ai.new_message_index'] = new_message_index
+        if new_message_index > 0:
+            attrs['pydantic_ai.new_message_index'] = new_message_index
 
-            if any(
-                (isinstance(m, ModelRequest) and m.instructions is not None and m.instructions != last_instructions)
-                for m in message_history[new_message_index:]
-            ):
-                attrs['pydantic_ai.variable_instructions'] = True
+        if self._variable_instructions:
+            attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
 
         usage_attrs = (
             {
@@ -261,8 +261,21 @@ class Instrumentation(AbstractCapability[Any]):
             # instead of falling back to reading `ModelRequest.instructions` from history.
             self._last_model_request_parameters = prepared_request_context.model_request_parameters
 
+            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
+            # This does an apples-to-apples comparison of the final payload sent to the model.
+            current_instructions = get_instructions(
+                request_context.messages, prepared_request_context.model_request_parameters
+            )
+            if not isinstance(self._last_formatted_instructions, Unset):
+                if current_instructions != self._last_formatted_instructions:
+                    self._variable_instructions = True
+            self._last_formatted_instructions = current_instructions
+
             response = await handler(request_context)
-            finish(response)
+            # For streaming requests, the agent graph's handler reports TTFT through
+            # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
+            # for non-streaming requests this reads the `None` default.
+            finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
             return response
 
     # ------------------------------------------------------------------
@@ -435,7 +448,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -459,5 +472,5 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
         )

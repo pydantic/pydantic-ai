@@ -66,7 +66,7 @@ def _has_module_vcr_marker(tree: ast.Module) -> bool:
 def _collect_vcr_tests_from_file(path: Path) -> set[str]:
     """Parse a Python test file and return cassette names for VCR or ws_cassette-marked tests."""
     try:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding='utf-8'))
     except SyntaxError:
         return set()
 

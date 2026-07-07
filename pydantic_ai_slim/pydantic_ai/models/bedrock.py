@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -17,6 +19,7 @@ from typing_extensions import ParamSpec, assert_never
 try:
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.model import StructureShape
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -65,6 +68,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -87,6 +91,7 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
+        ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
@@ -111,7 +116,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
@@ -142,6 +147,13 @@ def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) 
     if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
     return {'document': {'name': name, 'format': format, 'source': source}}
+
+
+# Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
+# permissive default for `bedrock_tool_result_colocatable_content` (no model restriction).
+_ALL_TOOL_RESULT_COLOCATABLE_CONTENT: frozenset[Literal['text', 'image', 'document', 'video']] = frozenset(
+    {'text', 'image', 'document', 'video'}
+)
 
 
 LatestBedrockModelNames = Literal[
@@ -224,6 +236,8 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
+    'malformed_model_output': 'error',
+    'malformed_tool_use': 'error',
     'tool_use': 'tool_call',
 }
 
@@ -425,7 +439,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> BedrockRuntimeClient:
@@ -459,6 +473,12 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @cached_property
+    def profile(self) -> BedrockModelProfile:
+        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
+        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
+        return cast(BedrockModelProfile, super().profile)
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
@@ -470,17 +490,19 @@ class BedrockConverseModel(Model[BaseClient]):
         settings = merge_model_settings(self.settings, model_settings)
         if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
             if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+                output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
             elif (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
-                suggested_output_type = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
+                suggested_output_type = (
+                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
+                )
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
         if (
-            self.profile.supports_json_schema_output
+            self.profile.get('supports_json_schema_output', False)
             and model_request_parameters.output_mode == 'native'
             and model_request_parameters.output_object is not None
         ):
@@ -493,14 +515,36 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         return super().prepare_request(model_settings, model_request_parameters)
 
+    @property
+    def _botocore_supports_strict_tool_param(self) -> bool:
+        """Whether the installed `botocore` knows the `strict` field on `toolSpec`.
+
+        `botocore` validates request params against its own bundled service model, so a
+        `botocore` older than the one that introduced strict tool calls rejects `strict`
+        with a `ParamValidationError` regardless of what the Bedrock model itself supports.
+        This notably happens on AWS Lambda, where the runtime's bundled `botocore` can
+        shadow a newer one provided via a layer.
+        """
+        tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
+        return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
-        if f.strict and self.profile.bedrock_supports_strict_tool_definition:
-            tool_spec['strict'] = f.strict
+        if f.strict and self.profile.get('bedrock_supports_strict_tool_definition', False):
+            if self._botocore_supports_strict_tool_param:
+                tool_spec['strict'] = f.strict
+            else:
+                warnings.warn(
+                    'The installed `botocore` is too old to send `strict` tool definitions to Bedrock, '
+                    'so the request is sent without `strict`. Upgrade `boto3`/`botocore` to enable strict '
+                    "tool calls; on AWS Lambda, the runtime's bundled `botocore` may be shadowing a newer "
+                    'one from your layer.',
+                    UserWarning,
+                )
 
         return {'toolSpec': tool_spec}
 
@@ -553,14 +597,25 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        converse: ConverseTokensRequestTypeDef = {
+            'messages': bedrock_messages,
+            'system': system_prompt,
+        }
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
+        # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
+        tool_config = self._map_tool_config(model_request_parameters, settings)
+        if tool_config:
+            converse['toolConfig'] = tool_config
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
+            converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
             'modelId': remove_bedrock_geo_prefix(self.model_name),
-            'input': {
-                'converse': {
-                    'messages': bedrock_messages,
-                    'system': system_prompt,
-                },
-            },
+            'input': {'converse': converse},
         }
         with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
@@ -573,7 +628,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -671,27 +726,41 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details=provider_details,
         )
 
-    def _translate_thinking(
+    def _build_additional_model_request_fields(
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, Any] | None:
-        """Build thinking-related additionalModelRequestFields, using unified thinking as fallback."""
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        profile = self.profile
+
+        # Bedrock's `inferenceConfig` has no `topK`, so unified `top_k` rides in the model-specific
+        # `additionalModelRequestFields` (shape varies per family). A user-supplied key wins.
+        if (top_k := model_settings.get('top_k')) is not None:
+            if profile.get('bedrock_top_k_variant', None) == 'anthropic' and 'top_k' not in existing:
+                existing['top_k'] = top_k
+            elif profile.get('bedrock_top_k_variant', None) == 'nova':
+                # Nova nests `topK` under `inferenceConfig`, so check that specific key (not the parent)
+                # and merge into a fresh dict to preserve any other user-supplied `inferenceConfig` fields
+                # without mutating the user's settings in place. A user-supplied `topK` wins.
+                inference_config: Mapping[str, Any] = existing.get('inferenceConfig') or {}
+                if isinstance(inference_config, dict) and 'topK' not in inference_config:
+                    existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
+
         thinking = model_request_parameters.thinking
         if thinking is None:
             return existing or None
 
-        profile = BedrockModelProfile.from_profile(self.profile)
-        variant = profile.bedrock_thinking_variant
+        variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
-            if profile.bedrock_supports_adaptive_thinking:
+            if profile.get('bedrock_supports_adaptive_thinking', False):
                 if thinking is not False:
                     existing['thinking'] = {'type': 'adaptive'}
                     # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
                     if (
-                        profile.bedrock_supports_effort
+                        profile.get('bedrock_supports_effort', False)
                         and isinstance(thinking, str)
                         and 'output_config' not in existing
                     ):
@@ -785,7 +854,9 @@ class BedrockConverseModel(Model[BaseClient]):
             elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
                 params['serviceTier'] = {'type': unified_tier}
 
-        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
         with _map_api_errors(self.model_name):
@@ -823,7 +894,7 @@ class BedrockConverseModel(Model[BaseClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        profile = BedrockModelProfile.from_profile(self.profile)
+        profile = self.profile
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )
@@ -839,10 +910,16 @@ class BedrockConverseModel(Model[BaseClient]):
             return None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'tool': {'name': next(iter(tool_names))}} if supports else {'auto': {}}
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
             else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
         else:
             assert_never(resolved_tool_choice)
@@ -860,11 +937,11 @@ class BedrockConverseModel(Model[BaseClient]):
             return None
 
         if cache_tool_definitions := (model_settings or {}).get('bedrock_cache_tool_definitions'):
-            if profile.bedrock_supports_tool_caching:
+            if profile.get('bedrock_supports_tool_caching', False):
                 tools.append(cast('ToolTypeDef', self._get_cache_point(cache_tool_definitions)))
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
-        if profile.bedrock_supports_tool_choice:
+        if tool_choice and profile.get('bedrock_supports_tool_choice', False):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
@@ -880,10 +957,31 @@ class BedrockConverseModel(Model[BaseClient]):
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
         settings = model_settings or BedrockModelSettings()
-        profile = BedrockModelProfile.from_profile(self.profile)
+        profile = self.profile
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
+
+        # Content-block kinds that may share a user turn with a `toolResult` block for this model.
+        colocatable_content = profile.get(
+            'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
+        )
+
+        # Media returned from a tool that can't live inside a `toolResult` block (see
+        # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
+        # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
+        # immediately following it, with nothing else sharing that turn, so such sibling media can't be
+        # placed there. When the media kind can't co-locate with a `toolResult` for this model, we collect
+        # it across the whole consecutive tool-return group and flush it as a separate user message after
+        # the grouped tool results; the merge pass below then separates it with a synthetic assistant turn.
+        # Media that this model does allow alongside a `toolResult` stays co-located in the same turn.
+        deferred_media_content: list[ContentBlockUnionTypeDef] = []
+
+        def flush_deferred_media() -> None:
+            if deferred_media_content:
+                bedrock_messages.append({'role': 'user', 'content': [*deferred_media_content]})
+                deferred_media_content.clear()
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
@@ -891,26 +989,25 @@ class BedrockConverseModel(Model[BaseClient]):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
+                        flush_deferred_media()
                         bedrock_messages.extend(
                             await self._map_user_prompt(
-                                part, document_count, supports_prompt_caching=profile.bedrock_supports_prompt_caching
+                                part,
+                                document_count,
+                                supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                             )
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         tool_result_content: list[Any] = []
-                        sibling_content: list[ContentBlockUnionTypeDef] = []
+                        colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
-                            'str' if profile.bedrock_tool_result_format == 'text' else 'jsonable'
+                            'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
                         for item in part.content_items(mode=content_mode):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
                                     raise UserError(
                                         f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
@@ -937,30 +1034,48 @@ class BedrockConverseModel(Model[BaseClient]):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
-                                if kind in profile.bedrock_supported_media_kinds_in_tool_returns:
+                                if kind in profile.get(
+                                    'bedrock_supported_media_kinds_in_tool_returns', frozenset({'image'})
+                                ):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                    sibling_content.append(file_block)
+                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    if kind in colocatable_content:
+                                        # This model allows the media alongside the `toolResult`; keep it in the same turn.
+                                        colocated_media_content.append(media_note)
+                                        colocated_media_content.append(file_block)
+                                    else:
+                                        # The media can't share the `toolResult`'s turn; defer it to a later user turn.
+                                        deferred_media_content.append(media_note)
+                                        deferred_media_content.append(file_block)
                             elif isinstance(item, str):
                                 tool_result_content.append({'text': item})
                             else:
                                 tool_result_content.append({'json': item})
+                        if not tool_result_content:
+                            tool_result_content.append(
+                                {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
+                            )
 
-                        user_content: list[ContentBlockUnionTypeDef] = [
+                        bedrock_messages.append(
                             {
-                                'toolResult': {
-                                    'toolUseId': part.tool_call_id,
-                                    'content': tool_result_content,
-                                    'status': 'success',
-                                }
+                                'role': 'user',
+                                'content': [
+                                    {
+                                        'toolResult': {
+                                            'toolUseId': part.tool_call_id,
+                                            'content': tool_result_content,
+                                            'status': 'success',
+                                        }
+                                    },
+                                    *colocated_media_content,
+                                ],
                             }
-                        ]
-                        user_content.extend(sibling_content)
-                        bedrock_messages.append({'role': 'user', 'content': user_content})
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
+                            flush_deferred_media()
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -981,6 +1096,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
@@ -989,7 +1105,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         if (
                             item.provider_name == self.system
                             and item.signature
-                            and profile.bedrock_send_back_thinking_parts
+                            and profile.get('bedrock_send_back_thinking_parts', False)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
@@ -1005,7 +1121,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.thinking_tags
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
@@ -1042,7 +1158,15 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 assert_never(message)
 
-        # Merge together sequential user messages.
+        # Flush any tool-return media that trails the conversation (the common case: history ends with
+        # tool returns and no following assistant turn).
+        flush_deferred_media()
+
+        # Merge together sequential user messages. Some models reject a user message that co-locates a
+        # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
+        # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
+        # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
+        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1051,11 +1175,24 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Add the new user content onto the existing user message.
-                last_content = list(last_message['content'])
-                last_content.extend(current_message['content'])
-                last_message['content'] = last_content
-                continue
+                merged_content = [*last_message['content'], *current_message['content']]
+                has_tool_result = any('toolResult' in block for block in merged_content)
+                has_non_colocatable = any(
+                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    for block in merged_content
+                )
+                if has_tool_result and has_non_colocatable:
+                    # The `toolResult` can't share this model's turn with the other content. Bedrock
+                    # re-merges consecutive same-role turns, so a bare split isn't enough; separate the
+                    # two user turns with a synthetic assistant turn. Several models reject whitespace-only
+                    # text, so use a period.
+                    processed_messages.append({'role': 'assistant', 'content': [{'text': '.'}]})
+                else:
+                    # Add the new user content onto the existing user message.
+                    last_content = list(last_message['content'])
+                    last_content.extend(current_message['content'])
+                    last_message['content'] = last_content
+                    continue
 
             # Add the entire message to the list of messages.
             processed_messages.append(current_message)
@@ -1068,7 +1205,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if (
             system_prompt
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
-            and profile.bedrock_supports_prompt_caching
+            and profile.get('bedrock_supports_prompt_caching', False)
         ):
             cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
             if instruction_parts and any(p.dynamic for p in instruction_parts):
@@ -1083,7 +1220,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 system_prompt.append(cache_point)
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
-            if profile.bedrock_supports_prompt_caching:
+            if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
                     # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
@@ -1091,12 +1228,17 @@ class BedrockConverseModel(Model[BaseClient]):
                         last_user_content, self._get_cache_point(cache_messages)
                     )
 
-        # Bedrock requires conversations to start with a user message.
-        # This can happen when there are no messages at all (only system prompt/instructions),
-        # or when message_history starts with an assistant response (e.g. from a previous
-        # system-prompt-only run). Prepend a synthetic user message in either case.
-        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
-        if not processed_messages or processed_messages[0]['role'] != 'user':
+        # Bedrock's Converse API requires at least one message, so an empty conversation (only a
+        # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
+        # families also reject a conversation that starts with an assistant turn (e.g. a
+        # `message_history` that begins with a `ModelResponse`) with "A conversation must start with
+        # a user message...", so we synthesize a leading user turn for them too. Anthropic and Qwen
+        # accept a leading assistant turn, so we leave their history untouched.
+        # Note: several models reject whitespace-only text, so we use a period.
+        if not processed_messages or (
+            processed_messages[0]['role'] != 'user'
+            and not profile.get('bedrock_supports_leading_assistant_message', False)
+        ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
@@ -1184,11 +1326,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if not item.file_id.startswith('s3://'):
                         raise UserError(
                             f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
@@ -1518,7 +1656,7 @@ def _is_thinking_enabled(
         if (
             (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
             and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') == 'enabled'
+            and thinking.get('type') in ('enabled', 'adaptive')
         ):
             return True
     return False
@@ -1535,7 +1673,7 @@ def _support_tool_forcing(
 
     Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
     """
-    if not profile.bedrock_supports_tool_choice:
+    if not profile.get('bedrock_supports_tool_choice', False):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(

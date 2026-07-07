@@ -169,9 +169,9 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 !!! warning "Trust model for file URLs"
     When URLs are forwarded to the provider, the provider fetches them under its own credentials. For cloud-storage schemes like `s3://` (Bedrock) and `gs://` (Google Cloud), those credentials are your server's IAM role or service account, so whoever controls the URL effectively controls what the provider can read on your behalf.
 
-    Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, convert references like `s3://bucket/key` into pre-signed `https://` URLs server-side before constructing the file URL part. `force_download=True` only works for `http(s)://` URLs (it routes through the library's HTTP client and applies SSRF protection); cloud-storage schemes like `s3://` and `gs://` aren't supported by the local download path and are forwarded to the provider as-is.
+    Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, convert references like `s3://bucket/key` into pre-signed `https://` URLs server-side before constructing the file URL part. `force_download=True` only works for `http(s)://` URLs (it routes through the library's HTTP client and applies SSRF protection); cloud-storage schemes like `s3://` and `gs://` aren't supported by the local download path and are forwarded to the provider as-is. Only use `force_download='allow-local'` for server-authored URLs, since it allows local network access.
 
-    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]. If you accept serialized `message_history` through a custom client API, use [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before passing that history to the agent.
 
 ## Uploaded Files
 
@@ -287,6 +287,12 @@ async def main():
 asyncio.run(main())
 ```
 
+!!! note "Referencing uploaded images"
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] can only reference uploaded *documents* by `file_id`. Referencing an uploaded image (an `image/*` media type) raises a [`UserError`][pydantic_ai.exceptions.UserError], because the Chat Completions API doesn't accept a `file_id` for image parts. Use [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent] for images, or use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which does support uploaded images.
+
+    With `OpenAIResponsesModel`, control the image [detail level](https://platform.openai.com/docs/guides/images-vision) by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the `UploadedFile`; it defaults to `'auto'`.
+    With `OpenAIChatModel`, `GroqModel`, `MistralModel`, and `XaiModel`, control the image detail level by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent]; it defaults to `'auto'`.
+
 ### Google
 
 Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
@@ -373,7 +379,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4-fast', provider=provider)
+    model = XaiModel('grok-4.3', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

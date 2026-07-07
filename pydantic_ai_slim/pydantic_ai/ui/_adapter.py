@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -16,26 +16,19 @@ from typing import (
     cast,
     runtime_checkable,
 )
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
-    BaseToolCallPart,
-    FileUrl,
+    ForceDownloadMode,
     ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    SystemPromptPart,
-    UserContent,
-    UserPromptPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -74,6 +67,32 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
+
+
+def resolve_allow_uploaded_files(
+    allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
+) -> bool:
+    """Map the deprecated `preserve_file_data` argument onto `allow_uploaded_files`.
+
+    Returns `allow_uploaded_files` unchanged when `preserve_file_data` is omitted (`None`).
+    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]
+    and returns its value. Used by adapters that exposed the old `preserve_file_data` argument for
+    honoring client-submitted uploaded files (now `allow_uploaded_files`).
+
+    `stacklevel` selects the frame the warning points at. The default `3` is right for the
+    `from_request`/`dispatch_request` classmethod paths (user → method → helper → `warn`). The
+    constructor path (`__post_init__`) has an extra generated-`__init__` frame in between
+    (user → `__init__` → `__post_init__` → helper → `warn`), so it passes `stacklevel=4`.
+    """
+    if preserve_file_data is None:
+        return allow_uploaded_files
+    warnings.warn(
+        '`preserve_file_data` is deprecated; use `allow_uploaded_files` to honor client-submitted '
+        'uploaded file references.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return preserve_file_data
 
 
 @runtime_checkable
@@ -166,7 +185,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     in client-submitted messages.
 
     Defaults to `{'http', 'https'}`. Parts whose URL scheme is not in this set are
-    dropped with a warning before the messages are passed to the agent.
+    dropped with a warning before the messages are passed to the agent. This applies
+    both to file URLs in user content and to those nested in tool return parts.
 
     Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Google Cloud) cause the model
     provider to fetch the object using the server-side IAM role or service account,
@@ -180,6 +200,48 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     frontend, add it to this set, e.g. `frozenset({'http', 'https', 's3'})`.
     """
 
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset()
+    """Additional [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values
+    allowed on [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages.
+
+    `False` (the safe default that the sanitizer resets to) is always permitted regardless of
+    whether it appears in this set. Values listed here are the *additional* `force_download`
+    values that are trusted from the client. Defaults to `frozenset()`, so by default both
+    `True` and `'allow-local'` are reset to `False` with a warning before the messages are
+    passed to the agent. This applies both to file URLs in user content and to those nested in
+    tool return parts.
+
+    `force_download=True` makes the server download the file itself instead of letting the
+    model provider fetch it. `force_download='allow-local'` additionally opts the URL out of
+    the SSRF private-IP block in [`download_item`][pydantic_ai.models.download_item], which
+    lets a client probe internal services. Neither is safe to honor from untrusted client
+    input by default.
+
+    To opt into a value after auditing your frontend, add it to this set, e.g.
+    `frozenset({True})` or `frozenset({True, 'allow-local'})`.
+    """
+
+    allow_uploaded_files: bool = False
+    """Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] references from
+    client-submitted messages.
+
+    Defaults to `False`. By default, `UploadedFile` items in client-submitted messages are
+    dropped with a warning before the messages are passed to the agent, mirroring how
+    [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] filters
+    [`FileUrl`][pydantic_ai.messages.FileUrl] parts. This applies both to uploaded files in
+    user content and to those nested in tool return parts.
+
+    Like a non-HTTP `FileUrl`, an `UploadedFile` references an object that the model provider
+    fetches using the server-side IAM role or service account, so a client that can supply
+    arbitrary file references can read anything that identity can reach. Uploaded files should
+    therefore only be accepted from trusted frontends.
+
+    Set to `True` to honor client-submitted uploaded files after auditing your frontend.
+
+    This is a purely inbound, security-oriented setting. It does not affect what the adapter
+    sends *to* the client: file content the agent produces is always serialized on the way out.
+    """
+
     @classmethod
     async def from_request(
         cls,
@@ -188,6 +250,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -201,6 +265,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -269,162 +335,40 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Called on the messages produced from the protocol-specific run input before
         they're passed to the agent. Caller-supplied `message_history` is not passed
-        through this method — it is trusted as coming from server-side persistence.
+        through this method — it is trusted as coming from server-side persistence. Use
+        [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before
+        passing `message_history` that came from an untrusted client.
 
-        Currently strips:
+        Delegates to
+        [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] — see its
+        docstring for the full list of what's stripped — with these adapter-specific settings:
 
-        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s when
-          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is
-          `'server'`. The agent's configured `system_prompt` is reinjected by
-          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on
-          the next model request. If stripping leaves a `ModelRequest` with no parts,
-          the request is dropped from history entirely.
-        - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
-          [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
-          Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
-          the object using the server-side IAM role, so they should only be accepted
-          from trusted frontends.
-        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
-          [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
-          the end of the history that don't have a matching entry in
-          `deferred_tool_results`. Tool calls are produced by the model on the server
-          side, so an unresolved tool call at the end of client-supplied history doesn't
-          correspond to a paused agent run and shouldn't be executed. Tool calls that
-          correspond to a resolution in `deferred_tool_results` are preserved so that
-          human-in-the-loop resumption continues to work. If stripping leaves the final
-          response with no parts, the response is dropped from history entirely.
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped only when
+          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is `'server'`,
+          and the agent's configured `system_prompt` is reinjected by
+          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on the next model
+          request.
+        - File URL schemes and `force_download` values are checked against
+          [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and
+          [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download],
+          and [`UploadedFile`][pydantic_ai.messages.UploadedFile]s are kept only when
+          [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is `True`.
+        - Tool calls at the end of the history are kept when they correspond to a resolution in
+          `deferred_tool_results`, so human-in-the-loop resumption continues to work.
         """
         resolved_tool_call_ids: set[str] = set()
         if deferred_tool_results is not None:
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        strip_system_prompt = self.manage_system_prompt == 'server'
-        stripped_system_prompt = False
-        disallowed_url_schemes: set[str] = set()
-        dangling_tool_call_names: list[str] = []
-        last_index = len(messages) - 1
-
-        sanitized: list[ModelMessage] = []
-        for index, message in enumerate(messages):
-            if isinstance(message, ModelRequest):
-                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
-                    message.parts, strip_system_prompt=strip_system_prompt, disallowed_schemes=disallowed_url_schemes
-                )
-                stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
-                if new_request_parts:
-                    sanitized.append(replace(message, parts=new_request_parts))
-                # Otherwise drop the request entirely so we don't leave an empty
-                # `ModelRequest(parts=[])` in history.
-            elif isinstance(message, ModelResponse) and index == last_index:
-                new_response_parts = self._sanitize_last_response_parts(
-                    message.parts,
-                    resolved_tool_call_ids=resolved_tool_call_ids,
-                    dangling_names=dangling_tool_call_names,
-                )
-                if new_response_parts:
-                    sanitized.append(replace(message, parts=new_response_parts))
-                # Otherwise drop the final response entirely so we don't leave an empty
-                # `ModelResponse(parts=[])` in history.
-            else:
-                sanitized.append(message)
-
-        if stripped_system_prompt:
-            warnings.warn(
-                "Client-submitted system prompts were stripped because `manage_system_prompt` is `'server'` "
-                "(the default). Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if disallowed_url_schemes:
-            warnings.warn(
-                f'Client-submitted file URLs with scheme(s) {sorted(disallowed_url_schemes)!r} '
-                f'were dropped because those schemes are not in `allowed_file_url_schemes` '
-                f'(currently {sorted(self.allowed_file_url_schemes)!r}). Non-HTTP schemes like '
-                f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
-                f'so they should only be accepted from trusted frontends. To allow a scheme, add it to '
-                f'`allowed_file_url_schemes` on the adapter.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if dangling_tool_call_names:
-            warnings.warn(
-                f'Client-submitted history ended with unresolved tool call(s) '
-                f'{sorted(set(dangling_tool_call_names))!r}, which were stripped. Tool calls are '
-                f'produced by the model on the server side, so an unresolved tool call at the end '
-                f'of client-supplied history does not correspond to a paused agent run. For '
-                f'human-in-the-loop resumption, pass matching `deferred_tool_results` to the run '
-                f'method.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        return sanitized
-
-    def _sanitize_request_parts(
-        self,
-        parts: Sequence[ModelRequestPart],
-        *,
-        strip_system_prompt: bool,
-        disallowed_schemes: set[str],
-    ) -> tuple[list[ModelRequestPart], bool]:
-        """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
-
-        `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
-        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped.
-        """
-        stripped_system_prompt = False
-        new_parts: list[ModelRequestPart] = []
-        for part in parts:
-            if strip_system_prompt and isinstance(part, SystemPromptPart):
-                stripped_system_prompt = True
-                continue
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                new_parts.append(replace(part, content=self._filter_user_content(part.content, disallowed_schemes)))
-            else:
-                new_parts.append(part)
-        return new_parts, stripped_system_prompt
-
-    def _filter_user_content(
-        self,
-        content: Sequence[UserContent],
-        disallowed_schemes: set[str],
-    ) -> list[UserContent]:
-        """Drop [`FileUrl`][pydantic_ai.messages.FileUrl] items whose scheme isn't in the allowlist.
-
-        `disallowed_schemes` is updated in place with any disallowed schemes encountered.
-        """
-        filtered: list[UserContent] = []
-        for item in content:
-            if isinstance(item, FileUrl):
-                scheme = urlparse(item.url).scheme.lower()
-                if scheme and scheme not in self.allowed_file_url_schemes:
-                    disallowed_schemes.add(scheme)
-                    continue
-            filtered.append(item)
-        return filtered
-
-    def _sanitize_last_response_parts(
-        self,
-        parts: Sequence[ModelResponsePart],
-        *,
-        resolved_tool_call_ids: set[str],
-        dangling_names: list[str],
-    ) -> list[ModelResponsePart]:
-        """Sanitize the parts of the trailing client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
-
-        Drops tool calls that aren't resolved by `deferred_tool_results`. `dangling_names`
-        is appended to with the names of any stripped calls.
-        """
-        new_parts: list[ModelResponsePart] = []
-        for part in parts:
-            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
-                dangling_names.append(part.tool_name)
-                continue
-            new_parts.append(part)
-        return new_parts
+        return sanitize_messages(
+            messages,
+            strip_system_prompts=self.manage_system_prompt == 'server',
+            allowed_file_url_schemes=self.allowed_file_url_schemes,
+            allowed_file_url_force_download=self.allowed_file_url_force_download,
+            allow_uploaded_files=self.allow_uploaded_files,
+            resolved_tool_call_ids=resolved_tool_call_ids,
+        )
 
     def transform_stream(
         self,
@@ -473,7 +417,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -496,13 +439,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
         """
-        from .. import _utils
-
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'UIAdapter.run_stream_native'
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
         if conversation_id is None:
@@ -536,8 +472,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
         if capabilities:
             run_capabilities.extend(capabilities)
-        if extra_capabilities:
-            run_capabilities.extend(extra_capabilities)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
             async with self.agent.run_stream_events(
@@ -555,8 +489,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=run_capabilities,
-            ) as stream:
-                async for event in stream:
+            ) as events:
+                async for event in events:
                     yield event
 
         return stream_events()
@@ -579,7 +513,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
 
@@ -604,9 +537,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
-        # Forward the legacy `builtin_tools=` kwarg through to `run_stream_native` for backward
-        # compatibility — its dedicated helper will emit a deprecation warning and route
-        # the items through capabilities.
         return self.transform_stream(
             self.run_stream_native(
                 output_type=output_type,
@@ -623,7 +553,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=capabilities,
-                **_deprecated_kwargs,
             ),
             on_complete=on_complete,
         )
@@ -651,6 +580,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -684,17 +615,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+            allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
+                the client (beyond `False`, which is always allowed). See
+                [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
+            allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
+                [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
-        # Extract the legacy `builtin_tools=` kwarg from `**kwargs` before passing the rest to
-        # `from_request`, so subclasses receive only their own adapter-specific extras.
-        legacy_builtin_tools_kwargs: dict[str, Any] = {}
-        if 'builtin_tools' in kwargs:
-            legacy_builtin_tools_kwargs['builtin_tools'] = kwargs.pop('builtin_tools')
-
         try:
             from starlette.responses import Response
         except ImportError as e:  # pragma: no cover
@@ -712,6 +642,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     allowed_file_url_schemes=allowed_file_url_schemes,
+                    allowed_file_url_force_download=allowed_file_url_force_download,
+                    allow_uploaded_files=allow_uploaded_files,
                     **kwargs,
                 ),
             )
@@ -739,6 +671,5 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 toolsets=toolsets,
                 capabilities=capabilities,
                 on_complete=on_complete,
-                **legacy_builtin_tools_kwargs,
             ),
         )

@@ -29,7 +29,7 @@ class JsonSchemaTransformer(ABC):
         *,
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
-        simplify_nullable_unions: bool = False,  # TODO (v2): Remove this, no longer used
+        simplify_nullable_unions: bool = False,
     ):
         self.schema = schema
 
@@ -161,7 +161,6 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
@@ -177,7 +176,6 @@ class JsonSchemaTransformer(ABC):
 
     @staticmethod
     def _simplify_nullable_union(cases: list[_JsonSchemaNode]) -> list[_JsonSchemaNode]:
-        # TODO (v2): Remove this method, no longer used
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(

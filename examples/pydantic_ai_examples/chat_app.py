@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -159,9 +159,9 @@ class Database:
     @asynccontextmanager
     async def connect(
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
-    ) -> AsyncIterator[Database]:
+    ) -> AsyncGenerator[Database]:
         with logfire.span('connect to DB'):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             executor = ThreadPoolExecutor(max_workers=1)
             con = await loop.run_in_executor(executor, cls._connect, file)
             slf = cls(con, loop, executor)

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -26,7 +26,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.bedrock import (
         BEDROCK_GEO_PREFIXES,
         BedrockJsonSchemaTransformer,
-        BedrockModelProfile,
         BedrockProvider,
         remove_bedrock_geo_prefix,
     )
@@ -101,165 +100,200 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-3-5-sonnet-20240620-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert anthropic_profile.bedrock_supports_tool_choice is True
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_tool_choice', False) is True
     # claude-3-5-sonnet predates Anthropic's native structured output support
-    assert anthropic_profile.supports_json_schema_output is False
-    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
-    assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert anthropic_profile.supported_native_tools == frozenset()
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert anthropic_profile.bedrock_supports_tool_choice is True
-    assert anthropic_profile.supports_json_schema_output is True
-    assert anthropic_profile.bedrock_supports_strict_tool_definition is True
-    assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert anthropic_profile.supported_native_tools == frozenset()
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_tool_choice', False) is True
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    # Anthropic on Bedrock accepts a leading assistant turn, so we skip the synthetic user prepend.
+    assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
+    assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Anthropic rejects documents/video co-located with a `toolResult`, but accepts text and images.
+    assert anthropic_profile.get('bedrock_tool_result_colocatable_content') == frozenset({'text', 'image'})
+    # Anthropic accepts images and documents inside a `toolResult`; no video support.
+    assert anthropic_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'image', 'document'})
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert anthropic_profile.bedrock_supports_tool_choice is True
-    assert anthropic_profile.supports_json_schema_output is False
-    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
-    assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert anthropic_profile.supported_native_tools == frozenset()
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_tool_choice', False) is True
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-1-20250805-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-1-20250805')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert anthropic_profile.supports_json_schema_output is False
-    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
     # Pre-4.6 Claude on Bedrock keeps the legacy `enabled + budget_tokens` translation.
-    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
-    assert anthropic_profile.bedrock_supports_effort is False
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-7-20260115-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-7-20260115')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert isinstance(anthropic_profile, dict)
     # Sonnet 4.5 is the most-recent non-adaptive model — the boundary case users compare
     # against Sonnet 4.6 when evaluating this fix.
-    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
-    assert anthropic_profile.bedrock_supports_effort is False
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert isinstance(anthropic_profile, dict)
     # Opus 4.5 supports `effort` on the direct Anthropic API but Bedrock only honors it
     # alongside adaptive thinking, so the Bedrock flag must stay False here.
-    assert anthropic_profile.bedrock_supports_adaptive_thinking is False
-    assert anthropic_profile.bedrock_supports_effort is False
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is False
+    assert anthropic_profile.get('bedrock_supports_effort', False) is False
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-6-20251015-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-6-20251015')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert isinstance(anthropic_profile, dict)
     # Sonnet 4.6+ requires adaptive thinking on Bedrock — see issue #5304.
-    assert anthropic_profile.bedrock_supports_adaptive_thinking is True
-    assert anthropic_profile.bedrock_supports_effort is True
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-6-20251015-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-6-20251015')
-    assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert anthropic_profile.bedrock_supports_adaptive_thinking is True
-    assert anthropic_profile.bedrock_supports_effort is True
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
-    assert isinstance(mistral_profile, BedrockModelProfile)
-    assert mistral_profile.bedrock_tool_result_format == 'json'
-    assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert mistral_profile.supports_json_schema_output is False
-    assert mistral_profile.bedrock_supports_strict_tool_definition is False
-    assert mistral_profile.supported_native_tools == frozenset()
+    assert isinstance(mistral_profile, dict)
+    assert mistral_profile.get('bedrock_tool_result_format', 'text') == 'json'
+    assert mistral_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert mistral_profile.get('supports_json_schema_output', False) is False
+    assert mistral_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert mistral_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Mistral requires a `toolResult` to be alone in its turn.
+    assert mistral_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
+    # Mistral accepts documents inside a `toolResult` but rejects images there; no video support.
+    assert mistral_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'document'})
 
     mistral_profile = provider.model_profile('mistral.mistral-large-3-675b-instruct')
     mistral_model_profile_mock.assert_called_with('mistral-large-3-675b-instruct')
-    assert isinstance(mistral_profile, BedrockModelProfile)
-    assert mistral_profile.bedrock_tool_result_format == 'json'
-    assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert mistral_profile.supports_json_schema_output is True
-    assert mistral_profile.bedrock_supports_strict_tool_definition is True
-    assert mistral_profile.supported_native_tools == frozenset()
+    assert isinstance(mistral_profile, dict)
+    assert mistral_profile.get('bedrock_tool_result_format', 'text') == 'json'
+    assert mistral_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert mistral_profile.get('supports_json_schema_output', False) is True
+    assert mistral_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    assert mistral_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')
     meta_model_profile_mock.assert_called_with('llama3-8b-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert meta_profile.supported_native_tools == frozenset()
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    # Meta Llama rejects a leading assistant turn, so the strict default applies (flag unset).
+    assert meta_profile.get('bedrock_supports_leading_assistant_message', False) is False
+    assert meta_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Llama requires a `toolResult` to be alone in its turn.
+    assert meta_profile.get('bedrock_tool_result_colocatable_content') == frozenset()
+    # Meta Llama accepts images and documents inside a `toolResult`; no video support.
+    assert meta_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset({'image', 'document'})
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
     assert cohere_profile is not None
-    assert cohere_profile.supported_native_tools == frozenset()
+    assert cohere_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.ignore_streamed_leading_whitespace is True
-    assert deepseek_profile.supported_native_tools == frozenset()
+    assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert deepseek_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
     qwen_model_profile_mock.assert_called_with('qwen3-32b')
-    assert isinstance(qwen_profile, BedrockModelProfile)
-    assert qwen_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert qwen_profile.supports_json_schema_output is True
-    assert qwen_profile.bedrock_supports_strict_tool_definition is True
-    assert qwen_profile.supported_native_tools == frozenset()
+    assert isinstance(qwen_profile, dict)
+    assert qwen_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert qwen_profile.get('supports_json_schema_output', False) is True
+    assert qwen_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    # Qwen on Bedrock also accepts a leading assistant turn.
+    assert qwen_profile.get('bedrock_supports_leading_assistant_message', False) is True
+    assert qwen_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Qwen rejects every media kind inside a `toolResult`.
+    assert qwen_profile.get('bedrock_supported_media_kinds_in_tool_returns') == frozenset()
 
     google_profile = provider.model_profile('google.gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
-    assert isinstance(google_profile, BedrockModelProfile)
-    assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert google_profile.supports_json_schema_output is True
-    assert google_profile.bedrock_supports_strict_tool_definition is True
-    assert google_profile.supported_native_tools == frozenset()
+    assert isinstance(google_profile, dict)
+    assert google_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert google_profile.get('supports_json_schema_output', False) is True
+    assert google_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    assert google_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     # gemma-3-4b-it is NOT in the structured output supported list
     google_profile = provider.model_profile('google.gemma-3-4b-it')
     google_model_profile_mock.assert_called_with('gemma-3-4b-it')
-    assert isinstance(google_profile, BedrockModelProfile)
-    assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert google_profile.supports_json_schema_output is False
-    assert google_profile.bedrock_supports_strict_tool_definition is False
-    assert google_profile.supported_native_tools == frozenset()
+    assert isinstance(google_profile, dict)
+    assert google_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert google_profile.get('supports_json_schema_output', False) is False
+    assert google_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert google_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     minimax_profile = provider.model_profile('minimax.minimax-m2')
-    assert isinstance(minimax_profile, BedrockModelProfile)
-    assert minimax_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert minimax_profile.supports_json_schema_output is True
-    assert minimax_profile.bedrock_supports_strict_tool_definition is True
-    assert minimax_profile.supported_native_tools == frozenset()
+    assert isinstance(minimax_profile, dict)
+    assert minimax_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert minimax_profile.get('supports_json_schema_output', False) is True
+    assert minimax_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    assert minimax_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     nvidia_profile = provider.model_profile('nvidia.nemotron-nano-12b-v2')
-    assert isinstance(nvidia_profile, BedrockModelProfile)
-    assert nvidia_profile.json_schema_transformer is BedrockJsonSchemaTransformer
-    assert nvidia_profile.supports_json_schema_output is True
-    assert nvidia_profile.bedrock_supports_strict_tool_definition is True
-    assert nvidia_profile.supported_native_tools == frozenset()
+    assert isinstance(nvidia_profile, dict)
+    assert nvidia_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert nvidia_profile.get('supports_json_schema_output', False) is True
+    assert nvidia_profile.get('bedrock_supports_strict_tool_definition', False) is True
+    assert nvidia_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
-    assert isinstance(amazon_profile, BedrockModelProfile)
-    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert amazon_profile.bedrock_supports_tool_choice is True
-    assert amazon_profile.bedrock_supports_prompt_caching is True
-    assert amazon_profile.supported_native_tools == frozenset()
+    assert isinstance(amazon_profile, dict)
+    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.get('bedrock_supports_tool_choice', False) is True
+    assert amazon_profile.get('bedrock_supports_prompt_caching', False) is True
+    # Nova rejects a leading assistant turn, so the strict default (synthesize a user prepend) applies.
+    assert amazon_profile.get('bedrock_supports_leading_assistant_message', False) is False
+    assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    # Nova has no `toolResult` co-location constraint, so it keeps the permissive default (unset).
+    assert amazon_profile.get('bedrock_tool_result_colocatable_content') is None
+    # Nova stays at the default (unset) media kinds: its constraint is document-format-dependent
+    # (accepts csv/txt but not pdf/docx inside a `toolResult`), which this kind-based flag can't express.
+    assert amazon_profile.get('bedrock_supported_media_kinds_in_tool_returns') is None
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-2-lite')
-    assert isinstance(amazon_profile, BedrockModelProfile)
-    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert amazon_profile.bedrock_supports_tool_choice is True
-    assert amazon_profile.bedrock_supports_prompt_caching is True
-    assert amazon_profile.supported_native_tools == frozenset({CodeExecutionTool})
+    assert isinstance(amazon_profile, dict)
+    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.get('bedrock_supports_tool_choice', False) is True
+    assert amazon_profile.get('bedrock_supports_prompt_caching', False) is True
+    assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset({CodeExecutionTool})
 
     amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')
     amazon_model_profile_mock.assert_called_with('titan-text-express')
     assert amazon_profile is not None
-    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert amazon_profile.supported_native_tools == frozenset()
+    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
     unknown_model = provider.model_profile('unknown-model')
     assert unknown_model is None
@@ -364,7 +398,7 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
 
 
 def test_strict_true_simple_schema():
-    """With strict=True, simple schemas are returned (no-op transform), is_strict_compatible=True."""
+    """With strict=True, simple object schemas get Bedrock-required additionalProperties=false."""
 
     class Person(BaseModel):
         name: str
@@ -480,7 +514,12 @@ def test_strict_false_preserves_schema():
 
 
 def test_strict_none_preserves_schema():
-    """With strict=None (default), schema is preserved, is_strict_compatible=True when compatible."""
+    """With strict=None, strict-mode rewrites are skipped and is_strict_compatible=False.
+
+    Mirrors Anthropic: strict=None never auto-promotes to True — the caller must opt in
+    explicitly. See https://github.com/pydantic/pydantic-ai/issues/5579. `title` and
+    `$schema` are still stripped (always-on transformer behavior).
+    """
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
@@ -489,7 +528,7 @@ def test_strict_none_preserves_schema():
     transformer = BedrockJsonSchemaTransformer(User.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is True
+    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',
@@ -498,13 +537,12 @@ def test_strict_none_preserves_schema():
                 'age': {'type': 'integer'},
             },
             'required': ['username', 'age'],
-            'additionalProperties': False,
         }
     )
 
 
 def test_strict_none_simple_schema():
-    """With strict=None, simple schemas are strict-compatible."""
+    """With strict=None, even simple schemas are not strict-compatible — opt-in required."""
 
     class Person(BaseModel):
         name: str
@@ -513,22 +551,20 @@ def test_strict_none_simple_schema():
     transformer = BedrockJsonSchemaTransformer(Person.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is True
+    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',
             'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
             'required': ['name', 'age'],
-            'additionalProperties': False,
         }
     )
 
 
-def test_strict_none_incompatible_schema_disables_auto_strict():
-    """With strict=None and constrained fields, is_strict_compatible=False.
+def test_strict_none_never_strict_compatible():
+    """With strict=None and constrained fields, is_strict_compatible=False and constraints survive.
 
-    This ensures strict is NOT auto-enabled for tools with constrained schemas,
-    mirroring the Anthropic test_strict_tools_incompatible_schema_not_auto_enabled.
+    Mirrors the Anthropic transformer's stance — strict=None is never auto-promoted.
     """
 
     class ConstrainedInput(BaseModel):
@@ -548,7 +584,6 @@ def test_strict_none_incompatible_schema_disables_auto_strict():
                 'count': {'minimum': 0, 'type': 'integer'},
             },
             'required': ['username', 'count'],
-            'additionalProperties': False,
         }
     )
 
@@ -875,6 +910,5 @@ def test_strict_none_preserves_numeric_constraints():
                 'score': {'type': 'number', 'minimum': 0.0, 'maximum': 100.0},
             },
             'required': ['score'],
-            'additionalProperties': False,
         }
     )
