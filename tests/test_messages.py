@@ -41,8 +41,11 @@ from pydantic_ai import (
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    AgentStreamEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
@@ -754,6 +757,18 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
+
+
+def test_agent_stream_lifecycle_event_discriminators_round_trip():
+    event_ta = TypeAdapter(AgentStreamEvent)
+
+    start_event = event_ta.validate_python({'event_kind': 'model_response_start', 'response': {'parts': []}})
+    assert isinstance(start_event, ModelResponseStartEvent)
+    assert isinstance(event_ta.validate_json(event_ta.dump_json(start_event)), ModelResponseStartEvent)
+
+    end_event = event_ta.validate_python({'event_kind': 'model_response_end', 'response': {'parts': []}})
+    assert isinstance(end_event, ModelResponseEndEvent)
+    assert isinstance(event_ta.validate_json(event_ta.dump_json(end_event)), ModelResponseEndEvent)
 
 
 def test_model_response_convenience_methods():
