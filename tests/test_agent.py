@@ -10711,6 +10711,9 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
 def test_agent_override_native_tools_preserves_dynamic_capability_tools():
     """Native tools that only materialize in `for_run` (here from a capability function) are
     preserved under `override(native_tools=...)`, which replaces only the agent's baseline tools.
+
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
     """
     model = TestModel()
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])

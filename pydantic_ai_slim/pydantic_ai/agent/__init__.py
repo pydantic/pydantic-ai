@@ -1245,26 +1245,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
 
+        # The capability layers resolved for this run: the base, then the extras. The
+        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves.
+        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
+            run_layers.insert(0, instrumentation_cap)
+
         # Per-run capability: resolve `for_run` exactly once per capability (it's documented as
         # called once per run and may have per-run side effects), keeping the resolved extras
-        # separate so `override(native_tools=...)` below can see native tools that only
+        # addressable so `override(native_tools=...)` below can see native tools that only
         # materialize at resolution time, e.g. from a capability function's returned capability.
         # `CombinedCapability` auto-flattens its input, so composing from the resolved pieces
         # yields the same structure as resolving a pre-composed tree.
-        resolved_base, *resolved_extras = await _utils.gather(
-            base_capability.for_run(initial_ctx), *(cap.for_run(initial_ctx) for cap in extra_capabilities)
-        )
-        if resolved_extras:
-            run_capability = CombinedCapability([resolved_base, *resolved_extras])
+        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        if len(resolved_layers) > 1:
+            run_capability = CombinedCapability(resolved_layers)
         else:
-            run_capability = resolved_base
-
-        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves.
-        if instrumentation_cap is not None and not has_capability_type(
-            [base_capability, *extra_capabilities], InstrumentationCap
-        ):
-            run_capability = CombinedCapability([await instrumentation_cap.for_run(initial_ctx), run_capability])
+            run_capability = resolved_layers[0]
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run
         capabilities_dict = _build_run_capabilities(run_capability)
