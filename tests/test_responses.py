@@ -651,11 +651,9 @@ async def test_handle_request_supports_per_request_deps():
 async def test_usage_limits_on_to_openai_responses():
     """Fixed-config apps can enforce usage limits across the server-side tool loop."""
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            yield 'done'
-        else:
-            yield {0: DeltaToolCall(name='get_weather', json_args='{"city":"Paris"}', tool_call_id='call_1')}
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        # `request_limit=1` trips before a second request, so the model only ever sees the first turn.
+        yield {0: DeltaToolCall(name='get_weather', json_args='{"city":"Paris"}', tool_call_id='call_1')}
 
     agent = Agent(FunctionModel(stream_function=stream))
 
