@@ -48,8 +48,6 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
-from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
-
 with try_import() as anthropic_imports:
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
