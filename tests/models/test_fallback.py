@@ -34,7 +34,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.fallback import FallbackModel, ResponseRejected, _stamp_continuation
+from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
@@ -2196,10 +2196,10 @@ class _ContinuationModel(Model):
     _inner: FunctionModel
     _stream_state: list[ModelResponseState] = field(default_factory=list[ModelResponseState])
     _stream_call_index: int = field(default=0)
-    _cancelled: list[ModelResponse] = field(default_factory=list['ModelResponse'])
+    cancelled: list[ModelResponse] = field(default_factory=list['ModelResponse'])
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        self._cancelled.append(response)
+        self.cancelled.append(response)
 
     async def request(  # pragma: no cover
         self,
@@ -2300,18 +2300,25 @@ async def test_fallback_cancel_suspended_response_resolves_pin_regardless_of_sta
     resolving the pin must not require `state == 'suspended'`, or the pinned model's server-side job
     (e.g. an OpenAI background run) would be left running.
     """
-    primary = _ContinuationModel(_inner=FunctionModel(success_response, model_name='primary'))
+
+    def suspend(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    primary = _ContinuationModel(_inner=FunctionModel(suspend, model_name='primary'))
     secondary = _ContinuationModel(_inner=FunctionModel(success_response, model_name='fallback'))
     model = FallbackModel(primary, secondary)
 
-    # The composite reports `'interrupted'` on cancel, yet the continuation pin still points at `primary`.
-    response = ModelResponse(parts=[TextPart('paused')], state='interrupted')
-    _stamp_continuation(response, primary)
+    # Drive a real request so `FallbackModel` stamps the continuation pin onto the suspended response,
+    # then simulate the terminal state the streamed composite reports once cancellation unwinds.
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    suspended = await model.request(messages, None, ModelRequestParameters())
+    assert suspended.state == 'suspended'
+    response = dataclasses.replace(suspended, state='interrupted')
 
     await model.cancel_suspended_response(response)
 
-    assert primary._cancelled == [response]
-    assert secondary._cancelled == []
+    assert primary.cancelled == [response]
+    assert secondary.cancelled == []
 
 
 async def test_fallback_streaming_pinned_continuation_still_continuing() -> None:
