@@ -254,9 +254,10 @@ Key facts for building realtime agents:
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Query capabilities before calling capability-gated methods**: `model.capabilities` (a
-  `RealtimeCapabilities`) reports `manual_turn_control`, `interruption`, `image_input`, and
-  `session_seeding`. OpenAI supports all four; Gemini Live lacks `manual_turn_control` and
-  `interruption` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+  `RealtimeCapabilities`) reports `manual_turn_control`, `interruption`, `image_input`,
+  `output_truncation`, and `session_seeding`. OpenAI supports all of these; Gemini Live lacks
+  `manual_turn_control`, `interruption`, and `output_truncation` (automatic VAD only). Calling an
+  unsupported method raises `UserError` up front.
 - **Slow tools**: pass `background_tools={'name'}` so the model keeps speaking while a tool runs.
 
 See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.

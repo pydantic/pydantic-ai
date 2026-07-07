@@ -170,6 +170,7 @@ class RealtimeSession:
         audio_retention: AudioRetention = 'transcript_only',
         message_history: Sequence[ModelMessage] | None = None,
         capabilities: RealtimeCapabilities | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
@@ -178,6 +179,7 @@ class RealtimeSession:
         self._capabilities = capabilities if capabilities is not None else _ALL_CAPABILITIES
         self._model_name = model_name
         self._agent_name = agent_name
+        self._conversation_id = conversation_id
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
         self._retain_input = audio_retention in ('input', 'both')
@@ -469,8 +471,12 @@ class RealtimeSession:
             return self._handle_input_transcript(event.text, event.is_final)
         if isinstance(event, TurnComplete):
             return self._handle_turn_complete(event)
-        # The remaining control-plane events pass through unchanged. (`ToolCall` and `SessionUsage`
-        # never reach here — `_handle_pump_event` handles them before delegating.)
+        # The remaining control-plane events pass through unchanged. This narrows with an explicit
+        # `assert isinstance(...)` rather than `assert_never`: the `RealtimeEvent` union is only
+        # *partially* consumed here. `ToolCall` and `SessionUsage` are peeled off at runtime by
+        # `_handle_pump_event` before it delegates (the type checker still sees them in `event`'s
+        # type), and the content events above are removed by the preceding `isinstance` checks. So
+        # `event` isn't statically `Never`; we assert the concrete residual set instead.
         assert isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError))
         return [event]
 
@@ -489,6 +495,10 @@ class RealtimeSession:
             attributes['gen_ai.request.model'] = self._model_name
         if self._agent_name:
             attributes['gen_ai.agent.name'] = self._agent_name
+        if self._conversation_id:
+            # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
+            # realtime session can be correlated with other runs sharing the conversation id.
+            attributes['gen_ai.conversation.id'] = self._conversation_id
         span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
         with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
             try:

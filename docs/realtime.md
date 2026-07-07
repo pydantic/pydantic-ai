@@ -198,6 +198,10 @@ the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent
 | `'output'` | The model's spoken audio. |
 | `'both'` | Both sides' audio. |
 
+Retained audio is kept on the history parts, but when you [hand off](#delegating-to-a-text-agent) to a
+standard model it is currently forwarded as the transcript text, not the audio itself: audio
+forwarding requires the target model's profile to declare audio-input support, which none do yet.
+
 ## Configuring the session
 
 Session behaviour is configured on the provider model. For OpenAI, on
@@ -215,8 +219,9 @@ model = OpenAIRealtimeModel(
 )
 ```
 
-`tool_choice` and `parallel_tool_calls` are read from `model_settings` passed to
-`realtime_session`. (GA realtime sessions have no `temperature`, so it is not forwarded.)
+`tool_choice`, `parallel_tool_calls`, and `max_tokens` (forwarded as the session's
+`max_output_tokens`) are read from `model_settings` passed to `realtime_session`. (GA realtime
+sessions have no `temperature`, so it is not forwarded.)
 
 ### Gemini configuration
 
@@ -480,8 +485,10 @@ async with agent.realtime_session(
 
 Realtime sessions emit OpenTelemetry spans when the agent is instrumented — call
 `logfire.instrument_pydantic_ai()` (or set `instrument=True` on the agent). You get a session span
-carrying cumulative usage and, when `include_content` is enabled, the conversation transcript, with
-an `execute_tool` span per tool call (including any delegated text-agent run) nested underneath. See
+carrying cumulative usage and, when `include_content` is enabled, the conversation transcript.
+Nested under it, each assistant response gets a `chat {model}` span (mirroring a classic model
+request: that response's input/output messages and per-turn usage), and each tool call an
+`execute_tool` span (including any delegated text-agent run). See
 [Debugging and monitoring](logfire.md).
 
 ```python {test="skip" lint="skip"}

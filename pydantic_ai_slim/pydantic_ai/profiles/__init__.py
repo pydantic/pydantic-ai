@@ -78,6 +78,10 @@ class ModelProfile(TypedDict, total=False):
     Used when converting `SpeechPart`s from realtime session history in
     `Model.prepare_messages`: if `True`, retained audio is sent to the model as `BinaryContent`;
     otherwise the transcript text is used.
+
+    No shipping profile sets this to `True` yet, so retained realtime audio is currently always
+    forwarded as transcript text on handoff; enabling it needs per-model-family verification that the
+    provider accepts audio in user messages.
     """
 
     supports_inline_system_prompts: bool

@@ -1,13 +1,7 @@
-"""Realtime test configuration.
-
-`test_finance_demo.py` imports the `pydantic_ai_examples` package, which isn't installed in the main
-test environment (examples are import-checked separately via `tests/import_examples.py`). Skip
-collecting it unless that package is available, so the unit-test job doesn't error on import.
-"""
+"""Realtime test configuration."""
 
 from __future__ import annotations as _annotations
 
-import importlib.util
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,11 +21,6 @@ with try_import() as xai_imports_successful:
 
 if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
-
-collect_ignore: list[str] = []
-
-if importlib.util.find_spec('pydantic_ai_examples') is None:
-    collect_ignore.append('test_finance_demo.py')
 
 CASSETTES_DIR = Path(__file__).parent / 'cassettes'
 

@@ -2711,6 +2711,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage if usage is not None else _usage.RunUsage(),
             model_settings=None,
             conversation_id=conversation_id,
+            # A realtime session has no run identity yet (`run_id` stays unset); it gains one once
+            # exchange-level hooks land and each exchange becomes an addressable unit.
             max_retries=self._max_tool_retries,
         )
 
@@ -2761,6 +2763,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         session_instrumentation = find_capability([effective_capability], InstrumentationCap)
         session_instrumentation_settings = (
             session_instrumentation.settings if session_instrumentation is not None else None
+        )
+
+        # Mirror `iter`'s `RunContext`: expose the resolved tracer (a `NoOpTracer` when uninstrumented)
+        # and content-tracing flag so tool spans and capability hooks see the same instrumentation the
+        # session span uses.
+        run_context.tracer = (
+            session_instrumentation_settings.tracer if session_instrumentation_settings is not None else NoOpTracer()
+        )
+        run_context.trace_include_content = (
+            session_instrumentation_settings is not None and session_instrumentation_settings.include_content
         )
 
         run_capability = await effective_capability.for_run(run_context)
@@ -2845,6 +2857,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     audio_retention=audio_retention,
                     message_history=message_history,
                     capabilities=model_capabilities,
+                    conversation_id=conversation_id,
                 )
 
     async def __aenter__(self) -> Self:

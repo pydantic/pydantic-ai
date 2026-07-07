@@ -373,6 +373,30 @@ async def test_include_content_false_omits_transcript_messages() -> None:
     assert 'gen_ai.input.messages' not in sess.attributes
 
 
+async def test_session_span_sets_conversation_id() -> None:
+    # `conversation_id` lands on the session span under the same key the classic agent-run span uses
+    # (`gen_ai.conversation.id`), so a realtime session can be correlated with other runs.
+    settings, exporter = _settings()
+    agent = _weather_agent()
+    agent.instrument = settings
+    conn = _Connection([TurnComplete()])
+    async with agent.realtime_session(model=_Model(conn), conversation_id='conv-123') as session:
+        _ = [e async for e in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == 'conv-123'
+
+
+async def test_session_span_omits_conversation_id_when_unset() -> None:
+    settings, exporter = _settings()
+    conn = _Connection([TurnComplete()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = [e async for e in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
+    assert sess.attributes is not None
+    assert 'gen_ai.conversation.id' not in sess.attributes
+
+
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
     conn = _Connection([TurnComplete()])  # no model/agent name, no Usage event
