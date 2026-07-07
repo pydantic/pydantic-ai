@@ -72,6 +72,52 @@ async def test_init_with_http_client():
         assert provider.client._client == http_client  # type: ignore
 
 
+async def test_init_with_http_client_preserves_existing_event_hooks():
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async def existing_response_hook(response: httpx.Response) -> None:
+        response.headers['X-Existing-Response-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(
+        event_hooks={'request': [existing_request_hook], 'response': [existing_response_hook]}
+    ) as http_client:
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+        assert provider.client._client == http_client  # type: ignore
+        assert existing_request_hook in http_client.event_hooks['request']
+        assert existing_response_hook in http_client.event_hooks['response']
+
+        request = httpx.Request('GET', provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer foobar'
+
+
+async def test_init_with_http_client_replaces_existing_gateway_hook():
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
+        first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
+        second_provider = gateway_provider(
+            'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
+        )
+
+        assert first_provider.client._client == http_client  # type: ignore
+        assert second_provider.client._client == http_client  # type: ignore
+        assert http_client.event_hooks['request'][0] == existing_request_hook
+        assert len(http_client.event_hooks['request']) == 2
+
+        request = httpx.Request('GET', second_provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer second'
+
+
 @pytest.fixture
 def gateway_api_key():
     return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')

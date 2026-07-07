@@ -12,6 +12,8 @@ import httpx
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
+_GATEWAY_REQUEST_HOOK = '_pydantic_ai_gateway_request_hook'
+
 if TYPE_CHECKING:
     from botocore.client import BaseClient
     from google.genai import Client as GoogleClient
@@ -167,11 +169,11 @@ def gateway_provider(
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
-    http_client.event_hooks = {'request': [_request_hook(api_key)]}
+    _add_request_hook(http_client, _request_hook(api_key))
 
     def _http_client_factory() -> httpx.AsyncClient:
         client = create_async_http_client()
-        client.event_hooks = {'request': [_request_hook(api_key)]}
+        _add_request_hook(client, _request_hook(api_key))
         return client
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
@@ -227,7 +229,21 @@ def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Req
 
         return request
 
+    setattr(_hook, _GATEWAY_REQUEST_HOOK, True)
     return _hook
+
+
+def _add_request_hook(
+    http_client: httpx.AsyncClient, hook: Callable[[httpx.Request], Awaitable[httpx.Request]]
+) -> None:
+    """Add a request hook without replacing caller-provided HTTPX hooks."""
+    request_hooks = [
+        existing_hook
+        for existing_hook in http_client.event_hooks.setdefault('request', [])
+        if not getattr(existing_hook, _GATEWAY_REQUEST_HOOK, False)
+    ]
+    request_hooks.append(hook)
+    http_client.event_hooks['request'] = request_hooks
 
 
 def _merge_url_path(base_url: str, path: str) -> str:
