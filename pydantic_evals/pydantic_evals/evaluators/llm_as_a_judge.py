@@ -35,7 +35,7 @@ class GradingOutput(BaseModel, populate_by_name=True):
 
 
 _JUDGE_REASON_INSTRUCTION = (
-    'The "reason" field must be a concise 1-2 sentence justification. '
+    '\nThe "reason" field must be a concise 1-2 sentence justification. '
     'Do not include your reasoning process, self-corrections, or re-checking in the reason. '
     'State only the final justification.'
 )
@@ -44,22 +44,21 @@ _JUDGE_REASON_INSTRUCTION = (
 _judge_output_agent = Agent(
     name='judge_output',
     system_prompt=dedent(
-        f"""
-        You are grading output according to a user-specified rubric. If the statement in the rubric is true, then the output passes the test. You respond with a JSON object with this structure: {{reason: string, pass: boolean, score: number}}
-
-        {_JUDGE_REASON_INSTRUCTION}
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
 
         Examples:
 
         <Output>Hello world</Output>
         <Rubric>Content contains a greeting</Rubric>
-        {{"reason": "the content contains the word 'Hello'", "pass": true, "score": 1.0}}
+        {"reason": "the content contains the word 'Hello'", "pass": true, "score": 1.0}
 
         <Output>Avast ye swabs, repel the invaders!</Output>
         <Rubric>Does not speak like a pirate</Rubric>
-        {{"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}}
+        {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -84,24 +83,23 @@ async def judge_output(
 _judge_input_output_agent = Agent(
     name='judge_input_output',
     system_prompt=dedent(
-        f"""
-        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided input and output, then the output passes the test. You respond with a JSON object with this structure: {{reason: string, pass: boolean, score: number}}
-
-        {_JUDGE_REASON_INSTRUCTION}
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided input and output, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
 
         Examples:
 
         <Input>Hello world</Input>
         <Output>Hello</Output>
         <Rubric>Content contains a greeting word which is present in the input</Rubric>
-        {{"reason": "the content contains the word 'Hello'", "pass": true, "score": 1.0}}
+        {"reason": "the content contains the word 'Hello'", "pass": true, "score": 1.0}
 
         <Input>Pirate</Input>
         <Output>Avast ye swabs, repel the invaders!</Output>
         <Rubric>Does not speak in the style described by the input</Rubric>
-        {{"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}}
+        {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -128,10 +126,8 @@ async def judge_input_output(
 _judge_input_output_expected_agent = Agent(
     name='judge_input_output_expected',
     system_prompt=dedent(
-        f"""
-        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided input, expected output, and output, then the output passes the test. You respond with a JSON object with this structure: {{reason: string, pass: boolean, score: number}}
-
-        {_JUDGE_REASON_INSTRUCTION}
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided input, expected output, and output, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
 
         Examples:
 
@@ -139,15 +135,16 @@ _judge_input_output_expected_agent = Agent(
         <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
         <Rubric>The output is consistent with the expected output but doesn't have to match exactly</Rubric>
-        {{"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}}
+        {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
         <Input>How many legs does a spider have?</Input>
         <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
         <Rubric>The output is factually consistent with the expected output</Rubric>
-        {{"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}}
+        {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
@@ -177,24 +174,23 @@ async def judge_input_output_expected(
 _judge_output_expected_agent = Agent(
     name='judge_output_expected',
     system_prompt=dedent(
-        f"""
-        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided expected output and output, then the output passes the test. You respond with a JSON object with this structure: {{reason: string, pass: boolean, score: number}}
-
-        {_JUDGE_REASON_INSTRUCTION}
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided expected output and output, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
 
         Examples:
 
         <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
         <Rubric>The output should be a shade of the expected output color</Rubric>
-        {{"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}}
+        {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
         <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
         <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
-        {{"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}}
+        {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
         """
-    ),
+    )
+    + _JUDGE_REASON_INSTRUCTION,
     output_type=GradingOutput,
 )
 
