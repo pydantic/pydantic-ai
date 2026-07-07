@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from fasta2a.broker import Broker
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
+    from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -1779,6 +1780,77 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 on_shutdown=on_shutdown,
                 lifespan=lifespan,
             )
+
+    def to_openai_responses(
+        self,
+        *,
+        path: str = '/v1/responses',
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+        usage_limits: UsageLimits | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves this agent as an [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) endpoint.
+
+        This lets any OpenAI-compatible client - the `openai` SDK pointed at a custom `base_url`,
+        OpenWebUI, LLM gateways, etc. - talk to the agent as if it were an OpenAI model. The agent
+        runs its own tool loop server-side and is exposed as a single model: assistant text is
+        returned, but internal tool calls and reasoning are not surfaced. Both streaming
+        (`stream=True`) and non-streaming requests are supported.
+
+        The returned Starlette application can be mounted into a FastAPI app or run directly with
+        any ASGI server (uvicorn, hypercorn, etc.).
+
+        Note that `deps`, `model_settings`, and `usage_limits` are the same for each request. To
+        provide different `deps` per request, use
+        [`handle_openai_responses_request`][pydantic_ai.openai_responses.handle_openai_responses_request]
+        directly from your own route handler.
+
+        Args:
+            path: The route the endpoint is mounted at. Defaults to `/v1/responses` so an OpenAI
+                client configured with `base_url='.../v1'` works unchanged.
+            model: Optional model to use for all requests, required if the agent has no model set.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
+            usage_limits: Optional limits on model request count or token usage.
+
+        Returns:
+            A configured Starlette application ready to be served (e.g., with uvicorn).
+
+        Example:
+            ```python {test="skip"}
+            from openai import OpenAI
+
+            from pydantic_ai import Agent
+
+            agent = Agent('openai:gpt-5.2', instructions='Be concise.')
+            app = agent.to_openai_responses()
+            # Run with: uvicorn app:app
+
+            client = OpenAI(base_url='http://localhost:8000/v1', api_key='unused')
+            response = client.responses.create(model='gpt-5.2', input='Where does the sun rise?')
+            print(response.output_text)
+            ```
+        """
+        try:
+            from ..openai_responses._app import create_app
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` and `openai` packages to use `Agent.to_openai_responses()`, '
+                'you can use the `ui` and `openai` optional groups — `pip install "pydantic-ai-slim[ui,openai]"`'
+            ) from e
+
+        return create_app(
+            self,
+            path=path,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            usage_limits=usage_limits,
+        )
 
     @deprecated(
         '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '

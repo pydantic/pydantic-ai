@@ -89,16 +89,16 @@ app = agent_to_a2a(agent)
 
 ## Expose Agents to OpenAI-Compatible Clients (Responses API)
 
-Use `Agent.to_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: only the final text is returned (internal tool calls and reasoning are not surfaced). Requires `starlette` and `openai` (`pip install 'pydantic-ai-slim[ui,openai]'`).
+Use `Agent.to_openai_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: assistant text is returned, while internal tool calls and reasoning are not surfaced. Requires `starlette` and `openai` (`pip install 'pydantic-ai-slim[ui,openai]'`).
 
 ```python
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2')
-app = agent.to_responses()  # run with `uvicorn module:app`; clients use base_url='.../v1'
+app = agent.to_openai_responses()  # run with `uvicorn module:app`; clients use base_url='.../v1'
 ```
 
-`to_responses()` uses the same `deps`/`model_settings` for every request. For per-request dependencies, call `handle_responses_request(request, agent, deps=...)` (from `pydantic_ai._responses`) in your own Starlette/FastAPI route instead. This contrasts with A2A (agent-to-agent interop) and the AG-UI/Vercel AI adapters (interactive frontends that stream tool calls and reasoning).
+`to_openai_responses()` uses the same `deps`/`model_settings`/`usage_limits` for every request. For per-request dependencies, call `handle_openai_responses_request(request, agent, deps=...)` (from `pydantic_ai.openai_responses`) in your own Starlette/FastAPI route instead. This contrasts with A2A (agent-to-agent interop) and the AG-UI/Vercel AI adapters (interactive frontends that stream tool calls and reasoning).
 
 ## Use Durable Execution
 

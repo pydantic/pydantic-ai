@@ -16,12 +16,23 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from .types import FunctionCall, InputMessage, ResponsesInputItem, ResponsesRequest
+from .types import FunctionCall, InputMessage, MessageContent, ResponsesInputItem, ResponsesRequest
+
+
+class OrphanedFunctionCallOutputError(ValueError):
+    """Raised when a `function_call_output` has no matching `function_call` in the request."""
+
+    def __init__(self, call_id: str) -> None:
+        super().__init__(f'No preceding `function_call` found for `function_call_output` with `call_id` {call_id!r}.')
 
 
 def _input_items(request: ResponsesRequest) -> Sequence[ResponsesInputItem]:
     input = request.input
     return [InputMessage(role='user', content=input)] if isinstance(input, str) else input
+
+
+def _content_text(content: MessageContent) -> str:
+    return content if isinstance(content, str) else '\n'.join(c.text for c in content)
 
 
 def load_messages(request: ResponsesRequest) -> list[ModelMessage]:
@@ -51,7 +62,7 @@ def load_messages(request: ResponsesRequest) -> list[ModelMessage]:
 
     for item in _input_items(request):
         if isinstance(item, InputMessage):
-            content = item.content if isinstance(item.content, str) else '\n'.join(c.text for c in item.content)
+            content = _content_text(item.content)
             if item.role == 'assistant':
                 add_response_part(TextPart(content=content))
             elif item.role == 'user':
@@ -62,9 +73,13 @@ def load_messages(request: ResponsesRequest) -> list[ModelMessage]:
             tool_names[item.call_id] = item.name
             add_response_part(ToolCallPart(tool_name=item.name, args=item.arguments, tool_call_id=item.call_id))
         else:
+            if item.call_id not in tool_names:
+                raise OrphanedFunctionCallOutputError(item.call_id)
             add_request_part(
                 ToolReturnPart(
-                    tool_name=tool_names.get(item.call_id, ''), content=item.output, tool_call_id=item.call_id
+                    tool_name=tool_names[item.call_id],
+                    content=_content_text(item.output),
+                    tool_call_id=item.call_id,
                 )
             )
 

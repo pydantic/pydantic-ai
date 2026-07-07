@@ -1,5 +1,5 @@
-# `pydantic_ai._responses`
+# `pydantic_ai.openai_responses`
 
-::: pydantic_ai._responses
+::: pydantic_ai.openai_responses
 
-::: pydantic_ai._responses.types
+::: pydantic_ai.openai_responses.types

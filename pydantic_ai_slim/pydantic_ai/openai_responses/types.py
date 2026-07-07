@@ -1,4 +1,4 @@
-"""OpenAI Responses API request types accepted by the [`Agent.to_responses()`][pydantic_ai.agent.Agent.to_responses] endpoint.
+"""OpenAI Responses API request types accepted by the [`Agent.to_openai_responses()`][pydantic_ai.agent.AbstractAgent.to_openai_responses] endpoint.
 
 These mirror the subset of the [Responses API request body](https://platform.openai.com/docs/api-reference/responses/create)
 that the endpoint honors when serving an agent as an OpenAI-compatible endpoint. Unknown fields
@@ -55,7 +55,7 @@ class FunctionCallOutput(_InputModel):
 
     type: Literal['function_call_output']
     call_id: str
-    output: str
+    output: MessageContent
 
 
 # Smart union: variants are distinguished by their required fields (`role` vs `name` vs `output`) and
@@ -82,9 +82,8 @@ class ResponsesRequest(BaseModel):
     """Whether to stream the response as SSE. The Responses API default is non-streaming."""
 
     previous_response_id: str | None = None
-    """Accepted but not yet honored: server-side conversation state is not supported, so history
-    must be replayed via `input`."""
+    """Rejected when set: server-side conversation state is not stored, so history must be replayed via `input`."""
 
 
 responses_request_ta: TypeAdapter[ResponsesRequest] = TypeAdapter(ResponsesRequest)
-"""[`TypeAdapter`][pydantic.TypeAdapter] for validating a request body into a [`ResponsesRequest`][pydantic_ai._responses.types.ResponsesRequest]."""
+"""[`TypeAdapter`][pydantic.TypeAdapter] for validating a request body into a [`ResponsesRequest`][pydantic_ai.openai_responses.types.ResponsesRequest]."""

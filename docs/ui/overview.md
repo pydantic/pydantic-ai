@@ -11,7 +11,7 @@ Pydantic AI natively supports two UI event stream protocols:
 
 These integrations are implemented as subclasses of the abstract [`UIAdapter`][pydantic_ai.ui.UIAdapter] class, so they also serve as a reference for integrating with other UI event stream protocols.
 
-If instead of an interactive frontend you want to expose your agent to OpenAI-compatible *clients* (so they can call it as if it were an OpenAI model), see the [OpenAI Responses Endpoint](../responses.md).
+If instead of an interactive frontend you want to expose your agent to OpenAI-compatible *clients* with [`Agent.to_openai_responses()`][pydantic_ai.agent.AbstractAgent.to_openai_responses] (so they can call it as if it were an OpenAI model), see the [OpenAI Responses Endpoint](../responses.md).
 
 ## Usage
 
