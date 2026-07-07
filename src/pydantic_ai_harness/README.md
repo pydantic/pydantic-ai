@@ -28,6 +28,7 @@ Extras for specific capabilities:
 ```bash
 uv add "pydantic-ai-harness[codemode]"   # CodeMode (adds the Monty sandbox)
 uv add "pydantic-ai-harness[logfire]"     # ManagedPrompt (Logfire-managed prompts)
+uv add "pydantic-ai-harness[acp]"         # ACP (serve an agent to editors over the Agent Client Protocol)
 ```
 
 The `code-mode` extra is also supported as an alias.
@@ -108,6 +109,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | | **Shell** | Execute commands with allowlists, denylists, and timeouts | :white_check_mark: [Docs](pydantic_ai_harness/shell/) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
 | | **Repo context injection** | Auto-load CLAUDE.md/AGENTS.md and repo structure | :construction: [PR&nbsp;#175](https://github.com/pydantic/pydantic-ai-harness/pull/175) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Verification loop** | Run tests after edits, auto-fix failures | :construction: [PR&nbsp;#169](https://github.com/pydantic/pydantic-ai-harness/pull/169) | |
+| **Editor integration** | **ACP** | Serve an agent to editors (Zed, etc.) over the [Agent Client Protocol](https://agentclientprotocol.com) -- streamed text, diff-rendered edits, tool approval | :white_check_mark: [Docs](pydantic_ai_harness/experimental/acp/) (experimental) | |
 | **Context management** | **Sliding window** | Trim conversation history to stay within token limits | :construction: [PR&nbsp;#191](https://github.com/pydantic/pydantic-ai-harness/pull/191) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
 | | **Context compaction** | LLM-powered summarization of older messages | :construction: [PR&nbsp;#191](https://github.com/pydantic/pydantic-ai-harness/pull/191) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
 | | **Limit warnings** | Warn agent before hitting context/iteration limits | :construction: [PR&nbsp;#191](https://github.com/pydantic/pydantic-ai-harness/pull/191) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |

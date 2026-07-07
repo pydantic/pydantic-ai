@@ -9,7 +9,6 @@ from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AgentToolset
 
 from pydantic_ai_harness.filesystem._toolset import FileSystemToolset
 
@@ -68,7 +67,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
 
-    def get_toolset(self) -> AgentToolset[AgentDepsT]:
+    def get_toolset(self) -> FileSystemToolset[AgentDepsT]:
         """Build and return the filesystem toolset."""
         return FileSystemToolset[AgentDepsT](
             root_dir=Path(self.root_dir),

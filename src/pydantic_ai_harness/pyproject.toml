@@ -50,6 +50,10 @@ logfire = [
     'logfire>=4.31.0',
     "pydantic-ai-slim[spec]>=2.1.0",
 ]
+acp = [
+    # The SDK breaks across minors, so cap per minor.
+    "agent-client-protocol>=0.11,<0.12",
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
