@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+from contextlib import suppress
 from functools import partial
 
 import logfire
@@ -91,8 +92,11 @@ def fill_speaker(
 
 def drain(play_queue: queue.Queue[bytes]) -> None:
     """Drop any buffered playback audio (used for barge-in)."""
-    while not play_queue.empty():
-        play_queue.get_nowait()
+    while True:
+        try:
+            play_queue.get_nowait()
+        except queue.Empty:
+            break
 
 
 async def handle_event(
@@ -162,6 +166,8 @@ async def main():
                         break
             finally:
                 pump.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pump
 
 
 if __name__ == '__main__':

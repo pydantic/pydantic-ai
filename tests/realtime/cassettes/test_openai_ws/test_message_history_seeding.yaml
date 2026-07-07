@@ -4,11 +4,11 @@ interactions:
   direction: received
   data:
     type: session.created
-    event_id: event_Dz2pmJlWqhf5wC1yLLTqF
+    event_id: event_Dz3T3izBjaq0Jz4ZJjUwg
     session:
       type: realtime
       object: realtime.session
-      id: sess_Dz2plRpIh4bU81NLobScM
+      id: sess_Dz3T3ZktaKkd9TQoxX9xI
       model: gpt-realtime
       output_modalities:
       - audio
@@ -25,7 +25,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1783444874
+      expires_at: 1783447309
       audio:
         input:
           format:
@@ -76,11 +76,11 @@ interactions:
   direction: received
   data:
     type: session.updated
-    event_id: event_Dz2pmMaZyrCOgWUatAdqE
+    event_id: event_Dz3T34sVdVsHiXHCpLktN
     session:
       type: realtime
       object: realtime.session
-      id: sess_Dz2plRpIh4bU81NLobScM
+      id: sess_Dz3T3ZktaKkd9TQoxX9xI
       model: gpt-realtime
       output_modalities:
       - text
@@ -97,7 +97,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1783444874
+      expires_at: 1783447309
       audio:
         input:
           format:
@@ -141,7 +141,7 @@ interactions:
       type: message
       role: assistant
       content:
-      - type: text
+      - type: output_text
         text: Nice to meet you, Alice!
 - kind: message
   direction: sent
@@ -160,22 +160,11 @@ interactions:
 - kind: message
   direction: received
   data:
-    type: error
-    event_id: event_Dz2pmsNOspX3DUjiWW5wu
-    error:
-      type: invalid_request_error
-      code: invalid_value
-      message: 'Invalid value: ''text''. Value must be ''output_text''.'
-      param: item.content[0].type
-      event_id: null
-- kind: message
-  direction: received
-  data:
     type: conversation.item.added
-    event_id: event_Dz2pmQ553mIM4kO5Ll4TB
+    event_id: event_Dz3T3HJYS96hIQArnsmxJ
     previous_item_id: null
     item:
-      id: item_Dz2pmSulMz5hfHlkjud8H
+      id: item_Dz3T3hyKaeeODXVvEKmdy
       type: message
       status: completed
       role: user
@@ -186,10 +175,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz2pmqxOm4aubGhX146w4
+    event_id: event_Dz3T3BvUxOCtkTtIKoYIN
     previous_item_id: null
     item:
-      id: item_Dz2pmSulMz5hfHlkjud8H
+      id: item_Dz3T3hyKaeeODXVvEKmdy
       type: message
       status: completed
       role: user
@@ -200,10 +189,38 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz2pmN6Eo3uoNeOOpa2Xz
-    previous_item_id: item_Dz2pmSulMz5hfHlkjud8H
+    event_id: event_Dz3T3jjfaLytwMR4Nr5JO
+    previous_item_id: item_Dz3T3hyKaeeODXVvEKmdy
     item:
-      id: item_Dz2pmp36WXK2z8bvTr6P1
+      id: item_Dz3T3o4P3bmXcX86D9ONL
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_Dz3T3BUKUXeG0BebS5uvs
+    previous_item_id: item_Dz3T3hyKaeeODXVvEKmdy
+    item:
+      id: item_Dz3T3o4P3bmXcX86D9ONL
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_Dz3T3XT3YTNiZ7QlCbSk0
+    previous_item_id: item_Dz3T3o4P3bmXcX86D9ONL
+    item:
+      id: item_Dz3T332jjMe5pBRKcDcfG
       type: message
       status: completed
       role: user
@@ -214,10 +231,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz2pm1f37OCwpUyztitAZ
-    previous_item_id: item_Dz2pmSulMz5hfHlkjud8H
+    event_id: event_Dz3T30CXyoRqu8NpHNDN6
+    previous_item_id: item_Dz3T3o4P3bmXcX86D9ONL
     item:
-      id: item_Dz2pmp36WXK2z8bvTr6P1
+      id: item_Dz3T332jjMe5pBRKcDcfG
       type: message
       status: completed
       role: user
@@ -228,14 +245,14 @@ interactions:
   direction: received
   data:
     type: response.created
-    event_id: event_Dz2pmxkNht17DCrpFME43
+    event_id: event_Dz3T3NQXzOTRGcWoB5TDM
     response:
       object: realtime.response
-      id: resp_Dz2pmeTm50zqrMEgDqUxE
+      id: resp_Dz3T3zIGA8DegZNiPeEg5
       status: in_progress
       status_details: null
       output: []
-      conversation_id: conv_Dz2plN0955dy9sSA6L2kz
+      conversation_id: conv_Dz3T3viVTrS33IpNwUkSF
       output_modalities:
       - text
       max_output_tokens: inf
@@ -251,11 +268,11 @@ interactions:
   direction: received
   data:
     type: response.output_item.added
-    event_id: event_Dz2pmKPZ4kfQPH7eSHiYt
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
+    event_id: event_Dz3T3GnIc7k9gM8kt5LnM
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
     output_index: 0
     item:
-      id: item_Dz2pmTMQ2Kka4OGgjpW8c
+      id: item_Dz3T3xrfY93EGb4isy9I0
       type: message
       status: in_progress
       role: assistant
@@ -264,10 +281,10 @@ interactions:
   direction: received
   data:
     type: conversation.item.added
-    event_id: event_Dz2pmEQgGBbF8oBYpeqsz
-    previous_item_id: item_Dz2pmp36WXK2z8bvTr6P1
+    event_id: event_Dz3T39iy3PVEuUKvmumsN
+    previous_item_id: item_Dz3T332jjMe5pBRKcDcfG
     item:
-      id: item_Dz2pmTMQ2Kka4OGgjpW8c
+      id: item_Dz3T3xrfY93EGb4isy9I0
       type: message
       status: in_progress
       role: assistant
@@ -276,9 +293,9 @@ interactions:
   direction: received
   data:
     type: response.content_part.added
-    event_id: event_Dz2pmSMRXjiZtmbDkU5u5
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T3wx5hzzgXmZU9tMiI
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     part:
@@ -288,621 +305,275 @@ interactions:
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmVBmmdL8pt4GwRWHx
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T3UGV8mGvLMvlIcuRL
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    delta: Hey
-    obfuscation: D90PHlSBl8A8o
+    delta: Your
+    obfuscation: uTROEGxWIA4C
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmfEP0rJcEqsyRMsYq
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' there'
-    obfuscation: bza8TsnLf6
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmU6X14LHLmbsm9POP
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ','
-    obfuscation: 6aVjXhlKGmU4N1c
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmFURfKUat57UEaTJ4
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' Alice'
-    obfuscation: pZAa8JY0Fa
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm4qzZIsExpmwXoP3l
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: '!'
-    obfuscation: GptQEHAxo1pPcAp
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm5oDqE1aSmKLPCiIB
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' Your'
-    obfuscation: d6PSfx9YHgB
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmZWKLe3dHGwh53Wht
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T3CXhFQVdx9AtBd1NZ
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     delta: ' name'
-    obfuscation: s1CuPS1eQC8
+    obfuscation: oNrPMMhgX6m
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmFfqiPq5SUtsS4nhk
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T3jEratewsKM1L0kwE
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     delta: ' is'
-    obfuscation: SPc7bMeZI4FS2
+    obfuscation: GTizArJS52s2e
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmGY9FMgxVvmoPKiXN
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4vSIqERO7NAXuQaG9
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     delta: ' Alice'
-    obfuscation: xk8OBYGKQ0
+    obfuscation: gA7LEKsE2t
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmJGLPlBKJ0K580mMs
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' and'
-    obfuscation: 3rVDM3Bdw1x6
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmiiOSACAQCNWl3o4K
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' your'
-    obfuscation: a3muPgajcM8
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmOJaTMOI7dhHe1nop
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' favorite'
-    obfuscation: 7iihDPy
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm1Z2TuAhziF4RcwuH
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' color'
-    obfuscation: eWJE0nHq09
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmUqNLo92T7Ozga14w
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' is'
-    obfuscation: WdNxLyQEdHkQr
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm6jbQ2cUhoMHpG7tJ
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' teal'
-    obfuscation: bEQU9UNIPlz
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmVtb6EB9A8eFsFx0j
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: —
-    obfuscation: C84bJFu7YPdEqNF
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmgjQb2voByri2lAPE
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: what
-    obfuscation: 07xmEH5Z9OaW
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmMhZup15MSuVw5N1W
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' a'
-    obfuscation: 30l4bwodCUQIdd
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmA15N77ThCajcHeKY
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' fantastic'
-    obfuscation: HnFqtW
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmQMhrw7J4ioAeM6Yq
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' combo'
-    obfuscation: 4vKYYnMUAQ
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmkMuTVrY98z0ZQ6XB
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: '!'
-    obfuscation: Ckfa2NlRU9m287i
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmFNkwVmFWuCEM2oLJ
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' Te'
-    obfuscation: ROoHQO7TSEOb9
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmmV9KS97JtHPBUke3
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: al
-    obfuscation: cRPGOnLLcFLiSF
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmWAw4QtPFuG3rZxHo
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' is'
-    obfuscation: 49Os6e4OnaZyp
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmRQ2dtU66JjrpuoxE
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' such'
-    obfuscation: D29t6bkVcIm
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmGYuyRUFfyV7iD8sw
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' a'
-    obfuscation: CTDD40vpAgkVn1
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmf1SOs6ecIwkb2u63
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' vibrant'
-    obfuscation: 6FJNkhg6
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmrxrLhkSideX4acPH
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T49BENwn4b39RB6e6k
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     delta: ','
-    obfuscation: GDGPH1bme234NLx
+    obfuscation: 0SjIWnHa7vOLbh5
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmoSJzyzcFdBdndket
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4try2eTNKDiSshNjF
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    delta: ' calming'
-    obfuscation: wOy1FRDL
+    delta: ' and'
+    obfuscation: MmSVzRnq7JYh
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmAlrgMuDubdvIr6rM
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' color'
-    obfuscation: uLllzR3daP
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmgYIu0DPo5u2bMUQU
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: .
-    obfuscation: TJUlwCwGmMunf2q
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmqeBUXego1tsJgA5g
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' Let'
-    obfuscation: auXrV1YpYTBp
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmWdbtZQzqCMUWRDL8
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ’s
-    obfuscation: TShla5QQdbvPyj
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmn5OEY0B1TaLKo51H
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' dive'
-    obfuscation: 6uiBkoGcmV0
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmvuNI7gG07ZuVPY9D
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' into'
-    obfuscation: vAG1HQKQCRe
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmiu9QdI9XpuvihTE8
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' something'
-    obfuscation: UnT8Gr
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmf5iG9WxtAxQ9cPB3
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' fun'
-    obfuscation: XhqEZUM0sBYo
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmD5px6hhEXNWQJSOI
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' with'
-    obfuscation: 9dpHzukKots
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmbKJUn2G61ehXdTHa
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' that'
-    obfuscation: hq1ROQK2aid
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmfqasQTh6E4a4RtMk
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' in'
-    obfuscation: fiId5NVBhBgdA
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm7GKoG6mORL2y4cOv
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' mind'
-    obfuscation: NuJF6QoT2Rg
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmKYQb041aFakKMKp9
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: .
-    obfuscation: m9CTmeBfAsISk7y
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmljg5Znfu3ynA89n6
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' What'
-    obfuscation: iSldAKDzcOJ
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmHRhW9GWBOr1PGEIj
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ’s
-    obfuscation: 2NJtkQH6mdAgtc
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pm4T4IGStvSqMZBWO4
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
-    output_index: 0
-    content_index: 0
-    delta: ' on'
-    obfuscation: CLktUagdfYAED
-- kind: message
-  direction: received
-  data:
-    type: response.output_text.delta
-    event_id: event_Dz2pmebo2aF5mF8iG76wv
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4JygbEmAS0A2wl0Uh
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     delta: ' your'
-    obfuscation: kB1lGwXeiua
+    obfuscation: mQYz9w129ci
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pm5sjgkqr2sMWwRaxS
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4jBOPQiSX7ATXaPSs
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    delta: ' mind'
-    obfuscation: mNUyiumcA21
+    delta: ' favorite'
+    obfuscation: agwUnFj
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pmTXkl0iwmKAOFb68s
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4RRWdtALwWO8J2sDb
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    delta: ' today'
-    obfuscation: NejAoREgWl
+    delta: ' color'
+    obfuscation: ignZB9g4wg
 - kind: message
   direction: received
   data:
     type: response.output_text.delta
-    event_id: event_Dz2pm6lp4kZt7khblqsR0
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4ypeZe8maDGHi8WcS
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    delta: '?'
-    obfuscation: PG4NklWxjZJNsyH
+    delta: ' is'
+    obfuscation: 0veUXKWhKhti6
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T422jxo0RuEy4UAdgV
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' teal'
+    obfuscation: pXKEHoWDV6i
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4n6mhkmHSfOyA7VHW
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: nmnevhpnfSTyRQS
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4XQabImjL7C1TqoUt
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' I''ve'
+    obfuscation: 5woTwHcBItY
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4UmnPFyHod3oeBKLp
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' got'
+    obfuscation: smmBFNQOwmqV
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4ayRTHy0sHupxTpaq
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' it'
+    obfuscation: NJkMq6ENkF5PW
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T46J54Mo0z1MP0zmFM
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' locked'
+    obfuscation: PIfn4gTJV
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4xRjwWP1mCcq51qUY
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: 31i9yiKwRjhEj
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_Dz3T4ZUmKWuuyPSG4CLhc
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: wACX5iwXfmMBYPO
 - kind: message
   direction: received
   data:
     type: response.output_text.done
-    event_id: event_Dz2pnHKsuWdphRIyVu9cB
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4SHculvzHLkm9xSEa
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
-    text: Hey there, Alice! Your name is Alice and your favorite color is teal—what
-      a fantastic combo! Teal is such a vibrant, calming color. Let’s dive into something
-      fun with that in mind. What’s on your mind today?
+    text: Your name is Alice, and your favorite color is teal! I've got it locked
+      in.
 - kind: message
   direction: received
   data:
     type: response.content_part.done
-    event_id: event_Dz2pnupLMNdtopfEcmmC0
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
-    item_id: item_Dz2pmTMQ2Kka4OGgjpW8c
+    event_id: event_Dz3T4chic6n5A7GVxmhsa
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
+    item_id: item_Dz3T3xrfY93EGb4isy9I0
     output_index: 0
     content_index: 0
     part:
       type: text
-      text: Hey there, Alice! Your name is Alice and your favorite color is teal—what
-        a fantastic combo! Teal is such a vibrant, calming color. Let’s dive into
-        something fun with that in mind. What’s on your mind today?
+      text: Your name is Alice, and your favorite color is teal! I've got it locked
+        in.
 - kind: message
   direction: received
   data:
     type: conversation.item.done
-    event_id: event_Dz2pnya6IpH0Xcf6VpeRg
-    previous_item_id: item_Dz2pmp36WXK2z8bvTr6P1
+    event_id: event_Dz3T4fqO2eCqmpQykZrVq
+    previous_item_id: item_Dz3T332jjMe5pBRKcDcfG
     item:
-      id: item_Dz2pmTMQ2Kka4OGgjpW8c
+      id: item_Dz3T3xrfY93EGb4isy9I0
       type: message
       status: completed
       role: assistant
       content:
       - type: output_text
-        text: Hey there, Alice! Your name is Alice and your favorite color is teal—what
-          a fantastic combo! Teal is such a vibrant, calming color. Let’s dive into
-          something fun with that in mind. What’s on your mind today?
+        text: Your name is Alice, and your favorite color is teal! I've got it locked
+          in.
 - kind: message
   direction: received
   data:
     type: response.output_item.done
-    event_id: event_Dz2pn1kcT2HDhXgxZFRoU
-    response_id: resp_Dz2pmeTm50zqrMEgDqUxE
+    event_id: event_Dz3T4ZjegtSg5cvc4LfYZ
+    response_id: resp_Dz3T3zIGA8DegZNiPeEg5
     output_index: 0
     item:
-      id: item_Dz2pmTMQ2Kka4OGgjpW8c
+      id: item_Dz3T3xrfY93EGb4isy9I0
       type: message
       status: completed
       role: assistant
       content:
       - type: output_text
-        text: Hey there, Alice! Your name is Alice and your favorite color is teal—what
-          a fantastic combo! Teal is such a vibrant, calming color. Let’s dive into
-          something fun with that in mind. What’s on your mind today?
+        text: Your name is Alice, and your favorite color is teal! I've got it locked
+          in.
 - kind: message
   direction: received
   data:
     type: response.done
-    event_id: event_Dz2pnNqKOcrXFlES7ukhj
+    event_id: event_Dz3T46sSfoipWf25J25Rw
     response:
       object: realtime.response
-      id: resp_Dz2pmeTm50zqrMEgDqUxE
+      id: resp_Dz3T3zIGA8DegZNiPeEg5
       status: completed
       status_details: null
       output:
-      - id: item_Dz2pmTMQ2Kka4OGgjpW8c
+      - id: item_Dz3T3xrfY93EGb4isy9I0
         type: message
         status: completed
         role: assistant
         content:
         - type: output_text
-          text: Hey there, Alice! Your name is Alice and your favorite color is teal—what
-            a fantastic combo! Teal is such a vibrant, calming color. Let’s dive into
-            something fun with that in mind. What’s on your mind today?
-      conversation_id: conv_Dz2plN0955dy9sSA6L2kz
+          text: Your name is Alice, and your favorite color is teal! I've got it locked
+            in.
+      conversation_id: conv_Dz3T3viVTrS33IpNwUkSF
       output_modalities:
       - text
       max_output_tokens: inf
@@ -913,11 +584,11 @@ interactions:
             rate: 24000
           voice: alloy
       usage:
-        total_tokens: 189
-        input_tokens: 138
-        output_tokens: 51
+        total_tokens: 169
+        input_tokens: 149
+        output_tokens: 20
         input_token_details:
-          text_tokens: 138
+          text_tokens: 149
           audio_tokens: 0
           image_tokens: 0
           cached_tokens: 0
@@ -926,6 +597,6 @@ interactions:
             audio_tokens: 0
             image_tokens: 0
         output_token_details:
-          text_tokens: 51
+          text_tokens: 20
           audio_tokens: 0
       metadata: null

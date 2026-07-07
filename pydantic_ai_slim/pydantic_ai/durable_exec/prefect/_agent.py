@@ -1023,6 +1023,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
+
+        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
+        inside a Prefect flow; calling it there raises a `UserError`. Outside a flow it delegates to
+        the wrapped agent unchanged.
+        """
         if FlowRunContext.get() is not None:
             raise UserError(
                 '`agent.realtime_session()` cannot be used inside a Prefect flow, as it runs a '

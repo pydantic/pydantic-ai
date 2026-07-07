@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeCapabilities, TurnComplete
+from pydantic_ai.realtime import RealtimeCapabilities, SessionError, TurnComplete
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -152,6 +152,10 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
                 events.append(event)
                 if isinstance(event, TurnComplete):
                     break
+
+    # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
+    # `SessionError`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, SessionError)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(

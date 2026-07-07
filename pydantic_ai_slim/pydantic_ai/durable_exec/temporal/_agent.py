@@ -1120,6 +1120,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session; see [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters.
+
+        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
+        inside a Temporal workflow; calling it there raises a `UserError`. Outside a workflow it
+        delegates to the wrapped agent unchanged.
+        """
         if workflow.in_workflow():
             raise UserError(
                 '`agent.realtime_session()` cannot be used inside a Temporal workflow, as it runs a '

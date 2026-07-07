@@ -77,6 +77,7 @@ exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
+realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"

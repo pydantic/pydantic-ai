@@ -118,7 +118,7 @@ def _seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
     """Project prior conversation to OpenAI `conversation.item.create` items (text/transcript only, v1).
 
     User prompts and user-spoken transcripts become `input_text` user items; assistant text and
-    assistant-spoken transcripts become `text` assistant items. `SystemPromptPart`s are skipped (the
+    assistant-spoken transcripts become `output_text` assistant items. `SystemPromptPart`s are skipped (the
     `instructions` session field covers system-level guidance), and tool calls/results are skipped —
     seeding a `function_call_output` without its originating call item is invalid, and full tool-round
     replay is out of scope for v1. Content that can't be projected is dropped rather than erroring.
@@ -134,9 +134,9 @@ def _seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
         else:
             for resp_part in message.parts:
                 if isinstance(resp_part, TextPart) and resp_part.content:
-                    items.append(_message_item('assistant', 'text', resp_part.content))
+                    items.append(_message_item('assistant', 'output_text', resp_part.content))
                 elif isinstance(resp_part, AudioWithTranscriptPart) and resp_part.transcript:
-                    items.append(_message_item('assistant', 'text', resp_part.transcript))
+                    items.append(_message_item('assistant', 'output_text', resp_part.transcript))
     return items
 
 
@@ -158,6 +158,19 @@ def _obj(value: Any) -> dict[str, Any]:
 def _int(value: Any) -> int:
     """Return `value` if it is an int (but not a bool), otherwise `0`."""
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _loads_obj(raw: str) -> dict[str, Any]:
+    """Parse a JSON text frame into an object, raising `ValueError` if it decodes to a non-object.
+
+    `json.loads` can return arrays, strings, or numbers; those aren't valid realtime frames, so treat
+    them as malformed (a `ValueError`, like a decode error) rather than letting a later `.get()` raise
+    `AttributeError` and escape the recoverable-error handling.
+    """
+    data: Any = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f'expected a JSON object, got {type(data).__name__}')
+    return cast('dict[str, Any]', data)
 
 
 def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
@@ -452,7 +465,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
         Raises `ValueError` (incl. `json.JSONDecodeError` / `binascii.Error`) on a malformed payload.
         """
-        data: dict[str, Any] = json.loads(raw)
+        data = _loads_obj(raw)
         event_type = data.get('type')
         events: list[RealtimeEvent] = []
         if event_type == 'response.created':
@@ -749,7 +762,7 @@ async def _expect_event(ws: ClientConnection, expected_type: str, *, timeout: fl
             raise TimeoutError(f'Timed out waiting for OpenAI realtime {expected_type!r} event') from None
         if not isinstance(raw, str):  # pragma: no cover
             raise TypeError(f'Expected a text message from the WebSocket, got {type(raw).__name__}')
-        data: dict[str, Any] = json.loads(raw)
+        data = _loads_obj(raw)
         event_type = data.get('type')
         if event_type == expected_type:
             return data

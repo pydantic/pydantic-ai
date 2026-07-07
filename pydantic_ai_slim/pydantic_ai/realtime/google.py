@@ -581,6 +581,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         yield event
             except (ConnectionClosed, genai_errors.APIError) as e:
                 if self._dial is None or self._reconnect is None:
+                    # No reconnect policy: a dropped connection is fatal. Surface it as a
+                    # non-recoverable error and end the stream cleanly, rather than returning silently
+                    # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
+                    yield SessionError(message=f'Gemini realtime connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
                     yield Reconnected()

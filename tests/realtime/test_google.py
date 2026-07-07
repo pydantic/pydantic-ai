@@ -467,12 +467,15 @@ async def test_connect_streams_events() -> None:
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-live-2.5-flash'
-    assert events == [
+    # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
+    # non-recoverable `SessionError` before the stream ends (see `test_iter_ends_on_api_error_close`).
+    assert events[:4] == [
         Transcript(text='hi', is_final=True),
         TurnComplete(interrupted=False),
         Transcript(text='bye', is_final=True),
         TurnComplete(interrupted=False),
     ]
+    assert isinstance(events[-1], SessionError) and events[-1].recoverable is False
 
 
 async def test_connect_seeds_message_history() -> None:
@@ -523,10 +526,13 @@ async def test_connect_wires_reconnect_only_with_resumption() -> None:
 
 
 async def test_iter_ends_on_api_error_close() -> None:
-    # The SDK surfaces a server-closed socket as an `APIError`; iteration should end, not raise.
+    # The SDK surfaces a server-closed socket as an `APIError`; without a reconnect policy iteration
+    # should end (not raise) but first surface a non-recoverable `SessionError` so callers can tell a
+    # dropped connection from a completed turn (mirroring the OpenAI provider).
     session = _RecordingSession([[_turn('hi')]], close_exc=genai_errors.APIError(1011, {'message': 'go away'}))
     events = [e async for e in _conn(session)]
-    assert events == [Transcript(text='hi', is_final=True), TurnComplete(interrupted=False)]
+    assert events[:2] == [Transcript(text='hi', is_final=True), TurnComplete(interrupted=False)]
+    assert isinstance(events[-1], SessionError) and events[-1].recoverable is False
 
 
 # --- config: voice / tone / turn-taking knobs --------------------------------

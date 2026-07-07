@@ -5275,6 +5275,9 @@ openrouter = [
 prefect = [
     { name = "pydantic-ai-slim", extra = ["prefect"] },
 ]
+realtime = [
+    { name = "pydantic-ai-slim", extra = ["realtime"] },
+]
 sentence-transformers = [
     { name = "pydantic-ai-slim", extra = ["sentence-transformers"] },
 ]
@@ -5363,6 +5366,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["realtime"], marker = "extra == 'realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'spec'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["tavily"], marker = "extra == 'tavily'", editable = "pydantic_ai_slim" },
@@ -5372,7 +5376,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "bedrock", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "realtime", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5441,6 +5445,7 @@ dependencies = [
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
+    { name = "sounddevice" },
     { name = "twelvelabs" },
     { name = "uvicorn" },
 ]
@@ -5462,6 +5467,7 @@ requires-dist = [
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
+    { name = "sounddevice", specifier = ">=0.5.0" },
     { name = "twelvelabs", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
@@ -7128,6 +7134,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/5c/48a7d9495be3d1c651198fd99dbb6ce190e2274d0f28b9051307bdec6b85/socksio-1.0.0.tar.gz", hash = "sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac", size = 19055, upload-time = "2020-04-17T15:50:34.664Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/c3/6eeb6034408dac0fa653d126c9204ade96b819c936e136c5e8a6897eee9c/socksio-1.0.0-py3-none-any.whl", hash = "sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3", size = 12763, upload-time = "2020-04-17T15:50:31.878Z" },
+]
+
+[[package]]
+name = "sounddevice"
+version = "0.5.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/f9/2592608737553638fca98e21e54bfec40bf577bb98a61b2770c912aab25e/sounddevice-0.5.5.tar.gz", hash = "sha256:22487b65198cb5bf2208755105b524f78ad173e5ab6b445bdab1c989f6698df3", size = 143191, upload-time = "2026-01-23T18:36:43.529Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/0a/478e441fd049002cf308520c0d62dd8333e7c6cc8d997f0dda07b9fbcc46/sounddevice-0.5.5-py3-none-any.whl", hash = "sha256:30ff99f6c107f49d25ad16a45cacd8d91c25a1bcdd3e81a206b921a3a6405b1f", size = 32807, upload-time = "2026-01-23T18:36:35.649Z" },
+    { url = "https://files.pythonhosted.org/packages/56/f9/c037c35f6d0b6bc3bc7bfb314f1d6f1f9a341328ef47cd63fc4f850a7b27/sounddevice-0.5.5-py3-none-macosx_10_6_x86_64.macosx_10_6_universal2.whl", hash = "sha256:05eb9fd6c54c38d67741441c19164c0dae8ce80453af2d8c4ad2e7823d15b722", size = 108557, upload-time = "2026-01-23T18:36:37.41Z" },
+    { url = "https://files.pythonhosted.org/packages/88/a1/d19dd9889cd4bce2e233c4fac007cd8daaf5b9fe6e6a5d432cf17be0b807/sounddevice-0.5.5-py3-none-win32.whl", hash = "sha256:1234cc9b4c9df97b6cbe748146ae0ec64dd7d6e44739e8e42eaa5b595313a103", size = 317765, upload-time = "2026-01-23T18:36:39.047Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/0e/002ed7c4c1c2ab69031f78989d3b789fee3a7fba9e586eb2b81688bf4961/sounddevice-0.5.5-py3-none-win_amd64.whl", hash = "sha256:cfc6b2c49fb7f555591c78cb8ecf48d6a637fd5b6e1db5fec6ed9365d64b3519", size = 365324, upload-time = "2026-01-23T18:36:40.496Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/39/a61d4b83a7746b70d23d9173be688c0c6bfc7173772344b7442c2c155497/sounddevice-0.5.5-py3-none-win_arm64.whl", hash = "sha256:3861901ddd8230d2e0e8ae62ac320cdd4c688d81df89da036dcb812f757bb3e6", size = 317115, upload-time = "2026-01-23T18:36:42.235Z" },
 ]
 
 [[package]]

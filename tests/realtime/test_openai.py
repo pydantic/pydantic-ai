@@ -453,18 +453,21 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
 
 @pytest.mark.anyio
 async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A malformed frame (invalid JSON, then a bad base64 audio payload) surfaces as a recoverable
-    # SessionError and the session keeps streaming rather than tearing down.
+    # A malformed frame (invalid JSON, a valid-JSON-but-non-object frame, then a bad base64 audio
+    # payload) surfaces as a recoverable SessionError and the session keeps streaming rather than
+    # tearing down. The non-object case guards against `json.loads` returning a list/str/number, which
+    # would otherwise raise `AttributeError` from a later `.get()` and escape the recoverable path.
     bad_json = 'not json'
+    non_object = json.dumps(['not', 'an', 'object'])
     bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': 'not-base64!!'})
     good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
-    ws = FakeWebSocket([_created(), _updated(), bad_json, bad_audio, good])
+    ws = FakeWebSocket([_created(), _updated(), bad_json, non_object, bad_audio, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
-    assert [type(e).__name__ for e in events] == ['SessionError', 'SessionError', 'AudioDelta']
-    assert all(isinstance(e, SessionError) and e.recoverable for e in events[:2])
+    assert [type(e).__name__ for e in events] == ['SessionError', 'SessionError', 'SessionError', 'AudioDelta']
+    assert all(isinstance(e, SessionError) and e.recoverable for e in events[:3])
     assert events[-1] == AudioDelta(data=b'\x09')
 
 
@@ -509,9 +512,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     items = [json.loads(frame) for frame in ws.sent[1:]]
     assert [(i['type'], i['item']['role'], i['item']['content'][0]) for i in items] == [
         ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'earlier question'}),
-        ('conversation.item.create', 'assistant', {'type': 'text', 'text': 'earlier answer'}),
+        ('conversation.item.create', 'assistant', {'type': 'output_text', 'text': 'earlier answer'}),
         ('conversation.item.create', 'user', {'type': 'input_text', 'text': 'spoken question'}),
-        ('conversation.item.create', 'assistant', {'type': 'text', 'text': 'spoken answer'}),
+        ('conversation.item.create', 'assistant', {'type': 'output_text', 'text': 'spoken answer'}),
     ]
 
 

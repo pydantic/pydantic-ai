@@ -799,14 +799,13 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
 async def test_snapshot_is_a_copy() -> None:
     conn = FakeRealtimeConnection([Transcript(text='one', is_final=True), TurnComplete()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
-    agen = cast(AsyncGenerator[Any], session.__aiter__())
-    async for _ in agen:
-        pass
-    snapshot_before = session.new_messages()
-    assert len(snapshot_before) == 1
-    # A later mutation of the internal history must not show up in the earlier snapshot.
-    session._history.append(ModelRequest(parts=[UserPromptPart(content='later')]))  # type: ignore[attr-defined]
-    assert len(snapshot_before) == 1
+    _ = [e async for e in session]
+    snapshot = session.new_messages()
+    assert len(snapshot) == 1
+    # `new_messages()` returns an independent copy: mutating the returned list must not leak back into
+    # the session's own history.
+    snapshot.append(ModelRequest(parts=[UserPromptPart(content='later')]))
+    assert len(session.new_messages()) == 1
 
 
 async def test_handoff_to_standard_agent_run() -> None:
@@ -1137,6 +1136,28 @@ async def test_agent_realtime_session_forwards_model_settings() -> None:
     async with agent.realtime_session(model=model, model_settings=settings) as session:
         _ = [e async for e in session]
     assert model.last_model_settings == settings
+
+
+async def test_agent_realtime_session_merges_agent_and_call_model_settings() -> None:
+    """Call-time `model_settings` layer over the agent-level default, mirroring `run`/`iter`."""
+    agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1, max_tokens=100))
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
+        _ = [e async for e in session]
+    assert model.last_model_settings == ModelSettings(temperature=0.5, max_tokens=100)
+
+
+async def test_agent_realtime_session_applies_model_settings_override() -> None:
+    """`Agent.override(model_settings=...)` reaches the realtime connection, mirroring `run`/`iter`."""
+    agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1))
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    with agent.override(model_settings=ModelSettings(temperature=0.9)):
+        async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
+            _ = [e async for e in session]
+    # The override replaces both the agent-level default and the call-time settings, as in `run`/`iter`.
+    assert model.last_model_settings == ModelSettings(temperature=0.9)
 
 
 async def test_agent_realtime_session_send_audio() -> None:

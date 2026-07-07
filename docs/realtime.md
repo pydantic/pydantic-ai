@@ -588,4 +588,3 @@ A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeM
 [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference implementation; the same
 shape applies to Gemini Live, Amazon Nova Sonic, and others. Inputs a provider doesn't support
 (e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.
-```

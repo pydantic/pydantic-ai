@@ -2709,10 +2709,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=self._get_model(None) if self._model else _RealtimeModelStub(),
             usage=usage if usage is not None else _usage.RunUsage(),
-            model_settings=model_settings,
+            model_settings=None,
             conversation_id=conversation_id,
             max_retries=self._max_tool_retries,
         )
+
+        # Model settings follow the same precedence as `run`/`iter`: an active
+        # `Agent.override(model_settings=...)` replaces both the agent-level default and this call's
+        # `model_settings`; otherwise the call's settings layer over the agent default. Callable
+        # settings are resolved once against the run context (a realtime session has no per-request
+        # rebuild).
+        model_settings_override = self._override_model_settings.get()
+        agent_model_settings = (
+            model_settings_override.value if model_settings_override is not None else self.model_settings
+        )
+        run_model_settings = model_settings if model_settings_override is None else None
+        resolved_agent_settings = (
+            agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+        )
+        effective_model_settings = merge_model_settings(resolved_agent_settings, run_model_settings)
+        run_context.model_settings = effective_model_settings
 
         # Capabilities: the agent's root + any per-call ones. Only the tool-lifecycle hooks run in a
         # realtime session (it executes tools but has no model-request/graph/output stages); deferred
@@ -2790,7 +2806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 instructions=resolved_instructions,
                 tools=tool_defs,
                 native_tools=native_tools,
-                model_settings=model_settings,
+                model_settings=effective_model_settings,
                 messages=message_history,
             ) as connection:
                 yield RealtimeSession(
