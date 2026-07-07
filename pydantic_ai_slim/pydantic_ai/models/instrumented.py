@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
+    TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
@@ -155,6 +157,21 @@ class InstrumentationSettings:
             unit='{USD}',
             description='Monetary cost',
         )
+        time_to_first_chunk_histogram_kwargs = dict(
+            name='gen_ai.client.operation.time_to_first_chunk',
+            unit='s',
+            description='Time from issuing a streaming request to the first chunk being surfaced to the consumer',
+        )
+        try:
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore
+            )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
@@ -222,6 +239,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
+        time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
@@ -233,6 +251,8 @@ class InstrumentationSettings:
         elif price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
+        if time_to_first_chunk is not None:
+            self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
 @dataclass(init=False)
@@ -288,6 +308,10 @@ class InstrumentedModel(WrapperModel):
         )
         with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
+            # Stamp the request-issue instant before the wrapped model opens the stream, so the
+            # `time_to_first_chunk` delta spans from when we issue the request to when the first
+            # chunk is surfaced to the consumer.
+            request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
                     prepared_rc.messages,
@@ -298,4 +322,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    finish(
+                        response_stream.get(),
+                        time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
+                    )

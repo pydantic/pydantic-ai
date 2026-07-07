@@ -11,6 +11,11 @@
 .PHONY: install
 install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
+	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
+	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
+	# workspace member under lowest-direct), so install it out-of-band; --no-deps
+	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
+	uv pip install --no-deps "pydantic-ai-harness>=0.4.0"
 	pre-commit install --install-hooks
 
 .PHONY: install-all-python

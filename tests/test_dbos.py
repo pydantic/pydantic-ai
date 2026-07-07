@@ -75,6 +75,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
 
@@ -170,6 +171,16 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+@DBOS.step()
+async def runtime_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('runtime_event', event=event)
+
+
 # This doesn't need to be a step
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
@@ -225,6 +236,19 @@ seq_complex_dbos_agent = DBOSAgent(
     parallel_execution_mode='sequential',
     name='seq_complex_agent',
 )
+
+
+async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    del messages, agent_info
+    yield 'Hello'
+    yield ' world'
+
+
+runtime_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='runtime_handler_stream_agent',
+)
+runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -618,6 +642,43 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     )
 
 
+async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await runtime_handler_stream_dbos_agent.run(
+            'Say hello', event_stream_handler=runtime_event_stream_handler
+        )
+
+    assert result.output == snapshot('Hello world')
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names[0] == 'runtime_handler_stream_agent__model.request_stream'
+    # The per-run handler fires live, nested inside the model-request step (delivering the streamed
+    # events asserted below). It is no longer invoked a second time at the graph level against the
+    # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
+    assert 'runtime_event_stream_handler' not in step_names
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
+async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:
+    # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
+    # directly, rather than the in-workflow per-event dispatcher.
+    agent = Agent(TestModel(), name='event_stream_handler_property_agent')
+    dbos_agent = DBOSAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    assert dbos_agent.event_stream_handler is runtime_event_stream_handler
+
+
 async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:
     """Verify that wrapper-level caching is skipped when cache_tools=False.
 
@@ -726,7 +787,9 @@ async def test_agent_name_collision(allow_model_requests: None, dbos: DBOS):
 async def test_agent_without_name():
     with pytest.raises(
         UserError,
-        match="An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps.",
+        match=re.escape(
+            "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
+        ),
     ):
         DBOSAgent(Agent())
 
@@ -734,7 +797,9 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.',
+        match=re.escape(
+            'An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.'
+        ),
     ):
         DBOSAgent(Agent(name='test_agent'))
 
@@ -939,6 +1004,100 @@ async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: No
     # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can pass in toolsets directly.
     result = await simple_dbos_agent.run('What is the capital of Mexico?', toolsets=[FunctionToolset()])
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_dbos_agent_run_in_workflow_with_runtime_external_toolset(dbos: DBOS):
+    def request_external_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(request_external_tool),
+        name='runtime_external_toolset_agent',
+        output_type=[str, DeferredToolRequests],
+    )
+    dbos_agent = DBOSAgent(agent)
+
+    result = await dbos_agent.run(
+        'Call the runtime external tool.',
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external',
+                        parameters_json_schema={
+                            'type': 'object',
+                            'properties': {'query': {'type': 'string'}},
+                            'required': ['query'],
+                        },
+                    )
+                ],
+                id='external',
+            )
+        ],
+    )
+
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+    )
+
+
+def runtime_tool() -> str:
+    return 'tool-result'
+
+
+async def test_dbos_agent_run_in_workflow_with_runtime_function_toolset(dbos: DBOS):
+    # Unlike Temporal and Prefect, DBOS runs function tools inline rather than wrapping them, so a
+    # `FunctionToolset` added per-run is allowed and executes like a constructor-time one. (The toolset,
+    # like all DBOS workflow arguments, must be serializable, so the tool is a module-level function.)
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(call_then_answer), name='runtime_function_toolset_agent')
+    dbos_agent = DBOSAgent(agent)
+
+    result = await dbos_agent.run(
+        'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
+    )
+    assert result.output == 'done'
+    assert any(
+        isinstance(part, ToolReturnPart) and part.content == 'tool-result'
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS):
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
+            '`ExternalToolset` can be passed at runtime.'
+        ),
+    ):
+        await simple_dbos_agent.run(
+            'Hello',
+            toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
+        )
+
+
+async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: DBOS):
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
+            '`ExternalToolset` can be passed at runtime.'
+        ),
+    ):
+        await simple_dbos_agent.run(
+            'Hello',
+            toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')],
+        )
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):

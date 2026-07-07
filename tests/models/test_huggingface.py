@@ -43,7 +43,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -856,8 +856,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(model)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 

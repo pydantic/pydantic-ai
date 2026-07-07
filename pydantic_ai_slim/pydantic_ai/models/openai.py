@@ -4448,19 +4448,20 @@ def _build_tool_search_return_part(
 
     Writes the cross-provider
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
-    to `content` (with as much detail as the provider returned — name and description
-    for OpenAI's full function-tool definitions) and stashes the `status` field on
-    `provider_details`.
+    to `content` (carrying only the matched tool names — the full
+    [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] is injected on the
+    next request via defer-loading, so description is redundant here) and
+    stashes the `status` field on `provider_details`.
     """
     matches: list[ToolSearchMatch] = []
     if output_item is not None:
         # `output_item.tools` is a union of OpenAI Responses tool variants; only
-        # function tools carry the name + description we want. Other variants
-        # (file_search, image generation, etc.) can't appear here in practice but
-        # aren't statically excluded from the union, so we filter by type.
+        # function tools carry a stable `name` field. Other variants (file_search,
+        # image generation, etc.) can't appear here in practice but aren't
+        # statically excluded from the union, so we filter by type.
         for t in output_item.tools:
             if isinstance(t, responses.FunctionTool):
-                matches.append({'name': t.name, 'description': t.description})
+                matches.append({'name': t.name})
     return NativeToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},

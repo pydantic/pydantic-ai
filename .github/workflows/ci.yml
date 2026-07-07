@@ -34,11 +34,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
+      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
+      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
+      # whose name is shadowed by the workspace member, so keeping it in the
+      # universal lock breaks the lowest-direct re-resolution. Install it into the
+      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
+      # present from the workspace). Keep the pin in sync with the runner's
+      # (.github/scripts/pydantic-ai-runner).
+      - run: uv pip install --no-deps "pydantic-ai-harness>=0.4.0"
+
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch
+          # pre-commit hooks shell out via `uv run`; without this they would
+          # re-sync the venv and drop the out-of-band harness install above.
+          UV_NO_SYNC: "1"
 
       - run: uv build --all-packages
       - run: ls -lh dist/
@@ -148,6 +160,24 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
+      # test model is on disk when the ST tests load it offline (see the
+      # `stsb_bert_tiny_model` fixture). On a sustained HF outage the cache stays
+      # cold and those tests skip instead of erroring the whole job.
+      - name: pre-download sentence-transformers test model
+        if: matrix.install.name == 'all-extras'
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --all-extras python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
+
       # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
       # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
       # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
@@ -209,6 +239,21 @@ jobs:
       - run: uv sync --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
+
+      # Warm the HF cache out-of-band (see the `test` job) so the ST tests load
+      # the model offline from disk instead of revalidating it against HF Hub.
+      - name: pre-download sentence-transformers test model
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            if uv run --no-sync python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+              exit 0
+            fi
+            echo "HF model download attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "sentence-transformers test model unavailable after retries; ST tests will skip"
+          exit 1
 
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
