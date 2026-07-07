@@ -289,9 +289,7 @@ def open_model_request_span(
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
                 cost_from_provider = cost_from_provider_details(response)
-                price_calculation = (
-                    None if cost_from_provider is not None else best_effort_price_calculation(response)
-                )
+                price_calculation = None if cost_from_provider is not None else best_effort_price_calculation(response)
 
                 if not span.is_recording():
                     return

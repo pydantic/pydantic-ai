@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from genai_prices import calc_price
 
@@ -46,16 +46,34 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
 
 
 def cost_from_provider_details(response: ModelResponse) -> Decimal | None:
-    """Try to get the cost from the provider details."""
-    if provider_details := response.provider_details:
-        # For Pydantic AI Gateway  only, unfortunate that it is aware of gateway specific logic here
-        if (usage := provider_details.get('usage')) and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')):
-            if (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None:
+    """Best-effort cost the provider reported for a response, or `None` to fall back to `genai-prices`.
+
+    Two shapes are recognised, both tolerated as untyped `provider_details` so malformed values fall
+    through to `None` rather than raising:
+
+    - OpenRouter reports its own cost at the top level as `provider_details['cost']`.
+    - The Pydantic AI Gateway reports a `cost_estimate` nested under `provider_details['usage']['pydantic_ai_gateway']`.
+
+    A top-level OpenRouter `cost` takes precedence over the nested gateway estimate. Floats are converted
+    via `str` so binary-float noise doesn't leak into the `Decimal`.
+    """
+    provider_details = response.provider_details
+    if not provider_details:
+        return None
+
+    # OpenRouter: a top-level `cost` (a reported `0.0` is a value, not "unknown", so only `None` is skipped).
+    if (cost := provider_details.get('cost')) is not None:
+        return Decimal(str(cost))
+
+    # Pydantic AI Gateway: a `cost_estimate` nested under `usage.pydantic_ai_gateway`.
+    usage = provider_details.get('usage')
+    if isinstance(usage, dict):
+        gateway = cast('dict[str, Any]', usage).get('pydantic_ai_gateway')
+        if isinstance(gateway, dict):
+            cost_estimate = cast('dict[str, Any]', gateway).get('cost_estimate')
+            if cost_estimate is not None:
                 return Decimal(str(cost_estimate))
 
-        # For every other provider we can just extract the cost from the provider cost and make the models themselves populate it while processing provider_details
-        # In this case we do it in OpenAI because OpenRouter uses OpenAI
-        return Decimal(str(response.provider_cost)) if response.provider_cost else None
     return None
 
 

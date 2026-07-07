@@ -208,9 +208,7 @@ def test_cost_from_provider_details_gateway():
 
 def test_cost_from_provider_details_openrouter_cost_takes_precedence_over_gateway():
     """A top-level OpenRouter `cost` wins over the nested gateway estimate."""
-    response = _response_with_provider_details(
-        {'cost': 0.5, 'usage': {'pydantic_ai_gateway': {'cost_estimate': 0.1}}}
-    )
+    response = _response_with_provider_details({'cost': 0.5, 'usage': {'pydantic_ai_gateway': {'cost_estimate': 0.1}}})
     assert cost_from_provider_details(response) == Decimal('0.5')
 
 
