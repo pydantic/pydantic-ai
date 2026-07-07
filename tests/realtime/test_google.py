@@ -316,6 +316,24 @@ def test_map_audio_and_text_parts() -> None:
     ]
 
 
+def test_map_skips_thought_parts() -> None:
+    # Native-audio models stream their reasoning as `thought` text next to the spoken answer; it must
+    # not leak into the transcript (only the real spoken text becomes a `Transcript`). Kept as a unit
+    # test because a cassette can't reliably force a model to think.
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            model_turn=genai_types.Content(
+                parts=[
+                    genai_types.Part(text='**Planning the greeting**', thought=True),
+                    genai_types.Part(text='Hello there.'),
+                ]
+            )
+        )
+    )
+    assert conn._map_message(message) == [Transcript(text='Hello there.', is_final=False)]  # pyright: ignore[reportPrivateUsage]
+
+
 def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(

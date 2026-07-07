@@ -16,8 +16,8 @@ Application Default Credentials when `vertexai=True` (useful where org policy di
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import InitVar, dataclass, field
 from typing import Any, Literal, cast
 
@@ -219,6 +219,37 @@ def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
         output_tokens=usage.response_token_count or 0,
         cache_read_tokens=usage.cached_content_token_count or 0,
     )
+
+
+@contextmanager
+def _single_ws_user_agent(client: Client) -> Generator[None]:
+    """Drop a duplicate `User-Agent` header for the duration of a Gemini Live WebSocket handshake.
+
+    `google-genai` forwards the client's HTTP headers verbatim as the Live WebSocket's
+    `additional_headers`. The `GoogleProvider` adds a capitalized `User-Agent` (for HTTP, where `httpx`
+    folds it together with the SDK's own lowercase `user-agent`), but the `websockets` library stores
+    headers case-insensitively and rejects the two as a duplicate, failing the handshake. We remove our
+    capitalized variant just for the connect and restore it after, so a single user-agent reaches the
+    socket while HTTP requests keep pydantic-ai's user-agent.
+    """
+    # Reach into the SDK's private HTTP options; guarded with `getattr` so custom / fake clients that
+    # don't expose them (e.g. in tests) simply skip the reconciliation.
+    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
+    if not isinstance(raw_headers, dict):
+        yield
+        return
+    headers = cast('dict[str, str]', raw_headers)
+    duplicates = [key for key in headers if key.lower() == 'user-agent']
+    if len(duplicates) < 2:
+        yield
+        return
+    # Keep the SDK's own lowercase `user-agent` if present, otherwise the first seen; drop the rest.
+    keep = 'user-agent' if 'user-agent' in duplicates else duplicates[0]
+    removed = {key: headers.pop(key) for key in duplicates if key != keep}
+    try:
+        yield
+    finally:
+        headers.update(removed)
 
 
 @dataclass
@@ -460,7 +491,8 @@ class GoogleRealtimeModel(RealtimeModel):
                 instructions, tools, model_settings, native_tools=native_tools, resumption_handle=handle
             )
             opening = client.aio.live.connect(model=self.model, config=config)
-            session = await opening.__aenter__()
+            with _single_ws_user_agent(client):
+                session = await opening.__aenter__()
             cm = opening
             return session
 
@@ -580,7 +612,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 for part in content.model_turn.parts or []:
                     if part.inline_data is not None and part.inline_data.data:
                         events.append(AudioDelta(data=part.inline_data.data))
-                    elif part.text:
+                    elif part.text and not part.thought:
+                        # Skip thinking parts: native-audio models stream their reasoning as `thought`
+                        # text alongside the spoken answer, and it must not leak into the transcript.
                         events.append(Transcript(text=part.text, is_final=False))
             if content.input_transcription is not None and content.input_transcription.text:
                 events.append(
