@@ -387,8 +387,16 @@ class RealtimeCapabilities:
     [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] (push-to-talk). When `False` the
     provider only supports automatic voice activity detection."""
     interruption: bool = False
-    """Whether the model supports server-side interruption — [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]
-    and [`truncate_output`][pydantic_ai.realtime.RealtimeSession.truncate_output]."""
+    """Whether the model supports server-side interruption — cancelling the model's in-progress response
+    via [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]."""
+    output_truncation: bool = False
+    """Whether the model can truncate its in-progress audio output to the point the user actually heard,
+    via [`truncate_output`][pydantic_ai.realtime.RealtimeSession.truncate_output] and the `audio_end_ms`
+    argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
+
+    Distinct from [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption]: a provider may
+    support cancelling a response (barge-in) without supporting output truncation. OpenAI supports both;
+    xAI Grok Voice supports cancellation but not truncation."""
     session_seeding: bool = False
     """Whether the model can seed a session with prior conversation (`message_history`)."""
 

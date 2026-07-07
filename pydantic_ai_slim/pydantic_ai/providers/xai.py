@@ -66,6 +66,16 @@ class XaiProvider(Provider[AsyncClient]):
             return self._lazy_client.get_client()
         return self._client
 
+    @property
+    def api_key(self) -> str | None:
+        """The resolved API key, or `None` when the provider was built from a pre-configured `xai_client`.
+
+        The gRPC `AsyncClient` doesn't expose its key, so this returns the one resolved from the `api_key`
+        argument or `XAI_API_KEY`. Used by transports that authenticate outside the SDK, e.g.
+        [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel]'s WebSocket `Authorization` header.
+        """
+        return self._api_key
+
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return grok_model_profile(model_name)
@@ -99,6 +109,9 @@ class XaiProvider(Provider[AsyncClient]):
                 and `timeout`.
         """
         self._lazy_client: _LazyAsyncClient | None = None
+        # Retained so transports authenticating outside the gRPC SDK (e.g. the realtime WebSocket) can
+        # read it back; `None` when a pre-configured `xai_client` was passed, since its key isn't exposed.
+        self._api_key: str | None = None
         if xai_client is not None:
             self._client = xai_client
         else:
@@ -108,6 +121,7 @@ class XaiProvider(Provider[AsyncClient]):
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
                     ' to use the xAI provider.'
                 )
+            self._api_key = api_key
             client_kwargs: dict[str, str | float] = {'api_key': api_key}
             if api_host is not None:
                 client_kwargs['api_host'] = api_host

@@ -879,7 +879,9 @@ class _FakeRealtimeModel(RealtimeModel):
 
     @property
     def capabilities(self) -> RealtimeCapabilities:
-        return RealtimeCapabilities(image_input=True, manual_turn_control=True, interruption=True, session_seeding=True)
+        return RealtimeCapabilities(
+            image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
+        )
 
     @asynccontextmanager
     async def connect(

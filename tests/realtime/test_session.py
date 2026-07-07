@@ -95,7 +95,7 @@ class FakeRealtimeModel(RealtimeModel):
     def __init__(self, connection: FakeRealtimeConnection, *, capabilities: RealtimeCapabilities | None = None) -> None:
         self._connection = connection
         self._capabilities = capabilities or RealtimeCapabilities(
-            image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
+            image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
         )
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
@@ -677,13 +677,28 @@ async def test_manual_turn_control_guard() -> None:
 
 
 async def test_interruption_guard() -> None:
+    # A model without interruption (e.g. Gemini Live) rejects barge-in cancellation up front.
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(interruption=False))
     with pytest.raises(UserError, match='does not support interruption'):
+        await session.interrupt()
+    assert conn.sent == []
+
+
+async def test_output_truncation_guard() -> None:
+    # A model that supports cancellation but not output truncation (e.g. xAI Grok Voice) rejects
+    # `truncate_output()` and `interrupt(audio_end_ms=...)`, while a plain `interrupt()` still cancels.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(
+        conn, _noop_runner, capabilities=RealtimeCapabilities(interruption=True, output_truncation=False)
+    )
+    with pytest.raises(UserError, match='does not support output truncation'):
         await session.truncate_output(100)
-    with pytest.raises(UserError, match='does not support interruption'):
+    with pytest.raises(UserError, match='does not support output truncation'):
         await session.interrupt(audio_end_ms=100)
     assert conn.sent == []
+    await session.interrupt()
+    assert conn.sent == [CancelResponse()]
 
 
 async def test_image_input_guard() -> None:

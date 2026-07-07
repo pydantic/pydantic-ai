@@ -17,17 +17,21 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import InitVar, dataclass, field
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 try:
     import websockets
-    from openai import AsyncOpenAI
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `websockets` and `openai` packages to use the OpenAI Realtime model, '
+        'Please install the `websockets` package to use the OpenAI Realtime model, '
         'you can use the `realtime` and `openai` optional groups - `pip install "pydantic-ai-slim[realtime,openai]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    # Only needed for typing: the provider supplies the concrete client at runtime, so importing the
+    # protocol helpers below (e.g. from the xAI realtime provider) doesn't require the `openai` package.
+    from openai import AsyncOpenAI
 
 from ..exceptions import UserError
 from ..messages import (
@@ -431,6 +435,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(json.dumps(event))
 
+    def _map_event(self, data: dict[str, Any]) -> RealtimeEvent | None:
+        """Map a raw provider frame to a codec event.
+
+        A hook so protocol clones (e.g. the xAI Grok Voice provider) can reuse the whole connection while
+        overriding only how frames map to events. Defaults to the OpenAI [`map_event`][pydantic_ai.realtime.openai.map_event].
+        """
+        return map_event(data)
+
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         while True:
             try:
@@ -493,7 +505,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 if _obj(data.get('response')).get('status') != 'cancelled':
                     self._response_active = True
                     await self._send_event({'type': 'response.create'})
-        if (event := map_event(data)) is not None:
+        if (event := self._map_event(data)) is not None:
             events.append(event)
         return events
 
@@ -661,6 +673,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             image_input=True,
             manual_turn_control=True,
             interruption=True,
+            output_truncation=True,
             session_seeding=True,
         )
 

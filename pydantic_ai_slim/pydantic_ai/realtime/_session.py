@@ -74,7 +74,7 @@ _PCM_MEDIA_TYPE = 'audio/pcm'
 # Fallback for a session created without a model's capabilities (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.capabilities`.
 _ALL_CAPABILITIES = RealtimeCapabilities(
-    image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
+    image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
 )
 
 
@@ -262,7 +262,7 @@ class RealtimeSession:
 
     async def truncate_output(self, audio_end_ms: int) -> None:
         """Truncate the model's current audio output at `audio_end_ms` (see `TruncateOutput`)."""
-        self._require_capability(self._capabilities.interruption, 'truncate_output', 'interruption')
+        self._require_capability(self._capabilities.output_truncation, 'truncate_output', 'output truncation')
         await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
@@ -280,6 +280,11 @@ class RealtimeSession:
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op.
         if audio_end_ms is not None:
+            if not self._capabilities.output_truncation:
+                raise UserError(
+                    'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
+                    'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
+                )
             await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
         await self._connection.send(CancelResponse())
 
@@ -524,26 +529,14 @@ class RealtimeSession:
             if tokens:
                 settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
 
-    async def _run_tool(self, call: ToolCall) -> str:
-        settings = self._instrumentation
-        if settings is None:
-            return await self._execute_tool(call)
-        attributes: dict[str, Any] = {
-            'gen_ai.operation.name': 'execute_tool',
-            'gen_ai.tool.name': call.tool_name,
-            'gen_ai.tool.call.id': call.tool_call_id,
-        }
-        if settings.include_content:
-            attributes['gen_ai.tool.call.arguments'] = call.args
-        with settings.tracer.start_as_current_span(
-            f'execute_tool {call.tool_name}', attributes=attributes, kind=SpanKind.INTERNAL
-        ) as span:
-            result = await self._execute_tool(call)
-            if settings.include_content:
-                span.set_attribute('gen_ai.tool.call.result', result)
-            return result
-
     async def _execute_tool(self, call: ToolCall) -> str:
+        # No `execute_tool` span is created here: the `execute_tool` span is owned by the
+        # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime_session`
+        # injects into the tool runner's `ToolManager` (mirroring a classic run). That capability
+        # span is the single, canonical source of tool spans; the pump task runs inside the session
+        # span's OTel context, so the capability's tool span nests under the session span as a sibling
+        # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
+        # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
         args, error = _parse_tool_args(call.args)
         if error is not None:
             result = error
@@ -584,7 +577,7 @@ class RealtimeSession:
     ) -> None:
         """Run a background tool and feed its completion (or failure) back through the queue."""
         try:
-            result = await self._run_tool(call)
+            result = await self._execute_tool(call)
         except Exception as e:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into the final `gather(..., return_exceptions=True)` and hang the session on a
@@ -615,7 +608,7 @@ class RealtimeSession:
                 background.add(task)
                 task.add_done_callback(background.discard)
             else:
-                result = await self._run_tool(event)
+                result = await self._execute_tool(event)
                 for out in self._complete_tool_call(call_part, result):
                     await queue.put(out)
             return False

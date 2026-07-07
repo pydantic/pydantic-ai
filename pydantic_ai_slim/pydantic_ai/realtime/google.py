@@ -339,6 +339,7 @@ class GoogleRealtimeModel(RealtimeModel):
             image_input=True,
             manual_turn_control=False,
             interruption=False,
+            output_truncation=False,
             session_seeding=True,
         )
 

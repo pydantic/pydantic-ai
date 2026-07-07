@@ -1,0 +1,366 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: c22dd60d-295d-4b65-a621-a1868408a22e
+    session:
+      id: f56666ca-2794-44f0-8872-723104df5498
+      object: realtime.session
+      model: grok-voice-latest
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Answer in two or three words.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: c89553cd-3b03-43ac-bf74-070d5b36787a
+    conversation:
+      id: f56666ca-2794-44f0-8872-723104df5498
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: 42f17041-1665-4bc5-9989-4e6228019e55
+    timestamp: 1783466053446
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Answer in two or three words.
+      voice: human_Ara
+      enable_noise_suppression: true
+      enable_echo_detection_filtering: false
+      echo_detection_threshold_ms: 3000
+      echo_detection_match_types:
+      - exact
+      - partial
+      - char_overlap
+      asr_validation_ignore_list:
+      - ah
+      - er
+      - hmm
+      - mhm
+      - mmm
+      - oh
+      - uh
+      - um
+      asr_validation_backchannel_ignore_list:
+      - i see
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      xvad_settings:
+        rms_vad_sensitivity: 0.0
+        silence_interval: 0.0
+        min_utterance: 0.1
+        min_db: -31.0
+        threshold: 0.3
+        num_frames_to_flip_state: 2
+        num_frames_to_flip_state_off: 6
+        num_frames_in_queue_on: 200
+        num_frames_in_queue_off: 1000
+        sampling_type: strict
+        sampling_type_on: ''
+        sampling_type_off: ''
+        sampling_type_use_sliding: false
+        sampling_type_threshold_percentage: 0.65
+        xvad_model_name: mix_042426_tutors_synthetic_denoised_042426_2140.pth
+        audio_floor_rms_vad_config:
+          enabled: true
+          minimum_rms: 0.02
+          cooldown_seconds: 1.5
+          maximum_rms: 0.18
+      asr_classifier:
+        enable: true
+        is_grok_4: true
+        model_sampler_config: grok-4-mini
+        model_address: grpc://voice-duplext-ic-prod.global.svc.cluster.local:80
+        temperature: 0.01
+        template_key: triclass
+        use_utterance_tag: false
+        pause: 2.0
+        'yes': respond
+        maybe: ok,silent
+        remove_punctuation: true
+        always_respond_for_non_english: true
+        min_num_messages: 9
+        max_num_messages: 13
+        blocking: true
+        enable_backchannel: false
+        max_message_words: 100
+      response_patient_starter_config:
+        enable: false
+        wait_time: 5.0
+        use_default_system_prompt: false
+      model: grok-voice-latest
+      keep_context: false
+      enable_phonetic_spelling: false
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      is_kids_mode: false
+      input_audio_transcription: null
+    type: session.updated
+    event_id: feb0b8a3-372a-43e5-b802-c41d66391b1b
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: f7d82732-13ed-47be-a05e-19f7d45013f1
+    item:
+      id: 4d2d71ba-dd02-40b3-80c3-681002e7d084
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 351eaa9f-df94-4c96-a878-78cb897846cf
+    response:
+      id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: bf3fa605-2425-490e-90f0-197ecca99d50
+    item:
+      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: c989f271-aec8-471f-9966-8ec9912e3e9f
+    item:
+      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: 4d2d71ba-dd02-40b3-80c3-681002e7d084
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 534adbe8-9295-459e-95a7-50e938773c8c
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 2f6d9cb1-88e4-442e-b486-caf0bbef5290
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    content_index: 0
+    output_index: 0
+    rid: 7bc405ea-12e7-427c-a207-265c97783100
+    latency: '0.59'
+    audio_duration_ms: 560
+    ts: 1783466054222
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 7bc405ea-12e7-427c-a207-265c97783100
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    delta: Hello there!
+    content_index: 0
+    output_index: 0
+    rid: 7bc405ea-12e7-427c-a207-265c97783100
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: be5e57db-4403-46f6-8ac9-449c48e1738c
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    delta: fv9Y/7H/LQDAADIBPgEHAaUAGwDe/8P/pv+4/7T/4v8v
+    content_index: 0
+    output_index: 0
+    rid: 7bc405ea-12e7-427c-a207-265c97783100
+    audio_duration_ms: 150
+    ts: 1783466054299
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 0d25fdd0-c756-4482-93ab-1767da0c885e
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    delta: JAAdABYADgAHAAIAAQAAAAEAAwAGAAcACAAIAAgABgAE
+    content_index: 0
+    output_index: 0
+    rid: 7bc405ea-12e7-427c-a207-265c97783100
+    audio_duration_ms: 80
+    ts: 1783466054300
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 579bd412-8ceb-40e6-9e46-75c5cd363334
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    transcript: Hello there!
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 99cd3344-ee2c-4c78-8d5e-7a1529922e59
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 0196cc0d-c725-4d95-aee0-0e4ee4f1c021
+    item_id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: b78852a1-ac0f-4d00-90a7-c2fa6ef50450
+    item:
+      id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 88d2ef24-3dff-46fd-ad80-4ff13672946f
+    response:
+      id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+      object: realtime.response
+      output:
+      - id: 8cfe796f-43c5-4957-8ea8-76fb67d90692
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Hello there!
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: f299eb6c-1fae-4040-9993-13cdc3db07ca
+    usage:
+      input_tokens: 5
+      input_token_details:
+        text_tokens: 5
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 43
+      output_token_details:
+        text_tokens: 3
+        audio_tokens: 40
+        grok_tokens: 0
+      total_tokens: 48
+      output_audio_seconds: 0.79
+    previous_item_id: null

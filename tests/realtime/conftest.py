@@ -22,6 +22,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as xai_imports_successful:
+    from pydantic_ai.providers.xai import XaiProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.providers import Provider
 
@@ -47,6 +50,7 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
+    monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
 
 
 def _record_mode(request: pytest.FixtureRequest) -> str | None:
@@ -57,13 +61,21 @@ def _record_mode(request: pytest.FixtureRequest) -> str | None:
 
 
 @contextmanager
-def _ws_cassette(request: pytest.FixtureRequest, provider: ProviderName) -> Generator[RealtimeCassette]:
-    """Patch the provider's WebSocket transport to replay from / record into this test's cassette."""
+def _ws_cassette(
+    request: pytest.FixtureRequest, provider: ProviderName, *, skip_if_missing: bool = False
+) -> Generator[RealtimeCassette]:
+    """Patch the provider's WebSocket transport to replay from / record into this test's cassette.
+
+    `skip_if_missing` skips (rather than errors) when no cassette exists offline, for providers whose
+    cassettes may not have been recorded yet (e.g. xAI, gated on realtime API access for our account).
+    """
     module = cast('str', request.node.fspath.basename).replace('.py', '')  # pyright: ignore[reportUnknownMemberType]
     name = sanitize_filename(cast('str', request.node.name), 240)  # pyright: ignore[reportUnknownMemberType]
     path = CASSETTES_DIR / module / f'{name}.yaml'
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=_record_mode(request))
     if plan == 'error_missing':  # pragma: no cover - only when a cassette is missing offline
+        if skip_if_missing:
+            pytest.skip(f'Missing realtime WebSocket cassette (record with `--record-mode=rewrite`): {path}')
         raise RuntimeError(
             f'Missing realtime WebSocket cassette: {path}\n'
             'Record it with: uv run --env-file .env pytest --record-mode=rewrite <test> -q'
@@ -99,3 +111,16 @@ def gemini_ws_cassette(
         pytest.skip('google-genai not installed')
     with _ws_cassette(request, 'gemini') as cassette:
         yield GoogleProvider(api_key=gemini_api_key), cassette
+
+
+@pytest.fixture
+def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterator[tuple[XaiProvider, RealtimeCassette]]:
+    """An `XaiProvider` whose Grok Voice realtime WebSocket is backed by a cassette.
+
+    Skips (rather than errors) when the cassette is missing offline: recording requires xAI realtime
+    API access, which our account may not have, so these cassettes may not be present.
+    """
+    if not xai_imports_successful():  # pragma: no cover
+        pytest.skip('xai-sdk / websockets not installed')
+    with _ws_cassette(request, 'xai', skip_if_missing=True) as cassette:
+        yield XaiProvider(api_key=xai_api_key), cassette

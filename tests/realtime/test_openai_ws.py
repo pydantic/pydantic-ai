@@ -191,5 +191,5 @@ def test_capabilities_allow_seeding() -> None:
     """
     caps = OpenAIRealtimeModel('gpt-realtime').capabilities
     assert caps == RealtimeCapabilities(
-        image_input=True, manual_turn_control=True, interruption=True, session_seeding=True
+        image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
     )

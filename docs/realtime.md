@@ -47,13 +47,28 @@ the `google-genai` SDK, available via the `google` optional group:
 pip install "pydantic-ai-slim[google]"
 ```
 
-Both implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the rest
-of this guide applies to either — swap `OpenAIRealtimeModel('gpt-realtime')` for
-`GoogleRealtimeModel('gemini-live-2.5-flash')`. A few provider differences are worth knowing: Gemini
-expects **16 kHz** PCM input audio (OpenAI uses 24 kHz), produces a single response modality per
-session, and natively accepts **live video frames** sent as
-[`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
-[`send_image`][pydantic_ai.realtime.RealtimeSession.send_image] for "show me this" interactions).
+The xAI Grok Voice provider ([`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel]) uses
+WebSockets plus the `xai-sdk` client (for [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]),
+available via the `realtime` and `xai` optional groups:
+
+```bash
+pip install "pydantic-ai-slim[realtime,xai]"
+```
+
+xAI's realtime API is a clone of the OpenAI Realtime protocol. Authentication and the base URL come
+from the `provider` argument, mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel]: pass
+`provider='xai'` (the default, reads `XAI_API_KEY`) or an
+[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] instance for a custom key.
+
+All three implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
+rest of this guide applies to any of them — swap `OpenAIRealtimeModel('gpt-realtime')` for
+`GoogleRealtimeModel('gemini-live-2.5-flash')` or `XaiRealtimeModel('grok-voice-latest')`. A few
+provider differences are worth knowing: Gemini expects **16 kHz** PCM input audio (OpenAI and xAI use
+24 kHz), produces a single response modality per session, and natively accepts **live video frames**
+sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
+[`send_image`][pydantic_ai.realtime.RealtimeSession.send_image] for "show me this" interactions). xAI
+Grok Voice supports cancellation-based barge-in but not output truncation (see
+[Capabilities](#capabilities)), and reports no per-response token usage.
 
 ## Quickstart
 
@@ -242,6 +257,28 @@ Authentication comes from the `provider` argument, mirroring
 Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
 [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client.
 
+### xAI Grok Voice configuration
+
+[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] keeps a minimal surface, reusing the
+OpenAI provider's [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] turn-detection knobs:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.openai import ServerVAD
+from pydantic_ai.realtime.xai import XaiRealtimeModel
+
+model = XaiRealtimeModel(
+    'grok-voice-latest',
+    voice='eve',                                       # eve (default), ara, rex, sal, leo, or a custom ID
+    turn_detection=ServerVAD(threshold=0.85),          # or None for push-to-talk
+    input_transcription_model='grok-transcribe',       # opt in to input transcription (off by default)
+)
+```
+
+`tool_choice`, `parallel_tool_calls`, and `max_tokens` are read from `model_settings` passed to
+`realtime_session`. Input transcription is off by default; when enabled, the user's transcript is
+surfaced at the end of each user turn (Grok Voice reports it as cumulative snapshots that can
+retroactively correct earlier text, so live partials are not streamed).
+
 ## Turn-taking and barge-in
 
 By default the provider uses server-side voice activity detection
@@ -266,7 +303,9 @@ async for event in session:
 
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
 caller's responsibility. Explicit `interrupt()` and manual turn-taking require provider support (see
-[Capabilities](#capabilities)); Gemini Live handles barge-in automatically and exposes neither.
+[Capabilities](#capabilities)); Gemini Live handles barge-in automatically and exposes neither. The
+`audio_end_ms` truncation additionally needs [`output_truncation`](#capabilities), which xAI Grok
+Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
 ### Push-to-talk (manual turn-taking)
 
@@ -290,17 +329,21 @@ aren't universal. Each model reports its support through
 [`RealtimeModel.capabilities`][pydantic_ai.realtime.RealtimeModel.capabilities], a frozen
 [`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities]:
 
-| [`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities] flag | Gates | OpenAI | Gemini |
-| --- | --- | :---: | :---: |
-| [`image_input`][pydantic_ai.realtime.RealtimeCapabilities.image_input] | [`send_image`](#images) | ✅ | ✅ |
-| [`manual_turn_control`][pydantic_ai.realtime.RealtimeCapabilities.manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ |
-| [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption] | [`interrupt`/`truncate_output`](#turn-taking-and-barge-in) | ✅ | ❌ |
-| [`session_seeding`][pydantic_ai.realtime.RealtimeCapabilities.session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ |
+| [`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities] flag | Gates | OpenAI | Gemini | xAI |
+| --- | --- | :---: | :---: | :---: |
+| [`image_input`][pydantic_ai.realtime.RealtimeCapabilities.image_input] | [`send_image`](#images) | ✅ | ✅ | ❌ |
+| [`manual_turn_control`][pydantic_ai.realtime.RealtimeCapabilities.manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ | ✅ |
+| [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
+| [`output_truncation`][pydantic_ai.realtime.RealtimeCapabilities.output_truncation] | [`truncate_output` / `interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
+| [`session_seeding`][pydantic_ai.realtime.RealtimeCapabilities.session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
-exposes neither the manual turn verbs nor an explicit `interrupt()`. Calling a method the model
-doesn't support raises a clear [`UserError`][pydantic_ai.exceptions.UserError] *before* anything is
-sent, so you can branch on `capabilities` up front rather than handle a mid-session failure:
+exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
+cancelling a response (`interrupt()`) but not truncating its audio to the point the user actually
+heard, so `output_truncation` is off — `truncate_output()` and `interrupt(audio_end_ms=…)` raise while
+`interrupt()` works. Calling a method the model doesn't support raises a clear
+[`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on
+`capabilities` up front rather than handle a mid-session failure:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -573,7 +616,6 @@ Realtime is in beta, and some capabilities are intentionally out of scope for no
 - **Browser-direct transport (WebRTC).** Sessions run server-side over WebSocket; there is no direct browser-to-provider WebRTC path.
 - **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.
 - **Session resumption beyond automatic reconnect.** You can't persist a handle and resume a session in a later process; recovery is limited to in-process [reconnection](#reconnecting).
-- **The xAI provider.** Only OpenAI Realtime and Gemini Live ship today.
 - **Bounded structured-output runs.** A session has no `output_type` or `session.run()` with an output schema — [delegate to a text agent](#delegating-to-a-text-agent) for structured results.
 - **Realtime-specific capability hooks.** Capabilities run their [tool-lifecycle hooks](#relationship-to-run-iter) only; there are no before/after-exchange hooks.
 - **Dynamic instructions mid-session.** Instructions are resolved once at connect and not re-evaluated during the session.

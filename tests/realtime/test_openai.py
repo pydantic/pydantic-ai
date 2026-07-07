@@ -1007,9 +1007,10 @@ def test_azure_provider_is_rejected() -> None:
 
 def test_capabilities() -> None:
     caps = OpenAIRealtimeModel('gpt-realtime').capabilities
-    assert (caps.image_input, caps.manual_turn_control, caps.interruption, caps.session_seeding) == (
-        True,
-        True,
-        True,
-        True,
-    )
+    assert (
+        caps.image_input,
+        caps.manual_turn_control,
+        caps.interruption,
+        caps.output_truncation,
+        caps.session_seeding,
+    ) == (True, True, True, True, True)

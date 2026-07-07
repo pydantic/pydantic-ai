@@ -113,3 +113,18 @@ session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. 
 parameters are read from `model_settings`.
 
 ::: pydantic_ai.realtime.google
+
+## xAI Grok Voice provider
+
+The xAI Grok Voice realtime API provider. Requires the `realtime` and `xai` optional groups
+(`pip install "pydantic-ai-slim[realtime,xai]"`).
+
+xAI's realtime API is a clone of the OpenAI Realtime protocol, so
+[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] reuses the OpenAI codec (event
+mapping, seeding, the WebSocket connection) and reuses [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]
+for turn-taking (or `None` for push-to-talk). It diverges only where xAI does: it supports
+cancellation-based interruption but not output truncation, has no image input, and surfaces input
+transcription at the end of each user turn. Authentication comes from an
+[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].
+
+::: pydantic_ai.realtime.xai
