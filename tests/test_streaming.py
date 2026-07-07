@@ -5245,11 +5245,9 @@ def replay_response(replay_timestamp: datetime.datetime) -> ModelResponse:
 async def test_replay_streamed_response_cancel_noop(
     replay_mrp: models.ModelRequestParameters,
 ) -> None:
-    """`_ReplayStreamedResponse.cancel()` is a no-op — events are replayed locally, no live connection to close."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
+    """`cancel()` on a replayed `CompletedStreamedResponse` is a no-op — events are replayed locally, no live connection to close."""
     response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
-    streamed_response = _ReplayStreamedResponse(response, model_request_parameters=replay_mrp)
+    streamed_response = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, events=True)
 
     await streamed_response.cancel()
     await streamed_response.cancel()
@@ -5261,10 +5259,8 @@ async def test_replay_streamed_response_cancel_noop(
 async def test_replay_streamed_response_events(
     replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
 ) -> None:
-    """Verify that `_ReplayStreamedResponse` replays all part types as stream events."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
-    stream = _ReplayStreamedResponse(replay_response, model_request_parameters=replay_mrp)
+    """Verify that `CompletedStreamedResponse(events=True)` replays all part types as stream events."""
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, events=True)
     events = [event async for event in stream]
 
     assert events == snapshot(
@@ -5306,10 +5302,8 @@ async def test_replay_streamed_response_buffered_aiter_idempotent(
     replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
 ) -> None:
     """`__aiter__` is idempotent on the buffered path — second call returns the same iterator."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
     buffered: list[ModelResponseStreamEvent] = [PartStartEvent(index=0, part=TextPart(content='hi'))]
-    stream = _ReplayStreamedResponse(replay_response, model_request_parameters=replay_mrp, buffered_events=buffered)
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, events=buffered)
     first = stream.__aiter__()
     second = stream.__aiter__()
     assert first is second
@@ -5319,9 +5313,7 @@ async def test_replay_streamed_response_get(
     replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
 ) -> None:
     """`get()` returns the wrapped `ModelResponse`."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
-    stream = _ReplayStreamedResponse(replay_response, model_request_parameters=replay_mrp)
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, events=True)
     assert stream.get() is replay_response
 
 
@@ -5331,9 +5323,7 @@ async def test_replay_streamed_response_metadata(
     replay_timestamp: datetime.datetime,
 ) -> None:
     """Metadata properties delegate to the underlying response."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
-    stream = _ReplayStreamedResponse(replay_response, model_request_parameters=replay_mrp)
+    stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, events=True)
     assert stream.usage == RequestUsage(input_tokens=10, output_tokens=20)
     assert stream.model_name == 'test-model'
     assert stream.provider_name == 'test-provider'
@@ -5345,10 +5335,8 @@ async def test_replay_streamed_response_metadata_defaults(
     replay_mrp: models.ModelRequestParameters,
 ) -> None:
     """When the response lacks provider info, `model_name` defaults to `''` and `provider_name`/`provider_url` to `None`."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
     response = ModelResponse(parts=[TextPart(content='hi')])
-    stream = _ReplayStreamedResponse(response, model_request_parameters=replay_mrp)
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, events=True)
     assert stream.model_name == ''
     assert stream.provider_name is None
     assert stream.provider_url is None
@@ -5358,10 +5346,8 @@ async def test_replay_streamed_response_empty_text_part(
     replay_mrp: models.ModelRequestParameters,
 ) -> None:
     """An empty `TextPart` emits a `PartStartEvent` but no `PartDeltaEvent`."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
     response = ModelResponse(parts=[TextPart(content='')])
-    stream = _ReplayStreamedResponse(response, model_request_parameters=replay_mrp)
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, events=True)
     events = [event async for event in stream]
 
     # Empty text: PartStartEvent, FinalResultEvent (from allow_text_output), PartEndEvent
@@ -5374,10 +5360,8 @@ async def test_replay_streamed_response_empty_thinking_part(
     replay_mrp: models.ModelRequestParameters,
 ) -> None:
     """An empty `ThinkingPart` emits a `PartStartEvent` but no `PartDeltaEvent`."""
-    from pydantic_ai.models import _ReplayStreamedResponse  # pyright: ignore[reportPrivateUsage]
-
     response = ModelResponse(parts=[ThinkingPart(content='')])
-    stream = _ReplayStreamedResponse(response, model_request_parameters=replay_mrp)
+    stream = CompletedStreamedResponse(response, model_request_parameters=replay_mrp, events=True)
     events = [event async for event in stream]
 
     assert len(events) == 2

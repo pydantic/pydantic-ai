@@ -24,7 +24,6 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
-    _ReplayStreamedResponse,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -727,11 +726,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        # Signal to durability capabilities that the agent loop expects a real
-        # event stream — they'll route through the streaming activity/step/task.
-        # Promoting this to a proper public field on `ModelRequestContext` is tracked
-        # alongside the runtime-capability rework in
-        # https://github.com/pydantic/pydantic-ai/issues/5477.
+        # Signal to hooks that the agent loop expects a real event stream —
+        # durability capabilities route through the streaming activity/step/task.
         wrap_request_context.streaming = True
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
@@ -779,11 +775,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
-            replay_sr = _ReplayStreamedResponse(
+            buffered = wrap_request_context._buffered_stream_events  # pyright: ignore[reportPrivateUsage]
+            replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
+                # Replay the real events captured inside the durable boundary when available;
+                # otherwise synthesize events from the response parts so streaming consumers
+                # still see the short-circuited response.
+                events=buffered if buffered is not None else True,
                 hooks_already_applied=wrap_request_context._hooks_already_applied,  # pyright: ignore[reportPrivateUsage]
-                buffered_events=wrap_request_context._buffered_stream_events,  # pyright: ignore[reportPrivateUsage]
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream

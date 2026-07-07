@@ -164,16 +164,13 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             ) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
                 # the live stream inside the DBOS step.
-                await process_event_stream(
+                events = await process_event_stream(
                     run_context=run_context,
                     request_context=request_context,
                     stream=streamed_response,
                     handler=event_stream_handler,
                 )
-            return StreamedActivityResult(
-                response=streamed_response.get(),
-                events=request_context._buffered_stream_events or [],  # pyright: ignore[reportPrivateUsage]
-            )
+            return StreamedActivityResult(response=streamed_response.get(), events=events)
 
         bound._request_stream_step = request_stream_step
 
@@ -320,9 +317,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                 request_context.model_request_parameters,
                 ctx,
             )
-            request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
-            request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
-            return result.response
+            return result.apply_to(request_context)
 
         return await self._request_step(
             request_context.messages,

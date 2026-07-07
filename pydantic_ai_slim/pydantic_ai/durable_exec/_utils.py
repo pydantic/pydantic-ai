@@ -37,11 +37,27 @@ class StreamedActivityResult:
 
     Carries both the final `ModelResponse` and the events emitted by the model
     stream while the chain consumed it inside the boundary, so the workflow side
-    can replay the events through any per-run `event_stream_handler`.
+    can replay the events through any per-run `event_stream_handler`. This is the
+    serializable counterpart of a
+    [`CompletedStreamedResponse`][pydantic_ai.models.CompletedStreamedResponse]
+    with buffered events: the workflow side calls `apply_to()` and the agent loop
+    rebuilds the equivalent stream from the request context.
     """
 
     response: ModelResponse
     events: list[ModelResponseStreamEvent]
+
+    def apply_to(self, request_context: ModelRequestContext) -> ModelResponse:
+        """Transfer this result onto the workflow-side `request_context` and return the response.
+
+        Marks the chain as already applied (the hooks ran inside the boundary) and
+        stashes the captured events so the agent loop replays them through any
+        per-run `event_stream_handler`. The single place the workflow side touches
+        the coordination fields.
+        """
+        request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
+        request_context._buffered_stream_events = self.events  # pyright: ignore[reportPrivateUsage]
+        return self.response
 
 
 async def process_event_stream(
@@ -50,17 +66,18 @@ async def process_event_stream(
     request_context: ModelRequestContext,
     stream: AsyncIterable[AgentStreamEvent],
     handler: EventStreamHandler[Any] | None = None,
-) -> None:
+) -> list[ModelResponseStreamEvent]:
     """Run the capability chain's `wrap_run_event_stream` hooks against a live model stream.
 
     Use from inside a durable-execution boundary (Temporal activity, DBOS step,
     Prefect task) to make sure capabilities like `ProcessEventStream` see real,
     in-time-order events rather than synthetic events replayed on the workflow side.
 
-    Captures the events emerging from the chain into `request_context` so the
-    outer agent loop can replay them through any per-run `event_stream_handler`
-    (a runtime handler can't cross the activity boundary, so without this it
-    would silently miss the model events).
+    Returns the events that emerged from the chain (also stashed on
+    `request_context`) so the boundary can ship them back to the workflow side,
+    where they're replayed through any per-run `event_stream_handler` (a runtime
+    handler can't cross the activity boundary, so without this it would silently
+    miss the model events).
 
     Marks `request_context` as having had the chain run (signals the outer agent
     loop to skip re-firing on the replay, which would double-emit hook side
@@ -98,5 +115,7 @@ async def process_event_stream(
     # The model-request path only produces ModelResponseStreamEvent (the chain
     # wraps but doesn't change the type); cast at the boundary to satisfy the
     # typed buffer field on `ModelRequestContext`.
+    events = cast(list[ModelResponseStreamEvent], captured)
     request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
-    request_context._buffered_stream_events = cast(list[ModelResponseStreamEvent], captured)  # pyright: ignore[reportPrivateUsage]
+    request_context._buffered_stream_events = events  # pyright: ignore[reportPrivateUsage]
+    return events

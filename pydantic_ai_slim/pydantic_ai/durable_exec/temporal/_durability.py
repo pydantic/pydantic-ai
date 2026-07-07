@@ -308,16 +308,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 # Fire the capability chain's wrap_run_event_stream hooks against
                 # the live stream — ProcessEventStream and any other outer capability
                 # sees real events here, not synthetic ones replayed in the workflow.
-                await process_event_stream(
+                events = await process_event_stream(
                     run_context=run_context,
                     request_context=request_context,
                     stream=streamed_response,
                     handler=event_stream_handler,
                 )
-            return StreamedActivityResult(
-                response=streamed_response.get(),
-                events=request_context._buffered_stream_events or [],  # pyright: ignore[reportPrivateUsage]
-            )
+            return StreamedActivityResult(response=streamed_response.get(), events=events)
 
         request_stream_activity.__annotations__['deps'] = deps_type | None
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
@@ -539,14 +536,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 ],
                 **activity_config,
             )
-            # Signal to the outer agent loop that the capability chain already ran
-            # against the live stream inside the activity (do not re-fire it) and
-            # propagate the buffered events so any per-run `event_stream_handler`
-            # gets to see real granular events from inside the activity rather
-            # than the synthetic chunks `ReplayStreamedResponse` would produce.
-            request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
-            request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
-            return result.response
+            return result.apply_to(request_context)
 
         activity_config = {'summary': f'request model: {model_name}', **self._model_activity_config}
         return await workflow.execute_activity(
