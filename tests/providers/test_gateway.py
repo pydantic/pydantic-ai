@@ -96,6 +96,12 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer foobar'
 
+        response = httpx.Response(200, request=request)
+        for hook in http_client.event_hooks['response']:
+            await hook(response)
+
+        assert response.headers['X-Existing-Response-Hook'] == 'kept'
+
 
 async def test_init_with_http_client_replaces_existing_gateway_hook():
     # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
