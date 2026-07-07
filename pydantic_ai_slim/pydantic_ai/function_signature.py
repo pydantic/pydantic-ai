@@ -479,13 +479,30 @@ def _path_to_typename(tool_name: str, path: str) -> str:
     return ''.join(_to_pascal_case(p) for p in parts)
 
 
+def _normalize_schema_node(node: dict[str, Any] | bool) -> dict[str, Any]:
+    """Normalize a JSON Schema node to a dict.
+
+    Per the JSON Schema spec, `True` and `False` are valid schemas anywhere a schema may
+    appear (most commonly as `additionalProperties`, but also as a property value or an
+    `allOf`/`anyOf`/`oneOf`/`items`/`$defs` member). `True` permits any value and `False`
+    permits none; neither maps to a precise Python type here, so both collapse to an empty
+    schema, which the walker renders as `Any` — the practical fallback for the model.
+    Non-bool nodes are returned unchanged.
+
+    Called at every point where a nested node may be a raw schema, so no walker has to
+    special-case the boolean form.
+    """
+    return {} if isinstance(node, bool) else node
+
+
 def _process_schema_defs(
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
 ) -> None:
     """Process $defs from a JSON schema, adding TypeSignatures for object-type definitions."""
-    for def_name, def_schema in defs.items():
+    for def_name, def_schema_raw in defs.items():
+        def_schema = _normalize_schema_node(def_schema_raw)
         if def_schema.get('type') == 'object' and 'properties' in def_schema:
             if def_name not in referenced_types:
                 _build_and_register_type(def_name, def_schema, defs, referenced_types, tool_name, def_name)
@@ -504,7 +521,8 @@ def _build_params_from_schema(
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
 
-    for prop_name, prop_schema in properties.items():
+    for prop_name, prop_schema_raw in properties.items():
+        prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
 
         if 'default' in prop_schema:
@@ -529,27 +547,29 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
     if isinstance(schema_type, list) and 'null' in schema_type:
         return True
     if 'anyOf' in schema:
-        return any(s.get('type') == 'null' for s in schema['anyOf'])
+        return any(_normalize_schema_node(s).get('type') == 'null' for s in schema['anyOf'])
     if 'oneOf' in schema:
-        return any(s.get('type') == 'null' for s in schema['oneOf'])
+        return any(_normalize_schema_node(s).get('type') == 'null' for s in schema['oneOf'])
     return False
 
 
 def _schema_to_type_expr(
-    schema: dict[str, Any],
+    schema: dict[str, Any] | bool,
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Convert a JSON schema to a TypeExpr."""
+    schema = _normalize_schema_node(schema)
+
     # Handle $ref
     if '$ref' in schema:
         ref = schema['$ref']
         ref_name = ref.split('/')[-1]
         # Ensure referenced def generates TypeSignature if needed
         if ref_name in defs and ref_name not in referenced_types:
-            ref_schema = defs[ref_name]
+            ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name
@@ -677,7 +697,8 @@ def _handle_union_schema(
     type_exprs: list[TypeExpr] = []
     has_null = False
 
-    for s in schemas:
+    for s_raw in schemas:
+        s = _normalize_schema_node(s_raw)
         if s.get('type') == 'null':
             has_null = True
         else:
@@ -737,7 +758,8 @@ def _build_type_signature(
 
     fields: dict[str, TypeFieldSignature] = {}
 
-    for prop_name, prop_schema in properties.items():
+    for prop_name, prop_schema_raw in properties.items():
+        prop_schema = _normalize_schema_node(prop_schema_raw)
         prop_path = f'{path}.{prop_name}' if path else prop_name
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_path)
         is_required = prop_name in required
