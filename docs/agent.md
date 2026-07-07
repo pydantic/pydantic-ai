@@ -134,6 +134,10 @@ async def main():
     """
 ```
 
+Each model response in the event stream is bracketed by a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent].
+The end event carries the complete [`ModelResponse`][pydantic_ai.messages.ModelResponse], including the per-request [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+The start event carries the response state known when streaming begins, which may already include provider metadata or partial usage such as input-token counts.
+
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
