@@ -837,6 +837,95 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
+async def test_bedrock_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {
+            'inputTokens': 13,
+            'outputTokens': 5,
+            'totalTokens': 1529,
+            'cacheReadInputTokens': 1504,
+            'cacheWriteInputTokens': 7,
+            'cacheDetails': [],
+            'futureBillableTokens': 11,
+        },
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    assert result.output == 'hello'
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
+
+
+async def test_bedrock_stream_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    class BedrockStream:
+        def __init__(self, events: list[Any]):
+            self._events = iter(events)
+
+        def __iter__(self) -> BedrockStream:
+            return self
+
+        def __next__(self) -> Any:
+            return next(self._events)
+
+        def close(self) -> None:
+            pass
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': BedrockStream(
+            [
+                {'messageStart': {'role': 'assistant'}},
+                {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}},
+                {'contentBlockStop': {'contentBlockIndex': 0}},
+                {'messageStop': {'stopReason': 'end_turn'}},
+                {
+                    'metadata': {
+                        'usage': {
+                            'inputTokens': 13,
+                            'outputTokens': 5,
+                            'totalTokens': 1529,
+                            'cacheReadInputTokens': 1504,
+                            'cacheWriteInputTokens': 7,
+                            'cacheDetails': [],
+                        }
+                    }
+                },
+            ]
+        ),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1524, cache_write_tokens=7, cache_read_tokens=1504, output_tokens=5, requests=1)
+    )
+
+
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'flex'})
