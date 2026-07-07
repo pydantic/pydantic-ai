@@ -8,6 +8,7 @@ error path.
 
 from __future__ import annotations as _annotations
 
+import re
 from enum import Enum
 from typing import Annotated
 
@@ -91,7 +92,7 @@ def test_bedrock_native_output_unsupported_model_raises(
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         agent.run_sync('Tell me about Berlin')
 
 

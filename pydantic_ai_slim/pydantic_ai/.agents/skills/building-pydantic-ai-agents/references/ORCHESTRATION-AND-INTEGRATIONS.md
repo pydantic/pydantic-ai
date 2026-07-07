@@ -9,12 +9,12 @@ Use agent delegation when one agent should call another and return the result.
 ```python
 from pydantic_ai import Agent, RunContext
 
-parent = Agent('openai:gpt-5.2')
-researcher = Agent('openai:gpt-5.2', output_type=str)
+parent = Agent('openai:gpt-5.2', name='parent_agent')
+researcher = Agent('openai:gpt-5.2', name='researcher_agent', output_type=str)
 
 
 @parent.tool
-async def research(ctx: RunContext[None], topic: str) -> str:
+async def research(ctx: RunContext, topic: str) -> str:
     result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
     return result.output
 ```
@@ -26,35 +26,35 @@ Good split:
 
 ## Build Multi-Step Workflows with Graphs
 
-Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop.
+Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop. Compose graphs with `GraphBuilder` and typed step functions:
 
 ```python
-from dataclasses import dataclass
+from pydantic_graph import GraphBuilder, StepContext
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
-
-
-@dataclass
-class FirstNode(BaseNode[None, None, int]):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> 'SecondNode | End[int]':
-        if self.value >= 5:
-            return End(self.value)
-        return SecondNode(self.value + 1)
+g = GraphBuilder(input_type=int, output_type=int)
 
 
-@dataclass
-class SecondNode(BaseNode):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> FirstNode:
-        return FirstNode(self.value)
+@g.step
+async def increment(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs + 1
 
 
-graph = Graph(nodes=[FirstNode, SecondNode])
-result = graph.run_sync(FirstNode(0))
+@g.step
+async def double(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs * 2
+
+
+g.add(
+    g.edge_from(g.start_node).to(increment),
+    g.edge_from(increment).to(double),
+    g.edge_from(double).to(g.end_node),
+)
+
+graph = g.build()
+result = graph.run_sync(inputs=3)
 ```
+
+Use `await graph.run(inputs=...)` from async code.
 
 ## Call the Model Without Using an Agent
 
@@ -72,21 +72,6 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
-## Expose Agents as HTTP Servers (A2A)
-
-Use `fasta2a.pydantic_ai.agent_to_a2a` when the agent should be exposed as an ASGI app that speaks the A2A protocol. Install with `pip install 'fasta2a[pydantic-ai]>=0.6.1'`.
-
-```python
-from fasta2a.pydantic_ai import agent_to_a2a
-
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.2')
-app = agent_to_a2a(agent)
-```
-
-`Agent.to_a2a()` still works in 1.x but emits a deprecation warning and is removed in 2.0.
-
 ## Expose Agents to OpenAI-Compatible Clients (Responses API)
 
 Use `Agent.to_openai_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: assistant text is returned, while internal tool calls and reasoning are not surfaced. Requires `starlette` and `openai` (`pip install 'pydantic-ai-slim[ui,openai]'`).
@@ -98,7 +83,7 @@ agent = Agent('openai:gpt-5.2')
 app = agent.to_openai_responses()  # run with `uvicorn module:app`; clients use base_url='.../v1'
 ```
 
-`to_openai_responses()` uses the same `deps`/`model_settings`/`usage_limits` for every request. For per-request dependencies, call `handle_openai_responses_request(request, agent, deps=...)` (from `pydantic_ai.openai_responses`) in your own Starlette/FastAPI route instead. This contrasts with A2A (agent-to-agent interop) and the AG-UI/Vercel AI adapters (interactive frontends that stream tool calls and reasoning).
+`to_openai_responses()` uses the same `deps`/`model_settings`/`usage_limits` for every request. For per-request dependencies, call `handle_openai_responses_request(request, agent, deps=...)` (from `pydantic_ai.openai_responses`) in your own Starlette/FastAPI route instead. This contrasts with the AG-UI/Vercel AI adapters (interactive frontends that stream tool calls and reasoning).
 
 ## Use Durable Execution
 
@@ -122,16 +107,14 @@ from pydantic_ai import Embedder
 embedder = Embedder('openai:text-embedding-3-small')
 ```
 
-## Use LangChain or ACI.dev Tools
+## Use LangChain Tools
 
 Third-party integrations to reach for:
 
 - `tool_from_langchain`
 - `LangChainToolset`
-- `tool_from_aci` (deprecated, removed in 2.0)
-- `ACIToolset` (deprecated, removed in 2.0)
 
-Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools. The ACI.dev wrappers are deprecated in 1.x and removed in 2.0; wrap ACI tools yourself with `Tool.from_schema` against `aci.ACI().functions.get_definition(...)`.
+Use these when the user explicitly wants the LangChain ecosystem instead of native Pydantic AI tools.
 
 ## Systematically Verify Agent Behavior with Evals
 

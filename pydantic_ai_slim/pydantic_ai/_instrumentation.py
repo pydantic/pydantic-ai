@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import itertools
+import json
 import warnings
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
 
-from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
-DEFAULT_INSTRUMENTATION_VERSION = 2
+DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
 
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
@@ -60,6 +61,26 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 
+# These are advised by the spec (the metric is "Development" stability, so this may change):
+# https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk
+# Like any bucket advisory it's only advice: users can override it by configuring a View for this
+# instrument on their MeterProvider, and SDKs configured for exponential-bucket histogram
+# aggregation (e.g. logfire) ignore it entirely.
+TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
+    0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
+)  # fmt: skip
+
+time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
+"""Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
+`Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
+in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
+request and only that handler ever sets the variable, so a value can't outlive its request;
+non-streaming requests read the `None` default.
+
+This is a context variable rather than a field on `ModelRequestContext` because that object is
+public and holds only the *inputs* to `Model.request[_stream]`.
+"""
+
 
 class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
@@ -90,6 +111,19 @@ def serialize_any(value: Any) -> str:
             return f'Unable to serialize: {e}'
 
 
+def safe_to_json(value: object) -> bytes:
+    """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
+
+    `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
+    which would crash an otherwise-successful run from within instrumentation. The stdlib fallback
+    escapes them, matching the lenient behavior callers had before adopting `to_json`.
+    """
+    try:
+        return to_json(value)
+    except PydanticSerializationError:
+        return json.dumps(value, separators=(',', ':')).encode()
+
+
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
     attributes: dict[str, AttributeValue] = {
         GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
@@ -113,17 +147,7 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
-
-
-def event_to_dict(event: LogRecord) -> dict[str, Any]:
-    if not event.body:
-        body = {}  # pragma: no cover
-    elif isinstance(event.body, Mapping):
-        body = event.body
-    else:
-        body = {'body': event.body}
-    return {**body, **(event.attributes or {})}
+    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -173,11 +197,21 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
+class _FinishModelRequestSpan(Protocol):
+    """The `finish` callback yielded by `open_model_request_span`.
+
+    `time_to_first_chunk` is the streaming-only TTFT in seconds; non-streaming
+    callers omit it.
+    """
+
+    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
@@ -215,7 +249,7 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:
@@ -230,7 +264,7 @@ def open_model_request_span(
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse) -> None:
+            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
                 nonlocal record_metrics
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
@@ -251,7 +285,7 @@ def open_model_request_span(
                         'gen_ai.request.model': request_model,
                         'gen_ai.response.model': response_model,
                     }
-                    settings.record_metrics(response, price_calculation, metric_attributes)
+                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
@@ -270,7 +304,7 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, system, span, prepared_parameters)
+                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
@@ -282,6 +316,8 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                 if response.finish_reason is not None:
                     attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                if time_to_first_chunk is not None:
+                    attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
@@ -393,12 +429,12 @@ class InstrumentationNames:
         """Create instrumentation configuration for a specific version.
 
         Args:
-            version: The instrumentation version (1, 2, or 3+)
+            version: The instrumentation version (2 or 3+)
 
         Returns:
             InstrumentationConfig instance with version-appropriate settings
         """
-        if version <= 2:
+        if version == 2:
             return cls(
                 agent_run_span_name='agent run',
                 agent_name_attr='agent_name',

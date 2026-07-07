@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -36,7 +37,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, strip_logfire_metrics, try_import
+from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics, try_import
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -76,6 +77,19 @@ def test_init() -> None:
     )
     assert fallback_model.system == 'fallback:function,function'
     assert fallback_model.base_url is None
+
+
+def test_all_fields_are_accessible() -> None:
+    """Every declared dataclass field must be a real attribute on the instance.
+
+    Regression: `_model_name` was declared as a field but never assigned (`model_name` is a
+    computed property), so generic dataclass introspection — e.g. Prefect's `visit_collection`
+    during durable execution, which does `getattr(model, f.name)` for each field — crashed with
+    `AttributeError`.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    for f in dataclasses.fields(fallback_model):
+        getattr(fallback_model, f.name)  # must not raise
 
 
 def test_first_successful() -> None:
@@ -212,7 +226,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -226,8 +240,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 1,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 1,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]},
@@ -324,6 +338,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.usage.input_tokens': 50,
                     'gen_ai.usage.output_tokens': 2,
                     'gen_ai.response.model': 'function::success_response_stream',
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -335,7 +350,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -350,8 +365,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'hello world',
-                    'gen_ai.usage.input_tokens': 50,
-                    'gen_ai.usage.output_tokens': 2,
+                    'gen_ai.aggregated_usage.input_tokens': 50,
+                    'gen_ai.aggregated_usage.output_tokens': 2,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]},
@@ -455,7 +470,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -1060,7 +1075,7 @@ Don't include any text or Markdown fencing before or after.
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
@@ -1074,8 +1089,8 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.aggregated_usage.input_tokens': 51,
+                    'gen_ai.aggregated_usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]},

@@ -138,7 +138,7 @@ class CohereModel(Model[AsyncClientV2]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncClientV2:
@@ -300,6 +300,11 @@ class CohereModel(Model[AsyncClientV2]):
                     else:
                         assert_never(item)
 
+                if not texts and not thinking and not tool_calls:
+                    # Cohere rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
                     contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
@@ -370,7 +375,7 @@ class CohereModel(Model[AsyncClientV2]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
+                    yield UserChatMessageV2(role='user', content=part.model_response())
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
@@ -399,8 +404,10 @@ def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
 
         request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
         response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        cache_read_tokens = int(u.cached_tokens) if u.cached_tokens else 0
         return usage.RequestUsage(
             input_tokens=request_tokens,
             output_tokens=response_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )

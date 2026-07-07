@@ -125,7 +125,7 @@ You can customize tool task behavior using `tool_task_config` (applies to all to
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
-agent = Agent('gpt-5.2', name='my_agent')
+agent = Agent('openai:gpt-5.2', name='my_agent')
 
 @agent.tool_plain
 def fetch_data(url: str) -> str:
@@ -155,6 +155,10 @@ For real-time streaming behavior inside Prefect flows, you can set an [`event_st
 - **Inside a flow**: Each event is wrapped as a Prefect task for durability, which may affect timing but ensures reliability
 
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+
+### Toolsets at Runtime
+
+Additional toolsets can be passed per run via [`PrefectAgent.run(toolsets=...)`][pydantic_ai.durable_exec.prefect.PrefectAgent.run], but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
 
 ## Task Configuration
 

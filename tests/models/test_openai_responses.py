@@ -2,7 +2,6 @@ import json
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -47,19 +46,16 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -91,12 +87,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -724,7 +714,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
-    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    async with agent.run_stream_events(prompt, model_settings=settings) as event_stream:
+        events = [event async for event in event_stream]
     annotation_event = next(
         event
         for event in events
@@ -749,7 +740,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
-    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    async with agent2.run_stream_events(prompt) as event_stream2:
+        events2 = [event async for event in event_stream2]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -769,7 +761,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
-    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    async with agent3.run_stream_events('What is 2+2?', model_settings=settings3) as event_stream3:
+        events3 = [event async for event in event_stream3]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -1831,24 +1824,6 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -1952,7 +1927,9 @@ def test_model_profile_strict_not_supported():
     m = OpenAIResponsesModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+        profile=merge_profile(
+            openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
+        ),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -2870,8 +2847,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
 
     # Turn 1 establishes a stored response we can seed from.
     result1 = await agent.run('Say hi in one word, no punctuation.')
-    last = result1.all_messages()[-1]
-    assert isinstance(last, ModelResponse)
+    last = message(result1.all_messages(), ModelResponse, index=-1)
     seed_response_id = last.provider_response_id
     assert seed_response_id is not None
 
@@ -3018,8 +2994,7 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         )
 
         assert result.output == snapshot('stored')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3030,8 +3005,7 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         )
 
         assert result.output == snapshot('CONV-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3048,8 +3022,7 @@ async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
             model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
         )
 
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
         original_pydantic_ai_conversation_id = response.conversation_id
@@ -3063,11 +3036,9 @@ async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
         )
 
         assert forked.output == snapshot('forked')
-        request = forked.all_messages()[-2]
-        assert isinstance(request, ModelRequest)
+        request = message(forked.all_messages(), ModelRequest, index=-2)
         assert request.conversation_id != original_pydantic_ai_conversation_id
-        response = forked.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(forked.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert 'conversation_id' not in response.provider_details
 
@@ -3102,8 +3073,7 @@ async def test_openai_conversation_id_preserves_mismatched_history(allow_model_r
         )
 
         assert result.output == snapshot('LOCAL-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3118,8 +3088,7 @@ async def test_openai_conversation_id_auto_without_history(allow_model_requests:
     )
 
     assert result.output == snapshot('no conversation')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.provider_details is not None
     assert 'conversation_id' not in response.provider_details
 
@@ -3142,8 +3111,7 @@ async def test_openai_conversation_id_tool_call_continuation(allow_model_request
         )
 
         assert result.output == snapshot('TOOL-PAI-5222')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3181,8 +3149,7 @@ async def test_openai_conversation_id_streaming_provider_details(allow_model_req
             output = await result.get_output()
 
         assert output == snapshot('streamed')
-        response = result.all_messages()[-1]
-        assert isinstance(response, ModelResponse)
+        response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
 
@@ -3936,8 +3903,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
         ]
     )
 
-    response = messages[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse, index=-1)
     assert isinstance(response.parts, list)
     response.parts[1] = TextPart(content='The meaning of life is 42')
 
@@ -5530,57 +5496,6 @@ I\
                     id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507',
                     provider_name='openai',
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -7469,23 +7384,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7792,28 +7690,6 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='image_generation',
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='image_generation',
-                    content={
-                        'status': 'completed',
-                        'background': 'opaque',
-                        'quality': 'high',
-                        'size': '1024x1536',
-                        'revised_prompt': IsStr(),
-                    },
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -9991,7 +9867,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(api_key=openai_api_key),
-        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'), OpenAIModelProfile(openai_responses_requires_function_call_status_none=True)
+        ),
     )
     agent = Agent(model)
 
@@ -11028,24 +10906,6 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=2,
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                 ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': ['What is the capital of France?']},
-                        tool_call_id=IsStr(),
-                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
-                        provider_name='openai',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    )
-                ),
             ]
         )
 
@@ -11280,38 +11140,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
             {'role': 'user', 'content': 'Hello'},
         ]
     )
-
-
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
-async def test_openai_responses_system_prompt_role(
-    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
-) -> None:
-    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
-    c = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-    agent = Agent(model, system_prompt='some instructions')
-
-    result = await agent.run('hello')
-    assert result.output == 'world'
-
-    expected_role = system_prompt_role or 'system'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['input'] == [
-        {'content': 'some instructions', 'role': expected_role},
-        {'content': 'hello', 'role': 'user'},
-    ]
 
 
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
@@ -11926,7 +11754,8 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
         'Now a 300-word story about a bear in a cave. Be very descriptive.',
         'What is 2+2?',
     ]:
-        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        async with agent.run_stream_events(question, message_history=message_history) as event_stream:
+            events = [event async for event in event_stream]
         all_events.extend(events)
         final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
         last_output = final.result.output
@@ -12188,8 +12017,7 @@ async def test_openai_responses_phase_non_streamed(allow_model_requests: None):
     agent = Agent(model=model)
 
     result = await agent.run('What is the capital of France?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
     assert [(p.id, p.content, (p.provider_details or {}).get('phase')) for p in text_parts] == snapshot(
         [
@@ -12281,8 +12109,7 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     async with agent.run_stream('What is the capital of France?') as result:
         await result.get_output()
 
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
     assert len(text_parts) == 1
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
@@ -12474,10 +12301,10 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
-    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False
+    assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False

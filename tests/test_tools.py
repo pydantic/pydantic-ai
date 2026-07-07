@@ -39,7 +39,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsStr, message, message_part
 
 
 def test_tool_no_ctx():
@@ -65,7 +65,7 @@ def test_tool_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
+        async def invalid_tool(ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -102,7 +102,7 @@ def test_tool_ctx_second():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: no cover
+        def invalid_tool(x: int, ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -271,7 +271,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: no cover
+    def my_tool(x: int) -> str:
         """A function that does something.
 
         Args:
@@ -283,6 +283,7 @@ def test_google_style_with_returns():
         return str(x)
 
     agent.tool_plain(my_tool)
+    assert my_tool(1) == '1'  # exercise the tool body so it doesn't need a no-cover pragma
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
@@ -700,7 +701,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -724,7 +725,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -736,7 +737,7 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
+    with pytest.raises(UserError, match=re.escape("Tool name conflicts with previously renamed tool: 'bar'.")):
         agent.run_sync('')
 
 
@@ -1081,7 +1082,7 @@ def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 1) -> int:
         raise NotImplementedError
 
     @agent.tool_plain
@@ -1164,7 +1165,7 @@ def test_call_tool_without_unrequired_parameters():
         return None
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 2) -> int:
         return a + b
 
     @agent.tool_plain
@@ -1173,10 +1174,8 @@ def test_call_tool_without_unrequired_parameters():
 
     result = agent.run_sync('Hello')
     all_messages = result.all_messages()
-    first_response = all_messages[1]
-    second_request = all_messages[2]
-    assert isinstance(first_response, ModelResponse)
-    assert isinstance(second_request, ModelRequest)
+    first_response = message(all_messages, ModelResponse, index=1)
+    second_request = message(all_messages, ModelRequest, index=2)
     tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
@@ -1305,7 +1304,7 @@ def test_tool_parameters_with_attribute_docstrings():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
@@ -1337,7 +1336,7 @@ def test_dynamic_tools_agent_wide():
 
 
 def test_sync_prepare_tools_agent_wide():
-    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         return tool_defs
@@ -1424,7 +1423,7 @@ def test_function_tool_inconsistent_with_schema():
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
     agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
-    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+    with pytest.raises(TypeError, match=r".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
     result = function('three', 4)
@@ -1464,7 +1463,7 @@ def test_tool_retries():
     call_max_retries: list[int] = []
     call_last_attempt: list[bool] = []
 
-    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1472,7 +1471,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         prepare_max_retries.append(ctx.max_retries)
@@ -1480,7 +1479,7 @@ def test_tool_retries():
         return tool_def
 
     @agent.tool(retries=5, prepare=prepare_tool_def)
-    def infinite_retry_tool(ctx: RunContext[None]) -> int:
+    def infinite_retry_tool(ctx: RunContext) -> int:
         nonlocal call_retries
         call_retries.append(ctx.retry)
         call_max_retries.append(ctx.max_retries)
@@ -1532,7 +1531,7 @@ def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1607,8 +1606,7 @@ def test_approval_required_with_user_prompt():
             )
         else:
             # Second call: respond to both tool result and user prompt
-            last_request = messages[-1]
-            assert isinstance(last_request, ModelRequest)
+            last_request = message(messages, ModelRequest, index=-1)
 
             # Verify we received both tool return and user prompt
             has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
@@ -1623,7 +1621,7 @@ def test_approval_required_with_user_prompt():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1684,7 +1682,7 @@ def test_approval_required_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -1749,7 +1747,7 @@ def test_approval_required_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired  # No metadata
         return x * 42
@@ -1788,17 +1786,17 @@ def test_mixed_deferred_tools_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def tool_a(ctx: RunContext[None], x: int) -> int:
+    def tool_a(ctx: RunContext, x: int) -> int:
         raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
 
     @agent.tool
-    def tool_b(ctx: RunContext[None], y: int) -> int:
+    def tool_b(ctx: RunContext, y: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
         return y * 10
 
     @agent.tool
-    def tool_c(ctx: RunContext[None], z: int) -> int:
+    def tool_c(ctx: RunContext, z: int) -> int:
         raise CallDeferred  # No metadata
 
     result = agent.run_sync('Hello')
@@ -1890,12 +1888,14 @@ async def test_deferred_tool_without_output_type():
 
 
 def test_output_type_deferred_tool_requests_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+    with pytest.raises(
+        UserError, match=re.escape('At least one output type must be provided other than `DeferredToolRequests`.')
+    ):
         Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
-    with pytest.raises(UserError, match='At least one output type must be provided.'):
+    with pytest.raises(UserError, match=re.escape('At least one output type must be provided.')):
         Agent(TestModel(), output_type=[])
 
 
@@ -2301,7 +2301,7 @@ def test_deferred_tool_call_approved_fails():
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
-    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
@@ -2388,7 +2388,7 @@ async def test_approval_required_toolset():
                 ]
             )
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def foo(x: int) -> int:
@@ -2594,7 +2594,7 @@ def test_tool_metadata():
     """Test that metadata is properly set on tools."""
     metadata = {'category': 'test', 'version': '1.0'}
 
-    def simple_tool(ctx: RunContext[None], x: int) -> int:
+    def simple_tool(ctx: RunContext, x: int) -> int:
         return x * 2  # pragma: no cover
 
     tool = Tool(simple_tool, metadata=metadata)
@@ -2605,7 +2605,7 @@ def test_tool_metadata():
     agent = Agent('test')
 
     @agent.tool(metadata={'source': 'agent'})
-    def agent_tool(ctx: RunContext[None], y: int) -> int:
+    def agent_tool(ctx: RunContext, y: int) -> int:
         return y + 1  # pragma: no cover
 
     agent_tool_def = agent._function_toolset.tools['agent_tool']
@@ -2630,14 +2630,14 @@ def test_tool_metadata():
     assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
     @toolset.tool(metadata={'toolset': 'function'})
-    def toolset_tool(ctx: RunContext[None], a: str) -> str:
+    def toolset_tool(ctx: RunContext, a: str) -> str:
         return a.upper()  # pragma: no cover
 
     toolset_tool_def = toolset.tools['toolset_tool']
     assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
-    def standalone_func(ctx: RunContext[None], b: float) -> float:
+    def standalone_func(ctx: RunContext, b: float) -> float:
         return b / 2  # pragma: no cover
 
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
@@ -2650,7 +2650,7 @@ def test_retry_tool_until_last_attempt():
     agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
-    def always_fail(ctx: RunContext[None]) -> str:
+    def always_fail(ctx: RunContext) -> str:
         if ctx.last_attempt:
             return 'I guess you never learn'
         else:
@@ -2676,6 +2676,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2697,6 +2698,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2718,6 +2720,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=72, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2739,6 +2742,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=77, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3063,8 +3067,9 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
             await agent.run('call tool')
 
         else:
-            async for _ in agent.run_stream_events('call tool'):
-                pass
+            async with agent.run_stream_events('call tool') as event_stream:
+                async for _ in event_stream:
+                    pass
 
     task = asyncio.create_task(run_agent())
     await asyncio.wait_for(is_called.wait(), timeout=10)
@@ -3093,7 +3098,7 @@ def test_tool_approved_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -3148,7 +3153,7 @@ def test_tool_approved_with_metadata_and_override_args():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture both the metadata and the argument
@@ -3201,7 +3206,7 @@ def test_tool_approved_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture the tool_call_metadata from context
@@ -3231,7 +3236,7 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     agent = Agent(TestModel())
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         # Capture the tool_call_metadata from context
         received_metadata.append(ctx.tool_call_metadata)
         return x * 42
@@ -3281,6 +3286,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3302,6 +3308,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3363,6 +3370,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3384,6 +3392,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3454,6 +3463,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3475,6 +3485,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3523,6 +3534,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3544,6 +3556,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3589,6 +3602,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3610,6 +3624,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4007,7 +4022,7 @@ def test_tool_ctx_agent():
     tool_output_types: list[Any] = []
 
     @agent.tool
-    def get_agent_info(ctx: RunContext[None]) -> str:
+    def get_agent_info(ctx: RunContext) -> str:
         assert ctx.agent is not None
         tool_agent_names.append(ctx.agent.name)
         tool_output_types.append(ctx.agent.output_type)
@@ -4030,6 +4045,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4051,6 +4067,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4077,7 +4094,7 @@ def test_tool_ctx_agent_in_output_validator():
     validator_agent_names: list[str | None] = []
 
     @agent.output_validator
-    def check_agent(ctx: RunContext[None], output: str) -> str:
+    def check_agent(ctx: RunContext, output: str) -> str:
         assert ctx.agent is not None
         validator_agent_names.append(ctx.agent.name)
         return output
@@ -4097,6 +4114,7 @@ def test_tool_ctx_agent_in_output_validator():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4231,10 +4249,7 @@ def test_include_return_schema_default_cleared():
     result = agent.run_sync('test')
     # return_schema should be cleared since include_return_schema defaults to False
     # (verified by the fact that the tool description doesn't contain "Return schema:")
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(result.all_messages(), UserPromptPart)
     assert 'Return schema' not in str(part.content)
 
 
@@ -4247,8 +4262,7 @@ def test_include_return_schema_via_capability():
 
     agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
     result = agent.run_sync('test')
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
+    request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
     tool_parts = [p for p in request.parts if hasattr(p, 'content')]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject

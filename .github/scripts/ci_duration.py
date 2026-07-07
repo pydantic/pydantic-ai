@@ -22,6 +22,7 @@ REPORT_MARKER = '<!-- ci-duration-report -->'
 REPORT_LABEL = 'trigger:ci-duration-report'
 BASELINE_MAIN_RUN_LIMIT = 30
 BASELINE_PR_RUN_LIMIT = 60
+BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
@@ -261,23 +262,36 @@ def find_latest_ci_run(client: GitHubClient, head_sha: str) -> JsonObject | None
 
 
 def collect_baselines(client: GitHubClient, current_head_sha: str) -> dict[str, Baseline]:
-    main_runs = client.request_paginated(
-        f'actions/workflows/{CI_WORKFLOW_FILE}/runs?branch=main&event=push&status=success',
-        max_items=BASELINE_MAIN_RUN_LIMIT,
-    )
-    pr_runs = client.request_paginated(
-        f'actions/workflows/{CI_WORKFLOW_FILE}/runs?event=pull_request&status=success',
-        max_items=BASELINE_PR_RUN_LIMIT,
-    )
+    try:
+        main_runs = client.request_paginated(
+            f'actions/workflows/{CI_WORKFLOW_FILE}/runs?branch=main&event=push&status=success',
+            max_items=BASELINE_MAIN_RUN_LIMIT,
+        )
+        pr_runs = client.request_paginated(
+            f'actions/workflows/{CI_WORKFLOW_FILE}/runs?event=pull_request&status=success',
+            max_items=BASELINE_PR_RUN_LIMIT,
+        )
+    except (TimeoutError, urllib.error.URLError) as exc:
+        print(f'Unable to collect baseline CI runs: {exc}', file=sys.stderr)
+        return {}
+
     durations: dict[str, list[float]] = {}
     seen_run_ids: set[int] = set()
+    baseline_deadline = time.monotonic() + BASELINE_COLLECTION_MAX_SECONDS
     for run in [*main_runs, *pr_runs]:
+        if time.monotonic() >= baseline_deadline:
+            print('Baseline collection time budget exhausted; using partial baseline samples', file=sys.stderr)
+            break
         run_id = _expect_int(run.get('id'), 'baseline run id')
         if run_id in seen_run_ids or run.get('head_sha') == current_head_sha:
             continue
         seen_run_ids.add(run_id)
         run_attempt = _expect_int(run.get('run_attempt'), 'baseline run_attempt')
-        jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
+        try:
+            jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
+        except (TimeoutError, urllib.error.URLError) as exc:
+            print(f'Unable to collect baseline jobs for run {run_id}: {exc}', file=sys.stderr)
+            continue
         for job_object in jobs:
             job = normalize_job(job_object)
             if job.conclusion == 'success' and job.duration_seconds is not None and is_tracked_test_job(job):
@@ -448,6 +462,8 @@ def parse_runner_class(runner_group_name: str | None, runner_name: str | None, l
     lower_values = ' '.join([runner_group_name or '', runner_name or '', *label_values]).lower()
     if 'depot' in lower_values:
         return 'depot'
+    if 'ubicloud' in lower_values:
+        return 'ubicloud'
     if 'github actions' in lower_values or 'ubuntu' in lower_values:
         return 'github-hosted'
     if 'self-hosted' in lower_values:
