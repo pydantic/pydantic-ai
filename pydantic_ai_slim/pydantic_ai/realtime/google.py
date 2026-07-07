@@ -24,7 +24,7 @@ from typing import Any, Literal, cast
 try:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Gemini realtime model, '
         'you can use the `google` optional group - `pip install "pydantic-ai-slim[google]"`'

@@ -84,7 +84,7 @@ def openai_ws_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
     """An `OpenAIProvider` whose realtime WebSocket is backed by a cassette."""
-    if not imports_successful():  # pragma: no cover
+    if not imports_successful():
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
