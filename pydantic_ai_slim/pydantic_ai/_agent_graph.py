@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import time
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -16,7 +17,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
@@ -676,6 +677,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Stamp the request-issue instant so the instrumentation capability can record
+            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+            # the first-chunk instant; the delta is the client-side time to first token.
+            request_start = time.perf_counter()
             with set_current_run_context(run_context):
                 async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
@@ -685,7 +690,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
-                    await stream_done.wait()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
             response = sr.get()
             _handler_response = response
             return response
@@ -1195,8 +1208,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                    # both signal that the model has no text output to give. Some models emit only thinking
+                    # after completing the task via a tool call, and forcing a retry just makes them produce
+                    # unnecessary follow-up text.
+                    if output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _output.run_none_process_hooks(
@@ -1268,30 +1284,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text = compaction_text
 
                 try:
-                    # At the moment, we generally prioritize at least executing tool calls if they are present.
+                    # At the moment, we prioritize at least executing tool calls if they are present.
                     # In the future, we'd consider making this configurable at the agent or run level.
                     # This accounts for cases like anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
-                    # Native output with `end_strategy='early'` is the exception: valid text is already final.
                     alternatives: list[str] = []
-                    if (
-                        tool_calls
-                        and text
-                        and ctx.deps.end_strategy == 'early'
-                        and output_schema.mode == 'native'
-                        and (text_processor := output_schema.text_processor)
-                    ):
-                        try:
-                            final_result = await self._process_text_response(ctx, text, text_processor)
-                        except ToolRetryError:
-                            pass
-                        else:
-                            # Record the tool calls as skipped so history has no dangling calls.
-                            # Skipped tools emit no events, so the loop body isn't reached here.
-                            async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
-                                yield event  # pragma: no cover
-                            return
-
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
@@ -1340,7 +1337,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
-        final_result: result.FinalResult[NodeRunEndT] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1356,14 +1352,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
-            # When `final_result` is set (e.g. native output already won under `end_strategy='early'`),
-            # `process_tool_calls` records the tool calls as skipped rather than executing them.
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
-                final_result=final_result,
+                final_result=None,
                 ctx=ctx,
                 output_parts=output_parts,
                 output_final_result=output_final_result,
@@ -1423,15 +1417,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        final_result = await self._process_text_response(ctx, text, text_processor)
-        return self._handle_final_result(ctx, final_result, [])
-
-    async def _process_text_response(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        text: str,
-        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
-    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
 
@@ -1444,7 +1429,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return result.FinalResult(result_data)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
         self,

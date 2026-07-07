@@ -12,12 +12,19 @@ import anyio
 from opentelemetry.trace import Tracer, get_tracer
 from typing_extensions import Self
 
+from .exceptions import UserError
+
 __all__ = (
     'AbstractConcurrencyLimiter',
     'ConcurrencyLimiter',
     'ConcurrencyLimit',
     'AnyConcurrencyLimit',
 )
+
+
+def _validate_max_running(max_running: int) -> None:
+    if max_running < 1:
+        raise UserError(f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.')
 
 
 class AbstractConcurrencyLimiter(ABC):
@@ -67,13 +74,16 @@ class ConcurrencyLimit:
     """Configuration for concurrency limiting with optional backpressure.
 
     Args:
-        max_running: Maximum number of concurrent operations allowed.
+        max_running: Maximum number of concurrent operations allowed. Must be >= 1.
         max_queued: Maximum number of operations waiting in the queue.
             If None, the queue is unlimited. If exceeded, raises `ConcurrencyLimitExceeded`.
     """
 
     max_running: int
     max_queued: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_max_running(self.max_running)
 
 
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
@@ -95,12 +105,16 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """Initialize the ConcurrencyLimiter.
 
         Args:
-            max_running: Maximum number of concurrent operations.
+            max_running: Maximum number of concurrent operations. Must be >= 1.
             max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded.
             name: Optional name for this limiter, used for observability when sharing
                 a limiter across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
+
+        Raises:
+            UserError: If `max_running` is less than 1.
         """
+        _validate_max_running(max_running)
         self._limiter = anyio.CapacityLimiter(max_running)
         self._max_queued = max_queued
         self._name = name

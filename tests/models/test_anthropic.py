@@ -11593,3 +11593,70 @@ async def test_anthropic_top_k_propagation(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['top_k'] == 40
+
+
+async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):
+    """An empty `ModelResponse` in history is omitted from the payload; a retry prompt is sent
+    instead so the model can produce a non-empty response. Anthropic accepts the resulting
+    consecutive user turns.
+    """
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot("""\
+# Hi there! 👋
+
+How can I help you today?\
+""")
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+# Hi there! 👋
+
+How can I help you today?\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=26,
+                    output_tokens=18,
+                    details={
+                        'input_tokens': 26,
+                        'output_tokens': 18,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-haiku-4-5-20251001',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
