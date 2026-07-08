@@ -1639,6 +1639,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
@@ -1648,6 +1649,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model: Optional model to use for the agent run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
 
@@ -1673,6 +1675,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
         )
@@ -1682,6 +1685,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
@@ -1691,6 +1695,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model: Optional model to use for the agent run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
 
@@ -1707,6 +1712,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 prog_name=prog_name,
                 message_history=message_history,
+                model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
             )

@@ -320,6 +320,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -338,6 +339,7 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -360,6 +362,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -381,6 +384,7 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -735,8 +739,29 @@ def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+    )
+
+
+def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    cli_agent.to_cli_sync(model='test')
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model='test',
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -758,8 +783,30 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    await cli_agent.to_cli(model='test')
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model='test',
+        model_settings=None,
+        usage_limits=None,
     )
 
 
