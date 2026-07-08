@@ -131,12 +131,12 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
+def cli_exit(prog_name: str = 'clai'):
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
 
 
-def pai_cli_exit():  # pragma: no cover
+def pai_cli_exit():
     """Run the CLI under its legacy `pai` command name and exit.
 
     `pai` was the original name of the CLI (now `clai`) and is kept as an alias; this ensures `pai --help`
