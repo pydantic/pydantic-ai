@@ -520,3 +520,45 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
         {'role': 'assistant', 'parts': [{'type': 'text'}]},
     ]
     assert chat.attributes['gen_ai.response.model'] == 'gpt-realtime'
+
+
+async def test_direct_session_runs_tool_via_runner() -> None:
+    """A direct `RealtimeSession` executes a tool call through its `tool_runner` and folds the result in.
+
+    The hand-managed path has no `Instrumentation` capability, so no `execute_tool` span is produced;
+    the runner's result surfaces as the `tool_call_response` folded into the post-tool `chat` span.
+    """
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            InputTranscript(text='weather in Paris?', is_final=True),
+            Transcript(text='let me check'),
+            ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
+            Transcript(text='it is sunny'),
+            TurnComplete(),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    _ = [e async for e in session]
+
+    finished = exporter.get_finished_spans()
+    assert not [s for s in finished if s.name.startswith('execute_tool')]  # tool spans are capability-owned
+    chats = [s for s in finished if s.name == 'chat gpt-realtime']
+    assert len(chats) == 2
+    _, second = chats
+    assert second.attributes is not None
+    # The runner returned 'sunny', which is folded into the post-tool response's input messages.
+    assert {'type': 'tool_call_response', 'id': 'c1', 'name': 'get_weather', 'result': 'sunny'} in json.loads(
+        str(second.attributes['gen_ai.input.messages'])
+    )[-1]['parts']
+
+
+async def test_chat_span_without_model_name() -> None:
+    """Without a model name, the `chat` span is named just `chat` and omits `gen_ai.request.model`."""
+    settings, exporter = _settings()
+    conn = _Connection([Transcript(text='hello'), TurnComplete()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings)  # no model_name
+    _ = [e async for e in session]
+    chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat')
+    assert chat.attributes is not None
+    assert 'gen_ai.request.model' not in chat.attributes

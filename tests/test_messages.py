@@ -2009,6 +2009,12 @@ def test_speech_part_has_content():
     assert not SpeechPart(speaker='assistant', transcript='').has_content()
 
 
+def test_speech_part_content():
+    """`SpeechPart.content` mirrors `TextPart.content`: the transcript, or `''` when unavailable."""
+    assert SpeechPart(speaker='user', transcript='Hello').content == 'Hello'
+    assert SpeechPart(speaker='user').content == ''
+
+
 def test_speech_part_speaker_invariant():
     """In `ModelRequest.parts` the speaker must be 'user'; in `ModelResponse.parts` it must be 'assistant'."""
     user_part = SpeechPart(speaker='user', transcript='Hello')

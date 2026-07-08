@@ -19,6 +19,8 @@ from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
     RealtimeCapabilities,
+    Reconnected,
+    SessionError,
     ToolCall,
     Transcript,
 )
@@ -140,6 +142,14 @@ def test_session_config_forwards_model_settings() -> None:
     assert config['tool_choice'] == 'required'
 
 
+def test_session_config_omits_absent_model_settings() -> None:
+    """A truthy `ModelSettings` without the realtime-relevant keys forwards none of them."""
+    config = _model()._session_config('hi', None, ModelSettings(temperature=0.5))  # pyright: ignore[reportPrivateUsage]
+    assert 'max_output_tokens' not in config
+    assert 'parallel_tool_calls' not in config
+    assert 'tool_choice' not in config
+
+
 # --- connect: handshake, URL, auth, seeding ------------------------------------------------------
 
 
@@ -179,6 +189,36 @@ class FakeConnect:
 
     async def __aexit__(self, *exc: object) -> bool:
         return False
+
+
+class _DropAfterHandshake(FakeWebSocket):
+    """Completes the handshake (via `recv`), then drops when iterated."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        raise rt_xai.websockets.ConnectionClosed(None, None)
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+class _RecordingConnect:
+    """Stand-in for `websockets.connect` that hands out sockets in order and records closes."""
+
+    def __init__(self, sockets: list[FakeWebSocket]) -> None:
+        self._sockets = iter(sockets)
+        self.closed: list[FakeWebSocket] = []
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+        ws = next(self._sockets)
+        recorder = self
+
+        class _CM:
+            async def __aenter__(self) -> FakeWebSocket:
+                return ws
+
+            async def __aexit__(self, *exc: object) -> bool:
+                recorder.closed.append(ws)
+                return False
+
+        return _CM()
 
 
 def _created() -> str:
@@ -259,6 +299,81 @@ async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.
             },
         },
     ]
+
+
+@pytest.mark.anyio
+async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reconnect through `connect()`'s own dial closes the dropped socket before opening the next."""
+    transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
+    dropped = _DropAfterHandshake([_created(), _updated()])
+    good = FakeWebSocket([_created(), _updated(), transcript])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))
+    async with model.connect(instructions='x') as conn:
+        events = [e async for e in conn]
+
+    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+    assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
+
+
+@pytest.mark.anyio
+async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed reconnect through `connect()`'s dial leaves nothing to close on teardown.
+
+    The dial nulls `cm` before re-dialing, so when the re-dial fails (an expected `OSError`) and the
+    session ends via a `SessionError`, teardown finds `cm` already `None` and skips the close.
+    """
+    dropped = _DropAfterHandshake([_created(), _updated()])
+
+    class _DropThenFail:
+        """First `connect()` yields a socket that drops after the handshake; the re-dial refuses."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            self.calls += 1
+            first = self.calls == 1
+
+            class _CM:
+                async def __aenter__(self) -> FakeWebSocket:
+                    if first:
+                        return dropped
+                    raise OSError('refused')  # an expected dial failure → reconnect gives up
+
+                async def __aexit__(self, *exc: object) -> bool:
+                    return False
+
+            return _CM()
+
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _DropThenFail())
+    model = _model(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
+    async with model.connect(instructions='x') as conn:
+        events = [e async for e in conn]
+
+    assert any(isinstance(e, SessionError) and not e.recoverable for e in events)
+
+
+@pytest.mark.anyio
+async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the very first connection fails to open, there is nothing to close on teardown."""
+
+    class _FailingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            raise ConnectionError('refused')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+            return False
+
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())
+    with pytest.raises(ConnectionError, match='refused'):
+        async with _model().connect(instructions='x'):
+            pass  # pragma: no cover
 
 
 # --- provider / auth resolution ------------------------------------------------------------------
