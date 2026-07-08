@@ -8,18 +8,16 @@ from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
-from pydantic import Json, TypeAdapter, ValidationError
-from pydantic_core import SchemaValidator, to_json
+from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
+from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
-    DeferredToolRequests,
     NativeOutput,
     OutputContext,
     OutputDataT,
@@ -33,7 +31,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -365,91 +363,45 @@ async def run_output_with_hooks(
     return cast(OutputDataT, result)
 
 
-async def execute_traced_output_function(
+async def execute_output_function(
     function_schema: _function_schema.FunctionSchema,
     *,
     run_context: RunContext[AgentDepsT],
     args: dict[str, Any],
     wrap_validation_errors: bool = True,
 ) -> Any:
-    """Execute an output function within a traced span with error handling.
+    """Execute an output function with error handling, converting `ModelRetry` to `ToolRetryError`.
 
-    This function executes the output function within an OpenTelemetry span for observability,
-    automatically records the function response, and handles ModelRetry exceptions by converting
-    them to ToolRetryError when wrap_validation_errors is True.
+    Tracing for output-function execution is provided by the
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability's
+    `wrap_output_process` hook — this function executes the function plain.
 
     Args:
         function_schema: The function schema containing the function to execute
-        run_context: The current run context containing tracing and tool information
+        run_context: The current run context containing tool information
         args: Arguments to pass to the function
-        wrap_validation_errors: If True, wrap ModelRetry exceptions in ToolRetryError
+        wrap_validation_errors: If True, wrap `ModelRetry` exceptions in `ToolRetryError`
 
     Returns:
         The result of the function execution
 
     Raises:
-        ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
-        ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
+        ToolRetryError: When `wrap_validation_errors` is True and a `ModelRetry` is caught
+        ModelRetry: When `wrap_validation_errors` is False and a `ModelRetry` occurs
     """
-    instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
-    # Set up span attributes
-    tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
-    attributes = {
-        'gen_ai.operation.name': 'execute_tool',
-        'gen_ai.tool.name': tool_name,
-        **get_agent_run_baggage_attributes(),
-        'logfire.msg': f'running output function: {tool_name}',
-    }
-    if run_context.tool_call_id:
-        attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
-    if run_context.trace_include_content:
-        attributes[instrumentation_names.tool_arguments_attr] = to_json(args).decode()
-
-    attributes['logfire.json_schema'] = json.dumps(
-        {
-            'type': 'object',
-            'properties': {
-                **(
-                    {
-                        instrumentation_names.tool_arguments_attr: {'type': 'object'},
-                        instrumentation_names.tool_result_attr: {'type': 'object'},
-                    }
-                    if run_context.trace_include_content
-                    else {}
-                ),
-                'gen_ai.tool.name': {},
-                **({'gen_ai.tool.call.id': {}} if run_context.tool_call_id else {}),
-            },
-        }
-    )
-
-    with run_context.tracer.start_as_current_span(
-        instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
-    ) as span:
-        try:
-            output = await function_schema.call(args, run_context)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                    tool_name=run_context.tool_name,
-                )
-                if run_context.tool_call_id:
-                    m.tool_call_id = run_context.tool_call_id  # pragma: no cover
-                raise ToolRetryError(m) from r
-            else:
-                raise
-
-        # Record response if content inclusion is enabled
-        if run_context.trace_include_content and span.is_recording():
-            from .models.instrumented import InstrumentedModel
-
-            span.set_attribute(
-                instrumentation_names.tool_result_attr,
-                output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+    try:
+        return await function_schema.call(args, run_context)
+    except ModelRetry as r:
+        if wrap_validation_errors:
+            m = _messages.RetryPromptPart(
+                content=r.message,
+                tool_name=run_context.tool_name,
             )
-
-        return output
+            if run_context.tool_call_id:
+                m.tool_call_id = run_context.tool_call_id  # pragma: no cover
+            raise ToolRetryError(m) from r
+        else:
+            raise
 
 
 @dataclass
@@ -533,16 +485,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`NativeOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
                 )
 
@@ -560,16 +512,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`PromptedOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
                 )
 
@@ -1007,7 +959,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
-            output = await execute_traced_output_function(
+            output = await execute_output_function(
                 self._function_schema,
                 run_context=run_context,
                 args=output,
@@ -1082,6 +1034,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output_type=self.output_type,
             object_def=self.object_def,
             has_function=self._function_schema is not None,
+            function_name=getattr(self._function_schema.function, '__name__', None) if self._function_schema else None,
             tool_call=tool_call,
             tool_def=tool_def,
             allows_text=schema.allows_text,
@@ -1108,14 +1061,12 @@ class _UnionValidatedOutput:
     data: Any
 
 
-@dataclass
-class UnionOutputResult:
+class UnionOutputResult(BaseModel):
     kind: str
     data: ObjectJsonSchema
 
 
-@dataclass
-class UnionOutputModel:
+class UnionOutputModel(BaseModel):
     result: UnionOutputResult
 
 
@@ -1132,8 +1083,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
-
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
         for output in outputs:
@@ -1157,12 +1106,25 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             json_schemas.append(json_schema)
 
+        # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
+        # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
+        # provider) instead of slipping through to the `_processors` lookup in `validate()`.
+        constrained_result = create_model(
+            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
+        )
+        union_model = create_model(
+            UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
+        )
+        self._union_processor = ObjectOutputProcessor(output=union_model)
+
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
 
         discriminated_json_schemas: list[ObjectJsonSchema] = []
         for object_key, json_schema in zip(self._processors.keys(), json_schemas):
             title = json_schema.pop('title', None)
-            description = json_schema.pop('description', None)
+            # Don't shadow the outer `description` parameter: it carries the union's own
+            # description (e.g. from `NativeOutput(..., description=...)`) into `super().__init__()` below.
+            json_schema_description = json_schema.pop('description', None)
 
             discriminated_json_schema = {
                 'type': 'object',
@@ -1178,8 +1140,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             }
             if title:  # pragma: no branch
                 discriminated_json_schema['title'] = title
-            if description:
-                discriminated_json_schema['description'] = description
+            if json_schema_description:
+                discriminated_json_schema['description'] = json_schema_description
 
             discriminated_json_schemas.append(discriminated_json_schema)
 
@@ -1226,7 +1188,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str = result.kind
         inner_data: dict[str, Any] = result.data
 
-        # Pydantic validation ensures kind is always valid, so KeyError can't happen.
+        # `_union_processor` validates `kind` against the registered keys, so the lookup is safe.
         inner = self._processors[kind]
         inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
@@ -1412,7 +1374,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ) -> Any:
         """Execute the text output function."""
         args = {self._str_argument_name: output}
-        return await execute_traced_output_function(
+        return await execute_output_function(
             self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
         )
 
@@ -1429,6 +1391,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             output_type=str,
             object_def=None,
             has_function=True,
+            function_name=getattr(self._function_schema.function, '__name__', None),
             tool_call=tool_call,
             tool_def=tool_def,
             allows_text=schema.allows_text,
@@ -1470,19 +1433,21 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_strict = strict
 
         max_retries_overrides: dict[str, int] = {}
-        tool_output_max_retries: int | None = None
+        tool_max_retries: int | None = None
 
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
             description = None
             strict = None
+            sequential = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
-                tool_output_max_retries = output.max_retries
+                tool_max_retries = output.max_retries
+                sequential = output.sequential
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1519,12 +1484,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
+                sequential=sequential,
             )
             processors[name] = processor
             tool_defs.append(tool_def)
-            if tool_output_max_retries is not None:
-                max_retries_overrides[name] = tool_output_max_retries
-            tool_output_max_retries = None
+            if tool_max_retries is not None:
+                max_retries_overrides[name] = tool_max_retries
+            tool_max_retries = None
 
         return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 

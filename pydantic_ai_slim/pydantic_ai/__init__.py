@@ -4,6 +4,7 @@ from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
+    AgentRetries,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -12,18 +13,6 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .builtin_tools import (
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
-    WebFetchTool,
-    WebSearchTool,
-    WebSearchUserLocation,
-    XSearchTool,
-)
 from .capabilities import AgentCapability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -50,6 +39,7 @@ from .exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -64,8 +54,6 @@ from .messages import (
     BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentFormat,
@@ -86,11 +74,17 @@ from .messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
+    ModelRequestState,
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
+    ModelResponseState,
     ModelResponseStreamEvent,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -101,8 +95,10 @@ from .messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
@@ -114,6 +110,17 @@ from .messages import (
 )
 from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
+from .native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+    XSearchTool,
+)
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -123,9 +130,9 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .settings import ModelSettings
+from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
-    AgentBuiltinTool,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -159,6 +166,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
@@ -191,6 +199,7 @@ __all__ = (
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
+    'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -202,8 +211,8 @@ __all__ = (
     'BaseToolCallPart',
     'BaseToolReturnPart',
     'BinaryContent',
-    'BuiltinToolCallPart',
-    'BuiltinToolReturnPart',
+    'NativeToolCallPart',
+    'NativeToolReturnPart',
     'CachePoint',
     'CompactionPart',
     'DocumentFormat',
@@ -225,11 +234,15 @@ __all__ = (
     'ModelMessagesTypeAdapter',
     'ModelRequest',
     'ModelRequestPart',
+    'ModelRequestState',
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
+    'ModelResponseState',
     'ModelResponseStreamEvent',
     'MultiModalContent',
+    'OutputToolCallEvent',
+    'OutputToolResultEvent',
     'PartDeltaEvent',
     'PartEndEvent',
     'PartStartEvent',
@@ -240,8 +253,10 @@ __all__ = (
     'TextPartDelta',
     'ThinkingPart',
     'ThinkingPartDelta',
+    'ToolCallEvent',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolResultEvent',
     'ToolReturn',
     'ToolReturnPart',
     'UploadedFile',
@@ -257,7 +272,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
-    'AgentBuiltinTool',
+    'AgentNativeTool',
     'Tool',
     'ToolDefinition',
     'RunContext',
@@ -288,7 +303,6 @@ __all__ = (
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
-    'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
@@ -310,6 +324,8 @@ __all__ = (
     'ModelRequestContext',
     # settings
     'ModelSettings',
+    'ToolChoice',
+    'ToolOrOutput',
     # usage
     'RunUsage',
     'RequestUsage',

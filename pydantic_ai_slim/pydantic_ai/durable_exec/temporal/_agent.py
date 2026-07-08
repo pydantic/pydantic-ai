@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -14,11 +14,9 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
-    AgentRunResultEvent,
     _instructions,
     _utils,
     messages as _messages,
@@ -26,21 +24,23 @@ from pydantic_ai import (
     usage as _usage,
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
+from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolResults,
     RunContext,
     Tool,
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
@@ -112,7 +112,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
-                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
+                If not provided, only `FunctionToolset` and `MCPToolset` will be prepared for Temporal.
                 The function takes the toolset, the activity name prefix, the toolset-specific activity config, the tool-specific activity configs and the run context type.
         """
         super().__init__(wrapped)
@@ -271,8 +271,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(
-        self, *, model: models.Model | models.KnownModelName | str | None = None, force: bool = False
-    ) -> Iterator[None]:
+        self,
+        *,
+        model: models.Model | models.KnownModelName | str | None = None,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        force: bool = False,
+    ) -> Generator[None]:
         """Context manager for workflow-specific overrides.
 
         When called outside a workflow, this is a no-op.
@@ -282,10 +286,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             yield
             return
 
+        # Per-run toolsets are merged with the constructor-time temporalized toolsets. Only non-executing
+        # toolsets like `ExternalToolset` are allowed at runtime (enforced in `iter`); executing toolsets
+        # need their activities registered with the worker before the workflow runs.
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
         # Override model and set the model for workflow execution
         with (
-            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            super().override(model=self._temporal_model, toolsets=merged_toolsets, tools=[]),
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
         ):
@@ -315,9 +323,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -339,9 +347,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -362,13 +370,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -403,10 +410,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
+                control. Tool retries cannot be overridden per run. See
+                [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
@@ -422,7 +432,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides(model=model):
+        with self._temporal_overrides(model=model, additional_toolsets=toolsets):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
@@ -436,13 +446,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage_limits=usage_limits,
                 usage=usage,
                 metadata=metadata,
+                retries=retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
-                **_deprecated_kwargs,
             )
 
     @overload
@@ -461,9 +470,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -485,9 +494,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -508,13 +517,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -547,10 +555,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
+                control. Tool retries cannot be overridden per run. See
+                [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
@@ -575,13 +586,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
+            retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         )
 
     @overload
@@ -600,9 +610,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -624,9 +634,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -648,14 +658,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
-    ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Example:
@@ -685,9 +694,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
+                control. Tool retries cannot be overridden per run. See
+                [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
@@ -714,13 +726,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
+            retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            builtin_tools=builtin_tools,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         ) as result:
             yield result
 
@@ -740,12 +751,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
 
     @overload
     def run_stream_events(
@@ -763,12 +774,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AbstractAsyncContextManager[
+        AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
+    ]: ...
 
     def run_stream_events(
         self,
@@ -785,12 +798,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -803,10 +816,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         agent = Agent('openai:gpt-5.2')
 
         async def main():
-            events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
-            print(events)
+            collected: list[AgentStreamEvent | AgentRunResultEvent] = []
+            async with agent.run_stream_events('What is the capital of France?') as events:
+                async for event in events:
+                    collected.append(event)
+            print(collected)
             '''
             [
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
@@ -840,41 +854,53 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
+                control. Tool retries cannot be overridden per run. See
+                [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
         Returns:
-            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
-            run result.
+            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
+            `AgentRunResultEvent` carrying the run result.
         """
-        if workflow.in_workflow():
-            raise UserError(
-                '`agent.run_stream_events()` cannot be used inside a Temporal workflow. '
-                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-            )
+        super_run_stream_events = super().run_stream_events
 
-        return super().run_stream_events(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            capabilities=capabilities,
-            spec=spec,
-        )
+        @asynccontextmanager
+        async def run_stream_events_context() -> AsyncGenerator[
+            AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
+        ]:
+            if workflow.in_workflow():
+                raise UserError(
+                    '`agent.run_stream_events()` cannot be used inside a Temporal workflow. '
+                    'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                )
+
+            async with super_run_stream_events(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                spec=spec,
+            ) as events:
+                yield events
+
+        return run_stream_events_context()
 
     @overload
     def iter(
@@ -892,12 +918,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -916,12 +941,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -940,13 +964,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -1025,9 +1048,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
+                output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
+                control. Tool retries cannot be overridden per run. See
+                [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
@@ -1043,10 +1069,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
             assert model is None, 'Temporal overrides must set the model before `agent.iter()` is invoked'
 
-            if toolsets is not None:
-                raise UserError(
-                    'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-                )
+            # Non-executing toolsets like `ExternalToolset` can be added per-run; executing ones need
+            # their activities registered with the worker before the workflow runs.
+            reject_unsupported_runtime_toolsets(
+                toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
+            )
 
             resolved_model = None
         else:
@@ -1065,12 +1092,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             metadata=metadata,
+            retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            builtin_tools=builtin_tools,
             capabilities=capabilities,
             spec=spec,
-            **_deprecated_kwargs,
         ) as run:
             yield run
 
@@ -1083,11 +1109,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
@@ -1099,11 +1126,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
-            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
-                Per-run `builtin_tools` are still added to these.
+            native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
+            retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
+                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict for finer control. When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
         """
         if workflow.in_workflow():
@@ -1119,9 +1148,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
-            if _utils.is_set(builtin_tools):
+            if _utils.is_set(native_tools):
                 raise UserError(
-                    'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                    'Native tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
 
         with super().override(
@@ -1130,9 +1159,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model=model,
             toolsets=toolsets,
             tools=tools,
-            builtin_tools=builtin_tools,
+            native_tools=native_tools,
             instructions=instructions,
             model_settings=model_settings,
+            retries=retries,
             spec=spec,
         ):
             yield

@@ -35,6 +35,7 @@
 
 <!-- rule:0 -->
 - Use `isinstance()` for type checking, not `hasattr()`, `getattr()`, `type(obj).__name__`, or discriminator field checks like `part_kind` — Enables proper type narrowing for static analysis and prevents fragile string-based comparisons that break during refactoring
+- Don't use `getattr()`/`setattr()` with a non-literal field name to read or copy fields of our own statically-known types (dataclasses, `BaseModel`s, message/part classes), e.g. looping over `fields()` and copying by name — use explicit attribute access (`merged.foo = merged.foo or other.foo`) — Reflecting over known fields by name defeats Pyright's field-existence and type checks and breaks silently on rename; this does not apply to `getattr(obj, 'name', default)` for genuinely optional or duck-typed attributes whose shape isn't statically known
 <!-- rule:142 -->
 - Use `Literal` types instead of plain `str` for fixed string value sets in parameters, fields, and return types — Makes valid values explicit in type signatures, enabling static type checkers to catch invalid strings at compile time and improving IDE autocomplete
 <!-- rule:809 -->
@@ -119,12 +120,15 @@
 - Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
 <!-- rule:717 -->
 - Override profile properties in model/provider classes, not in shared profile functions — Prevents provider-specific logic from leaking into shared utilities like `anthropic_model_profile()` that multiple providers (OpenAI, Bedrock, etc.) depend on — keeps profiles reusable and avoids cross-provider bugs
+<!-- rule:-3 -->
+- Check `pydantic_ai/_utils.py` for an existing shared helper or typeguard before writing a new one — it's the canonical home for cross-module utilities (e.g. `is_str_dict` narrows `Any` to `dict[str, Any]`, `is_set` for `Unset` sentinels, `guard_tool_call_id`) — Prevents duplicating helpers that already exist and keeps narrowing/validation logic consistent across the package
 
 ## Topic Guides
 
 Check these when working in specific areas:
 
-- **[Code Simplification & Idioms](agent_docs/code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
-- **[Documentation](agent_docs/documentation.md)**: When writing or updating documentation, comments, or docstrings
-- **[API Design & Interfaces](agent_docs/api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
+- **[Code Simplification & Idioms](code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
+- **[Documentation](documentation.md)**: When writing or updating documentation, comments, or docstrings
+- **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
+- **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->

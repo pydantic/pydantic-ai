@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -85,100 +85,121 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
     assert meta_profile is not None
-    assert meta_profile.supports_json_object_output is False
-    assert meta_profile.supports_json_schema_output is False
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('supports_json_object_output', False) is False
+    assert meta_profile.get('supports_json_schema_output', False) is False
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-maverick-17b-128e-instruct')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct')
     assert meta_profile is not None
-    assert meta_profile.supports_json_object_output is True
-    assert meta_profile.supports_json_schema_output is True
-    assert meta_profile.default_structured_output_mode == 'native'
-    assert meta_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert meta_profile.get('supports_json_object_output', False) is True
+    assert meta_profile.get('supports_json_schema_output', False) is True
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-scout-17b-16e-instruct')
     meta_model_profile_mock.assert_called_with('llama-4-scout-17b-16e-instruct')
     assert meta_profile is not None
-    assert meta_profile.supports_json_object_output is True
-    assert meta_profile.supports_json_schema_output is True
-    assert meta_profile.default_structured_output_mode == 'native'
-    assert meta_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert meta_profile.get('supports_json_object_output', False) is True
+    assert meta_profile.get('supports_json_schema_output', False) is True
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('llama-3.3-70b-versatile')
     meta_model_profile_mock.assert_called_with('llama-3.3-70b-versatile')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     google_profile = provider.model_profile('gemma2-9b-it')
     google_model_profile_mock.assert_called_with('gemma2-9b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek-r1-distill-llama-70b')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1-distill-llama-70b')
     assert deepseek_profile is not None
-    assert deepseek_profile.ignore_streamed_leading_whitespace is True
+    assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     mistral_profile = provider.model_profile('mistral-saba-24b')
     mistral_model_profile_mock.assert_called_with('mistral-saba-24b')
-    assert mistral_profile is None
+    assert mistral_profile is not None
+    assert mistral_profile.get('supports_inline_system_prompts', False) is True
 
     qwen_profile = provider.model_profile('qwen-qwq-32b')
     qwen_model_profile_mock.assert_called_with('qwen-qwq-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('compound-beta')
     groq_model_profile_mock.assert_called_with('compound-beta')
     assert qwen_profile is not None
-    assert isinstance(qwen_profile, GroqModelProfile)
-    assert qwen_profile.groq_always_has_web_search_builtin_tool is True
+    assert isinstance(qwen_profile, dict)
+    assert qwen_profile.get('groq_always_has_web_search_builtin_tool', False) is True
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2-instruct')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2-instruct')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.supports_json_object_output is True
-    assert moonshotai_profile.supports_json_schema_output is True
-    assert moonshotai_profile.default_structured_output_mode == 'native'
-    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
+    assert moonshotai_profile.get('supports_json_object_output', False) is True
+    assert moonshotai_profile.get('supports_json_schema_output', False) is True
+    assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
 
+    # GPT-OSS models default to native structured output; the `openai/` namespace reaches
+    # `groq_gpt_oss_model_profile` intact and is stripped inside it before the harmony profile.
     gpt_oss_profile = provider.model_profile('openai/gpt-oss-20b')
-    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-20b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-20b')
     assert gpt_oss_profile is not None
-    assert gpt_oss_profile.supports_json_object_output is True
-    assert gpt_oss_profile.supports_json_schema_output is True
-    assert gpt_oss_profile.default_structured_output_mode == 'native'
-    assert gpt_oss_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert gpt_oss_profile.get('supports_json_object_output', False) is True
+    assert gpt_oss_profile.get('supports_json_schema_output', False) is True
+    assert gpt_oss_profile.get('default_structured_output_mode', None) == 'native'
+    assert gpt_oss_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     gpt_oss_profile = provider.model_profile('openai/gpt-oss-120b')
-    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-120b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-120b')
     assert gpt_oss_profile is not None
-    assert gpt_oss_profile.supports_json_object_output is True
-    assert gpt_oss_profile.supports_json_schema_output is True
-    assert gpt_oss_profile.default_structured_output_mode == 'native'
-    assert gpt_oss_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert gpt_oss_profile.get('supports_json_object_output', False) is True
+    assert gpt_oss_profile.get('supports_json_schema_output', False) is True
+    assert gpt_oss_profile.get('default_structured_output_mode', None) == 'native'
+    assert gpt_oss_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     gpt_oss_profile = provider.model_profile('openai/gpt-oss-safeguard-20b')
-    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-safeguard-20b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('openai/gpt-oss-safeguard-20b')
     assert gpt_oss_profile is not None
-    assert gpt_oss_profile.supports_json_object_output is True
-    assert gpt_oss_profile.supports_json_schema_output is True
-    assert gpt_oss_profile.default_structured_output_mode == 'native'
-    assert gpt_oss_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-
-    compound_profile = provider.model_profile('groq/compound')
-    groq_model_profile_mock.assert_called_with('compound')
-    assert compound_profile is not None
-    assert isinstance(compound_profile, GroqModelProfile)
-    assert compound_profile.groq_always_has_web_search_builtin_tool is True
-
-    compound_profile = provider.model_profile('groq/compound-mini')
-    groq_model_profile_mock.assert_called_with('compound-mini')
-    assert compound_profile is not None
-    assert isinstance(compound_profile, GroqModelProfile)
-    assert compound_profile.groq_always_has_web_search_builtin_tool is True
+    assert gpt_oss_profile.get('supports_json_object_output', False) is True
+    assert gpt_oss_profile.get('supports_json_schema_output', False) is True
+    assert gpt_oss_profile.get('default_structured_output_mode', None) == 'native'
+    assert gpt_oss_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown-model')
-    assert unknown_profile is None
+    assert unknown_profile is not None
+    assert unknown_profile.get('supports_inline_system_prompts', False) is True
+
+
+def test_groq_provider_model_profile_reasoning_flags():
+    """`GroqProvider.model_profile` overlays Groq's reasoning flags onto every family profile.
+
+    Unit (not VCR): the overlay resolves profile flags read at request-build time, and the cassette
+    matcher isn't sensitive to which flags resolved — so a regression that flips a reasoning model
+    back to non-reasoning (or vice versa) would still match an existing recording. A direct profile
+    assertion is what catches it.
+    """
+    provider = GroqProvider(groq_client=AsyncGroq(api_key='api-key'))
+
+    # qwen3 (current): reasons, and can truly disable via `reasoning_effort='none'`.
+    qwen3_profile = provider.model_profile('qwen/qwen3-32b')
+    assert qwen3_profile is not None
+    assert qwen3_profile.get('supports_thinking', False) is True
+    assert qwen3_profile.get('thinking_always_enabled', False) is False
+    assert qwen3_profile.get('groq_supports_reasoning_disable', False) is True
+
+    # Legacy reasoning models route through generic family profiles that don't flag reasoning; the
+    # overlay restores it. They reason always-on (no true disable).
+    for model_name in ('qwen-qwq-32b', 'llama-4-maverick'):
+        legacy_profile = provider.model_profile(model_name)
+        assert legacy_profile is not None, model_name
+        assert legacy_profile.get('supports_thinking', False) is True, model_name
+        assert legacy_profile.get('thinking_always_enabled', False) is True, model_name
+        assert legacy_profile.get('groq_supports_reasoning_disable', False) is False, model_name
+
+    # Non-reasoning model: the overlay leaves it untouched.
+    plain_profile = provider.model_profile('llama-3.1-8b-instant')
+    assert plain_profile is not None
+    assert plain_profile.get('supports_thinking', False) is False
+    assert plain_profile.get('thinking_always_enabled', False) is False

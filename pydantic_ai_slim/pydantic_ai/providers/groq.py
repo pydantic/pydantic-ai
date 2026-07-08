@@ -8,6 +8,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
@@ -28,44 +29,46 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_GROQ_NATIVE_OUTPUT_PROFILE = ModelProfile(
-    supports_json_object_output=True,
-    supports_json_schema_output=True,
-    default_structured_output_mode='native',
-    json_schema_transformer=OpenAIJsonSchemaTransformer,
-)
-"""Profile for Groq models that support native structured output.
-
-Groq's API requires OpenAI-compatible JSON schema format with strict mode
-constraints (additionalProperties: false on all objects) for structured output.
-
-Native output is preferred because some models (e.g. Llama 4) don't reliably
-produce tool-based structured output on Groq."""
-
-
-def groq_moonshotai_model_profile(model_name: str) -> ModelProfile:
+def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    base = moonshotai_model_profile(model_name) or ModelProfile()
-    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
+    return merge_profile(
+        ModelProfile(supports_json_object_output=True, supports_json_schema_output=True),
+        moonshotai_model_profile(model_name),
+    )
 
 
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Meta model used with the Groq provider."""
     if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
-        base = meta_model_profile(model_name) or ModelProfile()
-        return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
+        return merge_profile(
+            ModelProfile(supports_json_object_output=True, supports_json_schema_output=True),
+            meta_model_profile(model_name),
+        )
     else:
         return meta_model_profile(model_name)
 
 
 def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
-    """Get profile for OpenAI GPT-OSS models on Groq.
+    """Get the model profile for an OpenAI GPT-OSS model used with the Groq provider.
 
-    `gpt-oss-20b` and `gpt-oss-120b` support strict native structured output with 100%
-    schema adherence; `gpt-oss-safeguard-20b` supports best-effort native structured output.
+    `gpt-oss-20b` and `gpt-oss-120b` support strict native structured output with 100% schema
+    adherence; `gpt-oss-safeguard-20b` supports best-effort native structured output. Groq's API
+    requires OpenAI-compatible JSON schemas (strict mode: `additionalProperties: false` on every
+    object), so native output is paired with the `OpenAIJsonSchemaTransformer`.
     """
-    base = harmony_model_profile(model_name)
-    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
+    # The registered prefix keeps the `openai/` namespace (the prefix key doesn't end in `/`), so strip
+    # it before `harmony_model_profile` — otherwise `openai_model_profile` reads the leading `o` as an
+    # o-series reasoning model and sets the wrong reasoning flags.
+    bare_name = model_name.split('/', 1)[-1]
+    return merge_profile(
+        harmony_model_profile(bare_name),
+        ModelProfile(
+            supports_json_object_output=True,
+            supports_json_schema_output=True,
+            default_structured_output_mode='native',
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+        ),
+    )
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -84,7 +87,7 @@ class GroqProvider(Provider[AsyncGroq]):
         return self._client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
+    def model_profile(model_name: str) -> ModelProfile:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'meta-llama/': meta_groq_model_profile,
@@ -94,24 +97,33 @@ class GroqProvider(Provider[AsyncGroq]):
             'mistral': mistral_model_profile,
             'moonshotai/': groq_moonshotai_model_profile,
             'compound-': groq_model_profile,
-            'groq/compound': groq_model_profile,
             'openai/gpt-oss-20b': groq_gpt_oss_model_profile,
             'openai/gpt-oss-120b': groq_gpt_oss_model_profile,
             'openai/gpt-oss-safeguard-20b': groq_gpt_oss_model_profile,
             'openai/': openai_model_profile,
         }
 
-        model_name_lower = model_name.lower()
+        model_name = model_name.lower()
+        profile: ModelProfile | None = None
         for prefix, profile_func in prefix_to_profile.items():
-            if model_name_lower.startswith(prefix):
-                # Strip provider prefix (e.g., 'openai/gpt-oss-120b' -> 'gpt-oss-120b')
-                if '/' in model_name_lower:
-                    model_name_for_profile = model_name_lower.split('/', 1)[-1]
-                else:
-                    model_name_for_profile = model_name_lower
-                return profile_func(model_name_for_profile)
+            if model_name.startswith(prefix):
+                family_name = model_name[len(prefix) :] if prefix.endswith('/') else model_name
+                profile = profile_func(family_name)
+                break
 
-        return None
+        # The generic family profiles above don't know Groq's serving specifics for reasoning
+        # (e.g. `qwen/qwen3-*` reasons, and Groq's `openai/gpt-oss-*` reasons, but the generic Qwen/OpenAI
+        # profiles flag them differently or not at all). Groq is authoritative here, so the Groq profile's
+        # reasoning flags override the family profile — it's layered *after* it. The family profile still
+        # provides all its other (non-`groq_`, non-reasoning) traits, which the Groq profile doesn't touch.
+        # Maintenance contract: because this makes `groq_model_profile`'s reasoning detection authoritative,
+        # its `is_reasoning_model` list must stay complete for every Groq-served reasoning model — a model the
+        # list misses would have any family-profile `supports_thinking=True` overridden to `False` here.
+        return merge_profile(
+            profile,
+            groq_model_profile(model_name),
+            ModelProfile(supports_inline_system_prompts=True),
+        )
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...

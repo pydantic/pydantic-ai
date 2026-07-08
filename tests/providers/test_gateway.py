@@ -21,8 +21,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -32,13 +32,18 @@ if not imports_successful():
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
+# Any URL works here — these tests exercise the explicit `PYDANTIC_AI_GATEWAY_BASE_URL` override path.
+GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
+
 
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
+        # PAIG exposes a single canonical `openai` route; Chat vs Responses is selected by the
+        # OpenAI SDK's sub-path (/chat/completions vs /responses), not by the URL prefix.
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
     ],
 )
 def test_init_with_base_url(
@@ -63,8 +68,64 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
-        provider = gateway_provider('openai', http_client=http_client, api_key='foobar')
-        assert provider.client._client == http_client  # type: ignore
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+        assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_init_with_http_client_preserves_existing_event_hooks():
+    # Unit (not VCR): this checks local HTTPX hook merging by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise hook ordering or preservation.
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async def existing_response_hook(response: httpx.Response) -> None:
+        response.headers['X-Existing-Response-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(
+        event_hooks={'request': [existing_request_hook], 'response': [existing_response_hook]}
+    ) as http_client:
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+        assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert existing_request_hook in http_client.event_hooks['request']
+        assert existing_response_hook in http_client.event_hooks['response']
+
+        request = httpx.Request('GET', provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer foobar'
+
+        response = httpx.Response(200, request=request)
+        for hook in http_client.event_hooks['response']:
+            await hook(response)
+
+        assert response.headers['X-Existing-Response-Hook'] == 'kept'
+
+
+async def test_init_with_http_client_replaces_existing_gateway_hook():
+    # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise Gateway hook deduplication.
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
+        first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
+        second_provider = gateway_provider(
+            'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
+        )
+
+        assert first_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert http_client.event_hooks['request'][0] == existing_request_hook
+        assert len(http_client.event_hooks['request']) == 2
+
+        request = httpx.Request('GET', second_provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer second'
 
 
 @pytest.fixture
@@ -90,9 +151,10 @@ def vcr_config():
     [
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
         ('groq', GroqProvider, 'groq'),
-        ('google-vertex', GoogleProvider, 'google-vertex'),
+        ('google', GoogleCloudProvider, 'google-vertex'),
+        ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
     ],
@@ -105,14 +167,19 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
     assert provider.base_url in (f'{GATEWAY_BASE_URL}/{route}/', f'{GATEWAY_BASE_URL}/{route}')
 
 
-@patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
-def test_gateway_provider_unknown():
-    with raises(snapshot('UserError: Unknown upstream provider: foo')):
-        gateway_provider('foo')
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+@pytest.mark.parametrize('removed_alias', ['foo', 'google-vertex', 'gemini'])
+def test_gateway_provider_unknown(removed_alias: str):
+    # `google-vertex` and `gemini` were removed in v2 alongside their bare-prefix counterparts —
+    # `gateway/google-vertex:` and `gateway/gemini:` raise the same `UserError` as any other unknown alias.
+    with pytest.raises(UserError, match=f'Unknown upstream provider: {removed_alias}'):
+        gateway_provider(removed_alias)
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('openai-chat', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 
@@ -138,8 +205,8 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_gateway_provider_with_google_vertex(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('google-vertex', api_key=gateway_api_key, base_url='http://localhost:8787')
+async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
@@ -172,26 +239,26 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 )
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = OpenAIResponsesModel('gpt-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = GoogleModel('gemini-1.5-flash', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = AnthropicModel('claude-sonnet-4-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):
-    provider = gateway_provider('openai', route='potato', api_key=gateway_api_key)
+    provider = gateway_provider('openai', route='potato', api_key=gateway_api_key, base_url=GATEWAY_BASE_URL)
     assert provider.client.base_url.path.endswith('/potato/')
 
 
@@ -202,9 +269,21 @@ async def test_gateway_provider_routing_group(gateway_api_key: str):
         pytest.param('pylf_v1_eu_abc123', 'gateway-eu.pydantic.dev', id='eu-region'),
         pytest.param('pylf_v1_stagingus_abc123', 'gateway.pydantic.info', id='staging'),
         pytest.param('pylf_v1_ap_abc123', 'gateway-ap.pydantic.dev', id='any-region'),
-        pytest.param('not-a-pylf-token', 'gateway.pydantic.dev', id='default-base-url'),
     ],
 )
 def test_infer_base_url(api_key: str, expected_base_url: str):
     provider = gateway_provider('openai', api_key=api_key)
     assert urlparse(provider.base_url).netloc == expected_base_url
+
+
+def test_infer_base_url_no_region():
+    """An API key that doesn't encode a region used to fall back to a shared Gateway URL; that URL
+    is dead, so it now raises instead of silently routing to a dead host."""
+    with raises(
+        snapshot(
+            'UserError: Could not infer the Pydantic AI Gateway base URL: the API key does not encode a region. '
+            'Generate a new key from the Pydantic AI Gateway, or set the `PYDANTIC_AI_GATEWAY_BASE_URL` '
+            'environment variable explicitly.'
+        )
+    ):
+        gateway_provider('openai', api_key='not-a-pylf-token')

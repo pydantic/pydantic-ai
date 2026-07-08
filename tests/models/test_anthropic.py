@@ -8,8 +8,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Annotated, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
+
+if TYPE_CHECKING:
+    from vcr.cassette import Cassette
 
 import httpx
 import pytest
@@ -18,8 +21,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -30,6 +31,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -42,26 +45,39 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolDefinition,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    CompactionPart,
     InstructionPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..cassette_utils import single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -72,8 +88,10 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
+        AsyncStream,
         omit as OMIT,
     )
     from anthropic.lib.tools import BetaAbstractMemoryTool
@@ -113,11 +131,14 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container import BetaContainer
     from anthropic.types.beta.beta_container_params import BetaContainerParams
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_refusal_stop_details import BetaRefusalStopDetails
 
     from pydantic_ai.models.anthropic import (
+        AnthropicCodeExecutionToolVersion,
         AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
+        AnthropicStreamedResponse,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -128,7 +149,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
+    AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -136,12 +157,6 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -158,6 +173,61 @@ def test_init():
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
+
+
+@dataclass
+class _BrokenClosableStream:
+    closed: bool = False
+
+    def __aiter__(self) -> _BrokenClosableStream:
+        return self
+
+    async def __anext__(self) -> BetaRawMessageStreamEvent:
+        raise httpx.ReadError('stream closed')
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _peekable_broken_stream(
+    stream: _BrokenClosableStream,
+) -> PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]:
+    return cast(
+        PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]],
+        PeekableAsyncStream(stream),
+    )
+
+
+async def test_anthropic_cancelled_read_error_is_suppressed():
+    stream = _BrokenClosableStream()
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=_peekable_broken_stream(stream),
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+    )
+
+    await response.cancel()
+    assert stream.closed is True
+    assert response.cancelled is True
+
+    events = [event async for event in response]
+    assert events == []
+
+
+async def test_anthropic_read_error_is_raised_when_not_cancelled():
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=_peekable_broken_stream(_BrokenClosableStream()),
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+    )
+
+    with pytest.raises(httpx.ReadError):
+        async for _event in response:
+            pass
 
 
 @dataclass
@@ -239,7 +309,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -252,7 +322,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=5,
@@ -320,7 +390,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=13,
@@ -335,8 +405,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
             },
         )
     )
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
@@ -413,7 +482,9 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
 
     with pytest.raises(
         UserError,
-        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+        match=re.escape(
+            'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.'
+        ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
 
@@ -490,6 +561,16 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
+def test_cache_control_last_cacheable_param_allows_empty_params():
+    """Empty-params guard for the cache-control walk — a defensive branch no real API response reaches, so it's a unit test, not VCR."""
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+    params: list[Any] = []
+
+    m._add_cache_control_to_last_cacheable_param(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert params == []
+
+
 def test_build_cache_control_includes_ttl():
     """Test that _build_cache_control includes TTL for all clients, including Bedrock."""
     from unittest.mock import MagicMock
@@ -506,6 +587,86 @@ def test_build_cache_control_includes_ttl():
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+def _mock_anthropic_client(client_cls: Any, base_url: str) -> Any:
+    from unittest.mock import MagicMock
+
+    client = MagicMock(spec=client_cls)
+    client.base_url = base_url
+    return client
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic.claude-haiku-4-5',
+        'anthropic.claude-haiku-4-5-20251001-v1:0',
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    ],
+)
+@pytest.mark.parametrize(
+    'client_cls,base_url',
+    [
+        pytest.param(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', id='bedrock'),
+        pytest.param(AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', id='bedrock-mantle'),
+    ],
+)
+def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str, client_cls: Any, base_url: str):
+    """A Bedrock-shaped model id resolves to the right capability profile, while the full id still goes on the wire."""
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.model_name == model_name
+    assert m.profile.get('supports_json_schema_output', False) is True
+    assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+
+def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
+    m = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
+    )
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], ModelRequestParameters(native_tools=[tool]), AnthropicModelSettings()
+    )
+    return cast('dict[str, Any]', next(t for t in tools if str(t.get('name', '')).startswith('tool_search_tool_')))
+
+
+def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
+    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+    # An explicit `regex` is honored.
+    param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool(strategy='regex'))
+    assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
+
+
+def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
+    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
+    m = AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+    with pytest.raises(
+        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
+    ):
+        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
+        )
+
+
+def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
+    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
+    param = _tool_search_param(
+        AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
+    )
+    assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
 
 
 @pytest.mark.parametrize(
@@ -610,6 +771,99 @@ async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_mod
     assert content == snapshot(
         [{'text': 'Some context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
     )
+
+
+async def test_anthropic_code_execution_files_with_message_cache(allow_model_requests: None):
+    """Pins that the non-cacheable `container_upload` block doesn't capture the cache breakpoint (it lands on the text instead).
+
+    Not a VCR test: cassette matchers aren't sensitive to `cache_control` placement in the request body, so this asserts the built payload via the mock client.
+    """
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                CodeExecutionTool(
+                    files=[
+                        UploadedFile(file_id='file_anthropic', provider_name='anthropic'),
+                        UploadedFile(file_id='file_openai', provider_name='openai'),
+                    ]
+                )
+            )
+        ],
+        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    result = await agent.run('Use the attached file.')
+    assert result.output == 'Response'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'files-api-2025-04-14' in completion_kwargs['betas']
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Use the attached file.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_anthropic_code_execution_files_append_to_first_user_message(allow_model_requests: None):
+    """Pins the internal `_map_message` placement: uploads attach to the *first* user message (keeping the cacheable prefix byte-identical as history grows), not a later one, and none are added when history has no user message.
+
+    Not a VCR test: the first-vs-later placement and the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
+    """
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    parameters = ModelRequestParameters(
+        native_tools=[
+            CodeExecutionTool(files=[UploadedFile(file_id='file_anthropic', provider_name='anthropic')]),
+        ]
+    )
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        [
+            ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+            ModelResponse(parts=[TextPart(content='Previous response')]),
+            ModelRequest(parts=[UserPromptPart(content='And now summarize it.')]),
+        ],
+        parameters,
+        AnthropicModelSettings(),
+    )
+
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Use the attached file.', 'type': 'text'},
+                    {'file_id': 'file_anthropic', 'type': 'container_upload'},
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'And now summarize it.', 'type': 'text'}]},
+        ]
+    )
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        [ModelResponse(parts=[TextPart(content='Previous response')])],
+        parameters,
+        AnthropicModelSettings(),
+    )
+
+    assert messages == snapshot([{'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]}])
 
 
 async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
@@ -1149,7 +1403,7 @@ async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_req
 
     agent = Agent(
         model,
-        builtin_tools=[MemoryTool()],
+        capabilities=[NativeTool(MemoryTool())],
         output_type=NativeOutput(CityLocation),
     )
 
@@ -1214,6 +1468,22 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=ModelSettings(top_k=40))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['top_k'] == 40
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -1266,6 +1536,170 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     betas = completion_kwargs['betas']
     assert 'interleaved-thinking-2025-05-14' in betas
     assert 'custom-feature-1' in betas
+
+
+async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
+
+
+async def test_anthropic_task_budget_adds_output_config_and_beta(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 20_000, 'remaining': 500},
+        ),
+    )
+
+    result = await agent.run('What is 2+2?')
+    assert result.output
+
+    assert single_request_body(vcr)['output_config'] == snapshot(
+        {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
+    )
+
+
+async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
+            anthropic_betas=['interleaved-thinking-2025-05-14'],
+            extra_headers={'anthropic-beta': 'custom-feature-1'},
+        ),
+    )
+    agent = Agent(model)
+
+    await agent.run('Hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert set(completion_kwargs['betas']) >= {
+        'task-budgets-2026-03-13',
+        'interleaved-thinking-2025-05-14',
+        'custom-feature-1',
+    }
+
+
+async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-6',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
+        ),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='does not support `anthropic_task_budget`'):
+        await agent.run('Hello')
+
+
+async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
+    """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
+
+    Anthropic's API rejects requests that combine `output_config.task_budget.remaining`
+    with server-side `AnthropicCompaction`; we surface this as a `UserError` before
+    sending the request so users see a clear message instead of an opaque 400.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+        ),
+    )
+    agent = Agent(model, capabilities=[AnthropicCompaction(token_threshold=50_000)])
+
+    with pytest.raises(UserError, match='cannot be combined with `AnthropicCompaction`'):
+        await agent.run('Hello')
+
+
+async def test_anthropic_task_budget_remaining_allows_non_compact_context_management(allow_model_requests: None):
+    """`task_budget.remaining` is allowed alongside non-`compact_20260112` context-management edits."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+            anthropic_context_management={'edits': [{'type': 'clear_tool_uses_20250919'}]},
+        ),
+    )
+    agent = Agent(model)
+
+    result = await agent.run('Hello')
+    assert result.output == 'Hello!'
+
+
+async def test_anthropic_task_budget_remaining_rejects_compaction_part_in_history(allow_model_requests: None):
+    """`task_budget.remaining` is rejected when history contains a `CompactionPart`.
+
+    `_add_compaction_params` auto-generates a `compact_20260112` config when messages contain
+    `CompactionPart`s even without explicit `anthropic_context_management`, so the validator
+    must run after that step to still surface a `UserError` instead of an opaque 400.
+
+    Regression test for PR #5140 review feedback (validation ordering).
+    https://github.com/pydantic/pydantic-ai/pull/5140
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+        ),
+    )
+    agent = Agent(model)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn.')]),
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of earlier turn.', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+    ]
+
+    with pytest.raises(UserError, match='cannot be combined with `AnthropicCompaction`'):
+        await agent.run('Hello', message_history=message_history)
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
@@ -1523,7 +1957,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=1,
             input_tokens=3,
@@ -2090,7 +2524,7 @@ async def test_stream_structured(allow_model_requests: None):
         # the block starts and once when it ends.
         assert chunks == snapshot(['FINAL_PAYLOAD', 'FINAL_PAYLOAD'])
         assert result.is_complete
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=20,
@@ -2100,21 +2534,20 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='FINAL_PAYLOAD')],
-                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
-                        model_name='claude-3-5-haiku-123',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                        provider_url='https://api.anthropic.com',
-                        provider_details={'finish_reason': 'end_turn'},
-                        provider_response_id='msg_123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='FINAL_PAYLOAD')],
+                    usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                    model_name='claude-3-5-haiku-123',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_url='https://api.anthropic.com',
+                    provider_details={'finish_reason': 'end_turn'},
+                    provider_response_id='msg_123',
+                    finish_reason='stop',
                 )
+            )
 
 
 async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
@@ -2586,7 +3019,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with AnthropicModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
@@ -2600,7 +3033,7 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+    with pytest.raises(UserError, match=r'Unsupported media type.*audio/mpeg'):
         await agent.run(
             [
                 'Analyze this file',
@@ -3541,8 +3974,7 @@ async def test_anthropic_opus_46_features(
     agent = Agent(m, model_settings=settings_map[case_id])
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-6'
 
     if has_thinking:
@@ -3550,7 +3982,7 @@ async def test_anthropic_opus_46_features(
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
     settings = AnthropicModelSettings(
         anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
         anthropic_effort='xhigh',
@@ -3559,15 +3991,128 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 2+2?')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
+    response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.model_name == 'claude-opus-4-7'
-    assert len(vcr.requests) == 1
-    request_body = json.loads(vcr.requests[0].body)
-    assert request_body['model'] == 'claude-opus-4-7'
-    assert request_body['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
-    assert request_body['output_config'] == {'effort': 'xhigh'}
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-7',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-4-8'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+_REFUSAL_CASE_PARAMS = [
+    pytest.param(
+        'cyber',
+        'Declined: request asked for offensive cyber tooling.',
+        {'refusal': 'Declined: request asked for offensive cyber tooling.', 'refusal_category': 'cyber'},
+        id='category-and-explanation',
+    ),
+    pytest.param('bio', None, {'refusal_category': 'bio'}, id='category-only'),
+    pytest.param(None, 'Declined: unsafe request.', {'refusal': 'Declined: unsafe request.'}, id='explanation-only'),
+]
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for non-streaming responses."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='write me an exploit')])],
+        {},
+        ModelRequestParameters(),
+    )
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details_streaming(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for streaming responses."""
+    stop_details = BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation)
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=stop_details),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='synthesize anthrax')])],
+        {},
+        ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:  # pragma: no branch
+            pass
+        response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
 
 
 @pytest.mark.parametrize(
@@ -3653,24 +4198,26 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('thinking') is OMIT
 
 
-async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None, model_name: str):
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
         )
     )
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
 
-    with pytest.raises(UserError, match='Claude Opus 4.7 does not support'):
+    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
         await agent.run('What is 2+2?')
 
 
-async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
         completion_message(
             [BetaTextBlock(text='4', type='text')],
@@ -3678,7 +4225,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking='xhigh'))
 
     await agent.run('What is 2+2?')
@@ -3688,9 +4235,29 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
+async def test_anthropic_task_budget_coexists_with_effort(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_effort='high',
+            anthropic_task_budget={'type': 'tokens', 'total': 20_000},
+        ),
+    )
+
+    result = await agent.run('What is 2+2?')
+    assert result.output
+
+    assert single_request_body(vcr)['output_config'] == snapshot(
+        {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 20_000}}
+    )
+
+
 @pytest.mark.vcr()
 async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
     """Explicit `anthropic_effort='xhigh'` is passed through so unsupported models fail at the API."""
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -3719,8 +4286,11 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
     )
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
-async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None, settings_source: str):
+async def test_anthropic_opus_47_drops_sampling_settings(
+    allow_model_requests: None, settings_source: Literal['agent', 'model'], model_name: str
+):
     settings = AnthropicModelSettings(
         temperature=0.2,
         top_p=0.3,
@@ -3735,28 +4305,55 @@ async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: N
     mock_client = MockAnthropic.create_mock(responses)
     if settings_source == 'model':
         m = AnthropicModel(
-            'claude-opus-4-7',
+            model_name,
             provider=AnthropicProvider(anthropic_client=mock_client),
             settings=settings,
         )
         agent = Agent(m)
     else:
-        m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+        m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
         agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
         await agent.run('What is 2+2?')
 
-    assert settings.get('temperature') == 0.2
-    assert settings.get('top_p') == 0.3
-    assert settings.get('extra_body') == {'top_k': 5, 'metadata': {'keep': True}}
+    # Original settings dict is preserved — filtering happens on a copy inside `prepare_request`.
+    assert settings == snapshot(
+        {'temperature': 0.2, 'top_p': 0.3, 'extra_body': {'top_k': 5, 'metadata': {'keep': True}}}
+    )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['temperature'] is OMIT
-    assert kwargs['top_p'] is OMIT
-    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+    assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
-async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_extra_body(
+    allow_model_requests: None, model_name: str
+):
+    settings = AnthropicModelSettings(
+        temperature=0.2,
+        extra_body={'temperature': 0.5, 'top_k': 5},
+    )
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        )
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    with pytest.warns(UserWarning) as recorded:
+        await agent.run('What is 2+2?')
+
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_k'] are not supported by '{model_name}'. These settings will be ignored."
+    ]
+
+
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None, model_name: str):
     settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
     responses = [
         completion_message(
@@ -3765,7 +4362,7 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -3813,6 +4410,35 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+
+async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    message_history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')],
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')],
+        ),
+    ]
+    agent = Agent(m)
+    await agent.run('continue', message_history=message_history)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == 'You are helpful.'
+    wrapped_contents = [
+        block['text']
+        for msg in kwargs['messages']
+        if msg['role'] == 'user'
+        for block in (msg['content'] if isinstance(msg['content'], list) else [{'text': msg['content']}])
+        if '<system>' in block.get('text', '')
+    ]
+    assert wrapped_contents == ['<system>Now be terse.</system>']
 
 
 def anth_msg(usage: BetaUsage) -> BetaMessage:
@@ -3869,6 +4495,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                         ),
                         BetaMessageIterationUsage(
                             type='message',
+                            model='claude-sonnet-4-5',
                             input_tokens=23,
                             output_tokens=1,
                             cache_creation_input_tokens=0,
@@ -3912,6 +4539,59 @@ def test_usage(
     assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
+def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
+    """With compaction, `details['input_tokens']` (raw, pre-compaction) diverges from the first-class
+    `input_tokens` (raw + compaction totals), yet both name the same conceptual quantity. The colliding
+    `input_tokens`/`output_tokens` detail keys must not be emitted under `gen_ai.usage.details.*`, or a
+    Langfuse-style consumer summing them double-counts. `compaction_*` keys don't collide and are kept.
+    """
+    message = anth_msg(
+        BetaUsage(
+            input_tokens=23,
+            output_tokens=1,
+            iterations=[
+                BetaCompactionIterationUsage(
+                    type='compaction',
+                    input_tokens=180,
+                    output_tokens=3,
+                    cache_creation_input_tokens=4,
+                    cache_read_input_tokens=5,
+                ),
+                BetaMessageIterationUsage(
+                    type='message',
+                    model='claude-sonnet-4-5',
+                    input_tokens=23,
+                    output_tokens=1,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                ),
+            ],
+        )
+    )
+    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    assert mapped.input_tokens == 212
+    assert mapped.details['input_tokens'] == 23  # still accessible on `details`
+    attributes = mapped.opentelemetry_attributes()
+    assert 'gen_ai.usage.details.input_tokens' not in attributes
+    assert 'gen_ai.usage.details.output_tokens' not in attributes
+    assert attributes == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 212,
+            'gen_ai.usage.output_tokens': 4,
+            'gen_ai.usage.cache_creation.input_tokens': 4,
+            'gen_ai.usage.cache_read.input_tokens': 5,
+            'gen_ai.usage.details.compaction_iterations': 1,
+            'gen_ai.usage.details.message_iterations': 1,
+            'gen_ai.usage.details.compaction_input_tokens': 180,
+            'gen_ai.usage.details.compaction_output_tokens': 3,
+            'gen_ai.usage.details.compaction_cache_creation_input_tokens': 4,
+            'gen_ai.usage.details.compaction_cache_read_input_tokens': 5,
+            'gen_ai.usage.details.cache_write_tokens': 4,
+            'gen_ai.usage.details.cache_read_tokens': 5,
+        }
+    )
+
+
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
     initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
@@ -3920,6 +4600,67 @@ def test_streaming_usage():
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )
+
+
+def test_map_usage_bedrock_start_event_without_message():
+    """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
+    `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
+    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
+    server response shape, so it can't be elicited from a recorded request.
+    """
+    # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
+    start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
+    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+
+    existing = RequestUsage(input_tokens=7, output_tokens=3)
+    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+
+
+async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
+    """A Bedrock `message=None` start event must be skipped across the whole streaming path (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    On Bedrock the SDK drops SSE event types, so Bedrock-only chunks (e.g. `amazon-bedrock-invocationMetrics`)
+    are non-validating `construct_type`d into `BetaRawMessageStartEvent(message=None)`. Driving `run_stream`
+    exercises `_process_streamed_response` and `AnthropicStreamedResponse._get_event_iterator`, which
+    previously crashed on `event.message.id`. The malformed chunk is placed first — a constructed worst case
+    (real Bedrock trails the metrics chunk) that also reaches the `_process_streamed_response` model-name
+    fallback: the streamed response then reports the configured model id, while usage and response id come
+    from the real `message_start` that follows.
+    """
+    stream: list[MockRawMessageStreamEvent] = [
+        # Contract-violating Bedrock chunk: the SDK hands out `message=None`.
+        BetaRawMessageStartEvent.model_construct(type='message_start', message=None),
+        BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=4, output_tokens=0)), type='message_start'),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='hello', type='text'), index=0, type='content_block_start'
+        ),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=2),
+            type='message_delta',
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+    assert output == snapshot('hello')
+
+    # The skipped `message=None` chunk contributes no usage and no response id: usage comes from the
+    # real `message_start` (input) + `message_delta` (output), and the id from the real event. The model
+    # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.usage == snapshot(
+        RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
+    )
+    assert response.provider_response_id == 'x'
+    assert response.model_name == 'claude-haiku-4-5'
 
 
 def test_streaming_usage_with_compaction():
@@ -3940,6 +4681,7 @@ def test_streaming_usage_with_compaction():
                     ),
                     BetaMessageIterationUsage(
                         type='message',
+                        model='claude-sonnet-4-5',
                         input_tokens=23,
                         output_tokens=1,
                         cache_creation_input_tokens=0,
@@ -4005,7 +4747,7 @@ What specific information about potatoes would be most helpful to you?\
 async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -4027,13 +4769,13 @@ I should search for San Francisco weather today to get the most current informat
                         signature='Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today'},
                         tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4235,13 +4977,13 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         signature='EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'Mexico City weather today'},
                         tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4420,7 +5162,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
 async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -4456,13 +5198,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather today"}',
                         tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4543,13 +5285,13 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     TextPart(
                         content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "San Francisco weather September 16 2025"}',
                         tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4771,7 +5513,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
                 ),
                 previous_part_kind='thinking',
@@ -4807,7 +5549,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
@@ -4817,7 +5559,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -4918,7 +5660,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
                 ),
                 previous_part_kind='text',
@@ -4963,7 +5705,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartEndEvent(
                 index=4,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
@@ -4973,7 +5715,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
             ),
             PartStartEvent(
                 index=5,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -5270,182 +6012,6 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "San Francisco weather today"}',
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Forecast | AccuWeather',
-                            'type': 'web_search_result',
-                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'National Weather Service',
-                            'type': 'web_search_result',
-                            'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcbayarea.com/weather/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Current Weather - The Weather Network',
-                            'type': 'web_search_result',
-                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
-                            'type': 'web_search_result',
-                            'url': 'https://abc7news.com/weather/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "San Francisco weather September 16 2025"}',
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | Weather25.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
-                            'type': 'web_search_result',
-                            'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                            'type': 'web_search_result',
-                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                            'type': 'web_search_result',
-                            'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | California',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, Weather for September, USA',
-                            'type': 'web_search_result',
-                            'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 weeks ago',
-                            'title': 'September 2025 Weather - San Francisco',
-                            'type': 'web_search_result',
-                            'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco Weather in September | Thomas Cook',
-                            'type': 'web_search_result',
-                            'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 days ago',
-                            'title': IsStr(),
-                            'type': 'web_search_result',
-                            'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
         ]
     )
 
@@ -5454,7 +6020,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -5488,13 +6054,13 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -5573,13 +6139,13 @@ Let me fetch the page first.\
                         signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -5700,7 +6266,7 @@ async def test_anthropic_web_fetch_tool_stream(
 
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     # Iterate through the stream to ensure streaming code paths are covered
     event_parts: list[Any] = []
@@ -5713,7 +6279,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     async for event in request_stream:  # pragma: lax no cover
                         if (  # pragma: lax no cover
                             isinstance(event, PartStartEvent)
-                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                            and isinstance(event.part, NativeToolCallPart | NativeToolReturnPart)
                         ) or isinstance(event, PartDeltaEvent):
                             event_parts.append(event)
 
@@ -5742,13 +6308,13 @@ async def test_anthropic_web_fetch_tool_stream(
                         signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content={
                             'content': {
@@ -5821,7 +6387,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=NativeToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -5847,7 +6413,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_fetch',
                     content={
                         'content': {
@@ -6175,7 +6741,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
 
 
 async def test_anthropic_web_fetch_tool_message_replay():
-    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for WebFetchTool are correctly serialized."""
+    """Test that NativeToolCallPart and NativeToolReturnPart for WebFetchTool are correctly serialized."""
     from typing import cast
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -6184,18 +6750,18 @@ async def test_anthropic_web_fetch_tool_message_replay():
     # Create a model instance
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
-    # Create message history with BuiltinToolCallPart and BuiltinToolReturnPart
+    # Create message history with NativeToolCallPart and NativeToolReturnPart
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Test')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     provider_name=m.system,
                     tool_name=WebFetchTool.kind,
                     args={'url': 'https://example.com'},
                     tool_call_id='test_id_1',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     provider_name=m.system,
                     tool_name=WebFetchTool.kind,
                     content={
@@ -6215,7 +6781,7 @@ async def test_anthropic_web_fetch_tool_message_replay():
     model_settings = {}
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[WebFetchTool()],
+        native_tools=[WebFetchTool()],
         output_tools=[],
     )
 
@@ -6265,12 +6831,14 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[web_fetch_tool],
+        native_tools=[web_fetch_tool],
         output_tools=[],
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -6278,6 +6846,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     # Verify all parameters are passed correctly
     assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert 'web-fetch-2025-09-10' in beta_features
     assert web_fetch_tool_param.get('max_uses') == 5
     assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
     assert web_fetch_tool_param.get('blocked_domains') is None
@@ -6298,12 +6867,14 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[web_fetch_tool],
+        native_tools=[web_fetch_tool],
         output_tools=[],
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -6314,16 +6885,59 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
+async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcptoolu_123',
+                    args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcptoolu_123',
+                    content={'content': [{'type': 'text', 'text': '2026-05-06T00:00:00Z'}], 'is_error': False},
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you call?')]),
+    ]
+
+    await model.request(
+        messages,
+        {},
+        ModelRequestParameters(
+            native_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+        ),
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'][1]['content'][0] == snapshot(
+        {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
+    )
+
+
 @pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                )
             )
         ],
         model_settings=settings,
@@ -6351,7 +6965,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -6364,7 +6978,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6441,7 +7055,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         signature='EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
@@ -6454,7 +7068,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6564,11 +7178,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                allowed_tools=['ask_question'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    allowed_tools=['ask_question'],
+                )
             )
         ],
         model_settings=settings,
@@ -6584,7 +7200,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                     async for event in request_stream:
                         if (
                             isinstance(event, PartStartEvent)
-                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                            and isinstance(event.part, NativeToolCallPart | NativeToolReturnPart)
                         ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
                             event_parts.append(event)
 
@@ -6610,13 +7226,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         signature='EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='mcp_server:deepwiki',
                         args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
@@ -6675,7 +7291,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
         [
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
@@ -6758,7 +7374,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     content={
                         'content': [
@@ -6849,18 +7465,20 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
     )
 
 
-async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=settings,
         instructions='Always use the code execution tool for math.',
     )
 
-    result = await agent.run('How much is 3 * 12390?')
-    messages = result.all_messages()
+    first_result = await agent.run('How much is 3 * 12390?')
+    messages = first_result.all_messages()
+    second_result = await agent.run('How about 4 * 12390?')
+
     assert messages == snapshot(
         [
             ModelRequest(
@@ -6873,52 +7491,49 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple calculation that could be done mentally, the instruction is clear that I should use the code execution tool for math.',
-                        signature='EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=',
+                        content='The user wants to calculate 3 * 12390.',
+                        signature='EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 3 * 12390
-print(f"3 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '3 * 12390 = 37170\n',
-                            'type': 'code_execution_result',
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
                         timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 * 12390 = 37170'),
+                    TextPart(content='The result of **3 × 12,390 = 37,170**.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1771,
-                    output_tokens=171,
+                    input_tokens=4692,
+                    output_tokens=106,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1771,
-                        'output_tokens': 171,
+                        'input_tokens': 4692,
+                        'output_tokens': 106,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
-                provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRhtVsGiXZx1CgSETLH'},
+                provider_response_id='msg_01FzttSG1H2WSfUwv2J5qbMB',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6926,8 +7541,7 @@ print(f"3 * 12390 = {result}")\
         ]
     )
 
-    result = await agent.run('How about 4 * 12390?')
-    assert result.new_messages() == snapshot(
+    assert second_result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -6944,52 +7558,49 @@ print(f"3 * 12390 = {result}")\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise calculation, so I should use the code execution tool to get the accurate result.',
-                        signature='EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==',
+                        content='The user wants to calculate 4 * 12390.',
+                        signature='EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 4 * 12390
-print(f"4 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '4 * 12390 = 49560\n',
-                            'type': 'code_execution_result',
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 * 12390 = 49560'),
+                    TextPart(content='**4 × 12,390 = 49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1741,
-                    output_tokens=143,
+                    input_tokens=4690,
+                    output_tokens=103,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1741,
-                        'output_tokens': 143,
+                        'input_tokens': 4690,
+                        'output_tokens': 103,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
-                provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRiLGQoB5CoDJP5jaVY'},
+                provider_response_id='msg_01GpqA67eRBKk6HEb9w5Rs28',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6997,11 +7608,17 @@ print(f"4 * 12390 = {result}")\
         ]
     )
 
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert [body['tools'] for body in request_bodies] == [
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+    ]
+
 
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
@@ -7028,81 +7645,66 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                        signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                        content='Let me calculate this mathematical expression.',
+                        signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
-                    ),
-                    BuiltinToolCallPart(
+                    TextPart(content="I'll calculate that expression for you right away!"),
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                            'type': 'code_execution_result',
+                            'stdout': '-428330955.97745\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(
                         content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
+
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2316,
-                    output_tokens=733,
+                    input_tokens=4714,
+                    output_tokens=304,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2316,
-                        'output_tokens': 733,
+                        'input_tokens': 4714,
+                        'output_tokens': 304,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
+                provider_details={
+                    'finish_reason': 'end_turn',
+                    'container_id': 'container_011CaNRFAbjdPf4rmBarZzqQ',
+                },
+                provider_response_id='msg_01Js8aWE7YbmiaUPneGiCskE',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7115,464 +7717,269 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
+                delta=ThinkingPartDelta(content_delta='Let'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- 65464-6+1.02255
-
-This\
-"""
-                ),
+                delta=ThinkingPartDelta(content_delta=' me calculate this mathematical expression.'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- Let me break this down:
-
-65\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-
-Following order of operations:
-1. First, multiplication:\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-2. Then left to right for\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- - 6 + 1.02255
-
-This\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
+                    signature_delta='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                    signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    content='Let me calculate this mathematical expression.',
+                    signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=1,
-                part=TextPart(content="I'll calculate this mathematical expression for you. Let me break"),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(
-                index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
-            ),
             PartEndEvent(
                 index=1,
-                part=TextPart(
-                    content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
-                ),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='{"com', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=')\\n\\nexpression = \\"65465-6544 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='mand": "ec', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='* 65464-6+1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='ho \\"65465-', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='.02255\\"\\nprint(f\\"Expression: {expression',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='6544 * 6', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\n# Let\'s break it down', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='54', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' step by step\\nstep1 = ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='64-6+1.02', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='255\\" | ', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# Multiplication first\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='(f\\"Step 1 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='- Multiplication: ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {step1}\\")\\n\\nstep2', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' = 65465 - step1  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# First subtraction\\nprint(f\\"Step', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' 2 - First subtraction:', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' 65465 - {step1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='} = {step2}\\")\\n\\nstep', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='3 = step2 - 6  # Second subtraction\\nprint',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Step 3 - Second subtraction: {step2}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' - 6 = {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\nfinal_result = step3 + ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='1.02255  # Final addition\\nprint(f\\"Step ',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='4 - Final addition: {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='} + 1.02255 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {final_result}\\")\\n\\n#', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=" Let's also verify with", tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' direct calculation\\ndirect_result = 65',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='465-6544 * 65464-', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='6+1.02255\\nprint(f\\"\\\\nDirect calculation:',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' {direct_result}\\")\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Results match: {final_result == direct',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='_result}\\")', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                delta=ToolCallPartDelta(args_delta='bc -l"}', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
+                        'stdout': '-428330955.97745\n',
+                        'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
+            PartStartEvent(index=4, part=TextPart(content='Following'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta=' the standard **order of operations (PEMDAS/BODMAS)** — multiplication is'
+                ),
+            ),
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
+ performed before addition and subtraction — here's the breakdown:
 
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='⃣ | `6544 × 65464` | `428,394,416'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
 
-Here's how it breaks down following the order of operations:
-1. First\
+### \
 """
                 ),
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 ')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-= 428,396,416
-2. Then left\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to right: 65,465 - 428')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,396,416 = -428,330,951
-3\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. Continue: -428,330,951 -')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' 6 = -428,330')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,957
-4. Finally: -428,330,957 + \
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='✅ Final Answer: **-428,330,955.97745**')),
             PartEndEvent(
                 index=4,
                 part=TextPart(
                     content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
+
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='code_execution',
-                    content={
-                        'content': [],
-                        'return_code': 0,
-                        'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
-                    },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
         ]
     )
+
+
+async def test_anthropic_code_execution_tool_version_unsupported(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-haiku-4-5-20251001',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
+    )
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            "`anthropic_code_execution_tool_version='20260120'` is not supported by model 'claude-haiku-4-5-20251001'"
+        ),
+    ):
+        await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_tool_type'),
+    [
+        ('claude-sonnet-4-0', 'code_execution_20250825'),
+        ('claude-opus-4-1', 'code_execution_20250825'),
+        ('claude-haiku-4-5-20251001', 'code_execution_20250825'),
+        ('claude-sonnet-4-5', 'code_execution_20260120'),
+        ('claude-sonnet-4-6', 'code_execution_20260120'),
+        ('claude-opus-4-5', 'code_execution_20260120'),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_auto(
+    allow_model_requests: None,
+    model_name: str,
+    expected_tool_type: str,
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+
+
+@pytest.mark.parametrize(
+    ('tool_version', 'expected_tool_type'),
+    [
+        ('20250825', 'code_execution_20250825'),
+        ('20260120', 'code_execution_20260120'),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_setting(
+    allow_model_requests: None,
+    tool_version: AnthropicCodeExecutionToolVersion,
+    expected_tool_type: str,
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version=tool_version),
+    )
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+    assert completion_kwargs['betas'] is OMIT
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
@@ -7583,7 +7990,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot('Today is November 19, 2025.')
@@ -7629,21 +8036,44 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     from pydantic_ai.providers.google import GoogleProvider
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(builtin_tools=[CodeExecutionTool()])
+    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [
+            [UserPromptPart],
+            [
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+            ],
+        ]
     )
 
     result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                TextPart,
+            ],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )
 
@@ -8147,14 +8577,14 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     # First run to get server tool history
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -8207,14 +8637,14 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # First run to get server tool history
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
@@ -8226,9 +8656,914 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     assert result2.output == 'The code execution returned the result: 4'
 
 
+async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(CodeExecutionTool())],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    result = await agent.run(
+        'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+        'Then use the text editor to view the file and tell me what it contains.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use the text editor to create /tmp/hello.txt with the text: Hello, world! Then use the text editor to view the file and tell me what it contains.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell commands.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
+                    ),
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length, empty document: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'is_file_update': False,
+                            'type': 'text_editor_code_execution_create_result',
+                        },
+                        timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(content="File created! Now let's view it."),
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(
+                        content="""\
+Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the tool confirmed the file was created successfully.
+2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:
+
+> `Hello, world!`
+
+Everything looks perfect! 🎉\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=10490,
+                    output_tokens=469,
+                    details={
+                        'input_tokens': 10490,
+                        'output_tokens': 469,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRHVR8X8ny5XjueVygS'},
+                provider_response_id='msg_015ZT9schxByyYqpexx5ir4o',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(CodeExecutionTool())],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt=(
+            'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+            'Then use the text editor to view the file and tell me what it contains.'
+        )
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Sure')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=' "creat', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='e"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=', "p', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ath": "/', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='llo.t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='xt"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', "file_t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ext', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='": "Hello', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', world!"}', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='{"comman', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='d": "view', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='"', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='th": "/', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='tmp/hello.', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartEndEvent(
+                index=2,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    timestamp=IsDatetime(),
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=4,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'error_code': 'unavailable',
+                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                        'type': 'text_editor_code_execution_tool_result_error',
+                    },
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=TextPart(content='No'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=5, delta=TextPartDelta(content_delta=" worries — the `view` couldn't run in parallel with")
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=" the `create` since the file didn't exist yet at the time both calls"
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=' were dispatched. Now that the file has been created, let me view it!'
+                ),
+            ),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="No worries — the `view` couldn't run in parallel with the `create` since the file didn't exist yet at the time both calls were dispatched. Now that the file has been created, let me view it!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=6,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=' "view"', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=', ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"p', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='ath": ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"/', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='llo.txt"}', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartEndEvent(
+                index=6,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=7,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=8, part=TextPart(content="Here's a"), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+ summary of what happened:
+
+1. **Created** `/tmp/hello.txt` — the file was successfully written to\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+ disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content="""\
+Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` — the file was successfully written to disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:
+
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
+"""
+                ),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_editor_code_execution_tool_message_replay(allow_model_requests: None):
+    """Serialize Anthropic text editor code execution metadata back to Anthropic block params."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='View the file.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'View the file.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_1',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_1',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
+async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_requests: None):
+    """Serialize Anthropic bash code execution metadata back to Anthropic block params."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run a shell command.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Run a shell command.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_1',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_1',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
+async def test_anthropic_code_execution_tool_message_replay_with_list_results(allow_model_requests: None):
+    """Serialize Anthropic code execution result lists instead of dropping them."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    bash_result = [
+        {
+            'return_code': 0,
+            'stderr': '',
+            'stdout': 'hello\n',
+            'type': 'bash_code_execution_result',
+        }
+    ]
+    text_editor_result = [
+        {
+            'content': 'Hello, world!',
+            'file_type': 'text',
+            'num_lines': 1,
+            'start_line': 1,
+            'total_lines': 1,
+            'type': 'text_editor_code_execution_view_result',
+        }
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=bash_result,
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=text_editor_result,
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_list',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_list',
+                        'content': [
+                            {
+                                'return_code': 0,
+                                'stderr': '',
+                                'stdout': 'hello\n',
+                                'type': 'bash_code_execution_result',
+                            }
+                        ],
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_list',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_list',
+                        'content': [
+                            {
+                                'content': 'Hello, world!',
+                                'file_type': 'text',
+                                'num_lines': 1,
+                                'start_line': 1,
+                                'total_lines': 1,
+                                'type': 'text_editor_code_execution_view_result',
+                            }
+                        ],
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
+async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_tool_name(
+    allow_model_requests: None,
+):
+    """Infer Anthropic code execution tool variants from legacy names and result content."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='text_editor_code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='bash_code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                    provider_details={'anthropic_tool_name': 'not_a_code_execution_tool'},
+                ),
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='srvtoolu_default_code_call',
+                    provider_details={'anthropic_tool_name': 123},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': '4\n',
+                        'type': 'code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_text_editor_call',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_text_editor_call',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_bash_call',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_bash_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_default_code_call',
+                        'name': 'code_execution',
+                        'input': {'code': 'print(2 + 2)'},
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
@@ -8242,7 +9577,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
                 ),
             ),
@@ -8271,7 +9606,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
@@ -8281,7 +9616,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -8377,7 +9712,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
                 ),
                 previous_part_kind='text',
@@ -8411,7 +9746,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartEndEvent(
                 index=3,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
@@ -8421,7 +9756,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=[
                         {
@@ -8754,182 +10089,6 @@ These stories represent major international diplomatic developments, significant
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Breaking News, World News and Video from Al Jazeera',
-                            'type': 'web_search_result',
-                            'url': 'https://www.aljazeera.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '7 hours ago',
-                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcnews.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 hours ago',
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '14 hours ago',
-                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
-                            'type': 'web_search_result',
-                            'url': 'https://www.cbsnews.com/world/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/International',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Google News',
-                            'type': 'web_search_result',
-                            'url': 'https://news.google.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 days ago',
-                            'title': 'World News Headlines - US News and World Report',
-                            'type': 'web_search_result',
-                            'url': 'https://www.usnews.com/news/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 hours ago',
-                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://www.foxnews.com/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://edition.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'ABC News – Breaking News, Latest News and Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
-                            'type': 'web_search_result',
-                            'url': 'https://globalnation.inquirer.net',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'News – The White House',
-                            'type': 'web_search_result',
-                            'url': 'https://www.whitehouse.gov/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
-                            'type': 'web_search_result',
-                            'url': 'https://www.business-standard.com/latest-news',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '10 hours ago',
-                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
-                            'type': 'web_search_result',
-                            'url': 'https://www.kyivpost.com/thread/58085',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': 'July 14, 2025',
-                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
-                            'type': 'web_search_result',
-                            'url': 'https://www.democracynow.org/shows/2025/7/14',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
         ]
     )
 
@@ -8938,7 +10097,7 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requ
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert result.output == snapshot("""\
@@ -9112,9 +10271,9 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
         provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
-    agent = Agent(anthropic_model, builtin_tools=[MemoryTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
-    with pytest.raises(UserError, match="Built-in `MemoryTool` requires a 'memory' tool to be defined."):
+    with pytest.raises(UserError, match=re.escape("Native `MemoryTool` requires a 'memory' tool to be defined.")):
         await agent.run('Where do I live?')
 
     class FakeMemoryTool(BetaAbstractMemoryTool):
@@ -9225,6 +10384,205 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
+async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool()), NativeTool(MemoryTool())],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'lookup result'
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:  # pragma: no cover
+        return 'memory response'
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert result.output == 'hello world'
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # Server-side tools (`code_execution`, `web_fetch`) are dropped from the `count_tokens` payload, but the
+    # client-side `MemoryTool` is kept so the count includes its definition (and beta).
+    assert count_tokens_kwargs['tools'] == [
+        {
+            'name': 'lookup',
+            'description': '',
+            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+        },
+        {'name': 'memory', 'type': 'memory_20250818'},
+    ]
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
+    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
+    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+        'code_execution': 'code_execution_20260120',
+        'web_fetch': 'web_fetch_20260209',
+        'memory': 'memory_20250818',
+    }
+    assert create_kwargs['betas'] == ['context-management-2025-06-27']
+
+
+async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
+    """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
+    as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
+    entry that the endpoint rejects.
+
+    The count path strips server tools from the wire `tools` list, but `_map_message` also derives
+    `tool_search_active` from `native_tools`: clearing `ToolSearchTool` there would silently
+    re-serialize the history turn as plain text and diverge from the real request. A VCR test
+    wouldn't catch this — the cassette matcher isn't sensitive to the `messages` body.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
+                        'message': 'Found 1 tool',
+                    },
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+    ]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    # The tool-search replay turn renders identically on both paths: a `tool_result` whose content
+    # is a `tool_reference` array pointing at the discovered function tool.
+    assert count_tokens_kwargs['messages'] == create_kwargs['messages']
+    assert count_tokens_kwargs['messages'][-1]['content'][0] == snapshot(
+        {
+            'tool_use_id': 'search-1',
+            'type': 'tool_result',
+            'content': [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}],
+            'is_error': False,
+        }
+    )
+
+    # The server-side `tool_search_tool_*` entry is rejected by `count_tokens`, so it's omitted there
+    # but present on the real request.
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
+    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
+    """`count_tokens` succeeds against the live API when a native/server tool is configured.
+
+    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
+    the model strips native tools from the `count_tokens` payload. A successful token count proves the
+    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
+    the `code_execution` entry, so a revert of the fix would send it and break playback.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    usage = await m.count_tokens(
+        [ModelRequest.user_text_prompt('What is 2 + 2?')],
+        None,
+        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+    )
+
+    assert usage.input_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_tool_search_replay(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """`count_tokens` succeeds against the live API with a `ToolSearchTool` and a tool-search replay history.
+
+    The endpoint rejects the server-side `tool_search_tool_*` entry, so it's omitted from the wire `tools`
+    list, but the replay turn must still serialize as a `tool_reference` block (pointing at a `function_tools`
+    entry, which is not stripped) — exactly as the real `/v1/messages` request does. A successful token count
+    proves the endpoint accepts that payload; the recorded request is the regression guard.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
+                        'message': 'Found 1 tool',
+                    },
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+    ]
+
+    usage = await m.count_tokens(messages, None, params)
+
+    assert usage.input_tokens > 0
+    request_body = json.loads(vcr.requests[0].body)
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in request_body['tools'])
+    tool_result = request_body['messages'][-1]['content'][0]
+    assert tool_result['content'] == [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}]
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """`count_tokens` keeps the client-side `MemoryTool`, which the endpoint accepts and counts.
+
+    Unlike server tools, `MemoryTool` is not rejected by `count_tokens` and its definition contributes
+    real tokens, so stripping it would undercount the prompt. The recorded request is the regression
+    guard: it must contain the `memory` tool, so a revert to clearing all native tools would omit it.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    usage = await m.count_tokens(
+        [ModelRequest.user_text_prompt('What is 2 + 2?')],
+        None,
+        ModelRequestParameters(
+            native_tools=[MemoryTool()],
+            function_tools=[ToolDefinition(name='memory', description='', parameters_json_schema={'type': 'object'})],
+        ),
+    )
+
+    assert usage.input_tokens > 0
+    request_body = json.loads(vcr.requests[0].body)
+    assert {'name': 'memory', 'type': 'memory_20250818'} in request_body['tools']
+
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""
@@ -9237,23 +10595,6 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == model_id
-
-
-async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
-    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key='test-access-key',
-        aws_secret_key='test-secret-key',
-        aws_region='us-east-1',
-    )
-    provider = AnthropicProvider(anthropic_client=bedrock_client)
-    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
 
 
 @pytest.mark.vcr()
@@ -9275,7 +10616,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -9291,7 +10632,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=1532,
             cache_read_tokens=1111,
@@ -9328,7 +10669,7 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
         'Please explain what Python is and its main use cases. ' * 100,
         usage_limits=UsageLimits(input_tokens_limit=5000, count_tokens_before_request=True),
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=1114,
             cache_read_tokens=1111,
@@ -9355,6 +10696,10 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     Verifies multi-turn caching works: result2 passes message_history from result1,
     and the API accepts cache_control with TTL without error.
     """
+    # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
+    # ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
+    pytest.importorskip('botocore')
+
     from anthropic import AsyncAnthropicBedrock
 
     bedrock_client = AsyncAnthropicBedrock(
@@ -9380,7 +10725,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
         'including major PEPs, typing improvements, performance enhancements, and ecosystem growth. '
     ) * 250
     result1 = await agent.run(long_prompt)
-    assert result1.usage() == snapshot(
+    assert result1.usage == snapshot(
         RunUsage(
             input_tokens=9514,
             cache_read_tokens=9511,
@@ -9396,7 +10741,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
-    assert result2.usage() == snapshot(
+    assert result2.usage == snapshot(
         RunUsage(
             input_tokens=11470,
             cache_write_tokens=1956,
@@ -9564,8 +10909,7 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
 
     # Check that container_id was captured in the response
     messages = result.all_messages()
-    model_response = messages[-1]
-    assert isinstance(model_response, ModelResponse)
+    model_response = message(messages, ModelResponse, index=-1)
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
@@ -9594,13 +10938,12 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     )
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         instructions='Always use the code execution tool for math.',
     )
 
     first = await agent.run('How much is 3 * 12390?')
-    first_response = first.all_messages()[-1]
-    assert isinstance(first_response, ModelResponse)
+    first_response = message(first.all_messages(), ModelResponse, index=-1)
     assert first_response.provider_details is not None
     container_id = first_response.provider_details.get('container_id')
     assert isinstance(container_id, str) and container_id.startswith('container_')
@@ -9622,40 +10965,35 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 3 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '37170',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 × 12,390 = **37,170**'),
+                    TextPart(content='3 * 12390 = **37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1983,
-                    output_tokens=85,
+                    input_tokens=4612,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 1983,
-                        'output_tokens': 85,
+                        'input_tokens': 4612,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -9664,8 +11002,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_01LZfXQfnKjDzM8MfBWwnVqV',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9679,40 +11017,35 @@ print(result)
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 4 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '49560',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 × 12,390 = **49,560**'),
+                    TextPart(content='4 * 12390 = **49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2219,
-                    output_tokens=85,
+                    input_tokens=4840,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 2219,
-                        'output_tokens': 85,
+                        'input_tokens': 4840,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -9721,8 +11054,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_016CCM7vKzHb1YyMDsVofT35',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9908,6 +11241,78 @@ Fix the errors and try again.\
     )
 
 
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_cancel',
+                model='claude-haiku-4-5-123',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaTextBlock(type='text', text=''),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaTextDelta(type='text_delta', text='hello '),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaTextDelta(type='text_delta', text='world'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=2),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}),
+                model_name='claude-haiku-4-5-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_response_id='msg_cancel',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_anthropic_compaction_capability_settings(allow_model_requests: None, anthropic_api_key: str):
     """Test that AnthropicCompaction capability correctly configures model settings."""
     from unittest.mock import Mock
@@ -9953,7 +11358,6 @@ async def test_anthropic_compaction_capability_preserves_existing_edits(
     settings_resolver = cap.get_model_settings()
     assert callable(settings_resolver)
 
-    # Simulate existing user-configured edits in model_settings
     existing_settings = {
         'anthropic_context_management': {
             'edits': [{'type': 'some_other_edit', 'custom': True}],
@@ -9974,7 +11378,6 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
 
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
 
-    # Create a message history that includes a CompactionPart
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello!')]),
         ModelResponse(
@@ -9987,12 +11390,10 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
         ModelRequest(parts=[UserPromptPart(content='What did I say earlier?')]),
     ]
 
-    # Run the agent with the compaction in history
     agent = Agent(model=model, instructions='Be brief.')
     result = await agent.run('What did I say earlier?', message_history=messages)
 
-    # The model should be able to respond based on the compacted context
-    assert result.output  # Just verify we got a response
+    assert result.output
 
 
 async def test_anthropic_compaction_beta_header(allow_model_requests: None):
@@ -10007,7 +11408,6 @@ async def test_anthropic_compaction_beta_header(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'response'
 
-    # Verify the beta header was included in the API call
     kwargs = cast(MockAnthropic, mock_client).chat_completion_kwargs[0]
     assert 'compact-2026-01-12' in kwargs['betas']
 
@@ -10032,7 +11432,6 @@ async def test_anthropic_compaction_in_response(allow_model_requests: None):
     result = await agent.run('Continue our conversation')
     assert result.output == 'Based on our conversation, here is my response.'
 
-    # Verify the CompactionPart is in the response messages
     response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
     assert len(response_msgs) == 1
     compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
@@ -10101,7 +11500,6 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
         output = await result.get_output()
     assert output == 'Here is my response.'
 
-    # Verify CompactionPart is in the response
     response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
     assert len(response_msgs) == 1
     compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
@@ -10116,8 +11514,6 @@ async def test_anthropic_compaction_only_response(allow_model_requests: None):
 
     from pydantic_ai.messages import CompactionPart
 
-    # Single response: compaction only (simulating pause_after_compaction=True)
-    # The compaction content is treated as text output, no retry needed
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],
@@ -10128,10 +11524,8 @@ async def test_anthropic_compaction_only_response(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Continue our conversation')
-    # CompactionPart content is treated as text output
     assert result.output == 'Summary of prior conversation.'
 
-    # Verify the compaction is preserved in the message history
     all_msgs = result.all_messages()
     compaction_parts = [
         p for msg in all_msgs if isinstance(msg, ModelResponse) for p in msg.parts if isinstance(p, CompactionPart)
@@ -10146,7 +11540,6 @@ async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthr
 
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
 
-    # Use a 50k threshold (minimum) and pad with enough text to exceed it (~4 chars/token)
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~55k tokens
     agent = Agent(
         model=model,
@@ -10154,10 +11547,8 @@ async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthr
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
     )
 
-    # First run with padded content to exceed 50k tokens
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
 
-    # The response should contain a CompactionPart (the API compacted the long context)
     all_msgs = result.all_messages()
     compaction_parts = [
         part
@@ -10171,11 +11562,10 @@ async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthr
     )
     compaction = compaction_parts[0]
     assert compaction.provider_name == 'anthropic'
-    assert compaction.content is not None  # Anthropic compaction has readable text
+    assert compaction.content is not None
 
-    # Second run: verify compacted history round-trips successfully
     result2 = await agent.run('What did I ask you to do?', message_history=result.all_messages())
-    assert result2.output  # Model should respond based on compacted context
+    assert result2.output
 
 
 async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None, anthropic_api_key: str):
@@ -10197,7 +11587,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=55376,
             cache_write_tokens=55096,
@@ -10236,7 +11626,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
     async with agent.run_stream(f'Remember this context: {padding}\n\nNow say hello.') as result:
         async for _ in result.stream_text():
             pass
-        usage = result.usage()
+        usage = result.usage
     assert usage == snapshot(
         RunUsage(
             input_tokens=55368,
@@ -10294,3 +11684,82 @@ async def test_anthropic_service_tier_mapping(
         assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
     else:
         assert kwargs['service_tier'] == expected
+
+
+async def test_anthropic_top_k_propagation(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['top_k'] == 40
+
+
+async def test_anthropic_model_retrying_after_empty_response(allow_model_requests: None, anthropic_api_key: str):
+    """An empty `ModelResponse` in history is omitted from the payload; a retry prompt is sent
+    instead so the model can produce a non-empty response. Anthropic accepts the resulting
+    consecutive user turns.
+    """
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot("""\
+# Hi there! 👋
+
+How can I help you today?\
+""")
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+# Hi there! 👋
+
+How can I help you today?\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=26,
+                    output_tokens=18,
+                    details={
+                        'input_tokens': 26,
+                        'output_tokens': 18,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-haiku-4-5-20251001',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
