@@ -224,14 +224,18 @@ _(This example is complete, it can be run "as is")_
 
 ### Repairing incomplete histories
 
-A run that is cancelled or crashes partway through can leave the history in a shape model providers reject: a [`ModelResponse`][pydantic_ai.messages.ModelResponse] containing tool calls with no matching results in a following [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The same goes for hand-built or truncated histories. You don't need to clean these up yourself — before each model request, Pydantic AI repairs the history it was given:
+A run that is cancelled or crashes partway through can leave the history in a shape model providers reject: a [`ModelResponse`][pydantic_ai.messages.ModelResponse] containing "dangling" tool calls with no matching results in a following [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The same goes for hand-built or truncated histories. You don't need to clean these up yourself — before each model request, Pydantic AI repairs dangling tool calls in the history it was given:
 
 - A tool call whose arguments were cut off mid-stream never executed and can't be replayed, so it is removed. A response left with no parts is removed entirely.
 - Any other tool call without a result is answered with a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] telling the model the call was interrupted before a result was produced. Synthesized returns carry `{'pydantic_ai_synthesized_tool_return': True}` in their [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell them apart from real tool results.
 
+Any repair is reported with a `UserWarning` describing what was synthesized or dropped: expected when reusing the history of an interrupted run, but a bug signal when it points at forgotten `deferred_tool_results` or a history processor that removed tool results.
+
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
-Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results`. Only a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams)) is repaired when a new `user_prompt` is provided, since its tool calls will never be executed.
+Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response or trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
+
+Repair is limited to dangling tool calls: orphaned tool results (results without a matching call, duplicates, or results placed before their call) are not repaired and may still be rejected by providers.
 
 ### Correlating runs with `conversation_id`
 
