@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import time
+import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -318,10 +319,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
-        if messages and isinstance(messages[-1], _messages.ModelRequest):
-            # A trailing request means the last response's tool calls were already (partially)
-            # processed — e.g. a run interrupted during tool execution — so any still-unanswered
-            # calls will never be executed and are closed out with synthesized returns.
+        if (
+            messages
+            and isinstance(last_message := messages[-1], _messages.ModelRequest)
+            and last_message.state == 'interrupted'
+        ):
+            # A trailing request interrupted during tool execution means the last response's
+            # still-unanswered calls will never be executed, so they are closed out with
+            # synthesized returns. A 'complete' trailing request (e.g. from a run that ended in
+            # `DeferredToolRequests`) is left alone: its response's open calls may still receive
+            # `deferred_tool_results`.
             messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
 
         next_message: _messages.ModelRequest | None = None
@@ -1805,6 +1812,72 @@ def _tool_call_args_incomplete(part: _messages.ToolCallPart) -> bool:
     return False
 
 
+def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
+    """Find tool calls that will never receive a result, keyed by the index of their response.
+
+    Matching is an ordered walk: a `ToolReturnPart`/`RetryPromptPart` only answers a call that is
+    open (produced by an earlier response and not already answered) at that point. An out-of-place
+    result — one preceding its call, a duplicate, or one reusing the ID of an already-answered
+    call — doesn't mask a genuinely dangling call.
+    """
+    open_calls: dict[str, tuple[int, _messages.ToolCallPart]] = {}
+    dangling_by_response: dict[int, list[_messages.ToolCallPart]] = {}
+    for index, message in enumerate(messages):
+        if isinstance(message, _messages.ModelResponse):
+            for part in message.parts:
+                if isinstance(part, _messages.ToolCallPart):
+                    if shadowed := open_calls.get(part.tool_call_id):
+                        # A new call reusing the ID of an open call means the open call can no
+                        # longer be answered: any later result answers the new call instead.
+                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
+                    open_calls[part.tool_call_id] = (index, part)
+        elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
+            for part in message.parts:
+                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                    open_calls.pop(part.tool_call_id, None)
+    for response_index, call in open_calls.values():
+        dangling_by_response.setdefault(response_index, []).append(call)
+    return dangling_by_response
+
+
+def _insert_synthesized_returns(
+    request: _messages.ModelRequest, synthesized: list[_messages.ToolReturnPart]
+) -> _messages.ModelRequest:
+    """Insert synthesized returns after the request's existing tool results (if any).
+
+    They go ahead of user-facing parts, matching where providers expect tool results.
+    """
+    insert_at = next(
+        (
+            part_index + 1
+            for part_index in range(len(request.parts) - 1, -1, -1)
+            if isinstance(request.parts[part_index], _messages.ToolReturnPart | _messages.RetryPromptPart)
+        ),
+        0,
+    )
+    return replace(request, parts=[*request.parts[:insert_at], *synthesized, *request.parts[insert_at:]])
+
+
+def _warn_repaired_history(synthesized_names: list[str], dropped_names: list[str]) -> None:
+    repairs: list[str] = []
+    if synthesized_names:
+        repairs.append(
+            f'synthesized results for tool call(s) {sorted(set(synthesized_names))!r} that never received one'
+        )
+    if dropped_names:
+        repairs.append(
+            f'dropped tool call(s) {sorted(set(dropped_names))!r} whose arguments were cut off mid-stream '
+            f'(text in the same response may still reference them)'
+        )
+    warnings.warn(
+        f'Message history was repaired before being sent to the model: {"; ".join(repairs)}. '
+        f'This is expected when reusing the history of an interrupted or cancelled run. Otherwise, it may '
+        f'indicate missing `deferred_tool_results` or a history processor that removed tool results.',
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def _repair_dangling_tool_calls(
     messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
 ) -> list[_messages.ModelMessage]:
@@ -1812,7 +1885,7 @@ def _repair_dangling_tool_calls(
 
     A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
     `ToolCallPart`s with no matching `ToolReturnPart`/`RetryPromptPart` in a later `ModelRequest`.
-    Providers reject such histories, so before a request is sent:
+    Providers reject histories with dangling tool calls, so before a request is sent:
 
     * A dangling tool call whose args string is unparsable JSON (cut off mid-stream) never
       executed and must not reach a provider, so it is removed from its response; a response left
@@ -1823,28 +1896,39 @@ def _repair_dangling_tool_calls(
       request follows.
 
     The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
-    are the live frontier that run resumption and `deferred_tool_results` may still answer.
+    are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
+    trailing unparsable-args call is left for local args validation to turn into a retry prompt.
+
+    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
+    response and not already answered) at that point. An out-of-place result — one preceding its
+    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call; such orphaned results themselves are not repaired.
 
     The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
     response they repair and contain no wall-clock or random data, so repairing the same history
     twice (or on every run) yields the same output and never churns provider prompt-cache prefixes.
-    If there is nothing to repair, the input list is returned unchanged.
+    If there is nothing to repair, the input list is returned unchanged; any repair is reported
+    with a `UserWarning`.
     """
-    answered_ids = {
-        part.tool_call_id
-        for message in messages
-        if isinstance(message, _messages.ModelRequest)
-        for part in message.parts
-        if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-    }
-    last_response_index = next(
-        (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], _messages.ModelResponse)),
-        None,
-    )
+    dangling_by_response = _dangling_tool_calls_by_response(messages)
+    if not repair_last_response:
+        last_response_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if isinstance(messages[index], _messages.ModelResponse)
+            ),
+            None,
+        )
+        if last_response_index is not None:
+            dangling_by_response.pop(last_response_index, None)
+    if not dangling_by_response:
+        return messages
 
+    synthesized_names: list[str] = []
+    dropped_names: list[str] = []
     repaired: list[_messages.ModelMessage] = []
     synthesized: list[_messages.ToolReturnPart] = []
-    changed = False
     for index, message in enumerate(messages):
         if isinstance(message, _messages.ModelResponse):
             if synthesized:
@@ -1853,24 +1937,23 @@ def _repair_dangling_tool_calls(
                 repaired.append(_messages.ModelRequest(parts=synthesized))
                 synthesized = []
 
-            dangling = [part for part in message.tool_calls if part.tool_call_id not in answered_ids]
-            incomplete_ids = {part.tool_call_id for part in dangling if _tool_call_args_incomplete(part)}
-            if incomplete_ids:
-                changed = True
-                parts = [
-                    part
-                    for part in message.parts
-                    if not (isinstance(part, _messages.ToolCallPart) and part.tool_call_id in incomplete_ids)
-                ]
-                if not parts:
-                    continue
-                message = replace(message, parts=parts)
+            if dangling := dangling_by_response.get(index):
+                incomplete_ids = {part.tool_call_id for part in dangling if _tool_call_args_incomplete(part)}
+                if incomplete_ids:
+                    dropped_names.extend(part.tool_name for part in dangling if part.tool_call_id in incomplete_ids)
+                    parts = [
+                        part
+                        for part in message.parts
+                        if not (isinstance(part, _messages.ToolCallPart) and part.tool_call_id in incomplete_ids)
+                    ]
+                    if not parts:
+                        continue
+                    message = replace(message, parts=parts)
 
-            if repair_last_response or index != last_response_index:
                 for call in dangling:
                     if call.tool_call_id in incomplete_ids:
                         continue
-                    changed = True
+                    synthesized_names.append(call.tool_name)
                     synthesized.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
@@ -1884,24 +1967,16 @@ def _repair_dangling_tool_calls(
             repaired.append(message)
         elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
             if synthesized:
-                # Insert the synthesized returns after the request's existing tool returns (if any),
-                # ahead of user-facing parts, matching where providers expect tool results.
-                insert_at = next(
-                    (
-                        part_index + 1
-                        for part_index in range(len(message.parts) - 1, -1, -1)
-                        if isinstance(message.parts[part_index], _messages.ToolReturnPart | _messages.RetryPromptPart)
-                    ),
-                    0,
-                )
-                message = replace(message, parts=[*message.parts[:insert_at], *synthesized, *message.parts[insert_at:]])
+                message = _insert_synthesized_returns(message, synthesized)
                 synthesized = []
             repaired.append(message)
 
     if synthesized:
         repaired.append(_messages.ModelRequest(parts=synthesized))
 
-    return repaired if changed else messages
+    _warn_repaired_history(synthesized_names, dropped_names)
+
+    return repaired
 
 
 def _clean_message_history(
