@@ -444,24 +444,24 @@ class Instrumentation(AbstractCapability[Any]):
         raise error
 
     def _record_validation_failure(self, call: ToolCallPart, error: ValidationError) -> None:
-        """Emit the near-miss classification for `error` as an event on the current span."""
-        span = get_current_span()
-        if not span.is_recording():
-            return
+        """Emit the near-miss classification for `error` as an event on the current span.
 
+        Emitted on `get_current_span()` — the enclosing agent-run span, since validation runs
+        before any per-call tool span exists. If the span isn't recording (e.g. a no-op tracer),
+        `add_event` is a harmless no-op.
+        """
         names = self._instrumentation_names
         failure = classify_tool_args_validation_failure(error)
         attributes: dict[str, Any] = {
             names.tool_validation_failure_kind_attr: failure.kind,
             'gen_ai.tool.name': call.tool_name,
+            'gen_ai.tool.call.id': call.tool_call_id,
         }
-        if call.tool_call_id:
-            attributes['gen_ai.tool.call.id'] = call.tool_call_id
         # The unknown key names are model-emitted content, so gate them behind `include_content`;
         # the `kind` alone already identifies the Ronacher class without exposing content.
         if failure.unknown_keys and self.settings.include_content:
             attributes[names.tool_validation_failure_unknown_keys_attr] = list(failure.unknown_keys)
-        span.add_event(names.tool_validation_failure_event_name, attributes=attributes)
+        get_current_span().add_event(names.tool_validation_failure_event_name, attributes=attributes)
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)

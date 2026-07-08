@@ -3798,3 +3798,62 @@ def test_tool_call_validation_failure_event_excludes_unknown_keys_without_conten
     assert event['name'] == 'pydantic_ai.tool.validation_failure'
     assert event['attributes']['pydantic_ai.tool.validation_failure.kind'] == 'unknown_keys_only'
     assert 'pydantic_ai.tool.validation_failure.unknown_keys' not in event['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_call_validation_failure_event_type_mismatch(capfire: CaptureLogfire) -> None:
+    """A type-coercion failure is classified as `type_mismatch_only` with no unknown keys recorded."""
+
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'a': 'not-an-int'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    @agent.tool_plain
+    def my_tool(a: int) -> str:
+        return f'ok {a}'
+
+    agent.run_sync('go')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    [event] = agent_run_span['events']
+    assert event['name'] == 'pydantic_ai.tool.validation_failure'
+    assert event['attributes']['pydantic_ai.tool.validation_failure.kind'] == 'type_mismatch_only'
+    assert 'pydantic_ai.tool.validation_failure.unknown_keys' not in event['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_call_model_retry_is_not_recorded_as_validation_failure(capfire: CaptureLogfire) -> None:
+    """A `ModelRetry` from a custom validator carries no schema-level shape and is not classified,
+    so no near-miss event is emitted (only schema `ValidationError`s are)."""
+
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'a': 1})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    def reject(ctx: RunContext[Any], a: int) -> None:
+        raise ModelRetry('please try again')
+
+    @agent.tool_plain(args_validator=reject)
+    def my_tool(a: int) -> str:  # pragma: no cover - body never runs; validator rejects first
+        return f'ok {a}'
+
+    agent.run_sync('go')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    assert not agent_run_span.get('events')
