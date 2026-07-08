@@ -47,6 +47,13 @@ def test_init_of_openai_with_base_url_and_without_api_key(env: TestEnv):
     assert provider.client.api_key == 'api-key-not-set'
 
 
+def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
+    env.remove('OPENAI_API_KEY')
+    env.set('OPENAI_BASE_URL', 'https://example.com/v1')
+    provider = OpenAIProvider()
+    assert provider.client.api_key == 'api-key-not-set'
+
+
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
         provider = OpenAIProvider(http_client=http_client, api_key='foobar')
