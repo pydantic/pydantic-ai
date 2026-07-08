@@ -17,6 +17,7 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from openai import omit
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message_function_tool_call import (
@@ -121,6 +122,14 @@ async def test_snowflake_settings_transformation():
     )
     assert transformed_disabled.get('extra_body') is None
 
+    # A reasoning-capable model that doesn't require `temperature=1` doesn't get a default temperature.
+    profile_no_temp = SnowflakeModelProfile(snowflake_supports_reasoning=True)
+    transformed_no_temp = _snowflake_settings_to_openai_settings(
+        SnowflakeModelSettings(snowflake_reasoning=SnowflakeReasoning(effort='low')), params, profile=profile_no_temp
+    )
+    assert cast(dict[str, Any], transformed_no_temp.get('extra_body', {})).get('reasoning') == {'effort': 'low'}
+    assert 'temperature' not in transformed_no_temp
+
 
 async def test_snowflake_unified_thinking(provider: SnowflakeProvider):
     """The unified `thinking` setting only flows through to the `reasoning` object for Claude models."""
@@ -136,6 +145,32 @@ async def test_snowflake_unified_thinking(provider: SnowflakeProvider):
     llama_settings, _ = llama.prepare_request(ModelSettings(thinking='medium'), params)
     assert llama_settings is not None
     assert llama_settings.get('extra_body') is None
+
+
+def test_snowflake_translate_thinking(provider: SnowflakeProvider):
+    """An explicit `openai_reasoning_effort` is passed through for Claude models, but a unified
+    thinking level is not (it flows through the `reasoning` object instead)."""
+    from pydantic_ai.models.openai import OpenAIChatModelSettings
+
+    claude = SnowflakeModel('claude-sonnet-4-6', provider=provider)
+    params = ModelRequestParameters(thinking='high')
+    assert claude._translate_thinking(OpenAIChatModelSettings(openai_reasoning_effort='low'), params) == 'low'  # pyright: ignore[reportPrivateUsage]
+    assert claude._translate_thinking(OpenAIChatModelSettings(), params) is omit  # pyright: ignore[reportPrivateUsage]
+
+    # OpenAI models fall back to the base behavior, which maps unified thinking to a reasoning effort.
+    gpt = SnowflakeModel('openai-gpt-5.2', provider=provider)
+    assert gpt._translate_thinking(OpenAIChatModelSettings(), params) == 'high'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_snowflake_replays_foreign_thinking_as_tags(provider: SnowflakeProvider):
+    """A `ThinkingPart` from a different provider is replayed as tags, not as `reasoning_details`."""
+    from pydantic_ai import ModelResponse
+
+    model = SnowflakeModel('claude-sonnet-4-6', provider=provider)
+    response = ModelResponse(parts=[ThinkingPart(content='foreign reasoning', provider_name='other', id='xyz')])
+    message = model._map_model_response(response)  # pyright: ignore[reportPrivateUsage]
+    assert message is not None
+    assert 'foreign reasoning' in str(message.get('content'))
 
 
 async def test_snowflake_model_simple(allow_model_requests: None, live_provider: SnowflakeProvider):
