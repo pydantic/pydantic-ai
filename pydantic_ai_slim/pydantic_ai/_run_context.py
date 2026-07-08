@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
-    from .usage import RunUsage
+    from .usage import RunUsage, UsageLimits
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -42,6 +42,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    usage_limits: UsageLimits | None = None
+    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, or `None` if the run wasn't started with any.
+
+    Read-only by convention: this reflects the limits the run is already enforcing, so tools and
+    capabilities can disclose or adapt to the run's budget (e.g. a budget-disclosure capability)
+    without having to be configured with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage]
+    to compute how much budget remains. Mutating it here does *not* change what the run enforces.
+    """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None

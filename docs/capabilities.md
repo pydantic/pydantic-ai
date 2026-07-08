@@ -136,6 +136,7 @@ Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-d
 - `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
 - `ctx.discovered_tool_names` — deferred function tools revealed by tool search. This is tool-level discovery, separate from capability-level loading.
 - `ctx.available_tool_names` — function tool names currently known as available: always-visible tools from the current step's assembled tool manager plus tool-search discoveries reconstructed from history. Early hooks such as `before_run` may see only the history-derived discovered names, or an empty set if none exist yet, before tool definitions have been prepared. See [Hook ordering](hooks.md#hook-ordering) for how hook timing affects what is populated.
+- `ctx.usage_limits` — the [`UsageLimits`][pydantic_ai.usage.UsageLimits] the run is enforcing (or `None` if none were passed), alongside `ctx.usage` for the usage so far. A capability can read the run's limits to disclose or adapt to the remaining budget (e.g. budget disclosure) without being configured with a duplicate copy. It's read-only by convention: mutating it does not change what the run enforces.
 
 Loading a capability updates the capability state immediately, but the loaded bundle's function tools, native tools, and model settings take effect on the next model request.
 
