@@ -4741,10 +4741,12 @@ async def test_nested_multimodal_tool_return_survives_temporal(client: Client):
     attachment = tool_return_content['attachment']
     assert isinstance(attachment, BinaryImage)
     assert attachment.media_type == 'image/png'
+    assert attachment.data == b'\x89PNG'
 
     source = tool_return_content['source']
     assert isinstance(source, DocumentUrl)
     assert source.media_type == 'application/pdf'
+    assert source.url == 'https://example.com/doc/12345'
 
 
 async def test_text_content_serialization_in_workflow(client: Client):
