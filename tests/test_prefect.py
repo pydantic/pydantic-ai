@@ -1387,6 +1387,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'agent',  # the agent instance, identified by task source not run state
         'model',  # live Model instance, not hashable run state
         'usage',  # accumulates per run; not an input that should fork the cache
+        'usage_limits',  # run-level budget config; read-only, doesn't fork a tool's result cache
         'tracer',  # tracing plumbing, not run state
         'tool_manager',  # live ToolManager, not hashable run state
         'capabilities',  # live capability objects, not hashable run state
