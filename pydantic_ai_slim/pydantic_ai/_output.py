@@ -4,7 +4,8 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
@@ -15,7 +16,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, OutputBufferState, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     NativeOutput,
@@ -70,6 +71,35 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+_BUFFER_STATUS_VALID = 'valid'
+_BUFFER_STATUS_INVALID = 'invalid'
+_EMPTY_OBJECT_JSON_SCHEMA: ObjectJsonSchema = {
+    'type': 'object',
+    'properties': {},
+    'additionalProperties': False,
+}
+_EDITOR_ARGS_VALIDATOR = cast(SchemaValidator, TypeAdapter(dict[str, Any]).validator)
+_READ_BUFFER_SCHEMA: ObjectJsonSchema = _EMPTY_OBJECT_JSON_SCHEMA
+_PATCH_BUFFER_SCHEMA: ObjectJsonSchema = {
+    'type': 'object',
+    'properties': {
+        'operations': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'op': {'type': 'string', 'enum': ['add', 'replace', 'remove']},
+                    'path': {'type': 'string'},
+                    'value': {},
+                },
+                'required': ['op', 'path'],
+                'additionalProperties': False,
+            },
+        }
+    },
+    'required': ['operations'],
+    'additionalProperties': False,
+}
 
 
 def _build_output_handlers(
@@ -1400,6 +1430,230 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
         )
 
 
+def _buffer_status(tool_name: str, buffer: OutputBufferState | None, *, status: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        'status': status,
+        'tool_name': tool_name,
+        'revision': buffer.revision if buffer is not None else 0,
+        'buffer': buffer.raw_args if buffer is not None else None,
+    }
+    if buffer is not None and buffer.validation_error is not None:
+        payload['errors'] = buffer.validation_error.content
+    return payload
+
+
+def _buffer_validation_error(
+    tool_name: str, error: ToolRetryError | ModelRetry | ValidationError
+) -> _messages.RetryPromptPart:
+    if isinstance(error, ToolRetryError):
+        return error.tool_retry
+    if isinstance(error, ValidationError):
+        content: list[Any] | str = error.errors(include_url=False, include_context=False)
+    else:
+        content = error.message
+    return _messages.RetryPromptPart(tool_name=tool_name, content=content)
+
+
+def _parse_json_pointer(path: str) -> list[str]:
+    if path == '':
+        return []
+    if not path.startswith('/'):
+        raise ModelRetry(f'JSON Patch path must be empty or start with `/`, got {path!r}.')
+    return [part.replace('~1', '/').replace('~0', '~') for part in path[1:].split('/')]
+
+
+def _get_json_patch_fields(operation: dict[str, Any]) -> tuple[Literal['add', 'replace', 'remove'], str]:
+    op_raw = operation.get('op')
+    path_raw = operation.get('path')
+    if not isinstance(op_raw, str) or not isinstance(path_raw, str):
+        raise ModelRetry('Each JSON Patch operation must include string `op` and `path` fields.')
+    if op_raw not in {'add', 'replace', 'remove'}:
+        raise ModelRetry(f'Unsupported JSON Patch operation {op_raw!r}; expected `add`, `replace`, or `remove`.')
+    op = cast(Literal['add', 'replace', 'remove'], op_raw)
+    if op != 'remove' and 'value' not in operation:
+        raise ModelRetry(f'JSON Patch operation {op!r} requires a `value` field.')
+    return op, path_raw
+
+
+def _apply_root_json_patch(operation: dict[str, Any], op: Literal['add', 'replace', 'remove']) -> dict[str, Any]:
+    if op == 'remove':
+        return {}
+    value = operation['value']
+    if not isinstance(value, dict):
+        raise ModelRetry('Root JSON Patch replacement must be an object.')
+    return deepcopy(cast(dict[str, Any], value))
+
+
+def _json_pointer_parent(document: dict[str, Any], parts: list[str], path: str) -> Any:
+    parent: Any = document
+    for part in parts[:-1]:
+        if isinstance(parent, dict):
+            parent_dict = cast(dict[str, Any], parent)
+            if part not in parent_dict:
+                raise ModelRetry(f'JSON Patch path {path!r} does not exist.')
+            parent = parent_dict[part]
+        elif isinstance(parent, list):
+            parent_list = cast(list[Any], parent)
+            try:
+                parent = parent_list[int(part)]
+            except (ValueError, IndexError) as e:
+                raise ModelRetry(f'JSON Patch path {path!r} does not exist.') from e
+        else:
+            raise ModelRetry(f'JSON Patch path {path!r} cannot traverse a non-container value.')
+    return parent
+
+
+def _apply_json_patch_to_dict(
+    parent: dict[str, Any], key: str, operation: dict[str, Any], op: Literal['add', 'replace', 'remove'], path: str
+) -> None:
+    if op == 'remove':
+        if key not in parent:
+            raise ModelRetry(f'JSON Patch path {path!r} does not exist.')
+        del parent[key]
+    elif op == 'replace':
+        if key not in parent:
+            raise ModelRetry(f'JSON Patch path {path!r} does not exist.')
+        parent[key] = deepcopy(operation['value'])
+    else:
+        parent[key] = deepcopy(operation['value'])
+
+
+def _apply_json_patch_to_list(
+    parent: list[Any], key: str, operation: dict[str, Any], op: Literal['add', 'replace', 'remove'], path: str
+) -> None:
+    if op == 'add' and key == '-':
+        parent.append(deepcopy(operation['value']))
+        return
+    try:
+        index = int(key)
+    except ValueError as e:
+        raise ModelRetry(f'JSON Patch path {path!r} does not identify a list index.') from e
+    if op == 'add':
+        if index < 0 or index > len(parent):
+            raise ModelRetry(f'JSON Patch path {path!r} does not identify an insertion point.')
+        parent.insert(index, deepcopy(operation['value']))
+    elif op == 'replace':
+        if index < 0 or index >= len(parent):
+            raise ModelRetry(f'JSON Patch path {path!r} does not exist.')
+        parent[index] = deepcopy(operation['value'])
+    else:
+        if index < 0 or index >= len(parent):
+            raise ModelRetry(f'JSON Patch path {path!r} does not exist.')
+        parent.pop(index)
+
+
+def _apply_json_patch_operation(document: dict[str, Any], operation: dict[str, Any]) -> dict[str, Any]:
+    op, path = _get_json_patch_fields(operation)
+    parts = _parse_json_pointer(path)
+    if not parts:
+        return _apply_root_json_patch(operation, op)
+
+    parent = _json_pointer_parent(document, parts, path)
+    key = parts[-1]
+    if isinstance(parent, dict):
+        _apply_json_patch_to_dict(cast(dict[str, Any], parent), key, operation, op, path)
+    elif isinstance(parent, list):
+        _apply_json_patch_to_list(cast(list[Any], parent), key, operation, op, path)
+    else:
+        raise ModelRetry(f'JSON Patch path {path!r} cannot update a non-container value.')
+    return document
+
+
+def _apply_json_patch(document: dict[str, Any], operations: Any) -> dict[str, Any]:
+    if not isinstance(operations, list):
+        raise ModelRetry('`operations` must be a list of JSON Patch operations.')
+    patched = deepcopy(document)
+    for operation in cast(list[Any], operations):
+        if not isinstance(operation, dict):
+            raise ModelRetry('Each JSON Patch operation must be an object.')
+        patched = _apply_json_patch_operation(patched, cast(dict[str, Any], operation))
+        if not isinstance(patched, dict):
+            raise ModelRetry('Buffered output arguments must remain an object after patching.')
+    return patched
+
+
+class BufferedOutputEditorToolset(AbstractToolset[AgentDepsT]):
+    """Generated tools for inspecting and patching buffered output-tool arguments."""
+
+    output_tool_names: tuple[str, ...]
+    output_schema: OutputSchema[Any]
+    _tools: dict[str, tuple[Literal['read', 'patch'], str]]
+
+    def __init__(self, output_tool_names: Sequence[str], output_schema: OutputSchema[Any]):
+        self.output_tool_names = tuple(output_tool_names)
+        self.output_schema = output_schema
+        tools: dict[str, tuple[Literal['read', 'patch'], str]] = {}
+        for name in self.output_tool_names:
+            tools[f'read_{name}_buffer'] = ('read', name)
+            tools[f'patch_{name}_buffer'] = ('patch', name)
+        self._tools = tools
+
+    @property
+    def id(self) -> str | None:
+        return '<buffered-output-editor>'  # pragma: no cover
+
+    @property
+    def label(self) -> str:
+        return "the agent's buffered output editor tools"
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return {
+            name: ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(
+                    name=name,
+                    description=self._tool_description(action, output_tool_name),
+                    parameters_json_schema=_READ_BUFFER_SCHEMA if action == 'read' else _PATCH_BUFFER_SCHEMA,
+                ),
+                max_retries=ctx.max_retries,
+                args_validator=_EDITOR_ARGS_VALIDATOR,
+            )
+            for name, (action, output_tool_name) in self._tools.items()
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        action, output_tool_name = self._tools[name]
+        buffers = ctx._output_buffers  # pyright: ignore[reportPrivateUsage]  # internal toolset state
+        if buffers is None:
+            raise ModelRetry('Buffered output state is not available for this run.')
+
+        buffer = buffers.get(output_tool_name)
+        if action == 'read':
+            return _buffer_status(output_tool_name, buffer, status='missing' if buffer is None else 'current')
+
+        buffer = buffers.setdefault(output_tool_name, OutputBufferState())
+        buffer.raw_args = _apply_json_patch(buffer.raw_args or {}, tool_args.get('operations'))
+        buffer.revision += 1
+        await self._validate_buffer(output_tool_name, ctx, buffer)
+        status = _BUFFER_STATUS_INVALID if buffer.validation_error is not None else _BUFFER_STATUS_VALID
+        return _buffer_status(output_tool_name, buffer, status=status)
+
+    async def _validate_buffer(
+        self, output_tool_name: str, ctx: RunContext[AgentDepsT], buffer: OutputBufferState
+    ) -> None:
+        tool_manager = ctx.tool_manager
+        if tool_manager is None:
+            raise ModelRetry('Tool manager is not available for buffered output validation.')
+        call = _messages.ToolCallPart(tool_name=output_tool_name, args=buffer.raw_args)
+        try:
+            await tool_manager.validate_output_tool_call(call, schema=self.output_schema, wrap_validation_errors=False)
+        except (ToolRetryError, ModelRetry, ValidationError) as e:
+            buffer.validation_error = _buffer_validation_error(output_tool_name, e)
+        else:
+            buffer.validation_error = None
+
+    @staticmethod
+    def _tool_description(action: Literal['read', 'patch'], output_tool_name: str) -> str:
+        if action == 'read':
+            return f'Read the current buffered arguments for output tool {output_tool_name!r}.'
+        return (
+            f'Apply JSON Patch operations to the buffered arguments for output tool {output_tool_name!r}. '
+            f'Call {output_tool_name!r} with no arguments to submit the buffer.'
+        )
+
+
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
     """A toolset that contains output tools for agent output types."""
@@ -1507,6 +1761,33 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
+
+    @property
+    def tool_names(self) -> tuple[str, ...]:
+        return tuple(tool_def.name for tool_def in self._tool_defs)
+
+    def with_buffered_submit(self) -> Self:
+        tool_defs = [
+            replace(
+                tool_def,
+                description=(
+                    f'{tool_def.description or DEFAULT_OUTPUT_TOOL_DESCRIPTION} '
+                    'When buffered output is enabled, call this tool with arguments to update the buffer; '
+                    'call it with no arguments to submit the current buffer.'
+                ),
+                parameters_json_schema={
+                    'anyOf': [tool_def.parameters_json_schema, _EMPTY_OBJECT_JSON_SCHEMA],
+                },
+            )
+            for tool_def in self._tool_defs
+        ]
+        return type(self)(
+            tool_defs=tool_defs,
+            processors=self.processors,
+            max_retries=self.max_retries,
+            max_retries_overrides=self._max_retries_overrides,
+            output_validators=self.output_validators,
+        )
 
     @property
     def id(self) -> str | None:

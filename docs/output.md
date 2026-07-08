@@ -360,6 +360,31 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+##### Buffered Tool Output
+
+For large structured outputs, you can let the model build the output arguments incrementally before it finalizes the run. Pass [`BufferedOutputStrategy`][pydantic_ai.output.BufferedOutputStrategy] as the agent's `output_strategy`:
+
+```python {title="buffered_output.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, BufferedOutputStrategy
+
+
+class Report(BaseModel):
+    title: str
+    summary: str
+    findings: list[str]
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    output_type=Report,
+    output_strategy=BufferedOutputStrategy(),
+)
+```
+
+With buffered output enabled, an output tool call with arguments updates the buffer and returns validation feedback to the model instead of ending the run. Pydantic AI also exposes generated buffer tools such as `read_final_result_buffer` and `patch_final_result_buffer` so the model can inspect and update the draft with JSON Patch operations. Calling the same output tool with no arguments submits the buffered value through the normal output validation and processing pipeline.
+
 ##### Parallel Output Tool Calls
 
 An [output tool](#tool-output) call is what ends a run and produces its final result. When a model emits one in the *same* response as other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to the rest. Most agents never need to think about this, since most responses don't mix an output tool with other tools — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.

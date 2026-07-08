@@ -17,6 +17,7 @@ from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
+    'BufferedOutputStrategy',
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',
@@ -71,6 +72,16 @@ You should not need to import or use this type directly.
 
 See [text output docs](../output.md#text-output) for more information.
 """
+
+
+@dataclass(frozen=True)
+class BufferedOutputStrategy:
+    """Incrementally build structured output before finalizing it.
+
+    When used with tool output, calls to an output tool with arguments update that output tool's
+    buffer and return validation feedback to the model instead of ending the run. Calling the same
+    output tool with no arguments submits the buffered value through the normal output pipeline.
+    """
 
 
 @dataclass(init=False)

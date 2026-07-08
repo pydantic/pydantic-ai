@@ -56,7 +56,7 @@ from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
-from ..output import OutputDataT, OutputSpec, StructuredDict
+from ..output import BufferedOutputStrategy, OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -228,6 +228,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """
 
     _output_type: OutputSpec[OutputDataT]
+    _output_strategy: BufferedOutputStrategy | None
 
     _instrument: InstrumentationSettings | bool | None
     """Backing store for the `instrument` attribute. Read internally by
@@ -290,6 +291,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'graceful',
+        output_strategy: BufferedOutputStrategy | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -314,6 +316,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'graceful',
+        output_strategy: BufferedOutputStrategy | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -337,6 +340,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'graceful',
+        output_strategy: BufferedOutputStrategy | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -385,6 +389,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
+            output_strategy: Strategy for handling structured output tool calls. Defaults to normal
+                finalization; [`BufferedOutputStrategy`][pydantic_ai.output.BufferedOutputStrategy]
+                lets the model build output-tool arguments incrementally before submitting them.
             metadata: Optional metadata to store with each run.
                 Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
@@ -435,11 +442,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
+        self._output_strategy = output_strategy
         self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
+        if output_strategy is not None and self._output_schema.toolset is None:
+            raise exceptions.UserError('`BufferedOutputStrategy` requires at least one structured tool output.')
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
@@ -1145,6 +1155,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_toolset = copy(output_toolset)
             output_toolset.max_retries = effective_output_toolset_max_retries
 
+        output_strategy = self._output_strategy
+        internal_toolsets: list[AbstractToolset[AgentDepsT]] = []
+        if output_strategy is not None and output_toolset is not None:
+            output_toolset = output_toolset.with_buffered_submit()
+            internal_toolsets.append(_output.BufferedOutputEditorToolset(output_toolset.tool_names, output_schema))
+
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
@@ -1363,6 +1379,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = self._get_toolset(
             output_toolset=output_toolset,
             additional_toolsets=toolsets,
+            internal_toolsets=internal_toolsets,
             cap_toolsets=cap_toolsets,
             run_capability=run_capability,
             max_output_retries=effective_output_toolset_max_retries,
@@ -1412,6 +1429,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
             end_strategy=self.end_strategy,
+            output_strategy=output_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
@@ -2487,6 +2505,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        internal_toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         run_capability: AbstractCapability[AgentDepsT] | None = None,
         max_output_retries: int | None = None,
@@ -2496,6 +2515,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
+            internal_toolsets: Framework-generated toolsets that should be available regardless of user toolset
+                overrides.
             cap_toolsets: Per-run capability toolsets to use instead of the init-time capability toolsets.
             run_capability: The per-run capability instance, used to apply wrapper toolsets.
             max_output_retries: The effective output retry budget for this run (run kwarg / spec / agent default).
@@ -2503,6 +2524,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 same budget the run will actually enforce. Falls back to the agent-level default.
         """
         toolsets = list(self._build_toolset_list(cap_toolsets=cap_toolsets))
+        toolsets.extend(internal_toolsets)
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]

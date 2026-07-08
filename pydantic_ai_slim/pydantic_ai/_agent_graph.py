@@ -33,9 +33,9 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
-from ._run_context import set_current_run_context
+from ._run_context import OutputBufferState, set_current_run_context
 from .exceptions import ToolRetryError
-from .output import OutputDataT, OutputSpec
+from .output import BufferedOutputStrategy, OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
@@ -168,6 +168,8 @@ class GraphAgentState:
     exposed as the private `_mcp_tool_defs_cache` field. Recreated per run and reconstructed
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
+    output_buffers: dict[str, OutputBufferState] = dataclasses.field(default_factory=dict[str, OutputBufferState])
+    """Private per-run buffers used by [`BufferedOutputStrategy`][pydantic_ai.output.BufferedOutputStrategy]."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -221,6 +223,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_output_retries: int
     end_strategy: EndStrategy
+    output_strategy: BufferedOutputStrategy | None
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[list[_messages.InstructionPart] | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
@@ -1511,6 +1514,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        _output_buffers=ctx.state.output_buffers,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared

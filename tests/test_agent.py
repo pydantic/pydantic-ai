@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union, cast
 
 import pytest
 from dirty_equals import IsJson
@@ -21,6 +21,7 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    BufferedOutputStrategy,
     CallDeferred,
     CombinedToolset,
     DocumentUrl,
@@ -339,6 +340,123 @@ def test_result_pydantic_model_retry():
         ]
     )
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+def test_buffered_output_strategy_patches_and_submits_buffer():
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool_name = info.output_tools[0].name
+        patch_tool_name = f'patch_{output_tool_name}_buffer'
+
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        output_tool_name,
+                        {'a': 1},
+                        tool_call_id='stage-output',
+                    )
+                ]
+            )
+
+        last_message = messages[-1]
+        assert isinstance(last_message, ModelRequest)
+        last_part = last_message.parts[-1]
+        assert isinstance(last_part, ToolReturnPart)
+        if last_part.tool_name == output_tool_name:
+            assert isinstance(last_part.content, dict)
+            content = cast(dict[str, Any], last_part.content)
+            assert content['status'] == 'invalid'
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        patch_tool_name,
+                        {'operations': [{'op': 'add', 'path': '/b', 'value': 'patched'}]},
+                        tool_call_id='patch-output',
+                    )
+                ]
+            )
+
+        assert last_part.tool_name == patch_tool_name
+        assert isinstance(last_part.content, dict)
+        content = cast(dict[str, Any], last_part.content)
+        assert content['status'] == 'valid'
+        return ModelResponse(parts=[ToolCallPart(output_tool_name, {}, tool_call_id='submit-output')])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_strategy=BufferedOutputStrategy())
+    validator_calls: list[Foo] = []
+
+    @agent.output_validator
+    def validate_output(output: Foo) -> Foo:
+        validator_calls.append(output)
+        return output
+
+    result = agent.run_sync('Hello')
+
+    assert result.output == Foo(a=1, b='patched')
+    assert validator_calls == [Foo(a=1, b='patched')]
+    assert all(
+        not isinstance(part, RetryPromptPart)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+class InvoiceOutput(BaseModel):
+    invoice_id: str
+    total: int
+
+
+class EscalationOutput(BaseModel):
+    reason: str
+
+
+def test_buffered_output_strategy_inherits_multiple_output_tool_names():
+    seen_infos: list[AgentInfo] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        seen_infos.append(info)
+        output_tool_name = 'final_result_InvoiceOutput'
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        output_tool_name,
+                        {'invoice_id': 'inv-1', 'total': 42},
+                        tool_call_id='stage-output',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[ToolCallPart(output_tool_name, {}, tool_call_id='submit-output')])
+
+    model = FunctionModel(return_model)
+    agent = Agent(
+        model,
+        output_type=[InvoiceOutput, EscalationOutput, str],
+        output_strategy=BufferedOutputStrategy(),
+    )
+
+    result = agent.run_sync('Hello')
+
+    assert result.output == InvoiceOutput(invoice_id='inv-1', total=42)
+    assert seen_infos
+    output_tools = seen_infos[0].output_tools or []
+    output_tool_names = {tool.name for tool in output_tools}
+    assert output_tool_names == {'final_result_InvoiceOutput', 'final_result_EscalationOutput'}
+    function_tool_names = {tool.name for tool in seen_infos[0].function_tools}
+    assert {
+        'read_final_result_InvoiceOutput_buffer',
+        'patch_final_result_InvoiceOutput_buffer',
+        'read_final_result_EscalationOutput_buffer',
+        'patch_final_result_EscalationOutput_buffer',
+    } <= function_tool_names
+    assert output_tools[0].parameters_json_schema['anyOf'][1] == {
+        'type': 'object',
+        'properties': {},
+        'additionalProperties': False,
+    }
 
 
 def test_result_pydantic_model_validation_error():

@@ -32,6 +32,15 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
+@dataclasses.dataclass
+class OutputBufferState:
+    """Private state for incrementally built output-tool arguments."""
+
+    raw_args: dict[str, Any] | None = None
+    validation_error: _messages.RetryPromptPart | None = None
+    revision: int = 0
+
+
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -122,6 +131,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     the process-shared toolset instance, so whether a wrapper schedules its `get_tools` activity/step
     depends only on the run's own history and stays replay-deterministic.
     """
+
+    _output_buffers: dict[str, OutputBufferState] | None = field(default=None, repr=False)
+    """Private output-buffer state shared with generated buffered-output tools."""
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
     """The tool manager for the current run step.
