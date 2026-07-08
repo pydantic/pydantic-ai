@@ -195,6 +195,12 @@ class AgentRunError(RuntimeError):
 class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
 
+    def __init__(self, message: str):
+        super().__init__(
+            f'{message.rstrip(".")}. Consider raising the limit, or see the docs on usage limits '
+            'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+        )
+
 
 class ConcurrencyLimitExceeded(AgentRunError):
     """Error raised when the concurrency queue depth exceeds max_queued."""

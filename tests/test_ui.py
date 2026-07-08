@@ -552,7 +552,7 @@ async def test_run_stream_response_error():
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
             "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
-            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries</error>",
             '</request>',
             '</stream>',
         ]
