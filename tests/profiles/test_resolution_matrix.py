@@ -138,6 +138,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
     'grok_supports_tool_choice_required': True,

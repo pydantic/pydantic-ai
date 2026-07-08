@@ -712,9 +712,9 @@ class GoogleModel(Model[Client]):
             # supports it. Only `AUTO` is upgraded; `required` (`ANY`) and `none` (`NONE`) are left as-is,
             # since `VALIDATED` is specifically the enforced `AUTO`.
             if (
-                mode is FunctionCallingConfigMode.AUTO
+                mode == FunctionCallingConfigMode.AUTO
                 and self.profile.get('google_supports_strict_tool_definition', False)
-                and all(tool_def.strict for tool_def in tool_defs.values())
+                and all(tool_def.strict is True for tool_def in tool_defs.values())
             ):
                 mode = FunctionCallingConfigMode.VALIDATED
             function_calling_config: FunctionCallingConfigDict = {'mode': mode}

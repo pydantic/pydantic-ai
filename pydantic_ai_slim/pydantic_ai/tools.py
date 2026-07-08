@@ -712,7 +712,9 @@ class ToolDefinition:
     in exchange for guaranteeing the API responses strictly match that schema.
 
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
-    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+    When `None` (the default), the value is inferred per provider: OpenAI enables strict mode whenever the
+    `parameters_json_schema` is strict-compatible, while Anthropic, Bedrock, and Google leave it off unless you
+    explicitly set `strict=True`, since their strict modes are opt-in.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. On Google it maps to
     Gemini's `VALIDATED` function-calling mode, which the API enforces on models that support it.
