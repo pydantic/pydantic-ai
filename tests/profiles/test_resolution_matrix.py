@@ -1108,6 +1108,9 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
+            'openai_supports_tool_choice_required': False,
+            'ignore_streamed_leading_whitespace': True,
+            'default_structured_output_mode': 'native',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
