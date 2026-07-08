@@ -18,7 +18,7 @@ import pydantic_core
 from pydantic import AnyUrl, Field
 from typing_extensions import Self, assert_never
 
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolAnnotations, ToolDefinition
 
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -1150,6 +1150,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'task': task_support in ('required', 'optional'),
                     },
+                    annotations=_map_tool_annotations(mcp_tool.annotations),
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
                 ),
@@ -1509,6 +1510,22 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         )
 
     return handler
+
+
+def _map_tool_annotations(mcp_annotations: mcp_types.ToolAnnotations | None) -> ToolAnnotations | None:
+    """Map an MCP tool's `ToolAnnotations` to Pydantic AI's [`ToolAnnotations`][pydantic_ai.tools.ToolAnnotations] behavior hints.
+
+    Returns `None` when the server declared no annotations, so unannotated tools keep the all-`None` default.
+    The MCP `title` hint is intentionally not carried here (it's not a behavior hint).
+    """
+    if mcp_annotations is None:
+        return None
+    return ToolAnnotations(
+        read_only=mcp_annotations.readOnlyHint,
+        destructive=mcp_annotations.destructiveHint,
+        idempotent=mcp_annotations.idempotentHint,
+        open_world=mcp_annotations.openWorldHint,
+    )
 
 
 def _map_mcp_tool_results(

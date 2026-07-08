@@ -70,6 +70,7 @@ with try_import() as imports_successful:
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
+    from pydantic_ai.tools import ToolAnnotations as PaiToolAnnotations
 
 
 pytestmark = [
@@ -1437,3 +1438,54 @@ class TestMCPToolsetBackgroundTasks:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
+
+
+class TestMCPToolAnnotations:
+    """`MCPToolset` surfaces each tool's MCP `ToolAnnotations` behavior hints on
+    [`ToolDefinition.annotations`][pydantic_ai.tools.ToolDefinition.annotations] so downstream policy
+    capabilities can reason about tool behavior without pattern-matching tool names."""
+
+    @pytest.fixture
+    async def annotations_server(self) -> FastMCP[None]:
+        server: FastMCP[None] = FastMCP('annotations_server')
+
+        @server.tool(
+            annotations=mcp_types.ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=False,
+            )
+        )
+        async def annotated_tool() -> str:
+            """A tool that declares all four MCP behavior hints."""
+            return 'ok'  # pragma: no cover
+
+        @server.tool()
+        async def unannotated_tool() -> str:
+            """A tool with no annotations at all."""
+            return 'ok'  # pragma: no cover
+
+        return server
+
+    async def test_annotations_are_surfaced(
+        self, annotations_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """MCP `ToolAnnotations` map onto the snake-cased `ToolDefinition.annotations` hints."""
+        toolset = MCPToolset(annotations_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        assert tools['annotated_tool'].tool_def.annotations == PaiToolAnnotations(
+            read_only=True, destructive=False, idempotent=True, open_world=False
+        )
+
+    async def test_unannotated_tool_has_no_annotations(
+        self, annotations_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """A tool the server declares without annotations keeps the all-`None` default (`annotations is None`)."""
+        toolset = MCPToolset(annotations_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        assert tools['unannotated_tool'].tool_def.annotations is None

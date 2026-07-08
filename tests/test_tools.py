@@ -35,7 +35,14 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolAnnotations,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -164,6 +171,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -206,6 +214,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -256,6 +265,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -307,6 +317,7 @@ def test_google_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -355,6 +366,7 @@ def test_sphinx_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -409,6 +421,7 @@ def test_numpy_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -451,6 +464,7 @@ def test_only_returns_type():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -484,6 +498,7 @@ def test_docstring_unknown():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -535,6 +550,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -579,6 +595,7 @@ def test_takes_just_model():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -632,6 +649,7 @@ def test_takes_model_and_int():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -1027,6 +1045,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -1107,6 +1126,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'annotations': None,
                 'timeout': None,
                 'defer_loading': False,
                 'unless_native': None,
@@ -1130,6 +1150,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'annotations': None,
                 'timeout': None,
                 'defer_loading': False,
                 'unless_native': None,
@@ -1224,6 +1245,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'annotations': None,
                 'timeout': None,
                 'defer_loading': False,
                 'unless_native': None,
@@ -1246,6 +1268,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'annotations': None,
                 'timeout': None,
                 'defer_loading': False,
                 'unless_native': None,
@@ -1291,6 +1314,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'annotations': None,
             'timeout': None,
             'defer_loading': False,
             'unless_native': None,
@@ -4430,6 +4454,93 @@ def test_include_return_schema_on_toolset_tool():
     tools = list(toolset.tools.values())
     assert len(tools) == 1
     assert tools[0].include_return_schema is True
+
+
+def test_tool_annotations_default_is_none():
+    """A tool with no declared annotations leaves the field `None` (unknown), not an empty `ToolAnnotations`."""
+    assert ToolDefinition(name='t').annotations is None
+
+    def plain(x: int) -> int:
+        return x  # pragma: no cover
+
+    assert Tool(plain).tool_def.annotations is None
+
+
+def test_tool_annotations_via_decorators():
+    """`annotations` on `@agent.tool`, `@agent.tool_plain`, and `Tool(...)` reaches the `ToolDefinition`."""
+    agent = Agent('test', deps_type=int)
+
+    @agent.tool(annotations=ToolAnnotations(read_only=True))
+    def ctx_tool(ctx: RunContext[int], x: int) -> int:
+        return x  # pragma: no cover
+
+    @agent.tool_plain(annotations=ToolAnnotations(destructive=True, idempotent=False, open_world=True))
+    def plain_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    explicit = Tool(plain_tool, name='explicit', annotations=ToolAnnotations(read_only=False))
+    assert explicit.annotations == ToolAnnotations(read_only=False)
+    assert explicit.tool_def.annotations == ToolAnnotations(read_only=False)
+
+    toolset = agent._function_toolset
+    assert toolset.tools['ctx_tool'].tool_def.annotations == ToolAnnotations(read_only=True)
+    assert toolset.tools['plain_tool'].tool_def.annotations == ToolAnnotations(
+        destructive=True, idempotent=False, open_world=True
+    )
+
+
+def test_tool_annotations_via_function_toolset_decorators():
+    """`annotations` on `FunctionToolset.tool` / `.tool_plain` reaches the `ToolDefinition`.
+
+    Agent-level decorators call `add_function` directly, so these toolset decorators need their own coverage.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(annotations=ToolAnnotations(read_only=True))
+    def ctx_tool(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    @toolset.tool_plain(annotations=ToolAnnotations(destructive=True))
+    def plain_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    assert toolset.tools['ctx_tool'].tool_def.annotations == ToolAnnotations(read_only=True)
+    assert toolset.tools['plain_tool'].tool_def.annotations == ToolAnnotations(destructive=True)
+
+
+def test_tool_annotations_serialization_round_trip():
+    """`ToolDefinition` round-trips through JSON both with and without annotations (additive, back-compat)."""
+    ta = TypeAdapter(ToolDefinition)
+
+    annotated = ToolDefinition(name='t', annotations=ToolAnnotations(read_only=True, open_world=False))
+    dumped = ta.dump_python(annotated)
+    assert dumped['annotations'] == snapshot(
+        {'read_only': True, 'destructive': None, 'idempotent': None, 'open_world': False}
+    )
+    assert ta.validate_python(dumped) == annotated
+
+    unannotated = ToolDefinition(name='t')
+    dumped_unannotated = ta.dump_python(unannotated)
+    assert dumped_unannotated['annotations'] is None
+    assert ta.validate_python(dumped_unannotated) == unannotated
+
+
+def test_tool_annotations_do_not_leak_to_wire():
+    """Annotations are framework-only metadata and must not change the provider-bound tool payload.
+
+    This is a unit test rather than a VCR test because our cassette matchers aren't sensitive to the
+    request body, so a leaked field could still match an existing recording and pass green. Asserting
+    the mapped payload directly is what pins the wire contract (cache-prefix stability).
+    """
+    openai = pytest.importorskip('pydantic_ai.models.openai')
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    model = openai.OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='x'))
+
+    base = ToolDefinition(name='t', description='d', parameters_json_schema={'type': 'object', 'properties': {}})
+    annotated = replace(base, annotations=ToolAnnotations(read_only=True, destructive=True))
+
+    assert model._map_tool_definition(annotated, {}) == model._map_tool_definition(base, {})
 
 
 # endregion

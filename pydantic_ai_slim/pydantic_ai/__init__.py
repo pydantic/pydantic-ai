@@ -137,6 +137,7 @@ from .tools import (
     DeferredToolResults,
     RunContext,
     Tool,
+    ToolAnnotations,
     ToolApproved,
     ToolDefinition,
     ToolDenied,
@@ -274,6 +275,7 @@ __all__ = (
     # tools
     'AgentNativeTool',
     'Tool',
+    'ToolAnnotations',
     'ToolDefinition',
     'RunContext',
     'DeferredToolRequests',

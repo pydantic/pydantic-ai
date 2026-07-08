@@ -452,6 +452,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    annotations: ToolAnnotations | None
     timeout: float | None
     defer_loading: bool
     include_return_schema: bool | None
@@ -479,6 +480,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -545,6 +547,8 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            annotations: Optional [behavior hints][pydantic_ai.tools.ToolAnnotations] (read-only, destructive, idempotent, open-world) describing
+                what the tool does to the world. These are hints, not guarantees, and are not sent to the model.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
@@ -574,6 +578,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.annotations = annotations
         self.timeout = timeout
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -644,6 +649,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            annotations=self.annotations,
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
@@ -681,6 +687,44 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 
 ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
+
+
+@dataclass(repr=False, kw_only=True)
+class ToolAnnotations:
+    """Hints describing how a tool behaves, mirroring the [MCP `ToolAnnotations`](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool) vocabulary.
+
+    These are **hints, not guarantees**: they describe the tool author's intent so that policy
+    capabilities (permission safelists, mutation tracking, staleness/checkpointing) can reason about
+    what a tool does to the world without pattern-matching tool names. They do not change how Pydantic
+    AI runs a tool, are never sent to the model, and should not be trusted for security decisions about
+    tools from untrusted sources.
+
+    The default for every hint is `None`, meaning "unknown/unspecified", which is distinct from an
+    explicit `True` or `False`.
+    """
+
+    read_only: bool | None = None
+    """If `True`, the tool does not modify its environment (MCP `readOnlyHint`)."""
+
+    destructive: bool | None = None
+    """If `True`, the tool may perform destructive updates; if `False`, it performs only additive updates (MCP `destructiveHint`).
+
+    Only meaningful when `read_only` is not `True`.
+    """
+
+    idempotent: bool | None = None
+    """If `True`, calling the tool repeatedly with the same arguments has no additional effect (MCP `idempotentHint`).
+
+    Only meaningful when `read_only` is not `True`.
+    """
+
+    open_world: bool | None = None
+    """If `True`, the tool may interact with an "open world" of external entities; if `False`, its domain of interaction is closed (MCP `openWorldHint`).
+
+    For example, a web search tool's world is open, whereas a memory tool's is not.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -742,6 +786,14 @@ class ToolDefinition:
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the server declares support for task-augmented execution.
+    """
+
+    annotations: ToolAnnotations | None = None
+    """Optional [behavior hints][pydantic_ai.tools.ToolAnnotations] describing what this tool does to the world (read-only, destructive, idempotent, open-world).
+
+    These are hints, not guarantees, and are never sent to the model. They let policy capabilities reason
+    about tool behavior instead of pattern-matching tool names. Populated from a tool's MCP `ToolAnnotations`
+    or from the `annotations` argument on `@agent.tool` / `Tool(...)`. Defaults to `None` (unknown).
     """
 
     timeout: float | None = None
