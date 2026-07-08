@@ -10766,7 +10766,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 1944,
             },
             requests=1,
-            cost=Decimal('0.0106741'),
+            cost=Decimal('0.01174151'),
         )
     )
 
@@ -10784,7 +10784,7 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
                 'output_tokens': 44,
             },
             requests=1,
-            cost=Decimal('0.0036191'),
+            cost=Decimal('0.00398101'),
         )
     )
 
