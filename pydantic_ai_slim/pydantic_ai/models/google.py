@@ -707,9 +707,10 @@ class GoogleModel(Model[Client]):
             mode = function_calling_config_modes[tool_choice_mode]
             # Gemini's `VALIDATED` mode is `AUTO` plus API-side schema enforcement: it rejects malformed or
             # hallucinated function calls instead of returning them (see #5366). It maps to the cross-provider
-            # `strict` tool flag (like OpenAI/Anthropic strict tool calling), so opt into it when every
-            # function tool has `strict=True` and the model supports it. Only `AUTO` is upgraded; `required`
-            # (`ANY`) and `none` (`NONE`) are left as-is, since `VALIDATED` is specifically the enforced `AUTO`.
+            # `strict` tool flag (like OpenAI/Anthropic strict tool calling), so opt into it when every tool in
+            # the request (`tool_defs` covers function and output tools) has `strict=True` and the model
+            # supports it. Only `AUTO` is upgraded; `required` (`ANY`) and `none` (`NONE`) are left as-is,
+            # since `VALIDATED` is specifically the enforced `AUTO`.
             if (
                 mode is FunctionCallingConfigMode.AUTO
                 and self.profile.get('google_supports_strict_tool_definition', False)

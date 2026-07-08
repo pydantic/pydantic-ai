@@ -2166,7 +2166,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce (vendor-specific) strict JSON schema validation for tool calls (supported by OpenAI, Anthropic, and Google).
+            strict: Whether to enforce (vendor-specific) strict JSON schema validation for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
@@ -2303,7 +2303,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: Whether to enforce (vendor-specific) strict JSON schema validation for tool calls (supported by OpenAI, Anthropic, and Google).
+            strict: Whether to enforce (vendor-specific) strict JSON schema validation for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
