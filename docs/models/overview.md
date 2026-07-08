@@ -496,7 +496,7 @@ The second argument is optional and detected per handler, so existing single-arg
 
 When all models fail, the resulting [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] wraps each model's exception in order of attempt, matching the order of the models passed to `FallbackModel`. Each sub-exception is annotated with a [PEP 678](https://peps.python.org/pep-0678/) note identifying the model that raised it, so tracebacks (and `exception.__notes__`) tell you exactly which model produced which error:
 
-```
+```text
   | pydantic_ai.exceptions.FallbackExceptionGroup: All models from FallbackModel failed (2 sub-exceptions)
   +-+---------------- 1 ----------------
     | pydantic_ai.exceptions.ModelHTTPError: status_code: 401, model_name: gpt-5.2, body: ...
