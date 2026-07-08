@@ -4242,11 +4242,11 @@ def test_set_model(env: TestEnv):
 
 
 def test_override_model_no_model():
-    agent = Agent()
+    agent = Agent(output_type=tuple[int, str])
 
-    with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
-        with agent.override(model='test'):
-            agent.run_sync('Hello')
+    with agent.override(model='test'):
+        result = agent.run_sync('Hello')
+    assert result.output == snapshot((0, 'a'))
 
 
 async def test_agent_name():
