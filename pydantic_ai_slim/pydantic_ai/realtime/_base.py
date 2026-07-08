@@ -28,6 +28,7 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    UserPromptPart,
 )
 from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings
@@ -506,3 +507,10 @@ async def reconnect_with_backoff(policy: ReconnectPolicy, attempt: Callable[[], 
         if await attempt():
             return True
     return False
+
+
+def user_prompt_text(part: UserPromptPart) -> str:
+    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item for item in part.content if isinstance(item, str))

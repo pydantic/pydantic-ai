@@ -13,7 +13,9 @@ the *real* protocol offline:
 
 The replay path validates outbound frames as well as replaying inbound ones, so a cassette pins both
 provider behaviour *and* the exact wire messages the library sends. Recording scrubs anything
-secret-looking and truncates inbound audio payloads so cassettes stay small.
+secret-looking, redacts internal provider backend config a provider may echo back (e.g. xAI's
+`session.updated` carries VAD/ASR tuning and an internal service address), and truncates inbound audio
+payloads so cassettes stay small.
 """
 
 from __future__ import annotations as _annotations
@@ -59,6 +61,21 @@ _OPENAI_AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
 _SECRET_RE = re.compile(r'(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|Bearer\s+\S+)')
 _SECRET_PLACEHOLDER = '<scrubbed>'
+
+# Frame keys whose values are internal provider backend config, not part of the public wire protocol
+# the session consumes. Providers can echo these back on inbound frames (xAI's `session.updated`
+# carries VAD/ASR tuning blocks that include an internal gRPC service address and model artifact
+# names), so their whole subtree is redacted to keep provider infrastructure details out of cassettes.
+# Redacting inbound values is safe: the session ignores these fields and no test asserts on them.
+_INTERNAL_CONFIG_KEYS = frozenset(
+    {
+        'xvad_settings',
+        'asr_classifier',
+        'response_patient_starter_config',
+        'model_address',
+        'xvad_model_name',
+    }
+)
 
 
 @dataclass
@@ -131,14 +148,17 @@ def realtime_cassette_plan(*, cassette_exists: bool, record_mode: str | None) ->
     return 'replay' if cassette_exists else 'error_missing'
 
 
-def _scrub_secrets(value: Any) -> Any:
-    """Recursively replace any secret-looking string in a frame with a placeholder."""
+def _scrub(value: Any) -> Any:
+    """Recursively redact secret-looking strings and internal provider config from a frame."""
     if isinstance(value, str):
         return _SECRET_RE.sub(_SECRET_PLACEHOLDER, value)
     if isinstance(value, dict):
-        return {key: _scrub_secrets(item) for key, item in cast('dict[str, Any]', value).items()}
+        return {
+            key: _SECRET_PLACEHOLDER if key in _INTERNAL_CONFIG_KEYS else _scrub(item)
+            for key, item in cast('dict[str, Any]', value).items()
+        }
     if isinstance(value, list):
-        return [_scrub_secrets(item) for item in cast('list[Any]', value)]
+        return [_scrub(item) for item in cast('list[Any]', value)]
     return value
 
 
@@ -212,7 +232,7 @@ class ReplayWebSocket:
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        actual = self._normalizer.normalize(_scrub_secrets(json.loads(text)))
+        actual = self._normalizer.normalize(_scrub(json.loads(text)))
         async with self._condition:
             interaction = self._peek()
             if not isinstance(interaction, CassetteMessage) or interaction.direction != 'sent':
@@ -273,7 +293,7 @@ class RecordingWebSocket:  # pragma: no cover - only runs while recording
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        data = self._normalizer.normalize(_scrub_secrets(json.loads(text)))
+        data = self._normalizer.normalize(_scrub(json.loads(text)))
         self._cassette.interactions.append(CassetteMessage(direction='sent', data=data))
         await self._ws.send(message)
 
@@ -287,7 +307,7 @@ class RecordingWebSocket:  # pragma: no cover - only runs while recording
             self._record_close(e, ok=False)
             raise
         text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
-        data = _truncate_audio(_scrub_secrets(json.loads(text)))
+        data = _truncate_audio(_scrub(json.loads(text)))
         self._cassette.interactions.append(CassetteMessage(direction='received', data=data))
         return raw
 

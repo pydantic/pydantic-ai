@@ -66,6 +66,7 @@ from ._base import (
     TurnComplete,
     WebSource,
     reconnect_with_backoff,
+    user_prompt_text,
 )
 
 INPUT_SAMPLE_RATE = 16000
@@ -126,13 +127,6 @@ _TURN_COVERAGE = {
 }
 
 
-def _user_prompt_text(part: UserPromptPart) -> str:
-    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
-    if isinstance(part.content, str):
-        return part.content
-    return ''.join(item for item in part.content if isinstance(item, str))
-
-
 def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | genai_types.ContentDict]:
     """Project prior conversation to Gemini `Content` turns (text/transcript only, v1).
 
@@ -146,7 +140,7 @@ def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | 
         texts: list[str] = []
         if isinstance(message, ModelRequest):
             for req_part in message.parts:
-                if isinstance(req_part, UserPromptPart) and (text := _user_prompt_text(req_part)):
+                if isinstance(req_part, UserPromptPart) and (text := user_prompt_text(req_part)):
                     texts.append(text)
                 elif isinstance(req_part, SpeechPart) and req_part.transcript:
                     texts.append(req_part.transcript)
@@ -605,7 +599,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._session = await self._dial(self._resumption_handle)
-        except Exception:
+        except (genai_errors.APIError, ConnectionClosed, OSError, TimeoutError):
+            # Expected dial failures: SDK-reported API errors, a closed socket, and network/timeout
+            # errors. A retry may still succeed. Anything else is a bug in `dial()` and propagates
+            # rather than masquerading as a failed reconnect.
             return False
         return True
 

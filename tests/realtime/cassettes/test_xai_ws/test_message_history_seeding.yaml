@@ -79,49 +79,9 @@ interactions:
         type: server_vad
         create_response: true
         interrupt_response: true
-      xvad_settings:
-        rms_vad_sensitivity: 0.0
-        silence_interval: 0.0
-        min_utterance: 0.1
-        min_db: -31.0
-        threshold: 0.3
-        num_frames_to_flip_state: 2
-        num_frames_to_flip_state_off: 6
-        num_frames_in_queue_on: 200
-        num_frames_in_queue_off: 1000
-        sampling_type: strict
-        sampling_type_on: ''
-        sampling_type_off: ''
-        sampling_type_use_sliding: false
-        sampling_type_threshold_percentage: 0.65
-        xvad_model_name: mix_042426_tutors_synthetic_denoised_042426_2140.pth
-        audio_floor_rms_vad_config:
-          enabled: true
-          minimum_rms: 0.02
-          cooldown_seconds: 1.5
-          maximum_rms: 0.18
-      asr_classifier:
-        enable: true
-        is_grok_4: true
-        model_sampler_config: grok-4-mini
-        model_address: grpc://voice-duplext-ic-prod.global.svc.cluster.local:80
-        temperature: 0.01
-        template_key: triclass
-        use_utterance_tag: false
-        pause: 2.0
-        'yes': respond
-        maybe: ok,silent
-        remove_punctuation: true
-        always_respond_for_non_english: true
-        min_num_messages: 9
-        max_num_messages: 13
-        blocking: true
-        enable_backchannel: false
-        max_message_words: 100
-      response_patient_starter_config:
-        enable: false
-        wait_time: 5.0
-        use_default_system_prompt: false
+      xvad_settings: <scrubbed>
+      asr_classifier: <scrubbed>
+      response_patient_starter_config: <scrubbed>
       model: grok-voice-latest
       keep_context: false
       enable_phonetic_spelling: false

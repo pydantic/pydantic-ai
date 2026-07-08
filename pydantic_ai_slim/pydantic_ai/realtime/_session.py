@@ -6,10 +6,11 @@ import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pydantic_core
 from opentelemetry.trace import Span, SpanKind
+from typing_extensions import assert_never
 
 from .._instrumentation import response_attributes, safe_to_json
 from ..exceptions import UsageLimitExceeded, UserError
@@ -75,6 +76,24 @@ _PCM_MEDIA_TYPE = 'audio/pcm'
 # everything is supported so no guard fires. Real sessions receive `model.capabilities`.
 _ALL_CAPABILITIES = RealtimeCapabilities(
     image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
+)
+
+# The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
+# `SessionUsage`, which `_handle_pump_event` peels off first (they drive tool execution and usage
+# accounting before delegating). Splitting the union lets `_translate_event` end in `assert_never`, so
+# a new non-pump variant added to `RealtimeEvent` is caught at type-check time — either the call site
+# (where the residual no longer fits this alias) or the `assert_never` flags it.
+_TranslatableEvent: TypeAlias = (
+    AudioDelta
+    | Transcript
+    | InputTranscript
+    | TurnComplete
+    | SpeechStarted
+    | SpeechStopped
+    | RateLimits
+    | Reconnected
+    | Sources
+    | SessionError
 )
 
 
@@ -455,11 +474,12 @@ class RealtimeSession:
             self._history.append(ModelRequest(parts=[part]))
         return [PartEndEvent(index=0, part=part)]
 
-    def _translate_event(self, event: RealtimeEvent) -> list[RealtimeSessionEvent]:
+    def _translate_event(self, event: _TranslatableEvent) -> list[RealtimeSessionEvent]:
         """Translate a low-level codec event into shared session events, building history as a side effect.
 
         Tool calls and usage are handled in `_handle_pump_event` (they interact with the queue and
-        tool execution); everything else routes through here.
+        tool execution); everything else routes through here. `event` is typed as `_TranslatableEvent`
+        (the pump-consumed variants narrowed out) so the final `assert_never` gives static exhaustiveness.
         """
         if isinstance(event, AudioDelta):
             return self._handle_assistant_audio(event.data)
@@ -471,14 +491,11 @@ class RealtimeSession:
             return self._handle_input_transcript(event.text, event.is_final)
         if isinstance(event, TurnComplete):
             return self._handle_turn_complete(event)
-        # The remaining control-plane events pass through unchanged. This narrows with an explicit
-        # `assert isinstance(...)` rather than `assert_never`: the `RealtimeEvent` union is only
-        # *partially* consumed here. `ToolCall` and `SessionUsage` are peeled off at runtime by
-        # `_handle_pump_event` before it delegates (the type checker still sees them in `event`'s
-        # type), and the content events above are removed by the preceding `isinstance` checks. So
-        # `event` isn't statically `Never`; we assert the concrete residual set instead.
-        assert isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError))
-        return [event]
+        # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
+        # any new non-pump `RealtimeEvent` variant that isn't handled here.
+        if isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError)):
+            return [event]
+        assert_never(event)
 
     # --- instrumentation --------------------------------------------------------------------------
 
@@ -532,8 +549,7 @@ class RealtimeSession:
                 span.set_attribute(
                     'gen_ai.output.messages', safe_to_json(settings.messages_to_otel_messages(responses)).decode()
                 )
-        for token_type in ('input', 'output'):
-            tokens: int = getattr(self.usage, f'{token_type}_tokens')
+        for token_type, tokens in (('input', self.usage.input_tokens), ('output', self.usage.output_tokens)):
             if tokens:
                 settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
 

@@ -44,6 +44,7 @@ from ._base import (
     ToolCall,
     Transcript,
     TurnComplete,
+    user_prompt_text,
 )
 
 if TYPE_CHECKING:
@@ -84,13 +85,6 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
-def _user_prompt_text(part: UserPromptPart) -> str:
-    """Extract the plain text from a `UserPromptPart` (dropping multimodal content for text seeding)."""
-    if isinstance(part.content, str):
-        return part.content
-    return ''.join(item for item in part.content if isinstance(item, str))
-
-
 def seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
     """Project prior conversation to OpenAI `conversation.item.create` items (text/transcript only, v1).
 
@@ -104,7 +98,7 @@ def seed_items(messages: Sequence[ModelMessage]) -> list[dict[str, Any]]:
     for message in messages:
         if isinstance(message, ModelRequest):
             for req_part in message.parts:
-                if isinstance(req_part, UserPromptPart) and (text := _user_prompt_text(req_part)):
+                if isinstance(req_part, UserPromptPart) and (text := user_prompt_text(req_part)):
                     items.append(_message_item('user', 'input_text', text))
                 elif isinstance(req_part, SpeechPart) and req_part.transcript:
                     items.append(_message_item('user', 'input_text', req_part.transcript))
@@ -269,7 +263,7 @@ class ServerVAD:
     """
 
     threshold: float | None = None
-    """Activation threshold (0.0–1.0). Higher requires louder audio; better in noisy environments."""
+    """Activation threshold (0.0-1.0). Higher requires louder audio; better in noisy environments."""
     prefix_padding_ms: int | None = None
     """Audio to include before detected speech, in milliseconds."""
     silence_duration_ms: int | None = None

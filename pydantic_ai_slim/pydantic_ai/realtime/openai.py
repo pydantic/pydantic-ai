@@ -313,7 +313,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._ws = await self._dial()
-        except Exception:
+        except (websockets.WebSocketException, OSError, TimeoutError):
+            # Expected dial/handshake failures: protocol/connection errors, network failures (DNS,
+            # refused, reset), and the handshake timeout. A retry may still succeed. Anything else is a
+            # bug in `dial()` and propagates rather than masquerading as a failed reconnect.
             return False
         self._response_active = False
         self._pending_response = False
@@ -348,7 +351,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         input_noise_reduction: Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference)
             microphones. `None` disables it.
         output_modalities: The modalities the model may produce, `('audio',)` (default) or `('text',)`.
-        output_speed: Playback speed multiplier for generated audio (0.25–1.5). `None` uses the default.
+        output_speed: Playback speed multiplier for generated audio (0.25-1.5). `None` uses the default.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionError` instead.

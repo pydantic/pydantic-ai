@@ -748,7 +748,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 @pytest.mark.anyio
 async def test_reconnect_gives_up_after_max_attempts() -> None:
     async def dial() -> Any:
-        raise RuntimeError('still down')
+        raise OSError('still down')  # an expected dial failure (network unreachable)
 
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
@@ -761,6 +761,23 @@ async def test_reconnect_gives_up_after_max_attempts() -> None:
     assert isinstance(error, SessionError)
     assert error.recoverable is False
     assert 'reconnect failed' in error.message
+
+
+@pytest.mark.anyio
+async def test_reconnect_propagates_unexpected_dial_error() -> None:
+    # An unexpected error while re-dialing (a bug, not a network/protocol failure) propagates instead
+    # of being swallowed as a failed reconnect, so it surfaces rather than looking like the server went
+    # away.
+    async def dial() -> Any:
+        raise RuntimeError('boom')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
+    )
+    with pytest.raises(RuntimeError, match='boom'):
+        _ = [e async for e in conn]
 
 
 def _audio_delta(item_id: str, content_index: int | None = None) -> str:
