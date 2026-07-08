@@ -527,7 +527,7 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools, search_settings
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -558,6 +558,12 @@ class GroqModel(Model[AsyncGroq]):
                         pass
                     else:
                         assert_never(item)
+                if not texts and not tool_calls:
+                    # An assistant message must carry content or tool calls; a bare
+                    # `{'role': 'assistant'}` is rejected by the Chat Completions API. Skip an empty
+                    # `ModelResponse` (e.g. one the agent graph recorded before retrying) rather than
+                    # send it, matching the OpenAI, Anthropic, Mistral, and Cohere adapters.
+                    continue
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
                 if texts:
                     # Note: model responses from this model should only have one text item, so the following

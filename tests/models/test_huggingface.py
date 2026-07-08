@@ -948,6 +948,28 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     }
 
 
+async def test_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` from a previous turn must not be sent back as a bare
+    assistant message (no content, no tool calls), which the Chat Completions API rejects with a
+    400. The agent graph retries the empty response by emitting a `RetryPromptPart`, relying on the
+    model adapter to omit the empty response from the payload.
+    """
+    responses = [
+        completion_message(ChatCompletionOutputMessage(content=None, role='assistant')),
+        completion_message(ChatCompletionOutputMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockHuggingFace.create_mock(responses)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the retry payload (no bare assistant message that 400s).
+    sent_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert not any(asdict(m).get('role') == 'assistant' for m in sent_messages)
+
+
 async def test_thinking_part_in_history(allow_model_requests: None):
     c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))
     mock_client = MockHuggingFace.create_mock(c)

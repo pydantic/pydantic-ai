@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -94,6 +94,7 @@ class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.groq.com'
 
     @cached_property
@@ -113,8 +114,9 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -135,6 +137,13 @@ class MockGroq:
         return response
 
 
+def get_mock_chat_completion_kwargs(async_groq: AsyncGroq) -> list[dict[str, Any]]:
+    if isinstance(async_groq, MockGroq):
+        return async_groq.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockGroq instance')
+
+
 def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
     return chat.ChatCompletion(
         id='123',
@@ -144,6 +153,29 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
         object='chat.completion',
         usage=usage,
     )
+
+
+async def test_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` from a previous turn must not be sent back as a bare
+    assistant message (no content, no tool calls), which the Chat Completions API rejects with a
+    400. The agent graph retries the empty response by emitting a `RetryPromptPart`, relying on the
+    model adapter to omit the empty response from the payload.
+    """
+    responses = [
+        completion_message(ChatCompletionMessage(content=None, role='assistant')),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockGroq.create_mock(responses)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the retry payload (no bare assistant message that 400s);
+    # a retry prompt is appended instead so the model can self-correct.
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert not any(message['role'] == 'assistant' for message in second_call_messages)
 
 
 async def test_request_simple_success(allow_model_requests: None):
