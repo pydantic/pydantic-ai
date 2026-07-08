@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -24,11 +25,29 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
     from ..settings import ModelSettings
 
-ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
-"""A sync or async callable that decides whether an exception should trigger fallback."""
+ExceptionHandler = (
+    Callable[[Exception], Awaitable[bool]]
+    | Callable[[Exception], bool]
+    | Callable[[Exception, 'Model'], Awaitable[bool]]
+    | Callable[[Exception, 'Model'], bool]
+)
+"""A sync or async callable that decides whether an exception should trigger fallback.
 
-ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
-"""A sync or async callable that decides whether a model response should trigger fallback."""
+The callable receives the raised exception, and may optionally accept the [`Model`][pydantic_ai.models.Model]
+that raised it as a second positional argument, to make per-model fallback decisions.
+"""
+
+ResponseHandler = (
+    Callable[[ModelResponse], Awaitable[bool]]
+    | Callable[[ModelResponse], bool]
+    | Callable[[ModelResponse, 'Model'], Awaitable[bool]]
+    | Callable[[ModelResponse, 'Model'], bool]
+)
+"""A sync or async callable that decides whether a model response should trigger fallback.
+
+The callable receives the model's [`ModelResponse`][pydantic_ai.messages.ModelResponse], and may optionally accept
+the [`Model`][pydantic_ai.models.Model] that produced it as a second positional argument.
+"""
 
 FallbackOn = (
     type[Exception]
@@ -65,6 +84,37 @@ def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, Exception)
 
 
+def _handler_accepts_model(handler: Callable[..., Any]) -> bool:
+    """Whether a `fallback_on` handler accepts the failing `Model` as a second positional argument.
+
+    Inspected once when the handler is registered so the signature isn't re-parsed on every request.
+    """
+    try:
+        sig = inspect.signature(handler)
+    except (TypeError, ValueError):  # pragma: no cover
+        return False
+    positional = 0
+    for param in sig.parameters.values():
+        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            positional += 1
+        elif param.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+    return positional >= 2
+
+
+@dataclass
+class _FallbackHandler:
+    """A parsed `fallback_on` handler with its call metadata cached at registration time."""
+
+    call: ExceptionHandler | ResponseHandler
+    is_async: bool
+    accepts_model: bool
+
+    @classmethod
+    def build(cls, handler: Callable[..., Any]) -> _FallbackHandler:
+        return cls(call=handler, is_async=is_async_callable(handler), accepts_model=_handler_accepts_model(handler))
+
+
 @dataclass(init=False)
 class FallbackModel(Model):
     """A model that uses one or more fallback models upon failure.
@@ -74,8 +124,8 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _exception_handlers: list[ExceptionHandler] = field(repr=False)
-    _response_handlers: list[ResponseHandler] = field(repr=False)
+    _exception_handlers: list[_FallbackHandler] = field(repr=False)
+    _response_handlers: list[_FallbackHandler] = field(repr=False)
 
     @cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -105,6 +155,10 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+                Handlers may optionally accept the [`Model`][pydantic_ai.models.Model] that raised the
+                exception (or produced the response) as a second positional argument, to make per-model
+                fallback decisions: `def check(exc: Exception, model: Model) -> bool`.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -120,10 +174,10 @@ class FallbackModel(Model):
         if isinstance(fallback_on, tuple):
             if fallback_on:
                 # Tuple of exception types (typing guarantees tuple contents are exception types)
-                self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
+                self._add_exception_types(fallback_on)  # type: ignore[arg-type]
         elif _is_exception_type(fallback_on):
             # Single exception type
-            self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
+            self._add_exception_types((fallback_on,))
         elif callable(fallback_on):
             # Single callable - auto-detect by type hints
             self._add_handler(fallback_on)
@@ -131,7 +185,7 @@ class FallbackModel(Model):
             # Sequence of mixed handlers/types
             for item in fallback_on:
                 if _is_exception_type(item):
-                    self._exception_handlers.append(_exception_types_to_handler((item,)))
+                    self._add_exception_types((item,))
                 elif callable(item):
                     self._add_handler(item)
                 else:
@@ -147,19 +201,28 @@ class FallbackModel(Model):
                 'Use fallback_on=(ModelAPIError,) for default behavior.'
             )
 
+    def _add_exception_types(self, exceptions: tuple[type[Exception], ...]) -> None:
+        """Register a fallback handler that triggers on the given exception types."""
+        self._exception_handlers.append(_FallbackHandler.build(_exception_types_to_handler(exceptions)))
+
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
         if _is_response_handler(handler):
-            self._response_handlers.append(handler)
+            self._response_handlers.append(_FallbackHandler.build(handler))
         else:
-            self._exception_handlers.append(handler)
+            self._exception_handlers.append(_FallbackHandler.build(handler))
 
-    async def _should_fallback(self, value: Exception | ModelResponse) -> bool:
-        """Check if any handler wants to trigger fallback."""
+    async def _should_fallback(self, value: Exception | ModelResponse, model: Model) -> bool:
+        """Check if any handler wants to trigger fallback to the next model.
+
+        `model` is the model that raised `value` (or produced it, for a response), and is passed to
+        handlers that accept it as a second positional argument.
+        """
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
-            # pyright can't narrow handler's param type from the isinstance check on value
-            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            args = (value, model) if handler.accepts_model else (value,)
+            # pyright can't narrow the handler's parameter types from the isinstance check on value
+            result = await handler.call(*args) if handler.is_async else handler.call(*args)  # type: ignore[arg-type]
             if result:
                 return True
         return False
@@ -229,12 +292,13 @@ class FallbackModel(Model):
                 prepared_messages = model.prepare_messages(messages)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                if await self._should_fallback(exc):
+                if await self._should_fallback(exc, model):
+                    _attribute_exception_to_model(exc, model)
                     exceptions.append(exc)
                     continue
                 raise exc
 
-            if await self._should_fallback(response):
+            if await self._should_fallback(response, model):
                 rejected_responses.append(response)
                 continue
 
@@ -263,7 +327,8 @@ class FallbackModel(Model):
                         model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
-                    if await self._should_fallback(exc):
+                    if await self._should_fallback(exc, model):
+                        _attribute_exception_to_model(exc, model)
                         exceptions.append(exc)
                         continue
                     raise exc  # pragma: no cover
@@ -314,8 +379,27 @@ def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> Exce
     return handler
 
 
+def _attribute_exception_to_model(exc: Exception, model: Model) -> None:
+    """Attach the failing model's name to `exc` as a [PEP 678](https://peps.python.org/pep-0678/) note.
+
+    Without this, the exceptions collected into a `FallbackExceptionGroup` carry no indication of which
+    model raised them. The note surfaces the model in tracebacks and in `exc.__notes__`, so callers can
+    tell attempts apart even when several models raise the same exception type.
+    """
+    note = f'Raised by fallback model {model.model_name!r}.'
+    # Write `__notes__` directly rather than via the `BaseException.add_note` API, which only exists on
+    # Python 3.11+; both the standard-library traceback formatter and the `exceptiongroup` backport read
+    # `__notes__`, so attribution renders consistently across supported Python versions.
+    exc.__notes__ = [*getattr(exc, '__notes__', []), note]  # type: ignore[attr-defined]  # 3.10 typeshed lacks `__notes__`
+
+
 def _raise_fallback_exception_group(exceptions: list[Exception], rejected_responses: list[ModelResponse]) -> NoReturn:
     """Raise a FallbackExceptionGroup combining exceptions and response rejections.
+
+    The sub-exceptions are ordered by attempt, matching the order of the models that raised them in
+    `FallbackModel.models`, and each is annotated with the failing model's name (see
+    `_attribute_exception_to_model`). If any responses were rejected by a response handler, a single
+    trailing `ResponseRejected` summarizes them.
 
     Args:
         exceptions: List of exceptions raised by models.

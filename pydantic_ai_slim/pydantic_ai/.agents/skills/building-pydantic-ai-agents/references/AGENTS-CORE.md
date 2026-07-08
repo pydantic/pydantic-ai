@@ -159,3 +159,8 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+
+Control failover with `fallback_on` (exception types/handlers and/or response handlers). A handler may take
+an optional second `model` argument (`def check(exc: Exception, model: Model) -> bool`) to make per-model
+decisions. When every model fails, the raised `FallbackExceptionGroup` orders sub-exceptions by attempt and
+annotates each with the failing model's name (visible in tracebacks and `exception.__notes__`).

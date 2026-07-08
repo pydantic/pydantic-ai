@@ -350,6 +350,8 @@ The `fallback_on` parameter accepts:
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+Handlers may optionally accept the [`Model`][pydantic_ai.models.Model] that raised the exception (or produced the response) as a second positional argument, so you can make per-model fallback decisions — see [Per-Model Fallback Decisions](#per-model-fallback-decisions).
+
 #### Finish Reason Example
 
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
@@ -459,6 +461,53 @@ fallback_model = FallbackModel(
     ],
 )
 ```
+
+#### Per-Model Fallback Decisions
+
+Any handler may accept the [`Model`][pydantic_ai.models.Model] that raised the exception (or produced the response) as a second positional argument. This lets a single handler behave differently depending on which model is being tried — for example, to avoid retrying an authentication failure on your primary model while still falling back for other errors:
+
+```python {title="fallback_on_per_model.py"}
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def fall_back_unless_primary_auth_error(exc: Exception, model: Model) -> bool:
+    """Fall back on API errors, except for auth failures on the primary model."""
+    if not isinstance(exc, ModelAPIError):
+        return False
+    if model.model_name == 'gpt-5.2' and 'authentication' in str(exc).lower():
+        return False  # let the auth error propagate instead of masking it behind a fallback
+    return True
+
+
+fallback_model = FallbackModel(
+    'openai:gpt-5.2',
+    'anthropic:claude-sonnet-4-5',
+    fallback_on=fall_back_unless_primary_auth_error,
+)
+agent = Agent(fallback_model)
+```
+
+The second argument is optional and detected per handler, so existing single-argument handlers keep working unchanged.
+
+### Attributing Failures to Models
+
+When all models fail, the resulting [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] wraps each model's exception in order of attempt, matching the order of the models passed to `FallbackModel`. Each sub-exception is annotated with a [PEP 678](https://peps.python.org/pep-0678/) note identifying the model that raised it, so tracebacks (and `exception.__notes__`) tell you exactly which model produced which error:
+
+```
+  | pydantic_ai.exceptions.FallbackExceptionGroup: All models from FallbackModel failed (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | pydantic_ai.exceptions.ModelHTTPError: status_code: 401, model_name: gpt-5.2, body: ...
+    | Raised by fallback model 'gpt-5.2'.
+    +---------------- 2 ----------------
+    | pydantic_ai.exceptions.ModelHTTPError: status_code: 529, model_name: claude-sonnet-4-5, body: ...
+    | Raised by fallback model 'claude-sonnet-4-5'.
+    +------------------------------------
+```
+
+On the success path, the winning model is identified as usual by the `model_name` field of the returned [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
 ### Exception Handling in Middleware and Decorators
 
