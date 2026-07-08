@@ -92,7 +92,7 @@ voyageai = ["voyageai>=0.3.7; python_version < '3.14'"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
-exa = ["exa-py>=2.15.0"]
+exa = ["exa-py>=2.13.0"]
 web-fetch = ["markdownify>=1.2"]
 # CLI
 cli = [
