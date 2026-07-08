@@ -495,6 +495,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
@@ -1282,20 +1283,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        if extra_capabilities:
-            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+
+        # The capability layers resolved for this run: the base, then the extras. The
+        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves.
+        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
+            run_layers.insert(0, instrumentation_cap)
+
+        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
+        # `CombinedCapability` first and resolving that (which would gather over the same
+        # children): `override(native_tools=...)` below needs the *resolved* extras — their
+        # native tools may only materialize in `for_run`, e.g. from a capability function's
+        # returned capability — and the composed tree can't give them back. `CombinedCapability`
+        # re-flattens and re-sorts its children both at construction and on the `replace()`
+        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
+        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
+        # once per run and may have per-run side effects (e.g. the durable-exec integrations
+        # rely on this for deterministic replay). Composing from the resolved pieces below
+        # yields the same structure as resolving a pre-composed tree, since the same
+        # flatten-and-sort runs on the same resolved children either way.
+        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
+        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
+        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        if len(resolved_layers) > 1:
+            run_capability = CombinedCapability(resolved_layers)
         else:
-            effective_capability = base_capability
+            run_capability = resolved_layers[0]
 
-        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves. `CombinedCapability`
-        # auto-flattens its input so a nested `effective_capability` is splatted into
-        # the new outer container — leaves participate as siblings in the ordering pass.
-        if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
-            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
-
-        # Per-run capability: re-extract get_*() if for_run returns a different instance
-        run_capability = await effective_capability.for_run(initial_ctx)
+        # Re-extract get_*() from the resolved capability if anything is contributed per-run
         capabilities_dict = _build_run_capabilities(run_capability)
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already
         # return one, mirroring the `has_capability_type` guard used for instrumentation above.
@@ -1308,10 +1325,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
-        if run_capability is not effective_capability:
+        if run_capability is not base_capability or override_cap is not None:
             source_cap = run_capability
-        elif override_cap is not None or extra_capabilities:
-            source_cap = effective_capability
         else:
             source_cap = None
 
@@ -1327,13 +1342,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
+        # Native tool ids are validated per layer, from each layer's *resolved* form, since
+        # contributions from e.g. capability functions only materialize in `for_run`. Two
+        # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
+        # last-wins *across* layers is the intentional override mechanism. The base layer is the
+        # agent's own capabilities (validated at construction as a fail-fast for static
+        # conflicts, and re-checked here to cover dynamic contributions) or their
+        # `override(spec=...)` replacement; instrumentation contributes no native tools.
+        base_native_tools = [
+            tool
+            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
+            for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(
+            base_native_tools,
+            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
+        )
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
+            tool for cap in resolved_extras for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
         # `capabilities=[NativeTool(...)]`) on top.
         if some_native_tools := self._override_native_tools.get():
-            extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
-            for cap in extra_capabilities:
-                extra_native_tools.extend(cap.get_native_tools())
+            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
             cap_native_tools = [*some_native_tools.value, *extra_native_tools]
 
         # Build model settings resolver using per-run capability
@@ -3054,9 +3088,32 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     return explicit_ids
 
 
-def _build_run_capabilities(
-    capability: AbstractCapability[AgentDepsT],
-) -> dict[str, AbstractCapability[AgentDepsT]]:
+def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:
+    """Reject native tools that share a `unique_id` but carry conflicting definitions.
+
+    Native tools are keyed by `unique_id` when request parameters are deduplicated (see
+    `Model.prepare_request`). That dedup is intentionally last-wins *across* layers, so a run-level
+    native tool can override an agent-level default with the same id. *Within* a single layer,
+    though, two different tools sharing an id are ambiguous: the silent last-wins would bind a
+    stable id (e.g. an `MCPServerTool` id) to an unexpected definition such as a different server
+    URL or authorization token. Fail fast here instead. Identical duplicates are allowed and
+    collapsed later.
+
+    `NativeToolFunc` callables are skipped: they have no stable `unique_id` to key on.
+    """
+    seen: dict[str, AbstractNativeTool] = {}
+    for tool in native_tools:
+        if not isinstance(tool, AbstractNativeTool):
+            continue
+        existing = seen.setdefault(tool.unique_id, tool)
+        if existing is not tool and existing != tool:
+            raise exceptions.UserError(
+                f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
+                'Native tool ids must be unique within a capability layer.'
+            )
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
