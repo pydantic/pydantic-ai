@@ -424,6 +424,11 @@ class InstrumentationNames:
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
 
+    # Tool-call argument validation-failure span event ("near-miss" telemetry)
+    tool_validation_failure_event_name: ClassVar[str] = 'pydantic_ai.tool.validation_failure'
+    tool_validation_failure_kind_attr: ClassVar[str] = 'pydantic_ai.tool.validation_failure.kind'
+    tool_validation_failure_unknown_keys_attr: ClassVar[str] = 'pydantic_ai.tool.validation_failure.unknown_keys'
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.

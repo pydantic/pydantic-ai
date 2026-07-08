@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import StatusCode, get_current_span
+from pydantic import ValidationError
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
@@ -21,14 +22,16 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
+from pydantic_ai._tool_validation import classify_tool_args_validation_failure
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
+    RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
@@ -407,6 +410,58 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
             handle_tool_control_flow=True,
         )
+
+    # ------------------------------------------------------------------
+    # on_tool_validate_error — near-miss telemetry (observe-only)
+    # ------------------------------------------------------------------
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Classify a tool-call argument validation failure and record it on the current span.
+
+        Fires when a model emits a tool call whose arguments fail Pydantic validation.
+        We classify the failure shape (unknown keys / type mismatch / missing / mixed /
+        unparsable JSON) and emit a span event so the "near-miss" rate — in particular the
+        Ronacher-class `unknown_keys_only` failures — can be measured per model and schema.
+
+        This is observe-only: the original `error` is always re-raised unchanged, so the
+        retry flow is exactly as it would be without instrumentation. `ModelRetry` (custom
+        validator rejection) carries no schema-level error shape, so it is not classified.
+
+        Validation runs before the tool-execution span is opened, so there is no per-call
+        tool span to attach to; the event lands on the enclosing agent-run span (the current
+        span when validation runs).
+        """
+        if isinstance(error, ValidationError):
+            self._record_validation_failure(call, error)
+        raise error
+
+    def _record_validation_failure(self, call: ToolCallPart, error: ValidationError) -> None:
+        """Emit the near-miss classification for `error` as an event on the current span."""
+        span = get_current_span()
+        if not span.is_recording():
+            return
+
+        names = self._instrumentation_names
+        failure = classify_tool_args_validation_failure(error)
+        attributes: dict[str, Any] = {
+            names.tool_validation_failure_kind_attr: failure.kind,
+            'gen_ai.tool.name': call.tool_name,
+        }
+        if call.tool_call_id:
+            attributes['gen_ai.tool.call.id'] = call.tool_call_id
+        # The unknown key names are model-emitted content, so gate them behind `include_content`;
+        # the `kind` alone already identifies the Ronacher class without exposing content.
+        if failure.unknown_keys and self.settings.include_content:
+            attributes[names.tool_validation_failure_unknown_keys_attr] = list(failure.unknown_keys)
+        span.add_event(names.tool_validation_failure_event_name, attributes=attributes)
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)

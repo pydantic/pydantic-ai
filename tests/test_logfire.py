@@ -3720,3 +3720,81 @@ def test_output_function_call_deferred_recorded_as_error(
     # not the deferral-attribute path that `wrap_tool_execute` uses.
     assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_call_validation_failure_near_miss_event(capfire: CaptureLogfire) -> None:
+    """A tool call with invented extra keys records a near-miss classification event on the run span.
+
+    Validation runs before any per-call tool span is opened (see `Instrumentation.on_tool_validate_error`),
+    so the event lands on the enclosing `invoke_agent` span, and no `execute_tool` span is created for the
+    failed call."""
+
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Byte-correct payload plus two invented trailing keys (the Ronacher class).
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'a': 1, 'requireUnique': True, 'oldText2': 'x'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    @agent.tool_plain
+    def my_tool(a: int) -> str:
+        return f'ok {a}'
+
+    agent.run_sync('go')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    assert agent_run_span['events'] == snapshot(
+        [
+            {
+                'name': 'pydantic_ai.tool.validation_failure',
+                'timestamp': IsInt(),
+                'attributes': {
+                    'pydantic_ai.tool.validation_failure.kind': 'unknown_keys_only',
+                    'gen_ai.tool.name': 'my_tool',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'pydantic_ai.tool.validation_failure.unknown_keys': ('requireUnique', 'oldText2'),
+                },
+            }
+        ]
+    )
+    # No per-call tool span exists for a call that failed validation.
+    assert not any(s['name'] == 'execute_tool my_tool' for s in spans)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_call_validation_failure_event_excludes_unknown_keys_without_content(
+    capfire: CaptureLogfire,
+) -> None:
+    """The failure `kind` is always recorded, but the invented key names are gated behind `include_content`."""
+
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'a': 1, 'bogus': 2})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings = InstrumentationSettings(include_content=False)
+    agent = Agent(FunctionModel(model_function), capabilities=[Instrumentation(settings=settings)])
+
+    @agent.tool_plain
+    def my_tool(a: int) -> str:
+        return f'ok {a}'
+
+    agent.run_sync('go')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    [event] = agent_run_span['events']
+    assert event['name'] == 'pydantic_ai.tool.validation_failure'
+    assert event['attributes']['pydantic_ai.tool.validation_failure.kind'] == 'unknown_keys_only'
+    assert 'pydantic_ai.tool.validation_failure.unknown_keys' not in event['attributes']
