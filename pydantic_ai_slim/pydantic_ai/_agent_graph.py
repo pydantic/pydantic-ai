@@ -1026,6 +1026,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             messages = prepared
 
+        # Render any `before_model_request`-contributed ephemeral parts onto the outgoing messages *after* the
+        # durable history was written back to state above, so they reach the provider (and count against the
+        # token budget below) for this request only and never enter `ctx.state.message_history`. Empty is the
+        # common case and skips all work.
+        if request_context.ephemeral_parts:
+            messages = _append_ephemeral_parts(messages, request_context.ephemeral_parts)
+
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
         usage = ctx.state.usage
@@ -1829,3 +1836,27 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+# TTL for the `CachePoint` placed in front of the ephemeral tail. Cache-supporting providers then cache the
+# stable conversation prefix and re-read only the small ephemeral block; non-supporting providers drop the
+# `CachePoint`. `'5m'` matches the shortest-lived Anthropic/Bedrock option, minimizing cache-write cost.
+_EPHEMERAL_CACHE_TTL: Literal['5m', '1h'] = '5m'
+
+
+def _append_ephemeral_parts(
+    messages: list[_messages.ModelMessage],
+    ephemeral_parts: Sequence[_messages.UserContent],
+) -> list[_messages.ModelMessage]:
+    """Render per-request `ephemeral_parts` onto a non-persisted copy of the outgoing messages.
+
+    The parts are appended, in contribution order and behind a `CachePoint`, as a fresh `UserPromptPart` on the
+    trailing `ModelRequest`. This returns a new list wrapping a replaced-in-copy final request, so the caller's
+    persisted history (which shares the original `ModelRequest` object) is never mutated: the parts reach the
+    provider for this request only and the cached prefix stays byte-identical across turns.
+    """
+    last = messages[-1]
+    # `_prepare_request` guarantees the outgoing history ends with a `ModelRequest`.
+    assert isinstance(last, _messages.ModelRequest), 'ephemeral parts require a trailing `ModelRequest`'
+    tail = _messages.UserPromptPart(content=[_messages.CachePoint(ttl=_EPHEMERAL_CACHE_TTL), *ephemeral_parts])
+    return [*messages[:-1], replace(last, parts=[*last.parts, tail])]

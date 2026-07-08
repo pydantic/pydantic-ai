@@ -51,6 +51,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -189,6 +190,44 @@ class ModelRequestContext:
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
+
+    ephemeral_parts: list[UserContent] = field(default_factory=list[UserContent])
+    """Per-request context appended to the tail of the outgoing request but never written to history.
+
+    Contribute to this list from
+    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] (usually via
+    [`add_ephemeral_part`][pydantic_ai.models.ModelRequestContext.add_ephemeral_part]) to show the model
+    per-request notices -- budget lines, staleness warnings, harness-state notes -- that should sit *next to
+    the conversation* (as context) rather than as standing instructions.
+
+    Unlike edits to [`messages`][pydantic_ai.models.ModelRequestContext.messages] (which are persisted to the
+    run's message history), these parts reach the provider for this one request only: they are rendered onto a
+    non-persisted copy of the outgoing messages, so `result.all_messages()` and the durable history stay
+    byte-identical and the cached prefix is never invalidated. Contributions are rendered in order, behind a
+    [`CachePoint`][pydantic_ai.messages.CachePoint] so the stable conversation prefix stays cacheable and only
+    the ephemeral tail falls outside the cached region.
+    """
+
+    def add_ephemeral_part(self, content: str | UserContent) -> None:
+        """Append per-request context that reaches the model without being persisted to history.
+
+        This is the blessed seam for "ephemeral" content -- see
+        [`ephemeral_parts`][pydantic_ai.models.ModelRequestContext.ephemeral_parts] for the full contract.
+        Call it from
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]:
+
+        ```python {test="skip"}
+        async def before_model_request(self, ctx, request_context):
+            request_context.add_ephemeral_part(f'<system-reminder>Token budget: {self.remaining} left.</system-reminder>')
+            return request_context
+        ```
+
+        Args:
+            content: Text (or any [`UserContent`][pydantic_ai.messages.UserContent], e.g. an image) to append
+                after the latest user message for this request only. Frame text with your own delimiter (e.g. a
+                `<system-reminder>` tag) so the model reads it as context rather than user speech.
+        """
+        self.ephemeral_parts.append(content)
 
 
 class Model(ABC, Generic[InterfaceClient]):
