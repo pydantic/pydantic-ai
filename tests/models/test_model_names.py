@@ -7,7 +7,7 @@ import httpx
 import pytest
 from typing_extensions import TypedDict
 
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -22,8 +22,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.xai import XaiModelName
+    from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
-    from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
@@ -31,7 +31,7 @@ if not imports_successful():  # pragma: lax no cover
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -66,7 +66,6 @@ _PROVIDER_TO_MODEL_NAMES = {
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
-    'grok': GrokModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
@@ -74,6 +73,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'zai': ZaiModelName,
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
@@ -87,6 +87,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
         'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
@@ -141,13 +142,19 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google-cloud:gemini-3-pro-preview',
         'gateway/google-cloud:gemini-flash-latest',
         'gateway/google-cloud:gemini-flash-lite-latest',
+        'gateway/google:gemini-2.0-flash',
+        'gateway/google:gemini-2.0-flash-lite',
+        'gateway/google:gemini-2.5-flash-preview-09-2025',
+        'gateway/google:gemini-3-pro-preview',
+        'gateway/google:gemini-flash-latest',
+        'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
         'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
-        'gateway/groq:qwen/qwen-3-32b',
+        'gateway/groq:qwen/qwen3-32b',
         'gateway/groq:whisper-large-v3',
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
@@ -229,17 +236,22 @@ def test_known_model_names():  # pragma: lax no cover
 
     generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_model_names = sorted(get_args(KnownModelName.__value__))
+    known_names = sorted(known_model_names())
 
-    if generated_names != known_model_names:
+    if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_model_names)
+        missing_names = set(generated_names) - set(known_names)
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_model_names) - set(generated_names)
+        extra_names = set(known_names) - set(generated_names)
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))
+
+
+def test_known_model_names_accessor():
+    """`known_model_names()` exposes exactly the `KnownModelName` members, verbatim."""
+    assert known_model_names() == get_args(KnownModelName.__value__)
 
 
 class HerokuModel(TypedDict):

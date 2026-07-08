@@ -1,0 +1,77 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '278'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Hi
+          type: text
+        role: user
+      - content:
+        - text: |-
+            Validation feedback:
+            Please return text.
+
+            Fix the errors and try again.
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '546'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5aec4d4d6d78d8828453f8273a08e44e-911393e15f7aba20-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: "# Hi there! \U0001F44B\n\nHow can I help you today?"
+        type: text
+      id: msg_011Ccmc3JDrLNAjTnX1WNbcp
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 26
+        output_tokens: 18
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

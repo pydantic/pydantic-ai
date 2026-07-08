@@ -39,19 +39,32 @@ def _replace_run_context(
                 'retry': value.retry,
                 'max_retries': value.max_retries,
                 'run_step': value.run_step,
+                # Deferred-load state must be part of the key: two runs identical except for which
+                # capabilities/tools have been loaded see different tools and must not share a cache
+                # entry. Sorted for a deterministic key (sets have no stable iteration order).
+                # `capability_loaded` is deliberately omitted (unlike Temporal's serializer, which
+                # round-trips every field a hook might read): it's derived from `loaded_capability_ids`
+                # plus the static capability set, so it adds no entropy the two fields above don't.
+                'loaded_capability_ids': sorted(value.loaded_capability_ids),
+                'discovered_tool_names': sorted(value.discovered_tool_names),
             }
 
     return inputs
 
 
-_CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id'})
-"""Fields excluded from cache key computation as they vary per-run."""
+_CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
+"""Message and part dataclass fields excluded from cache key computation as they vary per-run."""
 
 
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
 ) -> Any:
-    """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields."""
+    """Recursively convert dataclasses to dicts, excluding cache-irrelevant fields.
+
+    Only dataclass fields are excluded: those are ours (message and part attributes like
+    `timestamp` and `conversation_id`). Plain dict keys are user or provider data (tool args,
+    `provider_details`) where an identically-named key is meaningful and must fork the key.
+    """
     if is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {}
         for f in fields(obj):
@@ -60,7 +73,7 @@ def _strip_cache_excluded_fields(
                 result[f.name] = _strip_cache_excluded_fields(value)
         return result
     elif _is_dict(obj):
-        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items() if k not in _CACHE_EXCLUDED_FIELDS}
+        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items()}
     elif _is_list(obj):
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):

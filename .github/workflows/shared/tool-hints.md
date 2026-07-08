@@ -22,6 +22,26 @@ dependencies are **not** pre-installed; run `make install` once before using
 `pytest`, `ruff`, or `pyright`. Prefer `uv run pytest <test_file>` over a bare
 `pytest` call.
 
-**GitHub issue search** — `gh issue list --search` returns HTTP 403 via the AWF
-firewall proxy. Use MCP tools instead:
-`mcp__github__search_issues(query="repo:pydantic/pydantic-ai <keywords>")`
+**GitHub issue search** — this workflow runs the GitHub toolset in `gh-proxy`
+mode, so there are **no `mcp__github__*` tools**, and the `/search/issues`
+endpoint (`gh issue list --search`, `gh search issues`) returns HTTP 403 via the
+AWF firewall proxy. The issue-**list** endpoint **is** allowed through the
+proxied `gh` CLI, including its server-side `?labels=` filter. When this sweep
+files under a dedicated label, prefer a narrow label query over listing
+everything:
+
+```bash
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=<label>&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+If this sweep has no dedicated label, or the label filter is inconclusive, widen
+to a full open-issue scan:
+
+```bash
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+```
+
+`select(.pull_request == null)` drops PRs, which the issues endpoint also
+returns.

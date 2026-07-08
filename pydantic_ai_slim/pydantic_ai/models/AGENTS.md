@@ -14,6 +14,7 @@
 - Verify provider limitations through testing before implementing workarounds in `pydantic_ai/models/` — defer validation to runtime API responses rather than preemptive client-side checks — Prevents degrading functionality with unnecessary workarounds based on outdated assumptions, and lets the underlying API return clear error messages about actual incompatibilities
 <!-- rule:478 -->
 - Token counting must mirror actual request parameters (`tools`, `system_prompt`, configs) and use identical message formatting — Ensures token count estimates match actual API usage, preventing billing surprises and quota errors
+- Per-request injections or mutations of request content (message blocks, tool defs, instructions, cache breakpoints) must anchor to a position that doesn't move with history length (e.g. the first user message or a fixed index), never the last message or a length-based index — anchoring to a moving position shifts the cacheable prefix every turn, so the provider silently re-processes the tail instead of reading from cache, a cost/latency regression that surfaces no error
 
 ## Error Handling
 
