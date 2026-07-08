@@ -543,6 +543,9 @@ agent = Agent('azure-responses:gpt-5.2')
 ...
 ```
 
+!!! note
+    Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, the web search built-in tool is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
+
 Or initialise the model and provider directly:
 
 ??? example "Document processing with Azure using Responses API"
