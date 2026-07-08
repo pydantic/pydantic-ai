@@ -1,0 +1,11 @@
+version: 1
+interactions:
+- request_sample:
+    raw: !!binary |
+      ChIKDgoMV2hhdCBpcyAyKzI/EAESCGdyb2stNC41mAEC
+  response_sample:
+    raw: !!binary |
+      CiRlNDBiZDNhMC1lMTdhLTlmODktOGQ0OS1kYzc5NDI0Yzk3NzASYAgDGlwKBSoqNCoqEAIiT1Ro
+      ZSBxdWVzdGlvbiBpcyAiV2hhdCBpcyAyKzI/IiBUaGlzIGlzIGEgc2ltcGxlIG1hdGggcXVlc3Rp
+      b24uIDIgKyAyIGVxdWFscyA0Lgo4ASoKCI/VutIGENOaZDIIZ3Jvay00LjU6E2ZwXzJmZGExZTNm
+      ZGQ5MjkwNzlKHAgDENUBGJ0CINUBMEU4gAFYoL+WA5AB1QGYAUhaDhABIAItMzMzP00zM3M/
