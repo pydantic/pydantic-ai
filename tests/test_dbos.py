@@ -2234,6 +2234,23 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
+    """An `MCPToolset` without an `id` fails loudly at construction.
+
+    The DBOS step wrapper is swapped in by toolset ID at run time, so without one the
+    toolset's I/O would silently run un-checkpointed inside the DBOS workflow and
+    re-execute on recovery. Temporal raises the equivalent error for id-less leaves.
+    """
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), init_timeout=20)
+    with pytest.raises(UserError, match='MCP toolsets need to have a unique `id` in order to be used with DBOS'):
+        Agent(
+            _durability_fn_model,
+            name='durability_idless_mcp',
+            toolsets=[mcp_toolset],
+            capabilities=[DBOSDurability()],
+        )
+
+
 async def test_dbos_durability_wraps_capability_contributed_mcp_toolset(dbos: DBOS) -> None:
     """MCP toolsets contributed by other capabilities are wrapped as DBOS steps too.
 

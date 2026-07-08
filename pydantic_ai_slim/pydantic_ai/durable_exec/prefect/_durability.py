@@ -254,9 +254,16 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 self._tool_task_config_by_name,
             )
             if isinstance(wrapped, PrefectWrapperToolset):
-                ts_id = ts.id
-                if ts_id is not None:
-                    self._prefect_toolsets_by_id[ts_id] = wrapped
+                # Without an ID the wrapper can't be swapped in at run time (see
+                # `get_wrapper_toolset`), so the toolset's calls would silently run
+                # untracked inside the Prefect flow and re-execute on retries.
+                if ts.id is None:
+                    raise UserError(
+                        "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                        'need to have a unique `id` in order to be used with Prefect. '
+                        "The ID will be used to identify the toolset's tasks within the flow."
+                    )
+                self._prefect_toolsets_by_id[ts.id] = wrapped
             return wrapped
 
         toolset.visit_and_replace(prefectify)

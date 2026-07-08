@@ -259,13 +259,20 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                 pass
             else:
                 if isinstance(ts, MCPToolset):
+                    # Without an ID the wrapper can't be swapped in at run time (see
+                    # `get_wrapper_toolset`), so the toolset's I/O would silently run
+                    # un-checkpointed inside the DBOS workflow and re-execute on recovery.
+                    if ts.id is None:
+                        raise UserError(
+                            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+                            "The ID will be used to identify the toolset's steps within the workflow."
+                        )
                     wrapped = DBOSMCPToolset(
                         wrapped=ts,
                         step_name_prefix=self.name,
                         step_config=self._mcp_step_config,
                     )
-                    if ts.id is not None:  # pragma: no branch
-                        self._dbos_toolsets_by_id[ts.id] = wrapped
+                    self._dbos_toolsets_by_id[ts.id] = wrapped
                     return wrapped
 
             return ts

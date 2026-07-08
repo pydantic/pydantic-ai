@@ -1499,6 +1499,31 @@ def test_prefect_durability_idempotent_for_agent() -> None:
     assert agent.run is first_run
 
 
+@pytest.mark.parametrize('kind', ['function', 'mcp'])
+def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
+    """Wrapped leaf toolsets without an `id` fail loudly at construction.
+
+    The Prefect task wrapper is swapped in by toolset ID at run time, so without one the
+    toolset's calls would silently run untracked inside the Prefect flow and re-execute
+    on retries. Temporal raises the equivalent error for id-less leaves.
+    """
+
+    def greet() -> str:
+        return 'hi'  # pragma: no cover
+
+    toolset_factories = {
+        'function': lambda: FunctionToolset([greet]),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
+    }
+    with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Prefect'):
+        Agent(
+            _durability_fn_model,
+            name=f'prefect_idless_{kind}',
+            toolsets=[toolset_factories[kind]()],
+            capabilities=[PrefectDurability()],
+        )
+
+
 def test_prefect_durability_wraps_capability_contributed_toolsets() -> None:
     """Toolsets contributed by other capabilities are wrapped as Prefect tasks too.
 

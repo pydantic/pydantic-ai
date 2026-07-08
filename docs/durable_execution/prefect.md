@@ -128,6 +128,8 @@ When using Prefect with Pydantic AI agents, there are a few important considerat
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
+Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
+
 ### Tool Wrapping
 
 Agent tools are automatically wrapped as Prefect tasks, which means they benefit from:

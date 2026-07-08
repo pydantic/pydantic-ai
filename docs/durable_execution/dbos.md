@@ -128,6 +128,8 @@ When using DBOS with Pydantic AI agents, there are a few important consideration
 
 Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart.
 
+Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify the toolset's steps within the workflow. It should not be changed once the durable agent has been deployed to production as this would break recovering workflows.
+
 Tools and event stream handlers are not automatically wrapped by DBOS. You can decide how to integrate them:
 
 * Decorate with `@DBOS.step` if the function involves non-determinism or I/O.
