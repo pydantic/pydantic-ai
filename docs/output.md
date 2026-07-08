@@ -362,12 +362,12 @@ _(This example is complete, it can be run "as is")_
 
 ##### Buffered Tool Output
 
-For large structured outputs, you can let the model build the output arguments incrementally before it finalizes the run. Pass [`BufferedOutputStrategy`][pydantic_ai.output.BufferedOutputStrategy] as the agent's `output_strategy`:
+For large structured outputs, you can let the model build an output tool's arguments incrementally before it finalizes the run. Pass `buffered=True` to [`ToolOutput`][pydantic_ai.output.ToolOutput]:
 
 ```python {title="buffered_output.py"}
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, BufferedOutputStrategy
+from pydantic_ai import Agent, ToolOutput
 
 
 class Report(BaseModel):
@@ -378,12 +378,11 @@ class Report(BaseModel):
 
 agent = Agent(
     'openai:gpt-5.2',
-    output_type=Report,
-    output_strategy=BufferedOutputStrategy(),
+    output_type=ToolOutput(Report, buffered=True),
 )
 ```
 
-With buffered output enabled, an output tool call with arguments updates the buffer and returns validation feedback to the model instead of ending the run. Pydantic AI also exposes generated buffer tools such as `read_final_result_buffer` and `patch_final_result_buffer` so the model can inspect and update the draft with JSON Patch operations. Calling the same output tool with no arguments submits the buffered value through the normal output validation and processing pipeline.
+With buffered output enabled for an output tool, a call to that tool with arguments updates the buffer and returns validation feedback to the model instead of ending the run. Pydantic AI also exposes generated buffer tools such as `read_final_result_buffer` and `patch_final_result_buffer` so the model can inspect and update the draft with JSON Patch operations. Calling the same output tool with no arguments submits the buffered value through the normal output validation and processing pipeline.
 
 ##### Parallel Output Tool Calls
 

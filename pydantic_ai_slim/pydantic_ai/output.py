@@ -17,7 +17,6 @@ from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
-    'BufferedOutputStrategy',
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',
@@ -72,16 +71,6 @@ You should not need to import or use this type directly.
 
 See [text output docs](../output.md#text-output) for more information.
 """
-
-
-@dataclass(frozen=True)
-class BufferedOutputStrategy:
-    """Incrementally build structured output before finalizing it.
-
-    When used with tool output, calls to an output tool with arguments update that output tool's
-    buffer and return validation feedback to the model instead of ending the run. Calling the same
-    output tool with no arguments submits the buffered value through the normal output pipeline.
-    """
 
 
 @dataclass(init=False)
@@ -139,6 +128,13 @@ class ToolOutput(Generic[OutputDataT]):
     `sequential=True` output tool runs alone, so function tools the model emitted before it complete
     first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
     """
+    buffered: bool
+    """Whether the model can incrementally build this output tool's arguments before finalizing.
+
+    When enabled, calls to this output tool with arguments update a buffer and return validation
+    feedback to the model instead of ending the run. Calling the same output tool with no arguments
+    submits the buffered value through the normal output pipeline.
+    """
 
     def __init__(
         self,
@@ -149,6 +145,7 @@ class ToolOutput(Generic[OutputDataT]):
         max_retries: int | None = None,
         strict: bool | None = None,
         sequential: bool = False,
+        buffered: bool = False,
     ):
         self.output = type_
         self.name = name
@@ -156,6 +153,7 @@ class ToolOutput(Generic[OutputDataT]):
         self.max_retries = max_retries
         self.strict = strict
         self.sequential = sequential
+        self.buffered = buffered
 
 
 @dataclass(init=False)

@@ -1666,6 +1666,8 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     """Default max retries for output tools, set by the Agent. Per-tool overrides from `ToolOutput.max_retries` take priority."""
     _max_retries_overrides: dict[str, int]
     """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
+    buffered_tool_names: frozenset[str]
+    """Output tool names that stage arguments in a buffer before finalizing."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -1688,6 +1690,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
         max_retries_overrides: dict[str, int] = {}
         tool_max_retries: int | None = None
+        buffered_tool_names: set[str] = set()
 
         multiple = len(outputs) > 1
         for output in outputs:
@@ -1695,6 +1698,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             description = None
             strict = None
             sequential = False
+            buffered = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
@@ -1702,6 +1706,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = output.strict
                 tool_max_retries = output.max_retries
                 sequential = output.sequential
+                buffered = output.buffered
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1744,9 +1749,16 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             tool_defs.append(tool_def)
             if tool_max_retries is not None:
                 max_retries_overrides[name] = tool_max_retries
+            if buffered:
+                buffered_tool_names.add(name)
             tool_max_retries = None
 
-        return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
+        return cls(
+            processors=processors,
+            tool_defs=tool_defs,
+            max_retries_overrides=max_retries_overrides,
+            buffered_tool_names=frozenset(buffered_tool_names),
+        )
 
     def __init__(
         self,
@@ -1754,12 +1766,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         processors: dict[str, ObjectOutputProcessor[Any]],
         max_retries: int | None = None,
         max_retries_overrides: dict[str, int] | None = None,
+        buffered_tool_names: frozenset[str] | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
         self._max_retries_overrides = max_retries_overrides or {}
+        self.buffered_tool_names = buffered_tool_names or frozenset()
         self.output_validators = output_validators or []
 
     @property
@@ -1779,6 +1793,8 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                     'anyOf': [tool_def.parameters_json_schema, _EMPTY_OBJECT_JSON_SCHEMA],
                 },
             )
+            if tool_def.name in self.buffered_tool_names
+            else tool_def
             for tool_def in self._tool_defs
         ]
         return type(self)(
@@ -1786,6 +1802,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processors=self.processors,
             max_retries=self.max_retries,
             max_retries_overrides=self._max_retries_overrides,
+            buffered_tool_names=self.buffered_tool_names,
             output_validators=self.output_validators,
         )
 

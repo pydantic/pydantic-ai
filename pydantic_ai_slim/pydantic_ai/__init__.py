@@ -121,7 +121,7 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import BufferedOutputStrategy, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -311,7 +311,6 @@ __all__ = (
     'AgentCapability',
     'CapabilityFunc',
     # output
-    'BufferedOutputStrategy',
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',

@@ -373,7 +373,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         rather than raised inline so the caller can decide whether to re-raise (no other output
         produced a valid result) or absorb it as a skip.
         """
-        if self.ctx.deps.output_strategy is not None:
+        output_toolset = self.schema.toolset
+        if output_toolset is not None and call.tool_name in output_toolset.buffered_tool_names:
             return await self._run_buffered_output_tool_call(call)
         return await self._run_unbuffered_output_tool_call(call)
 

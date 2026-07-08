@@ -21,7 +21,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BufferedOutputStrategy,
     CallDeferred,
     CombinedToolset,
     DocumentUrl,
@@ -342,7 +341,7 @@ def test_result_pydantic_model_retry():
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
 
 
-def test_buffered_output_strategy_patches_and_submits_buffer():
+def test_buffered_tool_output_patches_and_submits_buffer():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         output_tool_name = info.output_tools[0].name
@@ -383,7 +382,7 @@ def test_buffered_output_strategy_patches_and_submits_buffer():
         assert content['status'] == 'valid'
         return ModelResponse(parts=[ToolCallPart(output_tool_name, {}, tool_call_id='submit-output')])
 
-    agent = Agent(FunctionModel(return_model), output_type=Foo, output_strategy=BufferedOutputStrategy())
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo, buffered=True))
     validator_calls: list[Foo] = []
 
     @agent.output_validator
@@ -403,6 +402,44 @@ def test_buffered_output_strategy_patches_and_submits_buffer():
     )
 
 
+def test_buffered_tool_output_ignores_deferred_tool_requests_output_type():
+    seen_infos: list[AgentInfo] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        seen_infos.append(info)
+        output_tool_name = info.output_tools[0].name
+
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        output_tool_name,
+                        {'a': 1, 'b': 'buffered'},
+                        tool_call_id='stage-output',
+                    )
+                ]
+            )
+
+        return ModelResponse(parts=[ToolCallPart(output_tool_name, {}, tool_call_id='submit-output')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[ToolOutput(Foo, buffered=True), DeferredToolRequests],
+    )
+
+    result = agent.run_sync('Hello')
+
+    assert result.output == Foo(a=1, b='buffered')
+    assert seen_infos
+    assert [tool.name for tool in seen_infos[0].output_tools or []] == ['final_result']
+    function_tool_names = {tool.name for tool in seen_infos[0].function_tools}
+    assert 'read_final_result_buffer' in function_tool_names
+    assert 'patch_final_result_buffer' in function_tool_names
+    assert 'read_DeferredToolRequests_buffer' not in function_tool_names
+    assert 'patch_DeferredToolRequests_buffer' not in function_tool_names
+
+
 class InvoiceOutput(BaseModel):
     invoice_id: str
     total: int
@@ -412,7 +449,7 @@ class EscalationOutput(BaseModel):
     reason: str
 
 
-def test_buffered_output_strategy_inherits_multiple_output_tool_names():
+def test_buffered_tool_output_inherits_multiple_output_tool_names():
     seen_infos: list[AgentInfo] = []
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -434,8 +471,7 @@ def test_buffered_output_strategy_inherits_multiple_output_tool_names():
     model = FunctionModel(return_model)
     agent = Agent(
         model,
-        output_type=[InvoiceOutput, EscalationOutput, str],
-        output_strategy=BufferedOutputStrategy(),
+        output_type=[ToolOutput(InvoiceOutput, buffered=True), EscalationOutput, str],
     )
 
     result = agent.run_sync('Hello')
@@ -449,14 +485,17 @@ def test_buffered_output_strategy_inherits_multiple_output_tool_names():
     assert {
         'read_final_result_InvoiceOutput_buffer',
         'patch_final_result_InvoiceOutput_buffer',
-        'read_final_result_EscalationOutput_buffer',
-        'patch_final_result_EscalationOutput_buffer',
     } <= function_tool_names
-    assert output_tools[0].parameters_json_schema['anyOf'][1] == {
+    assert 'read_final_result_EscalationOutput_buffer' not in function_tool_names
+    assert 'patch_final_result_EscalationOutput_buffer' not in function_tool_names
+    invoice_tool = next(tool for tool in output_tools if tool.name == 'final_result_InvoiceOutput')
+    escalation_tool = next(tool for tool in output_tools if tool.name == 'final_result_EscalationOutput')
+    assert invoice_tool.parameters_json_schema['anyOf'][1] == {
         'type': 'object',
         'properties': {},
         'additionalProperties': False,
     }
+    assert 'anyOf' not in escalation_tool.parameters_json_schema
 
 
 def test_result_pydantic_model_validation_error():
