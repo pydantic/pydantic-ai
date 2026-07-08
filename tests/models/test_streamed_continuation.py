@@ -487,7 +487,7 @@ async def test_new_prompt_after_trailing_suspended_history_errors() -> None:
         ModelRequest(parts=[UserPromptPart(content='go')]),
         _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2),
     ]
-    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('done')])))  # pragma: no cover
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('done')])))
 
     with pytest.raises(UserError, match='ends in a suspended response'):
         await agent.run('new prompt', message_history=history)

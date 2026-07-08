@@ -2202,7 +2202,7 @@ class _ContinuationModel(Model):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
 
-    async def request(  # pragma: no cover
+    async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
