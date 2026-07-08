@@ -359,6 +359,25 @@ def test_google_gemini_2_5_flash():
     )
 
 
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash_image():
+    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
+    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
+    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
+    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
+    assert profile is not None
+    assert profile.get('google_supports_strict_tool_definition') is False
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_image_output': True,
+            'supports_tools': False,
+            'supports_thinking': True,
+        }
+    )
+
+
 @pytest.mark.skipif(not xai_imports(), reason='xai not installed')
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')

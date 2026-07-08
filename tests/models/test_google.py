@@ -614,6 +614,37 @@ async def test_google_model_vertex_labels(
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
+async def test_google_strict_tools_use_validated_mode(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """A request whose function tools are all `strict=True` upgrades the function-calling mode to `VALIDATED`,
+    and Gemini accepts that enum end-to-end.
+
+    The `test_tool_choice_unit.py` cases assert the request shape against a `MagicMock` client; only a live
+    recording proves `VALIDATED` is a wire value the API accepts (rather than 400-ing on it), so this test
+    inspects the recorded request to confirm the mode we sent was `VALIDATED`.
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'The weather in {city} is sunny and 24C.'
+
+    @agent.tool_plain(strict=True)
+    def get_time(city: str) -> str:
+        return f'The time in {city} is 3pm.'
+
+    result = await agent.run('What is the weather and the time in Paris? Use the tools.')
+    assert result.output == snapshot('The weather in Paris is sunny and 24C. The time in Paris is 3pm.')
+
+    generate_requests = [r for r in vcr.requests if r.uri.endswith(':generateContent')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert generate_requests
+    first_request: dict[str, Any] = json.loads(generate_requests[0].body)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
+    assert len(first_request['tools'][0]['functionDeclarations']) == 2
+
+
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.')

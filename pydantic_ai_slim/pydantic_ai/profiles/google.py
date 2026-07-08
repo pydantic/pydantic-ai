@@ -59,8 +59,9 @@ class GoogleModelProfile(ModelProfile, total=False):
     """Whether the model supports Gemini's `VALIDATED` function-calling mode. Default: `False`.
 
     `VALIDATED` is Gemini's equivalent of the cross-provider `strict` tool flag (like OpenAI/Anthropic
-    strict tool calling): it behaves like `AUTO` but the API enforces the declared schema and rejects
-    malformed or hallucinated function calls instead of returning them. When enabled, `GoogleModel`
+    strict tool calling): it behaves like `AUTO` but the API enforces that the model adheres to the
+    declared function schema. Issue reports also observe that it mitigates the function-name hallucination
+    some Gemini models exhibit (an observed effect, not a documented guarantee). When enabled, `GoogleModel`
     upgrades `AUTO` to `VALIDATED` for requests whose tools (function and output tools) all have
     `ToolDefinition.strict=True`.
 
