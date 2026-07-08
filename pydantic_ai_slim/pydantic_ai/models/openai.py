@@ -1271,7 +1271,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 assistant message with `content=None` and no `tool_calls`, which the Chat Completions
                 API rejects with a 400 error.
             """
-            if not self.texts and not self.thinkings and not self.tool_calls:
+            if not self.texts and not self.tool_calls:
                 return None
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
@@ -2439,7 +2439,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
-                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+                container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
+                if tool.files:
+                    # Cross-provider files are dropped silently here, not raised via
+                    # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                    provider_file_ids = [file.file_id for file in tool.files if file.provider_name == self.system]
+                    if provider_file_ids:
+                        container['file_ids'] = provider_file_ids
+                tools.append({'type': 'code_interpreter', 'container': container})
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
@@ -4446,19 +4453,20 @@ def _build_tool_search_return_part(
 
     Writes the cross-provider
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
-    to `content` (with as much detail as the provider returned — name and description
-    for OpenAI's full function-tool definitions) and stashes the `status` field on
-    `provider_details`.
+    to `content` (carrying only the matched tool names — the full
+    [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] is injected on the
+    next request via defer-loading, so description is redundant here) and
+    stashes the `status` field on `provider_details`.
     """
     matches: list[ToolSearchMatch] = []
     if output_item is not None:
         # `output_item.tools` is a union of OpenAI Responses tool variants; only
-        # function tools carry the name + description we want. Other variants
-        # (file_search, image generation, etc.) can't appear here in practice but
-        # aren't statically excluded from the union, so we filter by type.
+        # function tools carry a stable `name` field. Other variants (file_search,
+        # image generation, etc.) can't appear here in practice but aren't
+        # statically excluded from the union, so we filter by type.
         for t in output_item.tools:
             if isinstance(t, responses.FunctionTool):
-                matches.append({'name': t.name, 'description': t.description})
+                matches.append({'name': t.name})
     return NativeToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},

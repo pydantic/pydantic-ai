@@ -7,6 +7,7 @@ Tests verify model profile detection for different OpenAI models, particularly:
 
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -103,7 +104,9 @@ class TestEncryptedReasoningContent:
 def test_send_back_thinking_parts_field_requires_thinking_field():
     with pytest.raises(
         UserError,
-        match='If `openai_chat_send_back_thinking_parts` is "field", `openai_chat_thinking_field` must be set to a non-None value.',
+        match=re.escape(
+            'If `openai_chat_send_back_thinking_parts` is "field", `openai_chat_thinking_field` must be set to a non-None value.'
+        ),
     ):
         validate_openai_profile(OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'))
 

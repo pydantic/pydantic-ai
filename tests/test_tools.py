@@ -39,7 +39,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsStr, message, message_part
 
 
 def test_tool_no_ctx():
@@ -739,7 +739,7 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
+    with pytest.raises(UserError, match=re.escape("Tool name conflicts with previously renamed tool: 'bar'.")):
         agent.run_sync('')
 
 
@@ -1176,10 +1176,8 @@ def test_call_tool_without_unrequired_parameters():
 
     result = agent.run_sync('Hello')
     all_messages = result.all_messages()
-    first_response = all_messages[1]
-    second_request = all_messages[2]
-    assert isinstance(first_response, ModelResponse)
-    assert isinstance(second_request, ModelRequest)
+    first_response = message(all_messages, ModelResponse, index=1)
+    second_request = message(all_messages, ModelRequest, index=2)
     tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
@@ -1429,7 +1427,7 @@ def test_function_tool_inconsistent_with_schema():
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
     agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
-    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+    with pytest.raises(TypeError, match=r".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
     result = function('three', 4)
@@ -1613,8 +1611,7 @@ def test_approval_required_with_user_prompt():
             )
         else:
             # Second call: respond to both tool result and user prompt
-            last_request = messages[-1]
-            assert isinstance(last_request, ModelRequest)
+            last_request = message(messages, ModelRequest, index=-1)
 
             # Verify we received both tool return and user prompt
             has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
@@ -1896,12 +1893,14 @@ async def test_deferred_tool_without_output_type():
 
 
 def test_output_type_deferred_tool_requests_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+    with pytest.raises(
+        UserError, match=re.escape('At least one output type must be provided other than `DeferredToolRequests`.')
+    ):
         Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
-    with pytest.raises(UserError, match='At least one output type must be provided.'):
+    with pytest.raises(UserError, match=re.escape('At least one output type must be provided.')):
         Agent(TestModel(), output_type=[])
 
 
@@ -2682,6 +2681,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2703,6 +2703,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2724,6 +2725,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=72, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2745,6 +2747,7 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=77, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3288,6 +3291,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3309,6 +3313,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3370,6 +3375,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3391,6 +3397,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3461,6 +3468,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3482,6 +3490,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3530,6 +3539,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3551,6 +3561,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3596,6 +3607,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3617,6 +3629,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4037,6 +4050,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4058,6 +4072,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4104,6 +4119,7 @@ def test_tool_ctx_agent_in_output_validator():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4238,10 +4254,7 @@ def test_include_return_schema_default_cleared():
     result = agent.run_sync('test')
     # return_schema should be cleared since include_return_schema defaults to False
     # (verified by the fact that the tool description doesn't contain "Return schema:")
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(result.all_messages(), UserPromptPart)
     assert 'Return schema' not in str(part.content)
 
 
@@ -4254,8 +4267,7 @@ def test_include_return_schema_via_capability():
 
     agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
     result = agent.run_sync('test')
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
+    request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
     tool_parts = [p for p in request.parts if hasattr(p, 'content')]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject

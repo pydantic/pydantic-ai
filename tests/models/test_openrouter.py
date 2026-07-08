@@ -32,7 +32,7 @@ from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsStr, message, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -120,6 +120,8 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
                 'cost': 0.00333825,
                 'upstream_inference_cost': None,
                 'is_byok': False,
+                'upstream_inference_prompt_cost': 0.00053325,
+                'upstream_inference_completions_cost': 0.002805,
                 'downstream_provider': 'xAI',
             }
         )
@@ -532,12 +534,19 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         )
     )
 
-    last_message = result.all_messages()[-1]
-
-    assert isinstance(last_message, ModelResponse)
-    assert last_message.provider_details is not None
-    for key in ['cost', 'upstream_inference_cost', 'is_byok']:
-        assert key in last_message.provider_details
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
+    assert last_message.provider_details == snapshot(
+        {
+            'finish_reason': 'completed',
+            'downstream_provider': 'OpenAI',
+            'cost': 0.00435825,
+            'upstream_inference_cost': None,
+            'upstream_inference_prompt_cost': 4.25e-06,
+            'upstream_inference_completions_cost': 0.004354,
+            'is_byok': False,
+            'timestamp': IsDatetime(),
+        }
+    )
 
 
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:

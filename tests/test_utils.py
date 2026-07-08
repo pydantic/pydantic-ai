@@ -1,16 +1,21 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import contextvars
 import functools
+import importlib
 import os
+import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
+from typing import Any
 
 import pytest
 
+import pydantic_ai._utils as utils_module
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
     UNSET,
@@ -52,6 +57,28 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
         assert groups == expected
+
+
+async def test_group_by_temporal_first_window_starts_on_first_item():
+    """The debounce window must start when the first item arrives, not when iteration begins.
+
+    Regression test for #5946. A slow first item — e.g. the latency before a model's first
+    streamed token — used to have its window measured from iteration start, so the window
+    elapsed before the item arrived and it was emitted in a group of its own. Here the first
+    item is delayed well past the window, yet must still group with a second item that arrives
+    within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
+    """
+    interval = 0.05
+
+    async def yield_groups() -> AsyncIterator[int]:
+        await asyncio.sleep(interval * 3)  # first item arrives long after iteration started
+        yield 1
+        await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
+        yield 2
+
+    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == [[1, 2]]
 
 
 def test_check_object_json_schema():
@@ -115,7 +142,7 @@ def test_check_object_json_schema():
     }
 
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
-    with pytest.raises(UserError, match='^Schema must be an object$'):
+    with pytest.raises(UserError, match=r'^Schema must be an object$'):
         check_object_json_schema(array_schema)
 
 
@@ -155,6 +182,61 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must drive our own coroutine's cleanup
+    (closing model streams and HTTP connections via its `async with`/`finally` blocks) and leave no
+    pending task, without cancelling other tasks on the caller-owned loop.
+
+    This is a unit test rather than a public-API/VCR test because it requires a real interrupt to
+    arrive mid-`run_until_complete` while the coroutine is suspended, which can't be triggered
+    reliably through the public API; we simulate the interrupt by patching the loop.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = utils_module.get_event_loop()
+
+    # An unrelated task on the (caller-owned) loop that must survive: the reporter's `all_tasks()`
+    # sledgehammer would cancel this, ours must not.
+    async def bystander() -> None:
+        await asyncio.Event().wait()
+
+    bystander_task = loop.create_task(bystander())
+    tasks_before = asyncio.all_tasks(loop)
+
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task (and the bystander) start and suspend, then simulate Ctrl-C reaching the
+            # caller of `run_until_complete`.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            utils_module.run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+    assert not bystander_task.cancelled()  # the unrelated task was left alone
+    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
+
+    bystander_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        loop.run_until_complete(bystander_task)
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
@@ -249,6 +331,37 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
                 assert result is main_thread
     finally:
         executor.shutdown(wait=True)
+
+
+async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    importlib.reload(utils_module)
+    try:
+        main_thread = threading.current_thread()
+
+        def check_thread() -> threading.Thread:
+            return threading.current_thread()
+
+        result = await utils_module.run_in_executor(check_thread)
+        assert result is not main_thread
+    finally:
+        importlib.reload(utils_module)
+
+
+async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'emscripten')
+    importlib.reload(utils_module)
+    try:
+        main_thread = threading.current_thread()
+
+        def check_thread() -> threading.Thread:
+            return threading.current_thread()
+
+        result = await utils_module.run_in_executor(check_thread)
+        assert result is main_thread
+    finally:
+        monkeypatch.setattr(sys, 'platform', 'linux')
+        importlib.reload(utils_module)
 
 
 def test_is_async_callable():
@@ -790,6 +903,7 @@ def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\r\n{"foo": "bar"}\r\n```') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{\n  "foo": "bar"\n}') == '{\n  "foo": "bar"\n}'
     assert (
         strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -112,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, message, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -528,6 +529,11 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'files': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/UploadedFile'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Files',
+                        },
                     },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
@@ -646,6 +652,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
+                        'anthropic:claude-sonnet-5',
                         'bedrock:amazon.titan-text-express-v1',
                         'bedrock:amazon.titan-text-lite-v1',
                         'bedrock:amazon.titan-tg1-large',
@@ -668,23 +675,57 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:cohere.command-r-plus-v1:0',
                         'bedrock:cohere.command-r-v1:0',
                         'bedrock:cohere.command-text-v14',
+                        'bedrock:deepseek.r1-v1:0',
+                        'bedrock:deepseek.v3.2',
                         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'bedrock:global.amazon.nova-2-lite-v1:0',
+                        'bedrock:global.anthropic.claude-fable-5',
                         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'bedrock:global.anthropic.claude-opus-4-6-v1',
+                        'bedrock:global.anthropic.claude-opus-4-7',
+                        'bedrock:global.anthropic.claude-opus-4-8',
+                        'bedrock:global.anthropic.claude-sonnet-5',
+                        'bedrock:google.gemma-3-12b-it',
+                        'bedrock:google.gemma-3-27b-it',
+                        'bedrock:google.gemma-3-4b-it',
                         'bedrock:meta.llama3-1-405b-instruct-v1:0',
                         'bedrock:meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:meta.llama3-1-8b-instruct-v1:0',
                         'bedrock:meta.llama3-70b-instruct-v1:0',
                         'bedrock:meta.llama3-8b-instruct-v1:0',
+                        'bedrock:minimax.minimax-m2',
+                        'bedrock:minimax.minimax-m2.1',
+                        'bedrock:minimax.minimax-m2.5',
+                        'bedrock:mistral.devstral-2-123b',
+                        'bedrock:mistral.magistral-small-2509',
+                        'bedrock:mistral.ministral-3-14b-instruct',
+                        'bedrock:mistral.ministral-3-3b-instruct',
+                        'bedrock:mistral.ministral-3-8b-instruct',
                         'bedrock:mistral.mistral-7b-instruct-v0:2',
                         'bedrock:mistral.mistral-large-2402-v1:0',
                         'bedrock:mistral.mistral-large-2407-v1:0',
+                        'bedrock:mistral.mistral-large-3-675b-instruct',
+                        'bedrock:mistral.mistral-small-2402-v1:0',
                         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+                        'bedrock:mistral.pixtral-large-2502-v1:0',
+                        'bedrock:moonshot.kimi-k2-thinking',
+                        'bedrock:moonshotai.kimi-k2.5',
+                        'bedrock:nvidia.nemotron-nano-12b-v2',
+                        'bedrock:nvidia.nemotron-nano-3-30b',
+                        'bedrock:nvidia.nemotron-nano-9b-v2',
+                        'bedrock:nvidia.nemotron-super-3-120b',
+                        'bedrock:qwen.qwen3-32b-v1:0',
+                        'bedrock:qwen.qwen3-coder-30b-a3b-v1:0',
+                        'bedrock:qwen.qwen3-coder-next',
+                        'bedrock:qwen.qwen3-next-80b-a3b',
+                        'bedrock:qwen.qwen3-vl-235b-a22b',
                         'bedrock:us.amazon.nova-2-lite-v1:0',
                         'bedrock:us.amazon.nova-lite-v1:0',
                         'bedrock:us.amazon.nova-micro-v1:0',
+                        'bedrock:us.amazon.nova-premier-v1:0',
                         'bedrock:us.amazon.nova-pro-v1:0',
                         'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
                         'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
@@ -693,11 +734,18 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
                         'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
                         'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+                        'bedrock:us.anthropic.claude-fable-5',
                         'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+                        'bedrock:us.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'bedrock:us.anthropic.claude-opus-4-6-v1',
+                        'bedrock:us.anthropic.claude-opus-4-7',
+                        'bedrock:us.anthropic.claude-opus-4-8',
                         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:us.anthropic.claude-sonnet-4-6',
+                        'bedrock:us.anthropic.claude-sonnet-5',
                         'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
                         'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
@@ -705,6 +753,14 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
                         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
                         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+                        'bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
+                        'bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
+                        'bedrock:us.mistral.pixtral-large-2502-v1:0',
+                        'bedrock:us.writer.palmyra-x4-v1:0',
+                        'bedrock:us.writer.palmyra-x5-v1:0',
+                        'bedrock:zai.glm-4.7',
+                        'bedrock:zai.glm-4.7-flash',
+                        'bedrock:zai.glm-5',
                         'cerebras:gpt-oss-120b',
                         'cerebras:llama3.1-8b',
                         'cerebras:qwen-3-235b-a22b-instruct-2507',
@@ -739,13 +795,62 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
-                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'gateway/anthropic:claude-sonnet-5',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+                        'gateway/bedrock:deepseek.r1-v1:0',
+                        'gateway/bedrock:deepseek.v3.2',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'gateway/bedrock:global.amazon.nova-2-lite-v1:0',
+                        'gateway/bedrock:global.anthropic.claude-fable-5',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
+                        'gateway/bedrock:global.anthropic.claude-opus-4-7',
+                        'gateway/bedrock:global.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:global.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:google.gemma-3-12b-it',
+                        'gateway/bedrock:google.gemma-3-27b-it',
+                        'gateway/bedrock:google.gemma-3-4b-it',
+                        'gateway/bedrock:minimax.minimax-m2',
+                        'gateway/bedrock:minimax.minimax-m2.1',
+                        'gateway/bedrock:minimax.minimax-m2.5',
+                        'gateway/bedrock:mistral.devstral-2-123b',
+                        'gateway/bedrock:mistral.magistral-small-2509',
+                        'gateway/bedrock:mistral.ministral-3-14b-instruct',
+                        'gateway/bedrock:mistral.ministral-3-3b-instruct',
+                        'gateway/bedrock:mistral.ministral-3-8b-instruct',
+                        'gateway/bedrock:mistral.mistral-large-3-675b-instruct',
+                        'gateway/bedrock:mistral.mistral-small-2402-v1:0',
+                        'gateway/bedrock:mistral.pixtral-large-2502-v1:0',
+                        'gateway/bedrock:moonshot.kimi-k2-thinking',
+                        'gateway/bedrock:moonshotai.kimi-k2.5',
+                        'gateway/bedrock:nvidia.nemotron-nano-12b-v2',
+                        'gateway/bedrock:nvidia.nemotron-nano-3-30b',
+                        'gateway/bedrock:nvidia.nemotron-nano-9b-v2',
+                        'gateway/bedrock:nvidia.nemotron-super-3-120b',
+                        'gateway/bedrock:qwen.qwen3-32b-v1:0',
+                        'gateway/bedrock:qwen.qwen3-coder-30b-a3b-v1:0',
+                        'gateway/bedrock:qwen.qwen3-coder-next',
+                        'gateway/bedrock:qwen.qwen3-next-80b-a3b',
+                        'gateway/bedrock:qwen.qwen3-vl-235b-a22b',
+                        'gateway/bedrock:us.amazon.nova-premier-v1:0',
+                        'gateway/bedrock:us.anthropic.claude-fable-5',
+                        'gateway/bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
+                        'gateway/bedrock:us.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'gateway/bedrock:us.anthropic.claude-opus-4-6-v1',
+                        'gateway/bedrock:us.anthropic.claude-opus-4-7',
+                        'gateway/bedrock:us.anthropic.claude-opus-4-8',
+                        'gateway/bedrock:us.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
+                        'gateway/bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
+                        'gateway/bedrock:us.mistral.pixtral-large-2502-v1:0',
+                        'gateway/bedrock:us.writer.palmyra-x4-v1:0',
+                        'gateway/bedrock:us.writer.palmyra-x5-v1:0',
+                        'gateway/bedrock:zai.glm-4.7',
+                        'gateway/bedrock:zai.glm-4.7-flash',
+                        'gateway/bedrock:zai.glm-5',
                         'gateway/google-cloud:gemini-2.5-flash',
                         'gateway/google-cloud:gemini-2.5-flash-image',
                         'gateway/google-cloud:gemini-2.5-flash-lite',
@@ -872,7 +977,7 @@ def test_model_json_schema_with_capabilities():
                         'groq:openai/gpt-oss-safeguard-20b',
                         'groq:playai-tts',
                         'groq:playai-tts-arabic',
-                        'groq:qwen/qwen-3-32b',
+                        'groq:qwen/qwen3-32b',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -911,6 +1016,10 @@ def test_model_json_schema_with_capabilities():
                         'mistral:mistral-moderation-latest',
                         'mistral:mistral-small-latest',
                         'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-k2.5',
+                        'moonshotai:kimi-k2.6',
+                        'moonshotai:kimi-k2.7-code',
+                        'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -919,6 +1028,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:moonshot-v1-32k-vision-preview',
                         'moonshotai:moonshot-v1-8k',
                         'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-auto',
                         'openai-chat:computer-use-preview',
                         'openai-chat:computer-use-preview-2025-03-11',
                         'openai-chat:gpt-3.5-turbo',
@@ -1107,6 +1217,26 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.3',
                         'xai:grok-4.3-latest',
                         'xai:grok-code-fast-1',
+                        'zai:autoglm-phone-multilingual',
+                        'zai:glm-4-32b-0414-128k',
+                        'zai:glm-4.5',
+                        'zai:glm-4.5-air',
+                        'zai:glm-4.5-airx',
+                        'zai:glm-4.5-flash',
+                        'zai:glm-4.5-x',
+                        'zai:glm-4.5v',
+                        'zai:glm-4.6',
+                        'zai:glm-4.6v',
+                        'zai:glm-4.6v-flash',
+                        'zai:glm-4.6v-flashx',
+                        'zai:glm-4.7',
+                        'zai:glm-4.7-flash',
+                        'zai:glm-4.7-flashx',
+                        'zai:glm-5',
+                        'zai:glm-5-turbo',
+                        'zai:glm-5.1',
+                        'zai:glm-5.2',
+                        'zai:glm-5v-turbo',
                     ],
                     'type': 'string',
                 },
@@ -1216,6 +1346,49 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'ToolSearchTool',
+                    'type': 'object',
+                },
+                'UploadedFile': {
+                    'properties': {
+                        'file_id': {'title': 'File Id', 'type': 'string'},
+                        'provider_name': {
+                            'enum': [
+                                'anthropic',
+                                'openai',
+                                'google',
+                                'google-cloud',
+                                'google-gla',
+                                'google-vertex',
+                                'bedrock',
+                                'xai',
+                            ],
+                            'title': 'Provider Name',
+                            'type': 'string',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {
+                            'const': 'uploaded-file',
+                            'default': 'uploaded-file',
+                            'title': 'Kind',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['file_id', 'provider_name'],
+                    'title': 'UploadedFile',
                     'type': 'object',
                 },
                 'WebFetchTool': {
@@ -2043,6 +2216,22 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_from_file_empty_yaml_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got NoneType'):
+        AgentSpec.from_file(spec_path)
+
+
+def test_from_file_json_array_raises_user_error(tmp_path: str):
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('[{"model": "test"}]', encoding='utf-8')
+
+    with pytest.raises(UserError, match='Agent spec must parse to an object, got list'):
+        AgentSpec.from_file(spec_path)
+
+
 def test_agent_from_file_yaml(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
@@ -2096,6 +2285,50 @@ def test_to_file_json(tmp_path: str):
 
     # Schema file should be generated
     schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_yaml_with_absolute_schema_path(tmp_path: Path):
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    content = spec_path.read_text(encoding='utf-8')
+    assert content.startswith('# yaml-language-server: $schema=agent_schema.json')
+    assert schema_path.exists()
+
+
+def test_to_file_json_with_external_absolute_schema_path(tmp_path: Path):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_dir = tmp_path / 'specs'
+    schema_dir = tmp_path / 'schemas'
+    spec_dir.mkdir()
+    schema_dir.mkdir()
+    spec_path = spec_dir / 'agent.json'
+    schema_path = schema_dir / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == str(schema_path)
     assert schema_path.exists()
 
 
@@ -2807,6 +3040,123 @@ async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     assert 'reports: Report tools.' in final_instructions
 
 
+async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
+    """Schema-violating dict args from the model must produce a retry, not crash the run.
+
+    Providers like Anthropic (non-streaming) and Google deliver tool args as parsed
+    dicts. A dict that doesn't match `LoadCapabilityArgs` fails the typed-subclass
+    validation when the response is narrowed — promotion must be best-effort (leave
+    the part plain) so the args validator at execution time can send the model a
+    retry as designed. Reproduces a live crash with `claude-haiku-4-5` coerced into
+    sending `{"name": ...}` instead of `{"id": ...}`.
+    """
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'name': 'refunds'})])
+        if calls == 2:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[object](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run('hi')
+    assert result.output == 'done'
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        args={'name': 'refunds'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {'type': 'missing', 'loc': ('id',), 'msg': 'Field required', 'input': {'name': 'refunds'}}
+                        ],
+                        tool_name='load_capability',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=81, output_tokens=10),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={'instructions': 'Refund instructions.'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=86, output_tokens=11),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'args,expected_id',
     [
@@ -3053,14 +3403,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {
-                                    'name': 'lookup_refund_policy',
-                                    'description': 'Look up the refund policy for an order.',
-                                }
-                            ]
-                        },
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
                         tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
@@ -3075,7 +3418,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=88, output_tokens=16),
+                usage=RequestUsage(input_tokens=79, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3102,7 +3445,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=94, output_tokens=23),
+                usage=RequestUsage(input_tokens=85, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3306,8 +3649,8 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
 
     def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
         call_ids: list[str] = []
-        for message in messages:
-            for part in message.parts:
+        for msg in messages:
+            for part in msg.parts:
                 if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
                     call_ids.append(part.tool_call_id)
         return call_ids
@@ -3965,7 +4308,7 @@ def test_infer_fmt_unknown_extension():
     """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
     from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
 
-    with pytest.raises(ValueError, match="Could not infer format for filename 'agent.txt'"):
+    with pytest.raises(ValueError, match=re.escape("Could not infer format for filename 'agent.txt'")):
         _infer_fmt(Path('agent.txt'), None)
 
 
@@ -8084,6 +8427,7 @@ also from spec\
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -10883,8 +11227,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         ]
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
-            first_request = messages[0]
-            assert isinstance(first_request, ModelRequest)
+            first_request = message(messages, ModelRequest)
             first_request_instructions.append(first_request.instructions)
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
@@ -19313,11 +19656,11 @@ def test_deferred_tool_requests_build_results_validates_ids():
     )
 
     # Mis-routed ID: tool-result provided for something in the approvals list.
-    with pytest.raises(ValueError, match='calls.*not in.*DeferredToolRequests.calls'):
+    with pytest.raises(ValueError, match=r'calls.*not in.*DeferredToolRequests.calls'):
         requests.build_results(calls={'approval_1': 'oops'})
 
     # Unknown ID entirely.
-    with pytest.raises(ValueError, match='approvals.*not in.*DeferredToolRequests.approvals'):
+    with pytest.raises(ValueError, match=r'approvals.*not in.*DeferredToolRequests.approvals'):
         requests.build_results(approvals={'unknown_id': True})
 
     # Happy path still works.

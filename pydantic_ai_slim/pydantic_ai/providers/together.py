@@ -55,9 +55,10 @@ class TogetherProvider(Provider[AsyncOpenAI]):
         profile = None
 
         model_name = model_name.lower()
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            profile = provider_to_profile[provider](model_name)
+        if '/' in model_name:
+            provider, model_name = model_name.split('/', 1)
+            if provider in provider_to_profile:
+                profile = provider_to_profile[provider](model_name)
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly

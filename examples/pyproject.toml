@@ -63,6 +63,10 @@ dependencies = [
     "duckdb>=1.4.2",
     "datasets>=4.0.0",
     "pandas>=2.3.3",
+    "twelvelabs>=1.2.8",
+    # On Python 3.14, the locked numpy 2.2.6 has no cp314 wheel and would be
+    # source-built in CI. numpy 2.3.2+ ships cp314 wheels, so require it there.
+    "numpy>=2.3.2 ; python_version >= '3.14'",
 ]
 
 [tool.hatch.build.targets.wheel]

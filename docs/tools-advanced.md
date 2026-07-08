@@ -747,7 +747,7 @@ Available strategy values:
 
 The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm and the current provider — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
 
-To force the local `keywords` algorithm on a provider that natively supports tool search, override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools] to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
+To force the local `keywords` algorithm on a provider that natively supports tool search, override [`ModelProfile.supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools] to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
 
 !!! note "Cross-provider history replay"
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:

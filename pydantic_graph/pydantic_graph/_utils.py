@@ -4,9 +4,9 @@ import asyncio
 import inspect
 import types
 import warnings
-from collections.abc import Generator
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, TypeAlias, get_args, get_origin
+from collections.abc import Awaitable, Generator
+from contextlib import contextmanager, suppress
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
 from typing_inspection import typing_objects
@@ -48,13 +48,37 @@ except ImportError:  # pragma: no cover
         return None
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+_T = TypeVar('_T')
+
+
+def run_until_complete(coro: Awaitable[_T]) -> _T:
+    """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
+
+    If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
+    `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
+    `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
+    *our own* task and drive its cleanup to completion before re-raising, without touching any
+    other tasks on the (caller-owned) loop.
+    """
+    loop = get_event_loop()
+    task = asyncio.ensure_future(coro, loop=loop)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                loop.run_until_complete(task)
+        raise
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -89,6 +113,12 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
 
     If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
     to get the correct namespace.
+
+    Args:
+        frame: The frame to start searching from, or `None`.
+
+    Returns:
+        The local namespace dict of the defining frame, or `None` if the frame was `None`.
     """
     if frame is not None:  # pragma: no branch
         if back := frame.f_back:  # pragma: no branch

@@ -21,6 +21,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[regression-detector] "
+    labels: [regression]
     close-older-key: "[regression-detector]"
     close-older-issues: false
     expires: 7d
@@ -31,6 +32,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/adversarial-review.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md

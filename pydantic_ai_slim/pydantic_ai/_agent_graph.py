@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import time
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -16,7 +17,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
@@ -92,8 +93,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:
@@ -158,6 +159,15 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
+    mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
+        default_factory=dict[str, dict[str, ToolDefinition]]
+    )
+    """Per-run cache of durable-execution MCP toolset tool definitions, keyed by toolset `id`.
+
+    Shared by reference into every `RunContext` this run (see `build_run_context`), where it is
+    exposed as the private `_mcp_tool_defs_cache` field. Recreated per run and reconstructed
+    identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
+    `get_tools` scheduling replay-deterministic."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -204,6 +214,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
     resumed_request: _messages.ModelRequest | None
+    resumed_request_index: int | None
 
     model: models.Model
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
@@ -634,7 +645,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -663,6 +677,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Stamp the request-issue instant so the instrumentation capability can record
+            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+            # the first-chunk instant; the delta is the client-side time to first token.
+            request_start = time.perf_counter()
             with set_current_run_context(run_context):
                 async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
@@ -672,7 +690,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
-                    await stream_done.wait()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
             response = sr.get()
             _handler_response = response
             return response
@@ -819,7 +845,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
@@ -922,6 +951,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        messages_before_processing = len(request_context.messages)
         self.last_request_context = request_context
         request_context = await ctx.deps.root_capability.before_model_request(
             run_context,
@@ -943,12 +973,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
+            # No separate user-prompt request this run: the trailing request that arrived via
+            # `message_history` *is* the request being sent, so it's prior context, not new. Track it
+            # two ways so `_first_new_message_index` can exclude it however capabilities/processors
+            # mutate the list: by object (identity/value, survives reordering and removal) and by
+            # position (survives an in-place rebuild that changes its fields). It's the last message
+            # here, before the model output is appended, so its index is `len(messages) - 1`.
             ctx.deps.resumed_request = self.request
+            ctx.deps.resumed_request_index = len(messages) - 1
+        elif ctx.deps.resumed_request_index is not None:
+            # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
+            # resumed request, shifting it. Translate the pinned index by the net count change; drop
+            # it (falling back to object/value matching, then run_id) if processing removed the
+            # resumed request itself. The object reference is left untouched — it still points at the
+            # step-1 request, so identity/value matching keeps working across steps.
+            shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
+            ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
-            messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1160,8 +1208,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                    # both signal that the model has no text output to give. Some models emit only thinking
+                    # after completing the task via a tool call, and forcing a retry just makes them produce
+                    # unnecessary follow-up text.
+                    if output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _output.run_none_process_hooks(
@@ -1194,17 +1245,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 # If the recovered text was invalid, fall through.
                                 pass
 
-                    if is_empty:
-                        # Go back to the model request node with an empty request, which means we'll
-                        # essentially resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
-                        return
-
-                    # For thinking-only responses without recoverable text, fall through to the
-                    # normal retry prompt below.
+                    # For empty or thinking-only responses without recoverable text, fall through to
+                    # the normal retry prompt below. That prompt is built from the output schema and
+                    # available tools, so it tells the model which kinds of output are actually valid
+                    # (text, tool call, and/or image) rather than assuming text is always an option.
 
                 text = ''
                 compaction_text = ''
@@ -1466,12 +1510,14 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
-    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
-    # silently break in-step capability loads / tool reveals.
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
+    # identity of the mutable members passed by reference above — `loaded_capability_ids`,
+    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
@@ -1674,29 +1720,51 @@ def _first_new_message_index(
     run_id: str,
     *,
     resumed_request: _messages.ModelRequest | None,
+    resumed_request_index: int | None,
 ) -> int:
-    """Return the first index that should be included in `new_messages()`."""
+    """Return the first index that should be included in `new_messages()`.
+
+    When resuming from `message_history` without a new user prompt, the trailing
+    `ModelRequest` is prior context even though the framework stamps it with the current
+    `run_id` for adapter bookkeeping, so it must be excluded. A capability or history processor
+    can mutate the message list before this runs, so the resumed request is located by trying
+    progressively looser fallbacks, each robust to a different kind of mutation:
+
+    1. Object identity (`is`) — survives reordering, insertion, and removal of *other* messages.
+    2. Value match (`_is_same_request`) — survives loss of identity (e.g. a deep-copying
+       processor) as long as the request's fields are unchanged.
+    3. Position (`resumed_request_index`, pinned while preparing the request) — survives an
+       in-place rebuild that changes the request's fields (e.g. system-prompt reinjection),
+       which defeats both matches above.
+
+    Falling back to the first message carrying the current `run_id` is the last resort. Note the
+    layers cover different *single* mutations: a rebuild that also shifts the request's position
+    by adding/removing messages after it on the same step defeats all three, and detection falls
+    back to `run_id` (which includes the resumed request); this is rarer than any layer's own
+    blind spot and no built-in capability triggers it.
+    """
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                # Requests passed in via `message_history` are prior context,
-                # even if they are stamped with the current `run_id` for adapter
-                # bookkeeping.
                 return index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
                 return index + 1
+
+    if resumed_request_index is not None and 0 <= resumed_request_index < len(messages):
+        return resumed_request_index + 1
+
     return _first_run_id_index(messages, run_id)
 
 
 def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
     if not isinstance(message, _messages.ModelRequest):
         return False
-    if message is request:
-        return True  # pragma: no cover
-    # Intentionally excludes run_id: the resumed request may not have
-    # run_id set yet when this comparison is performed.
+    if message is request:  # pragma: no cover
+        return True
+    # Intentionally excludes `run_id`: the resumed request may not have `run_id` set yet when
+    # this comparison is performed.
     return (
         message.parts == request.parts
         and message.timestamp == request.timestamp
@@ -1721,6 +1789,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
+                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
+                # nor try to preserve them across the merge. These fields are only bookkeeping for
+                # callers; they're never part of what gets sent to the model. Refusing to merge on a
+                # mismatch would leave two consecutive requests where the model expects one, breaking
+                # providers (and provider-side conversation state) that require a single request per
+                # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(

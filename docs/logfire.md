@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5.2', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5.2', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -80,6 +80,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 1. [`logfire.configure()`][logfire.configure] configures the SDK, by default it will find the write token from the `.logfire` directory, but you can also pass a token directly.
 2. [`logfire.instrument_pydantic_ai()`][logfire.Logfire.instrument_pydantic_ai] enables instrumentation of Pydantic AI.
 3. Since we've enabled instrumentation, a trace will be generated for each run, with spans emitted for models calls and tool function execution
+4. Passing `name` is optional but recommended: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict). This matters most when several agents run in one app and you need to tell their traces apart.
 
 _(This example is complete, it can be run "as is")_
 
@@ -247,6 +248,21 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
 
 ## Advanced usage
+
+### Emitted metrics
+
+In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `gen_ai.client.token.usage` | `{token}` | Number of tokens used per model or embedding request, split by the `gen_ai.token.type` attribute (`input` or `output`). Defined by the GenAI semantic conventions. |
+| `operation.cost` | `{USD}` | Estimated monetary cost of each model or embedding request, recorded when a price is known for the model. |
+| `gen_ai.client.operation.time_to_first_chunk` | `s` | Time from issuing a streaming request to the first chunk being surfaced to the consumer. Only recorded for streaming requests; the same value is also set as an attribute of the same name on the model request span. |
+
+Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`), `gen_ai.operation.name`, `gen_ai.request.model`, and `gen_ai.response.model` attributes, so histograms can be broken down by provider and model.
+
+!!! note "Stability and histogram buckets"
+    `gen_ai.client.operation.time_to_first_chunk` is currently at **Development** stability in the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk), so its name or shape may change before stabilization. Both `gen_ai.client.token.usage` and `gen_ai.client.operation.time_to_first_chunk` advise the explicit bucket boundaries specified by the conventions. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
 
 ### Aggregated usage attribute names
 

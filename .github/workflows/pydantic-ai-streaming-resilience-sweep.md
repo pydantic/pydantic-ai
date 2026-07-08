@@ -2,7 +2,7 @@
 emoji: "🌊"
 name: "Pydantic AI Streaming Resilience Sweep"
 description: "Audit the streaming state machine for ordering/lifecycle bugs and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: weekly on thursday
+on: weekly on saturday
 permissions:
   contents: read
   issues: read
@@ -21,6 +21,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[streaming-resilience-sweep] "
+    labels: [streaming]
     close-older-key: "[streaming-resilience-sweep]"
     close-older-issues: false
     expires: 7d
@@ -31,6 +32,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/adversarial-review.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md
