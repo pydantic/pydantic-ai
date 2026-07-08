@@ -129,7 +129,7 @@ spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:pai_cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]

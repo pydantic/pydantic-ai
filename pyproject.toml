@@ -85,7 +85,7 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:pai_cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
 pydantic-ai = { workspace = true }
