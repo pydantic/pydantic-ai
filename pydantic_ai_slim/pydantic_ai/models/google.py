@@ -1258,7 +1258,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        stream_provider_details = self.provider_details
+        stream_provider_details: dict[str, Any] | None = self.provider_details
         if self._provider_timestamp is not None:
             stream_provider_details = {'timestamp': self._provider_timestamp}
             self.provider_details = stream_provider_details
