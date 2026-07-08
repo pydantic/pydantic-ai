@@ -21,6 +21,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[docs-drift] "
+    labels: [docs-drift]
     close-older-key: "[docs-drift]"
     close-older-issues: false
     expires: 7d

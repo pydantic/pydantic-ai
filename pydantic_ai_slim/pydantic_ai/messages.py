@@ -144,7 +144,23 @@ ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 - `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
 """
 
-ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+
+def _serialize_provider_details_delta(
+    value: dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    # A callable `provider_details` is a transient merge callback used while chaining deltas; it cannot be
+    # JSON-serialized, so it is emitted as `null`. Once the delta is applied to a `ThinkingPart` the callback is
+    # resolved to a concrete dict, which serializes normally. This is scoped to JSON mode (`when_used='json'`) so
+    # Python-mode `model_dump()` keeps the callback intact for in-memory round-trips.
+    if callable(value):
+        return None
+    return value
+
+
+ProviderDetailsDelta: TypeAlias = Annotated[
+    dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None,
+    pydantic.PlainSerializer(_serialize_provider_details_delta, return_type=dict[str, Any] | None, when_used='json'),
+]
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
@@ -2954,7 +2970,9 @@ class ThinkingPartDelta:
     """Additional data returned by the provider that can't be mapped to standard fields.
 
     Can be a dict to merge with existing details, or a callable that takes
-    the existing details and returns updated details.
+    the existing details and returns updated details. A callable is a transient
+    merge callback and does not survive JSON serialization (it is emitted as
+    `null`); it is resolved to a concrete dict once the delta is applied to a `ThinkingPart`.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
 

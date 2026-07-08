@@ -31,6 +31,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/adversarial-review.md
   - shared/checkout.md
   - shared/engine-minimax.md
   - shared/pre-steps.md
