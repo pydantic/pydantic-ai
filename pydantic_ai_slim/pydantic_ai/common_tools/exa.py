@@ -226,14 +226,19 @@ class ExaFindSimilarTool:
         """
         # `find_similar` still works but `exa-py` emits its own per-call `DeprecationWarning`; suppress it
         # since callers are already warned once when the tool is created (via `PydanticAIDeprecationWarning`).
+        # `find_similar` is `@deprecated`, so the warning fires synchronously at call time rather than during
+        # the await. `catch_warnings` mutates process-global state and is not async-safe (see CPython #91505),
+        # so we scope it to just the call — matching only exa-py's message — and await the coroutine outside
+        # the block, where a suspension point could otherwise swallow warnings from concurrent tasks.
         with warnings.catch_warnings():
-            warnings.simplefilter('ignore', DeprecationWarning)
-            response = await self.client.find_similar(  # pyright: ignore[reportDeprecated]
+            warnings.filterwarnings('ignore', message='find_similar', category=DeprecationWarning)
+            coro = self.client.find_similar(  # pyright: ignore[reportDeprecated]
                 url,
                 num_results=self.num_results,
                 exclude_source_domain=exclude_source_domain,
                 contents={'text': True},
             )
+        response = await coro
 
         return [
             ExaSearchResult(
@@ -527,7 +532,7 @@ class ExaToolset(FunctionToolset):
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
         include_search: bool = True,
-        include_find_similar: bool | None = None,
+        include_find_similar: bool = True,
         include_get_contents: bool = True,
         include_answer: bool = True,
         id: str | None = None,
@@ -548,9 +553,8 @@ class ExaToolset(FunctionToolset):
             include_domains: Domains to restrict all search results to. Defaults to None (no restriction).
             exclude_domains: Domains to exclude all search results from. Defaults to None (no exclusion).
             include_search: Whether to include the search tool. Defaults to True.
-            include_find_similar: Whether to include the deprecated find_similar tool. It is included
-                by default for backward compatibility, but requesting it explicitly with `True` emits a
-                deprecation warning; pass `False` to exclude it.
+            include_find_similar: Whether to include the deprecated find_similar tool. Included by
+                default (emitting a `PydanticAIDeprecationWarning`); pass `False` to exclude it.
             include_get_contents: Whether to include the get_contents tool. Defaults to True.
             include_answer: Whether to include the answer tool. Defaults to True.
             id: Optional ID for the toolset, used for durable execution environments.
@@ -571,12 +575,8 @@ class ExaToolset(FunctionToolset):
                 )
             )
 
-        if include_find_similar or include_find_similar is None:
-            with warnings.catch_warnings():
-                if include_find_similar is None:
-                    # Included by default for backward compatibility; only an explicit opt-in warns.
-                    warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-                tools.append(exa_find_similar_tool(client=client, num_results=num_results))
+        if include_find_similar:
+            tools.append(exa_find_similar_tool(client=client, num_results=num_results))
 
         if include_get_contents:
             tools.append(exa_get_contents_tool(client=client))

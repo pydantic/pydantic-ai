@@ -205,21 +205,11 @@ def test_find_similar_tool_is_deprecated(exa_api_key: str):
     assert tool.name == 'exa_find_similar'
 
 
-def test_toolset_includes_find_similar_by_default_without_warning(exa_api_key: str):
-    """The default toolset still includes find_similar for backward compatibility, without warning.
-
-    Warnings are errors in this test suite, so constructing the toolset without a
-    `PydanticAIDeprecationWarning` being raised is itself the assertion.
-    """
-    toolset = ExaToolset(exa_api_key)
-    assert set(toolset.tools) == snapshot({'exa_search', 'exa_find_similar', 'exa_get_contents', 'exa_answer'})
-
-
-def test_toolset_warns_when_explicitly_including_find_similar(exa_api_key: str):
-    """Explicitly opting into the deprecated find_similar tool emits a deprecation warning."""
+def test_toolset_includes_find_similar_by_default(exa_api_key: str):
+    """The default toolset includes find_similar for backward compatibility, emitting a deprecation warning."""
     with pytest.warns(PydanticAIDeprecationWarning, match='find_similar'):
-        toolset = ExaToolset(exa_api_key, include_find_similar=True)
-    assert 'exa_find_similar' in toolset.tools
+        toolset = ExaToolset(exa_api_key)
+    assert set(toolset.tools) == snapshot({'exa_search', 'exa_find_similar', 'exa_get_contents', 'exa_answer'})
 
 
 @pytest.mark.parametrize(
