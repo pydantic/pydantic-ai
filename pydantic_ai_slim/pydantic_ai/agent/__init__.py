@@ -2419,12 +2419,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         model_: models.Model
         if some_model := self._override_model.get():
-            # we don't want `override()` to cover up errors from the model not being defined, hence this check
-            if model is None and self.model is None:
-                raise exceptions.UserError(
-                    '`model` must either be set on the agent or included when calling it. '
-                    '(Even when `override(model=...)` is customizing the model that will actually be called)'
-                )
             model_ = some_model.value
         elif model is not None:
             model_ = models.infer_model(model)

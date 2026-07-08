@@ -597,6 +597,8 @@ KnownModelName = TypeAliasType(
         'xai:grok-4.20-reasoning-latest',
         'xai:grok-4.3',
         'xai:grok-4.3-latest',
+        'xai:grok-4.5',
+        'xai:grok-4.5-latest',
         'xai:grok-code-fast-1',
         'zai:autoglm-phone-multilingual',
         'zai:glm-4-32b-0414-128k',
