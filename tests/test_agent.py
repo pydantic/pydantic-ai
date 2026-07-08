@@ -10708,6 +10708,148 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     )
 
 
+def test_agent_rejects_conflicting_agent_level_native_tool_ids():
+    """Two agent-level native tools sharing an id but with conflicting definitions fail at construction.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        Agent(
+            model=TestModel(),
+            capabilities=[
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+            ],
+        )
+
+
+def test_agent_allows_identical_agent_level_native_tools():
+    """Identical duplicates within a layer are allowed and collapsed by the model-layer dedup.
+
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
+    """
+    model = TestModel()
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api')),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api')),
+        ],
+    )
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello')
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [MCPServerTool(id='api', url='https://mcp.example.com/api')]
+    )
+
+
+def test_agent_rejects_conflicting_run_level_native_tool_ids():
+    """Two run-level native tools sharing an id but with conflicting definitions fail at run time.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync(
+            'Hello',
+            capabilities=[
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+            ],
+        )
+
+
+def test_agent_rejects_conflicting_override_native_tool_ids():
+    """Two `override(native_tools=...)` tools sharing an id but with conflicting definitions fail.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    with (
+        agent.override(
+            native_tools=[
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'),
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'),
+            ]
+        ),
+        pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"),
+    ):
+        agent.run_sync('Hello')
+
+
+def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
+    """Native tools contributed by `for_run()` are validated within the run-capabilities layer.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
+
+    def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+
+
+def test_agent_rejects_conflicting_agent_level_dynamic_capability_native_tool_ids():
+    """Conflicting native tools contributed by agent-level capability functions only materialize
+    in `for_run`, so they escape the construction-time check but are caught when the resolved
+    base layer is validated at run time.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+
+    def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
+
+    def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
+
+    agent = Agent(model=TestModel(), capabilities=[cap_a, cap_b])
+
+    with pytest.raises(
+        UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions in agent capabilities"
+    ):
+        agent.run_sync('Hello')
+
+
+def test_agent_rejects_conflicting_override_spec_native_tool_ids():
+    """Native tools from `override(spec=...)` capabilities are validated as the base layer.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+    spec = {
+        'capabilities': [
+            {
+                'NativeTool': {
+                    'tool': {'kind': 'mcp_server', 'id': 'api', 'url': 'https://mcp.example.com/tenant-a/api'}
+                }
+            },
+            {
+                'NativeTool': {
+                    'tool': {'kind': 'mcp_server', 'id': 'api', 'url': 'https://mcp.example.com/tenant-b/api'}
+                }
+            },
+        ]
+    }
+
+    with (
+        agent.override(spec=spec),
+        pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"),
+    ):
+        agent.run_sync('Hello')
+
+
 @pytest.mark.parametrize('instrument', [False, True])
 def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrument: bool):
     """Native tools that only materialize in `for_run` (here from a capability function) are
