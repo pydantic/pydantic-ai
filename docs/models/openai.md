@@ -343,6 +343,23 @@ agent = Agent(model)
 ...
 ```
 
+For example, TokenLab exposes an OpenAI-compatible `/v1` endpoint:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'claude-sonnet-5',
+    provider=OpenAIProvider(
+        base_url='https://api.tokenlab.sh/v1', api_key='your-tokenlab-api-key'
+    ),
+)
+agent = Agent(model)
+...
+```
+
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
 When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
 
