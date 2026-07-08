@@ -488,6 +488,9 @@ Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception
 
 Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
 
+!!! note
+    The agent-wide default and its per-run override apply to function tools and output tools. MCP tools registered through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
+
 ### Tool Timeout
 
 You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
