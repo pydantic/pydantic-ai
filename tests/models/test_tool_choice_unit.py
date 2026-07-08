@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
@@ -364,7 +364,7 @@ async def test_unsupported_profile_with_forced_tool_choice_raises(
         m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-    with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
+    with pytest.raises(UserError, match=r'tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
 
 
@@ -617,6 +617,17 @@ NATIVE_TOOL_CONFIG_CASES = [
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
         expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
     ),
+    dict(
+        id='code-execution-gemini-3-sets-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(
+            native_tools=[CodeExecutionTool()], function_tools=[make_tool('get_weather')]
+        ),
+        expected_tool_config={
+            'include_server_side_tool_invocations': True,
+            'function_calling_config': {'mode': 'AUTO'},
+        },
+    ),
 ]
 
 
@@ -716,7 +727,7 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
     m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
     settings: AnthropicModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='Anthropic does not support .* for this model'):
+    with pytest.raises(UserError, match=r'Anthropic does not support .* for this model'):
         m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
 

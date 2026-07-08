@@ -140,6 +140,10 @@ It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mod
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`parallel_execution_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
 
+### Toolsets at Runtime
+
+Additional toolsets can be passed per run via [`DBOSAgent.run(toolsets=...)`][pydantic_ai.durable_exec.dbos.DBOSAgent.run]. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.
+
 
 ## Step Configuration
 

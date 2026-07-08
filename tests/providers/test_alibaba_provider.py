@@ -4,7 +4,6 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, DocumentUrl
-from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
@@ -68,18 +67,18 @@ def test_qwen_omni_profile_audio_uri():
     provider = AlibabaProvider(api_key='key')
     # Omni model -> expect 'uri' encoding
     profile = provider.model_profile('qwen-omni-turbo')
-    assert isinstance(profile, OpenAIModelProfile)
-    assert profile.openai_chat_audio_input_encoding == 'uri'
-    # The document-input flag must survive the omni branch's `.update()` merge.
-    assert profile.openai_chat_supports_document_input is False
+    assert isinstance(profile, dict)
+    assert profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri'
+    # The document-input flag must survive the omni branch's merge_profile call.
+    assert profile.get('openai_chat_supports_document_input') is False
 
 
 def test_qwen_non_omni_profile_default():
     provider = AlibabaProvider(api_key='key')
     # Non-omni model -> expect default (base64)
     profile = provider.model_profile('qwen-max')
-    assert isinstance(profile, OpenAIModelProfile)
-    assert profile.openai_chat_audio_input_encoding == 'base64'
+    assert isinstance(profile, dict)
+    assert profile.get('openai_chat_audio_input_encoding', 'base64') == 'base64'
 
 
 def test_alibaba_provider_with_openai_client():

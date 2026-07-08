@@ -66,7 +66,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         raise ValueError('No WorkflowRunner provided to the Pydantic AI plugin.')  # pragma: no cover
 
     if not isinstance(runner, SandboxedWorkflowRunner):
-        return runner  # pragma: no cover
+        return runner
 
     return replace(
         runner,
@@ -109,6 +109,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
+            # `response.cost()` lazily imports `genai_prices` (and its `httpx2` dependency) on first call.
+            # When cost is calculated inside a workflow, the sandbox re-imports that chain and `httpx2._models`
+            # subclasses `urllib.request.Request`, which is restricted unless `genai_prices`/`httpx2` are passed
+            # through alongside the rest of the HTTP stack.
+            'genai_prices',
+            'httpx2',
         ),
     )
 
@@ -116,7 +122,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 class PydanticAIPlugin(SimplePlugin):
     """Temporal client and worker plugin for Pydantic AI."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='PydanticAIPlugin',
             data_converter=_data_converter,

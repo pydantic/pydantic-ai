@@ -36,10 +36,11 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -166,7 +167,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncInferenceClient:
@@ -285,7 +286,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         items: list[ModelResponsePart] = []
 
         if content:
-            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
+            items.extend(
+                split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
+            )
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -392,7 +395,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.thinking_tags
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
@@ -454,17 +457,20 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     async def _map_user_message(
         self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # type: ignore
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                file_content.extend(tool_file_content)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
                     {
                         'role': 'tool',
                         'tool_call_id': _guard_tool_call_id(t=part),
-                        'content': part.model_response_str(),
+                        'content': tool_text,
                     }
                 )
             elif isinstance(part, RetryPromptPart):
@@ -482,6 +488,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> ChatCompletionInputMessage:
@@ -565,8 +573,8 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
-                        thinking_tags=self._model_profile.thinking_tags,
-                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                        thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                        ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
                     ):
                         yield event
 

@@ -9,13 +9,50 @@ on:
 permissions: {}
 
 jobs:
+  ci-duration-collect:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Collect CI duration telemetry
+        continue-on-error: true
+        run: uv run --no-project --with certifi --with logfire python .github/scripts/ci_duration.py collect --output ci-duration-record.json
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          LOGFIRE_WRITE_TOKEN: ${{ secrets.LOGFIRE_WRITE_TOKEN }}
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
+          OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
+
+      - name: Store CI duration record
+        if: hashFiles('ci-duration-record.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-duration-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ci-duration-record.json
+          retention-days: 7
+
   smokeshow:
     runs-on: ubuntu-latest
     permissions:
       statuses: write
 
     steps:
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: "3.12"
 
@@ -52,7 +89,7 @@ jobs:
         env:
           GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -60,7 +97,7 @@ jobs:
       - run: npm install
         working-directory: docs-site
 
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: "3.12"
           enable-cache: true

@@ -7,12 +7,18 @@ from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
-from typing_extensions import deprecated, overload
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
+
+_FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
+"""`details` keys whose names collide with the first-class `gen_ai.usage.{input,output}_tokens`
+attributes. They must never be emitted under `gen_ai.usage.details.*` too: doing so reports the same
+conceptual quantity under two attributes that consumers like Langfuse then sum, double-counting tokens
+and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
+billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -59,16 +65,6 @@ class UsageBase:
         return new
 
     @property
-    @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
-    def request_tokens(self) -> int:
-        return self.input_tokens
-
-    @property
-    @deprecated('`response_tokens` is deprecated, use `output_tokens` instead')
-    def response_tokens(self) -> int:
-        return self.output_tokens
-
-    @property
     def total_tokens(self) -> int:
         """Sum of `input_tokens + output_tokens`."""
         return self.input_tokens + self.output_tokens
@@ -99,6 +95,11 @@ class UsageBase:
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
+                # Never emit a `details` entry whose name collides with a first-class token attribute: the
+                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                    continue
                 # Skipping check for value since spec implies all detail values are relevant
                 if value:
                     result[prefix + key] = value
@@ -245,18 +246,13 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.cache_read_tokens += incr_usage.cache_read_tokens
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
         if isinstance(value, (int, float)):
             slf.details[key] = slf.details.get(key, 0) + value
-
-
-@dataclass(repr=False, kw_only=True)
-@deprecated('`Usage` is deprecated, use `RunUsage` instead')
-class Usage(RunUsage):
-    """Deprecated alias for `RunUsage`."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -293,75 +289,6 @@ class UsageLimits:
     - Bedrock Converse
     - OpenAI Responses
     """
-
-    @property
-    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
-    def request_tokens_limit(self) -> int | None:
-        return self.input_tokens_limit
-
-    @property
-    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
-    def response_tokens_limit(self) -> int | None:
-        return self.output_tokens_limit
-
-    @overload
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    @overload
-    @deprecated(
-        'Use `input_tokens_limit` instead of `request_tokens_limit` and `output_tokens_limit` and `total_tokens_limit`'
-    )
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-        # deprecated:
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-    ):
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

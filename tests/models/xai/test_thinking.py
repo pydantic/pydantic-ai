@@ -5,7 +5,6 @@ from __future__ import annotations as _annotations
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
@@ -13,7 +12,6 @@ from ...conftest import try_import
 from ..mock_xai import MockXai, create_response, get_grok_text_chunk, get_mock_chat_create_kwargs
 
 with try_import() as imports_successful:
-    from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -166,13 +164,3 @@ async def test_xai_unified_thinking_omits_reasoning_effort(
 
     assert result.output == 'ok'
     assert 'reasoning_effort' not in get_mock_chat_create_kwargs(mock_client)[0]
-
-
-def test_xai_effort_map_deprecated():
-    """`XAI_EFFORT_MAP` stays importable but deprecated; the mapping is now profile-derived."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`XAI_EFFORT_MAP` is deprecated'):
-        mapping = xai_module.XAI_EFFORT_MAP
-    assert mapping[True] == 'high'
-
-    with pytest.raises(AttributeError, match=r'has no attribute'):
-        xai_module.DefinitelyDoesNotExist
