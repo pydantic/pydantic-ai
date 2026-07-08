@@ -5463,7 +5463,9 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         content='The first call failed due to missing and extra parameters, as expected. The second call succeeded and returned: "Something with name: test".'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=336, output_tokens=96, details={'reasoning_tokens': 59}),
+                usage=RequestUsage(
+                    input_tokens=336, cache_read_tokens=256, output_tokens=96, details={'reasoning_tokens': 59}
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
