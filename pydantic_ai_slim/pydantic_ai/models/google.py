@@ -1258,39 +1258,48 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        stream_provider_details = self.provider_details
         if self._provider_timestamp is not None:
-            self.provider_details = {'timestamp': self._provider_timestamp}
+            stream_provider_details = {'timestamp': self._provider_timestamp}
+            self.provider_details = stream_provider_details
+        provider_name = self._provider_name
+        provider_url = self._provider_url
+        parts_manager = self._parts_manager
+
         try:
             async for chunk in self._response:
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                self._usage = _metadata_as_usage(chunk, provider_name, provider_url, self._usage)
 
                 if (
                     chunk.sdk_http_response
                     and chunk.sdk_http_response.headers
                     and (service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier'))
                 ):
-                    self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
+                    if stream_provider_details is None:
+                        stream_provider_details = {}
+                        self.provider_details = stream_provider_details
+                    stream_provider_details['service_tier'] = service_tier.lower()
 
                 # Capture traffic_type before the candidates guard, since usage_metadata
                 # may be present on chunks without candidates.
                 if chunk.usage_metadata and chunk.usage_metadata.traffic_type:
-                    self.provider_details = {
-                        **(self.provider_details or {}),
-                        'traffic_type': chunk.usage_metadata.traffic_type.value,
-                    }
+                    if stream_provider_details is None:
+                        stream_provider_details = {}
+                        self.provider_details = stream_provider_details
+                    stream_provider_details['traffic_type'] = chunk.usage_metadata.traffic_type.value
 
                 if not chunk.candidates:
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
                         self._has_content_filter = True
                         block_reason = chunk.prompt_feedback.block_reason
-                        self.provider_details = {
-                            **(self.provider_details or {}),
-                            'block_reason': block_reason.value,
-                        }
+                        if stream_provider_details is None:
+                            stream_provider_details = {}
+                            self.provider_details = stream_provider_details
+                        stream_provider_details['block_reason'] = block_reason.value
                         if chunk.prompt_feedback.block_reason_message:
-                            self.provider_details['block_reason_message'] = chunk.prompt_feedback.block_reason_message
+                            stream_provider_details['block_reason_message'] = chunk.prompt_feedback.block_reason_message
                         if chunk.prompt_feedback.safety_ratings:
-                            self.provider_details['safety_ratings'] = [
+                            stream_provider_details['safety_ratings'] = [
                                 r.model_dump(by_alias=True) for r in chunk.prompt_feedback.safety_ratings
                             ]
                         self.finish_reason = 'content_filter'
@@ -1305,13 +1314,13 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:
-                    self.provider_details = {
-                        **(self.provider_details or {}),
-                        'finish_reason': raw_finish_reason.value,
-                    }
+                    if stream_provider_details is None:
+                        stream_provider_details = {}
+                        self.provider_details = stream_provider_details
+                    stream_provider_details['finish_reason'] = raw_finish_reason.value
 
                     if candidate.safety_ratings:
-                        self.provider_details['safety_ratings'] = [
+                        stream_provider_details['safety_ratings'] = [
                             r.model_dump(by_alias=True) for r in candidate.safety_ratings
                         ]
 
@@ -1342,11 +1351,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 # tool_call/tool_response parts *instead of* the metadata, never both.
                 if not self._has_tool_invocations:
                     web_fetch_call, web_fetch_return = _map_url_context_metadata(
-                        candidate.url_context_metadata, self.provider_name
+                        candidate.url_context_metadata, provider_name
                     )
                     if web_fetch_call and web_fetch_return:
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
                 if candidate.content is None or candidate.content.parts is None:
                     continue
@@ -1356,7 +1365,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     continue  # pragma: no cover
 
                 if not self._has_tool_invocations:
-                    self._has_tool_invocations = _has_native_tool_invocations(parts)
+                    for response_part in parts:
+                        if response_part.tool_call or response_part.tool_response:
+                            self._has_tool_invocations = True
+                            break
 
                 for part in parts:
                     provider_details: dict[str, Any] | None = None
@@ -1372,28 +1384,28 @@ class GeminiStreamedResponse(StreamedResponse):
                         if len(part.text) == 0 and not provider_details:
                             continue
                         if part.thought:
-                            for event in self._parts_manager.handle_thinking_delta(
+                            for event in parts_manager.handle_thinking_delta(
                                 vendor_part_id=None,
                                 content=part.text,
-                                provider_name=self.provider_name if provider_details else None,
+                                provider_name=provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ):
                                 yield event
                         else:
-                            for event in self._parts_manager.handle_text_delta(
+                            for event in parts_manager.handle_text_delta(
                                 vendor_part_id=None,
                                 content=part.text,
-                                provider_name=self.provider_name if provider_details else None,
+                                provider_name=provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ):
                                 yield event
                     elif part.function_call:
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                        maybe_event = parts_manager.handle_tool_call_delta(
                             vendor_part_id=uuid4(),
                             tool_name=part.function_call.name,
                             args=part.function_call.args,
                             tool_call_id=part.function_call.id,
-                            provider_name=self.provider_name if provider_details else None,
+                            provider_name=provider_name if provider_details else None,
                             provider_details=provider_details,
                         )
                         if maybe_event is not None:  # pragma: no branch
@@ -1408,39 +1420,39 @@ class GeminiStreamedResponse(StreamedResponse):
                         mime_type = part.inline_data.mime_type
                         assert data and mime_type, 'Inline data must have data and mime type'
                         content = BinaryContent(data=data, media_type=mime_type)
-                        yield self._parts_manager.handle_part(
+                        yield parts_manager.handle_part(
                             vendor_part_id=uuid4(),
                             part=FilePart(
                                 content=BinaryContent.narrow_type(content),
-                                provider_name=self.provider_name if provider_details else None,
+                                provider_name=provider_name if provider_details else None,
                                 provider_details=provider_details,
                             ),
                         )
                     elif part.tool_call:
-                        tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
+                        tool_call_part = _map_tool_call(part.tool_call, provider_name)
                         tool_call_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
+                        tool_response_part = _map_tool_response(part.tool_response, provider_name)
                         tool_response_part.provider_details = provider_details
                         if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
                             # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
                             # so consumers see a single populated file_search result rather than an empty one
                             # followed by a filled duplicate.
                             self._pending_file_search_returns.append(tool_response_part)
-                            self._parts_manager.handle_part(
+                            parts_manager.handle_part(
                                 vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
                             )
                         else:
-                            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                            yield parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                     elif part.code_execution_result is not None:
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -1452,7 +1464,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         candidate.grounding_metadata
                     )
                     if file_search_part is not None:
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+                        yield parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
                 elif self._pending_file_search_returns:
                     # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
                     # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
@@ -1466,14 +1478,14 @@ class GeminiStreamedResponse(StreamedResponse):
                         if pending.content is None:
                             still_pending.append(pending)
                         else:
-                            yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+                            yield parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
                     self._pending_file_search_returns = still_pending
 
             # Grounding never arrived (or carried no retrieved contexts) for these reserved returns: emit
             # their deferred `PartStartEvent`s with empty content, so streaming consumers still see every
             # part present in the final response.
             for pending in self._pending_file_search_returns:
-                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+                yield parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
@@ -1902,8 +1914,12 @@ def _metadata_as_usage(
     if existing_usage:
         details = {**existing_usage.details, **details}
 
+    usage_metadata_payload = {
+        'modelVersion': response.model_version,
+        'usageMetadata': metadata.model_dump(by_alias=True),
+    }
     new_usage = usage.RequestUsage.extract(
-        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        usage_metadata_payload,
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
