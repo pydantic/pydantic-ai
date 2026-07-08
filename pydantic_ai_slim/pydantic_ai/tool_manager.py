@@ -23,6 +23,7 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
+    StopRun,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -322,7 +323,7 @@ class ToolManager(Generic[AgentDepsT]):
                     tool_result = await cap.wrap_tool_execute(
                         ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
                     )
-                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, StopRun):
                     raise  # Control flow, not errors
                 except ModelRetry:
                     raise  # Propagate to outer handler

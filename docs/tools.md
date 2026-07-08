@@ -4,7 +4,7 @@ Function tools provide a mechanism for models to perform actions and retrieve ex
 
 They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the instructions, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
-If you want a model to be able to call a function as its final action, without the result being sent back to the model, you can use an [output function](output.md#output-functions) instead.
+If you want a model to be able to call a function as its final action, without the result being sent back to the model, you can use an [output function](output.md#output-functions) instead. To end the run from inside a regular tool with an output you already have in hand — rather than letting the model choose to call an output function — raise [`StopRun(output)`][pydantic_ai.exceptions.StopRun].
 
 There are a number of ways to register tools with an agent:
 

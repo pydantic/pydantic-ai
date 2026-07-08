@@ -121,6 +121,8 @@ Instead of plain text or structured data, you may want the output of your agent 
 
 Output functions are similar to [function tools](tools.md), but the model is forced to call one of them, the call ends the agent run, and the result is not passed back to the model.
 
+Output functions let the _model_ choose to end the run by calling one. If instead you want a regular [tool](tools.md) or [capability hook](capabilities.md#ending-the-run-with-a-given-output) to end the run with an output _you_ already have in hand, raise [`StopRun(output)`][pydantic_ai.exceptions.StopRun].
+
 As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
 To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.

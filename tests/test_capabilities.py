@@ -18,6 +18,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai import CallToolsNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
@@ -59,6 +60,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    StopRun,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -21210,6 +21212,110 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
         DynamicCapability(capability_func=factory, defer_loading=True)
+
+
+# endregion
+
+
+# region StopRun from node hooks
+
+
+async def test_stop_run_from_after_node_run_hook():
+    """`StopRun` raised from an `after_node_run` hook ends the run with the validated output.
+
+    Uses `FunctionModel` (not VCR): it pins the internal hook control-flow — that a hook-raised
+    `StopRun` bypasses `on_node_run_error`, runs output validators, and ends the run — which no
+    recorded model response would exercise.
+    """
+
+    def say_hi(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('hi')]
+        )  # pragma: no cover  # StopRun ends the run before any model request
+
+    @dataclass
+    class StopAfterNodeCapability(AbstractCapability[Any]):
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            raise StopRun('stopped by hook')
+
+    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[StopAfterNodeCapability()])
+
+    @agent.output_validator
+    def shout(value: str) -> str:
+        return value.upper()
+
+    result = await agent.run('go')
+    assert result.output == 'STOPPED BY HOOK'
+
+
+async def test_stop_run_from_after_node_run_preserves_tool_returns():
+    """`StopRun` from `after_node_run` after a tool call keeps the tool return in message history.
+
+    Uses `FunctionModel` (not VCR): it pins message-history bookkeeping — that ending the run early
+    from a node hook still records the pending tool return, leaving no dangling tool call — which a
+    recorded model response would not exercise.
+    """
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_data', {})])
+        return ModelResponse(parts=[TextPart('unreachable')])  # pragma: no cover
+
+    @dataclass
+    class StopAfterToolCall(AbstractCapability[Any]):
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            if isinstance(node, CallToolsNode):
+                raise StopRun('done')
+            return result
+
+    agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[StopAfterToolCall()])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'the data'
+
+    result = await agent.run('go')
+    assert result.output == 'done'
+
+    tool_returns = [
+        part
+        for message in result.all_messages()
+        for part in getattr(message, 'parts', [])
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_data'
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == 'the data'
+
+
+async def test_stop_run_from_wrap_node_run_hook():
+    """`StopRun` raised from a `wrap_node_run` hook (before the node runs) ends the run.
+
+    Uses `FunctionModel` (not VCR): it pins internal control flow — that a `StopRun` from
+    `wrap_node_run` bypasses `on_node_run_error` and ends the run before any node result exists —
+    which no recorded model response would exercise.
+    """
+
+    def say_hi(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('hi')]
+        )  # pragma: no cover  # StopRun ends the run before any model request
+
+    @dataclass
+    class StopInWrapCapability(AbstractCapability[Any]):
+        errors_seen: int = 0
+
+        async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            raise StopRun('stopped in wrap')
+
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            self.errors_seen += 1  # pragma: no cover  # StopRun must bypass this hook
+            raise error  # pragma: no cover
+
+    cap = StopInWrapCapability()
+    agent = Agent(FunctionModel(say_hi), output_type=str, capabilities=[cap])
+    result = await agent.run('go')
+    assert result.output == 'stopped in wrap'
+    assert cap.errors_seen == 0  # StopRun from wrap_node_run bypasses on_node_run_error
 
 
 # endregion

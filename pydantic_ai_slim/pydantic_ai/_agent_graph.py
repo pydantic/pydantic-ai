@@ -1363,6 +1363,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_final_result=output_final_result,
             ):
                 yield event
+        except exceptions.StopRun as e:
+            # A tool function or tool-execute hook asked to end the run with a given output.
+            # Record the tool returns collected so far as a clean (non-interrupted) request and
+            # finish with the validated output — no further model request. `output_final_result`
+            # is ignored: it can't be populated once `process_tool_calls` was interrupted.
+            run_context = _build_output_run_context(ctx)
+            output_data = await _output.run_stop_run_output(
+                e.output,
+                run_context=run_context,
+                output_validators=ctx.deps.output_validators,
+            )
+            self._next_node = self._handle_final_result(
+                ctx, result.FinalResult(cast(NodeRunEndT, output_data)), output_parts
+            )
+            return
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
@@ -1454,20 +1469,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
-        messages = ctx.state.message_history
-
-        # To allow this message history to be used in a future run without dangling tool calls,
-        # append a new ModelRequest using the tool returns and retries
-        if tool_responses:
-            messages.append(
-                _messages.ModelRequest(
-                    parts=tool_responses,
-                    run_id=ctx.state.run_id,
-                    conversation_id=ctx.state.conversation_id,
-                    timestamp=now_utc(),
-                )
-            )
-
+        append_tool_responses(ctx.state, tool_responses)
         return End(final_result)
 
     __repr__ = dataclasses_no_defaults_repr
@@ -1483,6 +1485,22 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
+
+
+def append_tool_responses(state: GraphAgentState, tool_responses: list[_messages.ModelRequestPart]) -> None:
+    """Append tool returns and retries as a `ModelRequest` when a run ends.
+
+    This lets the resulting message history be reused in a future run without dangling tool calls.
+    """
+    if tool_responses:
+        state.message_history.append(
+            _messages.ModelRequest(
+                parts=tool_responses,
+                run_id=state.run_id,
+                conversation_id=state.conversation_id,
+                timestamp=now_utc(),
+            )
+        )
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
