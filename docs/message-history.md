@@ -741,6 +741,55 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 !!! warning "Be careful when summarizing the message history"
     When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
+#### Scheduling maintenance into cache-cold windows
+
+History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
+
+Providers publish a retention window for their prompt cache (Anthropic's default is 5 minutes, OpenAI's is 5-10 minutes). Where the figure is documented, it's recorded as a conservative floor on the model's [`ModelProfile.prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
+
+```python {title="cache_cold_maintenance.py"}
+from datetime import datetime, timedelta, timezone
+
+from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles import prompt_cache_outlook
+
+profile = AnthropicModel('claude-sonnet-4-5').profile
+
+now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
+    ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
+]
+
+# The last exchange was 30 minutes ago, well past Anthropic's 5-minute retention floor.
+outlook = prompt_cache_outlook(history, profile=profile, now=now)
+print(outlook)
+#> cold
+```
+
+A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess. A history processor can call the helper with its own message list to decide whether to do the expensive work this turn:
+
+```python {title="cache_cold_processor.py"}
+from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.profiles import prompt_cache_outlook
+
+
+async def compact_when_cold(ctx: RunContext, messages: list[ModelMessage]) -> list[ModelMessage]:
+    over_budget = ctx.usage.total_tokens > 100_000
+    cache_cold = prompt_cache_outlook(messages, profile=ctx.model.profile) == 'cold'
+    if len(messages) > 10 and (over_budget or cache_cold):
+        # Expensive: replace with your real summarization/pruning pass.
+        return messages[:1] + messages[-4:]
+    return messages
+
+
+agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ProcessHistory(compact_when_cold)])
+```
+
+Because the field is a conservative floor and unknown providers leave it `None`, the outlook never over-eagerly declares a cache cold: providers without a documented retention window always return `'unknown'`.
+
 ### Testing History Processors
 
 You can test what messages are actually sent to the model provider using

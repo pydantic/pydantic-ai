@@ -1,14 +1,18 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
+
+if TYPE_CHECKING:
+    from ..messages import ModelMessage
 
 __all__ = [
     'ModelProfile',
@@ -19,6 +23,8 @@ __all__ = [
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     'merge_profile',
+    'PromptCacheOutlook',
+    'prompt_cache_outlook',
 ]
 
 
@@ -120,6 +126,21 @@ class ModelProfile(TypedDict, total=False):
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
+    prompt_cache_retention: timedelta | None
+    """A conservative floor on how long the provider retains a prompt-cache prefix after the last request. Default: `None`.
+
+    This is a *documented lower bound*, not a guarantee: a request made within this window past the
+    previous one has a good chance of hitting the provider's cache; a request made after it should be
+    assumed to pay full input price. Only documented values are populated (see the per-provider profile
+    modules); where a provider does not publish a retention figure the field is left `None`, meaning
+    "unknown — never predict the cache is cold".
+
+    Consumed by [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] to classify, from a
+    message history alone, whether the next request is likely to hit a warm cache. A `'cold'` outlook is
+    a free moment to run history-mutating maintenance (compaction, pruning, repair): the next request
+    pays a full prefix re-write either way, so the marginal cache cost of the mutation is ~zero.
+    """
+
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
@@ -136,6 +157,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'prompt_cache_retention': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 
@@ -162,3 +184,79 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
         if override:
             result = {**result, **override}
     return result
+
+
+PromptCacheOutlook: TypeAlias = Literal['warm', 'cold', 'unknown']
+"""Predicted state of the provider's prompt cache for the *next* request built on a message history.
+
+- `'warm'`: the last request happened within the provider's documented retention window, so the cached
+  prefix is likely still available and the next request should hit it.
+- `'cold'`: the last request happened longer ago than the retention window, so the prefix has likely
+  been evicted and the next request will pay full input price regardless — a free moment to mutate history.
+- `'unknown'`: there's no retention figure for the model, or the history has no usable timestamp, so no
+  prediction can be made. Treat like `'warm'` for scheduling (never mutate on a guess).
+"""
+
+
+def prompt_cache_outlook(
+    messages: Sequence[ModelMessage],
+    *,
+    profile: ModelProfile | None = None,
+    retention: timedelta | None = None,
+    now: datetime | None = None,
+) -> PromptCacheOutlook:
+    """Predict whether the provider's prompt cache is still warm for the next request on this history.
+
+    This is a pure function of the message history and a retention floor — it holds no state and makes no
+    requests, so a history processor, capability, or plain application code can call it with just a
+    message history to decide whether the next turn is a cheap moment for history-mutating maintenance
+    (compaction, pruning, repair). When the outlook is `'cold'` the next request pays a full prefix
+    re-write anyway, so the marginal cache cost of mutating history right now is ~zero.
+
+    The prediction compares the most recent timestamp in `messages` (a [`ModelResponse.timestamp`][pydantic_ai.messages.ModelResponse.timestamp],
+    or a [`ModelRequest.timestamp`][pydantic_ai.messages.ModelRequest.timestamp] when present) against `now`:
+    an idle gap within the retention window is `'warm'`, a larger gap is `'cold'`.
+
+    Args:
+        messages: The message history the next request would be built on, oldest first.
+        profile: The model profile whose [`prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention]
+            is used as the retention floor. Ignored when `retention` is passed explicitly.
+        retention: An explicit retention floor, overriding the profile's. Use this to model the paid
+            extended-TTL tiers (e.g. Anthropic's 1h cache) that the conservative profile floor doesn't assume.
+        now: The reference time to measure idleness against. Defaults to the current UTC time; inject a
+            fixed value for deterministic tests.
+
+    Returns:
+        `'warm'`, `'cold'`, or `'unknown'` (see [`PromptCacheOutlook`][pydantic_ai.profiles.PromptCacheOutlook]).
+    """
+    if retention is None and profile is not None:
+        retention = profile.get('prompt_cache_retention')
+    if retention is None:
+        return 'unknown'
+
+    last_timestamp = _last_message_timestamp(messages)
+    if last_timestamp is None:
+        return 'unknown'
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    # Historical messages may carry naive timestamps; assume UTC so the subtraction is well-defined.
+    if last_timestamp.tzinfo is None:
+        last_timestamp = last_timestamp.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    idle = now - last_timestamp
+    return 'warm' if idle <= retention else 'cold'
+
+
+def _last_message_timestamp(messages: Sequence[ModelMessage]) -> datetime | None:
+    """The most recent timestamp in the history, scanning from the end.
+
+    `ModelResponse` always carries a timestamp; `ModelRequest.timestamp` is `None` for requests that
+    haven't been sent yet or were deserialized from an old format, so we skip those and keep looking back.
+    """
+    for message in reversed(messages):
+        if (timestamp := message.timestamp) is not None:
+            return timestamp
+    return None

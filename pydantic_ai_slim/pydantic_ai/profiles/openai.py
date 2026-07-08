@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -232,6 +233,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # the `NativeOutput` marker, so an error from the API is acceptable.
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
+        # OpenAI documents automatic prompt caching as being cleared after "5-10 minutes of inactivity,
+        # and always within one hour". Some newer models offer longer extended caching, but the
+        # conservative documented floor is 5 minutes.
+        # https://developers.openai.com/api/docs/guides/prompt-caching
+        prompt_cache_retention=timedelta(minutes=5),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,

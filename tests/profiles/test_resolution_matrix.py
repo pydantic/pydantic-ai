@@ -25,6 +25,7 @@ To regenerate after an intentional change: `pytest tests/profiles/test_resolutio
 
 from __future__ import annotations
 
+from datetime import timedelta
 from textwrap import dedent
 from typing import Any
 
@@ -105,6 +106,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'thinking_tags': ('<think>', '</think>'),
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'prompt_cache_retention': None,
     # OpenAIModelProfile subclass defaults
     'openai_chat_thinking_field': None,
     'openai_chat_send_back_thinking_parts': 'auto',
@@ -178,6 +180,7 @@ def test_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(
@@ -200,6 +203,7 @@ def test_anthropic_claude_opus_4_7():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -227,6 +231,7 @@ def test_anthropic_claude_haiku_4_5():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_forced_tool_choice': True,
@@ -245,6 +250,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
@@ -261,6 +267,7 @@ def test_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -284,6 +291,7 @@ def test_openai_gpt_4o():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -302,6 +310,7 @@ def test_openai_o3_mini():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -449,6 +458,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_tool_caching': True,
@@ -478,6 +488,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
@@ -506,6 +517,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
@@ -701,6 +713,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_adaptive_thinking': True,
@@ -733,6 +746,7 @@ def test_openrouter_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -969,6 +983,7 @@ def test_azure_openai_gpt_5():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1100,6 +1115,7 @@ def test_groq_gpt_oss():
     assert _normalize(profile) == snapshot(
         {
             'supports_thinking': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': True,
@@ -1158,6 +1174,7 @@ def test_ollama_gpt_oss():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
@@ -1243,6 +1260,7 @@ def test_litellm_openai_gpt():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1321,6 +1339,7 @@ def test_anthropic_unknown_model_returns_some_profile():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
@@ -1359,6 +1378,7 @@ def test_github_openai_bare_name():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1431,6 +1451,7 @@ def test_vercel_anthropic_claude_sonnet():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_adaptive_thinking': True,
@@ -1453,6 +1474,7 @@ def test_vercel_openai_gpt():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1525,6 +1547,7 @@ def test_heroku_returns_openai_transformer():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'prompt_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
