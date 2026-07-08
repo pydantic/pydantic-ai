@@ -106,7 +106,7 @@ async def test_alibaba_document_input_not_supported(allow_model_requests: None):
     model = OpenAIChatModel(model_name='qwen-max', provider=provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='alibaba.*does not support document input'):
+    with pytest.raises(UserError, match=r'alibaba.*does not support document input'):
         await agent.run(
             [
                 'Summarize this document',
@@ -120,5 +120,5 @@ async def test_alibaba_document_url_input_not_supported(allow_model_requests: No
     model = OpenAIChatModel(model_name='qwen-max', provider=provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='alibaba.*does not support document input'):
+    with pytest.raises(UserError, match=r'alibaba.*does not support document input'):
         await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
