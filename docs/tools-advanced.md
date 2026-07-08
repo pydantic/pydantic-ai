@@ -179,7 +179,7 @@ Strict mode is currently supported by **OpenAI**, **Anthropic**, **Google**, and
 
 The `strict` flag is a `bool | None`:
 
-- `True` — force strict mode. Strict schemas impose restrictions (for example, OpenAI requires every property to be `required` and disallows `additionalProperties`), so a schema that can't be represented strictly may be transformed lossily, or the flag may be ignored on providers that can't honor it for that schema.
+- `True` — force strict mode. Strict schemas impose restrictions (for example, OpenAI requires every property to be listed in `required` and sets `additionalProperties: false` so no extra properties are allowed), so a schema that can't be represented strictly may be transformed lossily, or the flag may be ignored on providers that can't honor it for that schema.
 - `False` — never use strict mode.
 - `None` (**default**) — infer per provider from the tool's JSON schema. OpenAI enables strict when the schema is strict-compatible; Anthropic, Bedrock, and Google leave it off unless you explicitly opt in with `strict=True`, since their strict/`VALIDATED` modes are opt-in.
 

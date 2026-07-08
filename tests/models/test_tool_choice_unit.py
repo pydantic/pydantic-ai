@@ -690,20 +690,44 @@ STRICT_TOOL_CONFIG_CASES = [
         settings={'tool_choice': 'none'},
         expected_mode='NONE',
     ),
+    dict(
+        # `tool_defs` covers function and output tools, so a strict output tool alongside strict function tools
+        # keeps the request all-strict and still upgrades to `VALIDATED`.
+        id='all-strict-including-output-tool-uses-validated',
+        model='gemini-2.5-flash',
+        function_tools=[make_tool('a', strict=True)],
+        output_tools=[make_tool('final_result', strict=True)],
+        settings={},
+        expected_mode='VALIDATED',
+    ),
+    dict(
+        # A non-strict output tool makes the request mixed-strict, so `VALIDATED` must not engage even though
+        # every function tool is strict.
+        id='non-strict-output-tool-stays-auto',
+        model='gemini-2.5-flash',
+        function_tools=[make_tool('a', strict=True)],
+        output_tools=[make_tool('final_result', strict=False)],
+        settings={},
+        expected_mode='AUTO',
+    ),
 ]
 
 
 @pytest.mark.skipif(not google_available(), reason='google not installed')
 @pytest.mark.parametrize('case', STRICT_TOOL_CONFIG_CASES, ids=lambda c: c['id'])
 def test_google_strict_tools_upgrade_auto_to_validated(case: dict[str, Any]):
-    """`AUTO` is upgraded to Gemini's `VALIDATED` mode only when every function tool is `strict=True` and the
-    model supports it; `required`/`none` tool choices are never upgraded.
+    """`AUTO` is upgraded to Gemini's `VALIDATED` mode only when every tool in the request (function *and*
+    output tools) is `strict=True` and the model supports it; `required`/`none` tool choices are never upgraded.
 
     Asserted on the request shape directly rather than via VCR: a cassette replay can't catch the mode we send,
     since it replays a recorded response without re-validating the request against the API.
     """
     m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
-    params = ModelRequestParameters(function_tools=case['function_tools'], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=case['function_tools'],
+        output_tools=case.get('output_tools', []),
+        allow_text_output=True,
+    )
 
     _, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
 
