@@ -224,12 +224,9 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        # `find_similar` still works but `exa-py` emits its own per-call `DeprecationWarning`; suppress it
-        # since callers are already warned once when the tool is created (via `PydanticAIDeprecationWarning`).
-        # `find_similar` is `@deprecated`, so the warning fires synchronously at call time rather than during
-        # the await. `catch_warnings` mutates process-global state and is not async-safe (see CPython #91505),
-        # so we scope it to just the call — matching only exa-py's message — and await the coroutine outside
-        # the block, where a suspension point could otherwise swallow warnings from concurrent tasks.
+        # `find_similar` still works but `exa-py` emits its own per-call `DeprecationWarning` synchronously; suppress
+        # it since callers are already warned once when the tool is created (via `PydanticAIDeprecationWarning`)
+        # and await outside the catch block.
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='find_similar', category=DeprecationWarning)
             coro = self.client.find_similar(  # pyright: ignore[reportDeprecated]
@@ -515,7 +512,8 @@ class ExaToolset(FunctionToolset):
     from pydantic_ai import Agent
     from pydantic_ai.common_tools.exa import ExaToolset
 
-    toolset = ExaToolset(api_key='your-api-key')
+    # `find_similar` is deprecated; opt out to avoid the deprecation warning.
+    toolset = ExaToolset(api_key='your-api-key', include_find_similar=False)
     agent = Agent('openai:gpt-5.2', toolsets=[toolset])
     ```
     """
