@@ -55,12 +55,26 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
 
+    google_supports_strict_tool_definition: bool
+    """Whether the model supports Gemini's `VALIDATED` function-calling mode. Default: `False`.
+
+    `VALIDATED` is Gemini's equivalent of the cross-provider `strict` tool flag (like OpenAI/Anthropic
+    strict tool calling): it behaves like `AUTO` but the API enforces the declared schema and rejects
+    malformed or hallucinated function calls instead of returning them. When enabled, `GoogleModel`
+    upgrades `AUTO` to `VALIDATED` for requests whose function tools all have `ToolDefinition.strict=True`.
+
+    See <https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config>.
+    """
+
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
     is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
+    # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
+    # #5366); image models don't support function tools, so leave it off there.
+    supports_strict_tool_definition = is_thinking_model and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = is_thinking_model and is_pro
@@ -77,6 +91,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,
+        google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
 
 
@@ -85,6 +100,17 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
 
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
     """
+
+    def walk(self) -> JsonSchema:
+        # Gemini's `VALIDATED` tool mode enforces the exact schema we already send (unlike OpenAI/Anthropic
+        # strict mode, it needs no lossy schema rewrite), so any schema Gemini accepts for function calling
+        # is also valid for `VALIDATED`. Even so, we mirror Anthropic's conservative default and only treat a
+        # schema as strict-compatible when the caller explicitly opts in with `strict=True`. That keeps the
+        # default behavior (mode `AUTO`) unchanged; `VALIDATED` is a preview feature, so we don't turn it on
+        # implicitly. `_customize_tool_def` coalesces `ToolDefinition.strict = self.is_strict_compatible` when
+        # it was left as `None`.
+        self.is_strict_compatible = self.strict is True
+        return super().walk()
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove properties not supported by Gemini

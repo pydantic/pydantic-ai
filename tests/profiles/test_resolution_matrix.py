@@ -338,6 +338,7 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -352,6 +353,7 @@ def test_google_gemini_2_5_flash():
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_thinking': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 
@@ -782,6 +784,7 @@ def test_openrouter_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1492,6 +1495,7 @@ def test_vercel_vertex_gemini():
                 'text/plain',
             ),
             'google_supports_thinking_level': True,
+            'google_supports_strict_tool_definition': True,
         }
     )
 

@@ -151,6 +151,39 @@ print(result.output)
 
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
+## Strict Mode {#strict-mode}
+
+Some providers support a *strict* mode for tool calls, where the API itself enforces that the model's tool-call arguments match the tool's JSON schema, rejecting malformed or hallucinated calls at the API layer instead of letting them reach your code. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain(strict=True)
+def get_weather(city: str) -> str:
+    return f'The weather in {city} is sunny.'
+```
+
+Strict mode is currently supported by **OpenAI**, **Anthropic**, and **Google** models. Each provider enforces it differently:
+
+| Provider | Mechanism |
+|---|---|
+| OpenAI | `strict: true` on the tool definition (constrained decoding). |
+| Anthropic | `strict: true` on the tool definition. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), used when every function tool in the request has `strict=True`. It behaves like the default mode but the API enforces the declared schema, which mitigates the [function-name hallucination](https://github.com/googleapis/python-genai/issues/813) some Gemini models exhibit. It is applied only on models whose profile sets `google_supports_strict_tool_definition` (Gemini 2.5 and newer). |
+
+### Strictness values
+
+The `strict` flag is a `bool | None`:
+
+- `True` — force strict mode. Strict schemas impose restrictions (for example, OpenAI requires every property to be `required` and disallows `additionalProperties`), so a schema that can't be represented strictly may be transformed lossily, or the flag may be ignored on providers that can't honor it for that schema.
+- `False` — never use strict mode.
+- `None` (**default**) — infer per provider from the tool's JSON schema. OpenAI enables strict when the schema is strict-compatible; Anthropic and Google leave it off unless you explicitly opt in with `strict=True`, since their strict/`VALIDATED` modes are opt-in.
+
+To turn strict mode on for many tools at once, use [agent-wide dynamic tools](#prepare-tools) to set `strict=True` on each [`ToolDefinition`][pydantic_ai.tools.ToolDefinition].
+
 ## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to

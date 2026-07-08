@@ -704,9 +704,19 @@ class GoogleModel(Model[Client]):
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
         # are function tools.
         if tool_defs:
-            function_calling_config: FunctionCallingConfigDict = {
-                'mode': function_calling_config_modes[tool_choice_mode]
-            }
+            mode = function_calling_config_modes[tool_choice_mode]
+            # Gemini's `VALIDATED` mode is `AUTO` plus API-side schema enforcement: it rejects malformed or
+            # hallucinated function calls instead of returning them (see #5366). It maps to the cross-provider
+            # `strict` tool flag (like OpenAI/Anthropic strict tool calling), so opt into it when every
+            # function tool has `strict=True` and the model supports it. Only `AUTO` is upgraded; `required`
+            # (`ANY`) and `none` (`NONE`) are left as-is, since `VALIDATED` is specifically the enforced `AUTO`.
+            if (
+                mode is FunctionCallingConfigMode.AUTO
+                and self.profile.get('google_supports_strict_tool_definition', False)
+                and all(tool_def.strict for tool_def in tool_defs.values())
+            ):
+                mode = FunctionCallingConfigMode.VALIDATED
+            function_calling_config: FunctionCallingConfigDict = {'mode': mode}
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
