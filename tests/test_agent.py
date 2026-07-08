@@ -6835,27 +6835,37 @@ def test_heterogeneous_responses_non_streaming() -> None:
 
 
 def test_nested_capture_run_messages() -> None:
-    agent = Agent('test')
+    """Each `capture_run_messages` context captures the runs for which it is the innermost active context.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/1568.
+    """
+    agent1 = Agent('test')
+    agent2 = Agent(TestModel(custom_output_text='inner result'))
 
     with capture_run_messages() as messages1:
         assert messages1 == []
-        with capture_run_messages() as messages2:
-            assert messages2 == []
-            assert messages1 is messages2
-            result = agent.run_sync('Hello')
-            assert result.output == 'success (no tool calls)'
+        res1 = agent1.run_sync('Hi Bro')
+        assert res1.output == 'success (no tool calls)'
 
+        with capture_run_messages() as messages2:
+            # A nested context starts empty and captures only its own run.
+            assert messages2 == []
+            assert messages1 is not messages2
+            res2 = agent2.run_sync('Hello')
+            assert res2.output == 'inner result'
+
+    # The outer context still holds only the run(s) it captured before nesting.
     assert messages1 == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hi Bro', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
@@ -6864,7 +6874,84 @@ def test_nested_capture_run_messages() -> None:
             ),
         ]
     )
-    assert messages1 == messages2
+    # The inner context holds only the nested run.
+    assert messages2 == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='inner result')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert messages1 != messages2
+
+
+def test_nested_capture_run_messages_in_tool() -> None:
+    """A nested agent run wrapped in its own `capture_run_messages` (e.g. inside a tool) is captured
+    independently of the outer run, even when the inner run raises.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/1568.
+    """
+
+    def raise_unexpected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise UnexpectedModelBehavior('boom')
+
+    agent_outer = Agent('test')
+    agent_inner = Agent(FunctionModel(raise_unexpected))
+
+    captured_inner: list[ModelMessage] | None = None
+
+    @agent_outer.tool_plain
+    async def call_inner(x: str) -> str:
+        nonlocal captured_inner
+        with capture_run_messages() as inner_messages:
+            captured_inner = inner_messages
+            result = await agent_inner.run(x)
+            return result.output
+
+    with capture_run_messages() as outer_messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            agent_outer.run_sync('foobar')
+
+    # The inner context captured the inner run's request even though it raised...
+    assert captured_inner is not None
+    assert any(isinstance(m, ModelRequest) for m in captured_inner)
+    # ...and it is a distinct list from the outer capture.
+    assert captured_inner is not outer_messages
+    # The outer context captured the outer run up to the tool call that triggered the failing inner run.
+    assert any(
+        isinstance(m, ModelResponse) and any(isinstance(p, ToolCallPart) for p in m.parts) for m in outer_messages
+    )
+
+
+def test_sequential_capture_run_messages() -> None:
+    """Sequential (non-nested) `capture_run_messages` contexts each capture their own run."""
+    agent = Agent('test')
+
+    with capture_run_messages() as messages1:
+        agent.run_sync('First')
+
+    with capture_run_messages() as messages2:
+        agent.run_sync('Second')
+
+    assert messages1 is not messages2
+    first_prompt = messages1[0]
+    second_prompt = messages2[0]
+    assert isinstance(first_prompt, ModelRequest)
+    assert isinstance(second_prompt, ModelRequest)
+    assert first_prompt.parts[0] == snapshot(UserPromptPart(content='First', timestamp=IsNow(tz=timezone.utc)))
+    assert second_prompt.parts[0] == snapshot(UserPromptPart(content='Second', timestamp=IsNow(tz=timezone.utc)))
 
 
 def test_double_capture_run_messages() -> None:
