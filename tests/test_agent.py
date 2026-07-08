@@ -6918,7 +6918,7 @@ def test_nested_capture_run_messages_in_tool() -> None:
         with capture_run_messages() as inner_messages:
             captured_inner = inner_messages
             result = await agent_inner.run(x)
-            return result.output
+            return result.output  # pragma: no cover
 
     with capture_run_messages() as outer_messages:
         with pytest.raises(UnexpectedModelBehavior):
