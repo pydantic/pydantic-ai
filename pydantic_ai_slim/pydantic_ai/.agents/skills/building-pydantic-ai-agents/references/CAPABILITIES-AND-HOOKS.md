@@ -102,7 +102,14 @@ Use hooks when the user wants observability, auditing, or light interception wit
 
 From `before_model_request`, edits to `request_context.messages` are persisted into history. For notices the model should see but that must NOT persist (budget lines, staleness warnings, "you are being evaluated" notes), call `request_context.add_ephemeral_part(content)` instead.
 
-```python {test="skip" lint="skip"}
+```python
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
 @hooks.on.before_model_request
 async def staleness(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     request_context.add_ephemeral_part('<system-reminder>src/foo.py changed on disk; re-read it.</system-reminder>')
