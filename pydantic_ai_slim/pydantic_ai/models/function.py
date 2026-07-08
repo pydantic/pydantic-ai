@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
@@ -12,19 +12,19 @@ from typing import Any, TypeAlias
 from typing_extensions import assert_never, overload
 
 from .. import _utils, usage
+from .._instrumentation import get_instructions
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
-from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -35,6 +35,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -139,7 +140,7 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=get_instructions(messages, model_request_parameters),
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -163,7 +164,7 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -174,24 +175,30 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=get_instructions(messages, model_request_parameters),
         )
 
         assert self.stream_function is not None, (
             'FunctionModel must receive a `stream_function` to support streamed requests'
         )
 
-        response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
+        response_stream: PeekableAsyncStream[
+            str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns,
+            AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns],
+        ] = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
         first = await response_stream.peek()
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _iter=response_stream,
-        )
+        try:
+            yield FunctionStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_name=self._model_name,
+                _iter=response_stream,
+            )
+        finally:
+            await response_stream.aclose()
 
     @property
     def provider(self) -> None:
@@ -208,11 +215,11 @@ class FunctionModel(Model):
         return self._system
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """FunctionModel supports all builtin tools for testing flexibility."""
-        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+        from ..native_tools import SUPPORTED_NATIVE_TOOLS
 
-        return SUPPORTED_BUILTIN_TOOLS
+        return SUPPORTED_NATIVE_TOOLS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -278,7 +285,7 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
-BuiltinToolCallsReturns: TypeAlias = dict[int, BuiltinToolCallPart | BuiltinToolReturnPart]
+BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolReturnPart]
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
@@ -338,18 +345,22 @@ class FunctionStreamedResponse(StreamedResponse):
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
-                    elif isinstance(delta, BuiltinToolCallPart):
+                    elif isinstance(delta, NativeToolCallPart):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
-                    elif isinstance(delta, BuiltinToolReturnPart):
+                    elif isinstance(delta, NativeToolReturnPart):
                         if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     else:
                         assert_never(delta)
+
+    async def close_stream(self) -> None:
+        # FunctionModel has no underlying connection to close.
+        pass
 
     @property
     def model_name(self) -> str:
@@ -397,9 +408,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
                     response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
+                elif isinstance(part, ToolCallPart | NativeToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):
+                elif isinstance(part, NativeToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])

@@ -34,7 +34,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-3-flash-preview',  # (1)!
+    'google:gemini-3-flash-preview',  # (1)!
     deps_type=str,  # (2)!
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -87,6 +87,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -98,6 +99,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -111,6 +113,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -122,6 +125,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -135,6 +139,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -146,6 +151,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -214,13 +220,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     instructions=instructions,
 )
 agent_b = Agent(
-    'google-gla:gemini-3-flash-preview',
+    'google:gemini-3-flash-preview',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
@@ -369,13 +375,21 @@ _(This example is complete, it can be run "as is")_
 
     This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
+## Injecting Follow-up Messages from a Tool
+
+A tool can push extra messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful when a tool wants
+to add follow-up context, redirect the agent's plan, or surface an event the model
+should react to. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run)
+for the full pattern.
+
 ## See Also
 
 For more tool features and integrations, see:
 
 - [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, tool execution and retries
 - [Toolsets](toolsets.md) - Managing collections of tools
-- [Builtin Tools](builtin-tools.md) - Native tools provided by LLM providers
+- [Native Tools](native-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
-- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, ACI.dev and other tool libraries
+- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, and other tool libraries
 - [Deferred Tools](deferred-tools.md) - Tools requiring approval or external execution

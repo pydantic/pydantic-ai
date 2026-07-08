@@ -54,7 +54,8 @@ with try_import() as anthropic_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -73,9 +74,6 @@ with try_import() as xai_available:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
-    ),
 ]
 
 ProviderName = Literal[
@@ -192,9 +190,12 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
     ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
-    # OpenAI uploaded file references only support document formats, not images
-    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'unsupported MIME type'),
-    ('openai_responses', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'supported format'),
+    # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
+    # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to
+    # `input_image` and succeeds (see the matrix success path + test_uploaded_image_maps_to_input_image_responses).
+    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
+        UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
+    ),
     # Anthropic API doesn't support 'file' source type in tool_result blocks
     ('anthropic', 'image', 'uploaded_file', None): ExpectError(
         ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
@@ -406,7 +407,8 @@ UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple
     ('google_vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
     ('openai_chat', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai_chat', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('openai_responses', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    # input_image (not input_file) confirms image UploadedFiles are mapped to the vision input type.
+    ('openai_responses', 'image'): 'input_image',
     ('openai_responses', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
@@ -516,7 +518,7 @@ def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) 
     if not project:
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
     location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
-    return GoogleProvider(project=project, location=cast(VertexAILocation, location))  # pragma: no cover
+    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))  # pragma: no cover
 
 
 @pytest.fixture
@@ -598,7 +600,7 @@ async def test_multimodal_tool_return_matrix(
     else:
         content = URL_FACTORIES[(file_type, content_source)]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> Any:
@@ -648,7 +650,7 @@ async def test_mixed_content_ordering(
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
@@ -703,7 +705,7 @@ async def test_model_sees_multiple_images(
     kiwi_image = image_content
     url_image = URL_FACTORIES[('image', 'url')]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images() -> list[Any]:
@@ -728,7 +730,11 @@ async def test_vendor_metadata_detail(
     allow_model_requests: None,
     cassette_ctx: CassetteContext,
 ):
-    """Test that vendor_metadata with detail setting is handled correctly."""
+    """`vendor_metadata['detail']` reaches the OpenAI Responses wire for image inputs.
+
+    Covers `BinaryImage`, `ImageUrl`, and an image `UploadedFile` — the last referenced by `file_id`
+    and mapped to an `input_image` part that must carry its `detail`.
+    """
     model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     image_binary = BinaryImage(
         data=assets_path.joinpath('kiwi.jpg').read_bytes(),
@@ -739,12 +745,18 @@ async def test_vendor_metadata_detail(
         url=IMAGE_URL,
         vendor_metadata={'detail': 'low'},
     )
+    uploaded_image = UploadedFile(
+        file_id='file-BVTjj4CLd1Z7cgppk5sL45',
+        provider_name='openai',
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
-        return [image_binary, image_url]
+        return [image_binary, image_url, uploaded_image]
 
     result = await agent.run(
         'Call the get_images_with_metadata tool and describe what you see.',
@@ -752,6 +764,8 @@ async def test_vendor_metadata_detail(
     )
     assert result.output, 'Expected non-empty response from model'
     cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
+    # The uploaded image is sent as an `input_image` referenced by `file_id`, carrying its `detail`.
+    cassette_ctx.verify_contains('"detail": "high", "file_id": "file-BVTjj4CLd1Z7cgppk5sL45", "type": "input_image"')
 
 
 async def test_text_plain_document_anthropic(
@@ -768,7 +782,7 @@ async def test_text_plain_document_anthropic(
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_text_document() -> BinaryContent:
@@ -789,7 +803,7 @@ async def test_non_pdf_document_url_error(
 ):
     """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
     model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> DocumentUrl:
@@ -896,8 +910,14 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
     UploadedFileErrorCase(
         id='google_vertex_non_gcs_uri',
         provider='google_vertex',
-        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-vertex'),
-        match=r'UploadedFile for GoogleModel \(Vertex\) must use a GCS URI',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
+        match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
+    ),
+    UploadedFileErrorCase(
+        id='openai_responses_wrong_provider',
+        provider='openai_responses',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google'),
+        match="provider_name='google'.*cannot be used with OpenAIResponsesModel",
     ),
 ]
 
@@ -938,6 +958,10 @@ async def test_uploaded_file_validation_error_in_tool_return(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
             ):
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'openai_responses':
+        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 
@@ -946,9 +970,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
 async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
     model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    file = UploadedFile(
-        file_id='gs://bucket/path/file.pdf', provider_name='google-vertex', media_type='application/pdf'
-    )
+    file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
     ]

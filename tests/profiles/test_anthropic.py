@@ -16,7 +16,8 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated
+import warnings
+from typing import Annotated, Any
 
 import pytest
 from pydantic import BaseModel, Field
@@ -210,6 +211,65 @@ def test_strict_none_simple_schema():
 
 
 # =============================================================================
+# Transformer Tests - dict field warnings
+# =============================================================================
+
+
+def test_strict_true_warns_on_dict_fields():
+    """With strict=True, dict fields (additionalProperties with schema) emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_false_no_warning_on_dict_fields():
+    """With strict=False, dict fields do not emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        AnthropicJsonSchemaTransformer(schema, strict=False).walk()
+
+
+def test_strict_none_no_warning_on_dict_fields():
+    """With strict=None (the default), dict fields do not emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        AnthropicJsonSchemaTransformer(schema, strict=None).walk()
+
+
+def test_strict_true_warns_on_basemodel_with_dict_field():
+    """With strict=True, a BaseModel containing a dict field emits a warning."""
+
+    class ModelWithDict(BaseModel):
+        name: str
+        metadata: dict[str, str]
+
+    schema = ModelWithDict.model_json_schema()
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_true_warns_on_any_dict_field():
+    """With strict=True, dict[str, Any] fields (additionalProperties: true) emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': True}
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_true_warns_on_basemodel_with_any_dict_field():
+    """With strict=True, a BaseModel containing a dict[str, Any] field emits a warning."""
+
+    class ModelWithAnyDict(BaseModel):
+        name: str
+        metadata: dict[str, Any]
+
+    schema = ModelWithAnyDict.model_json_schema()
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+# =============================================================================
 # Model Profile Tests
 # =============================================================================
 
@@ -218,18 +278,131 @@ def test_model_profile_supported_model():
     """Models that support structured outputs have supports_json_schema_output=True."""
     profile = anthropic_model_profile('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.supports_json_schema_output is True
+    assert profile.get('supports_json_schema_output', False) is True
 
 
 def test_model_profile_unsupported_model():
     """Models that don't support structured outputs have supports_json_schema_output=False."""
     profile = anthropic_model_profile('claude-sonnet-4-0')
     assert profile is not None
-    assert profile.supports_json_schema_output is False
+    assert profile.get('supports_json_schema_output', False) is False
 
 
 def test_model_profile_opus():
     """Opus 4.1 supports structured outputs."""
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
-    assert profile.supports_json_schema_output is True
+    assert profile.get('supports_json_schema_output', False) is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-mythos-preview',
+        'claude-sonnet-4-6',
+        'claude-opus-4-6',
+        'claude-opus-4-7',
+        'claude-opus-4-8',
+    ],
+)
+def test_model_profile_supports_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+
+
+@pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'])
+def test_model_profile_does_not_support_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is False
+
+
+def test_model_profile_fable_5():
+    """Claude Fable 5 mirrors the Opus 4.8 capability set, minus fast speed and forced tool choice.
+
+    Capabilities verified live against the Anthropic API: it rejects sampling settings and
+    budget-based thinking, accepts adaptive thinking + `xhigh` effort + task budgets + json-schema
+    output, but rejects `anthropic_speed='fast'` and a forced `tool_choice` outright.
+    """
+    profile = anthropic_model_profile('claude-fable-5')
+    assert profile is not None
+
+    # Shared with the Opus 4.7 / 4.8 family
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Fable-5-specific divergences from the Opus mirror
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_mythos_rejects_forced_tool_choice():
+    """Claude Mythos Preview rejects a forced `tool_choice` outright, like Fable 5.
+
+    Per the Anthropic docs, requests with `tool_choice: {'type': 'any'}` or `{'type': 'tool'}`
+    return a 400 on this model, so `anthropic_supports_forced_tool_choice` must be False.
+    """
+    profile = anthropic_model_profile('claude-mythos-preview')
+    assert profile is not None
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_mythos_5():
+    """Claude Mythos 5 is the safety-classifier-free twin of Claude Fable 5 and carries the same
+    capability profile (Anthropic: 'Mythos 5 shares the same capabilities without the safety classifiers').
+
+    Every capability is documented for Mythos 5 by name except the forced-`tool_choice` rejection,
+    which is inferred from it being both the successor to Mythos Preview and Fable 5's twin.
+    """
+    profile = anthropic_model_profile('claude-mythos-5')
+    assert profile is not None
+
+    # Identical to the Fable 5 / Opus 4.8 capability set
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Shared divergences from the Opus mirror (same as Fable 5)
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_sonnet_5():
+    """Claude Sonnet 5 carries Sonnet 4.6's tool/schema/adaptive surface plus the Opus 4.7 / 4.8
+    frontier flags (xhigh effort, task budgets, no budget-based thinking, no sampling settings).
+
+    Capabilities verified live against the Anthropic API: it accepts adaptive thinking, `xhigh`
+    effort, task budgets, json-schema output, tool search, dynamic filtering, and forced
+    `tool_choice`, but rejects budget-based thinking, sampling settings, and `anthropic_speed='fast'`.
+    """
+    profile = anthropic_model_profile('claude-sonnet-5')
+    assert profile is not None
+
+    # Frontier flags shared with the Opus 4.7 / 4.8 family (new vs Sonnet 4.6)
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
+    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('anthropic_supports_fast_speed') is False

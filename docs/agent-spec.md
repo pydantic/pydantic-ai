@@ -19,7 +19,8 @@ instructions: You are a helpful research assistant.
 model_settings:
   max_tokens: 8192
 capabilities:
-  - WebSearch
+  - WebSearch:
+      local: duckduckgo
   - Thinking:
       effort: high
 ```
@@ -51,7 +52,7 @@ agent = Agent.from_spec(
     {
         'model': 'anthropic:claude-opus-4-6',
         'instructions': 'You are helping {{user_name}}.',
-        'capabilities': ['WebSearch'],
+        'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     },
     deps_type=UserContext,
 )
@@ -59,7 +60,7 @@ agent = Agent.from_spec(
 
 Keyword arguments interact with spec fields as follows:
 
-* **Scalar fields** (`model`, `name`, `retries`, `end_strategy`, etc.) — the keyword argument overrides the spec value when provided.
+* **Scalar fields** (`model`, `name`, `end_strategy`, etc.) — the keyword argument overrides the spec value when provided. For retry budgets, the `retries` keyword argument overrides the spec's `retries` value.
 * **`instructions`** — merged: spec instructions come first, then keyword argument instructions.
 * **`capabilities`** — merged: spec capabilities come first, then keyword argument capabilities.
 * **`model_settings`** — merged additively: keyword argument settings override matching spec settings.
@@ -129,9 +130,8 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
-| `retries` | `int` | Default [tool retries](retries.md) (default: `1`) |
-| `output_retries` | `int \| None` | [Output](output.md) validation retries |
-| `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
+| `retries` | `int \| AgentRetries \| None` | Retry budgets for [tools](tools-advanced.md#tool-retries) and [output validation](output.md#output-validator-functions). Pass an integer to use the same budget for both, or [`AgentRetries`][pydantic_ai.agent.AgentRetries] to configure them separately. |
+| `end_strategy` | `EndStrategy` | When to stop (`'early'`, `'graceful'`, or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default [tool](tools.md) timeout in seconds |
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent [metadata](agent.md#run-metadata) |
@@ -165,7 +165,8 @@ output_schema:
   required: [answer, confidence]
 instructions: "You are helping {{user_name}}. Always include a confidence score."
 capabilities:
-  - WebSearch
+  - WebSearch:
+      local: duckduckgo
 ```
 
 ## Saving specs
@@ -178,7 +179,7 @@ from pydantic_ai import AgentSpec
 spec = AgentSpec(
     model='anthropic:claude-opus-4-6',
     instructions='You are a helpful assistant.',
-    capabilities=['WebSearch'],
+    capabilities=[{'WebSearch': {'local': 'duckduckgo'}}],
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

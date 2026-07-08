@@ -23,14 +23,14 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -48,7 +48,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .conftest import ClientWithHandler, TestEnv, try_import
+from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -84,6 +84,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+        if '.agents' in ex.path.parts:
+            continue
         if ex.path.name != '_utils.py':
             try:
                 path = ex.path.relative_to(root_dir)
@@ -115,6 +117,20 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
+    """Patch MCP-related symbols only if the underlying modules are importable in this env."""
+    try:
+        import pydantic_ai.mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass
+    else:
+        mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
+    try:
+        mocker.patch('mcp.server.fastmcp.FastMCP')
+    except (ImportError, AttributeError):
+        pass
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -127,16 +143,11 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 
 
 @pytest.mark.xdist_group(name='doc_tests')
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated',
-    'ignore:`BuiltinToolResultEvent` is deprecated',
-)
-@pytest.mark.parametrize('example', find_filter_examples())
+@pytest.mark.parametrize('example', list(find_filter_examples()))
 def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
-    client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,
@@ -168,10 +179,7 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
-    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-    mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
-    mocker.patch('mcp.server.fastmcp.FastMCP')
+    _patch_optional_mcp_modules(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -208,9 +216,13 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    # Doc examples use placeholder Gateway API keys (`pylf_v...`) that don't encode a region;
+    # set an explicit base URL so they don't hit region inference.
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
+    env.set('ZAI_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -292,6 +304,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
     return s
 
 
@@ -331,6 +344,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    """Stand-in for `MCPToolset` used as a fixture in doc-example tests.
+
+    Doc examples rarely exercise every method; the unused bodies carry coverage-skip markers so
+    coverage reflects only paths actual examples reach.
+    """
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
@@ -379,6 +398,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    'Summarize the latest deploy report': 'Initial deploy summary: 12 services updated, all green.',
+    'A new error was just reported — include it in the summary.': (
+        'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
+    ),
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
@@ -596,6 +619,14 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'Write a long essay about Python': (
+        'Python is a versatile, high-level programming language known for its readability and simplicity. '
+        'Created by Guido van Rossum and first released in 1991, Python has grown to become one of the most '
+        'popular programming languages in the world, used in web development, data science, artificial intelligence, '
+        'automation, and countless other domains.'
+    ),
+    'Tell me about Python': 'Python is a versatile programming language.',
+    'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
@@ -810,25 +841,25 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-                        },
+                        args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                            'type': 'code_execution_result',
+                            'stdout': '1307674368000\n',
+                            'type': 'bash_code_execution_result',
                         },
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
                 ]
@@ -1107,6 +1138,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
+        'gemini-embedding-2': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
@@ -1121,7 +1153,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         model = infer_model(model)
 
     if isinstance(model, FallbackModel):
-        # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
+        # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
         def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')

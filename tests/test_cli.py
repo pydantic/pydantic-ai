@@ -1,15 +1,17 @@
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from io import StringIO
 from typing import Any
 
 import pytest
+import sniffio
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -28,6 +30,17 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
+
+
+@pytest.fixture(autouse=True)
+def reset_sniffio_cvar() -> Iterator[None]:
+    # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
+    # start and the value leaks into sync tests, causing `anyio.run` to refuse to start.
+    token = sniffio.current_async_library_cvar.set(None)
+    try:
+        yield
+    finally:
+        sniffio.current_async_library_cvar.reset(token)
 
 
 def test_cli_version(capfd: CaptureFixture[str]):
@@ -108,8 +121,10 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai-chat:gpt-4o', 'hello']) == 0
 
+    # CLI banner shows `model.model_id` which is `{system}:{model_name}` — `OpenAIChatModel.system`
+    # is `'openai'`, so the banner prints `'openai:gpt-4o'` even when the user passed `'openai-chat:'`.
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
     assert isinstance(custom_agent.model, OpenAIChatModel)
@@ -149,8 +164,8 @@ def test_list_models(capfd: CaptureFixture[str]):
         'anthropic',
         'bedrock',
         'cerebras',
-        'google-vertex',
-        'google-gla',
+        'google',
+        'google-cloud',
         'groq',
         'mistral',
         'cohere',
@@ -158,9 +173,9 @@ def test_list_models(capfd: CaptureFixture[str]):
         'gateway/',
         'heroku',
         'moonshotai',
-        'grok',
         'xai',
         'huggingface',
+        'zai',
     )
     models = {line.strip().split(' ')[0] for line in output[3:]}
     for provider in providers:
@@ -652,17 +667,17 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
-def test_run_web_command_agent_builtin_tools_not_duplicated(
+def test_run_web_command_agent_native_tools_not_duplicated(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
-    from pydantic_ai.builtin_tools import WebSearchTool
+    """Test run_web_command only passes CLI-provided tools, not agent's native tools."""
+    from pydantic_ai.native_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     # Create agent with web_search tool already configured
-    test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
+    test_agent = Agent(TestModel(custom_output_text='test'), capabilities=[NativeTool(WebSearchTool())])
     create_test_module(custom_agent=test_agent)
 
     # Add code_execution via CLI
@@ -673,8 +688,8 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
 
     # Verify only CLI-provided tools are passed (agent's tools are handled by create_web_app)
     call_kwargs = mock_create_app.call_args.kwargs
-    builtin_tools = call_kwargs.get('builtin_tools', [])
-    tool_kinds = {t.kind for t in builtin_tools}
+    native_tools = call_kwargs.get('native_tools', [])
+    tool_kinds = {t.kind for t in native_tools}
     # web_search is on the agent, so it's NOT passed here (it's handled internally)
     assert 'web_search' not in tool_kinds
     # code_execution was provided via CLI, so it IS passed

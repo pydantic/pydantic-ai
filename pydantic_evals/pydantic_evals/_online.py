@@ -12,7 +12,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import anyio
 import sniffio
@@ -176,7 +176,7 @@ def dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
             with _background_lock:
                 _background_threads.discard(thread)
 
-    thread = threading.Thread(target=_thread_target, daemon=True)
+    thread = threading.Thread(target=_thread_target, daemon=False)
     with _background_lock:
         _background_threads.add(thread)
     try:
@@ -263,7 +263,7 @@ def _normalize_sinks(
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback,
 ) -> list[EvaluationSink]:
     if isinstance(sink, EvaluationSink):
-        return [_ensure_payload_compat(sink)]
+        return [sink]
     if callable(sink):
         return [CallbackSink(sink)]
     return [_normalize_single_sink(single_sink) for single_sink in sink]
@@ -271,86 +271,8 @@ def _normalize_sinks(
 
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
-        return _ensure_payload_compat(sink)
-    return CallbackSink(sink)
-
-
-# ---------------------------------------------------------------------------
-# Back-compat shim for EvaluationSink.submit signature change.
-#
-# The original signature was
-#   async def submit(*, results, failures, context, span_reference)
-# and is now
-#   async def submit(payload: SinkPayload)
-# Sinks that still use the old kwargs are detected via signature introspection
-# and wrapped in `_LegacyKwargsShim`, which unpacks the payload for them.
-#
-# TODO(v2): delete this whole section. In v2, `EvaluationSink.submit` will
-# require `(payload: SinkPayload)` unconditionally — drop `_is_legacy_submit`,
-# `_ensure_payload_compat`, `_LegacyKwargsShim`, and `_warned_legacy_sink_ids`,
-# and inline the return values in `_normalize_sinks` / `_normalize_single_sink`.
-# ---------------------------------------------------------------------------
-_warned_legacy_sink_ids: set[int] = set()
-
-
-def _is_legacy_submit(sink: EvaluationSink) -> bool:
-    """Return whether a sink's `submit` uses the pre-`SinkPayload` kwargs signature.
-
-    The bound signature of a modern sink (`async def submit(self, payload)`)
-    has exactly one non-`**kwargs` parameter. Everything else — 4-kwarg legacy,
-    `**kwargs`-only, zero-arg — gets the shim. Using arity rather than
-    parameter names means a modern sink that happens to name its argument
-    `results` still resolves correctly, and an unusual keyword-only
-    `submit(self, *, payload)` is routed to the modern call path rather than
-    being shimmed and emitting a spurious deprecation warning.
-    """
-    try:
-        params = list(inspect.signature(sink.submit).parameters.values())
-    except (TypeError, ValueError):  # pragma: no cover — some C-implemented callables
-        return False  # can't introspect — assume modern signature, don't warn
-    non_var_kwargs = [p for p in params if p.kind is not inspect.Parameter.VAR_KEYWORD]
-    return len(non_var_kwargs) != 1
-
-
-class _LegacyKwargsShim:
-    """Wraps a legacy sink using the pre-`SinkPayload` kwargs signature.
-
-    Unpacks the `SinkPayload` into `(results, failures, context, span_reference)`
-    kwargs and delegates.
-    """
-
-    def __init__(self, inner: EvaluationSink) -> None:
-        self._inner = inner
-
-    async def submit(self, payload: SinkPayload) -> None:
-        # Cast to Any: the shim exists specifically to call sinks whose real signatures
-        # predate the `payload: SinkPayload` change, so pyright's protocol-based view
-        # of `_inner.submit` doesn't match the kwargs we need to pass.
-        await cast(Any, self._inner).submit(
-            results=payload.results,
-            failures=payload.failures,
-            context=payload.context,
-            span_reference=payload.span_reference,
-        )
-
-
-def _ensure_payload_compat(sink: EvaluationSink) -> EvaluationSink:
-    """If `sink.submit` uses the pre-`SinkPayload` signature, wrap it and warn once per class."""
-    if not _is_legacy_submit(sink):
         return sink
-    sink_cls = type(sink)
-    cls_id = id(sink_cls)
-    if cls_id not in _warned_legacy_sink_ids:
-        _warned_legacy_sink_ids.add(cls_id)
-        warnings.warn(
-            f'{sink_cls.__module__}.{sink_cls.__qualname__}.submit() uses the deprecated '
-            'kwargs signature (results, failures, context, span_reference). Update it to '
-            '`async def submit(self, payload: SinkPayload)` — this compatibility shim will '
-            'be removed in pydantic-evals v2.',
-            DeprecationWarning,
-            stacklevel=4,
-        )
-    return _LegacyKwargsShim(sink)
+    return CallbackSink(sink)
 
 
 async def _call_on_error(

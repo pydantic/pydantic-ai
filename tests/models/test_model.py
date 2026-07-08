@@ -6,7 +6,18 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import try_import
 
@@ -28,7 +39,16 @@ if not imports_successful():
 
 TEST_CASES = [
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
+        'gateway/openai:gpt-5',
+        'gpt-5',
+        'openai',
+        'openai',
+        OpenAIResponsesModel,
+        id='gateway/openai:gpt-5',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/chat:gpt-5',
         'gpt-5',
         'openai',
@@ -37,7 +57,7 @@ TEST_CASES = [
         id='gateway/chat:gpt-5',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/responses:gpt-5',
         'gpt-5',
         'openai',
@@ -46,7 +66,7 @@ TEST_CASES = [
         id='gateway/responses:gpt-5',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/groq:llama-3.3-70b-versatile',
         'llama-3.3-70b-versatile',
         'groq',
@@ -55,16 +75,16 @@ TEST_CASES = [
         id='gateway/groq:llama-3.3-70b-versatile',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/gemini:gemini-1.5-flash',
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
+        'gateway/google:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-vertex',
+        'google-cloud',
         'google',
         GoogleModel,
-        id='gateway/gemini:gemini-1.5-flash',
+        id='gateway/google:gemini-1.5-flash',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/anthropic:claude-opus-4-7',
         'claude-opus-4-7',
         'anthropic',
@@ -73,7 +93,7 @@ TEST_CASES = [
         id='gateway/anthropic:claude-opus-4-7',
     ),
     pytest.param(
-        {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/converse:amazon.nova-micro-v1:0',
         'amazon.nova-micro-v1:0',
         'bedrock',
@@ -87,20 +107,12 @@ TEST_CASES = [
         'gpt-3.5-turbo',
         'openai',
         'openai',
-        OpenAIChatModel,
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
+        'openai-chat:gpt-3.5-turbo',
         'gpt-3.5-turbo',
-        'gpt-3.5-turbo',
-        'openai',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
-        {'OPENAI_API_KEY': 'openai-api-key'},
-        'o1',
-        'o1',
         'openai',
         'openai',
         OpenAIChatModel,
@@ -119,31 +131,15 @@ TEST_CASES = [
     ),
     pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
-        'google-gla:gemini-1.5-flash',
+        'google:gemini-1.5-flash',
         'gemini-1.5-flash',
-        'google-gla',
         'google',
-        GoogleModel,
-    ),
-    pytest.param(
-        {'GEMINI_API_KEY': 'gemini-api-key'},
-        'gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google-gla',
         'google',
         GoogleModel,
     ),
     pytest.param(
         {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
         'anthropic:claude-haiku-4-5',
-        'claude-haiku-4-5',
-        'anthropic',
-        'anthropic',
-        AnthropicModel,
-    ),
-    pytest.param(
-        {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
-        'claude-haiku-4-5',
         'claude-haiku-4-5',
         'anthropic',
         'anthropic',
@@ -198,14 +194,6 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
-        {'GROK_API_KEY': 'grok-api-key'},
-        'grok:grok-3',
-        'grok-3',
-        'grok',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
         'openai-responses:gpt-4o',
         'gpt-4o',
@@ -240,6 +228,7 @@ def test_infer_model(
         expected_model = getattr(model_module, model_class.__name__)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
             m = infer_model(model_name)
 
         assert isinstance(m, expected_model)
@@ -257,7 +246,7 @@ def test_infer_model_with_provider():
     from pydantic_ai.providers import openai
 
     provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
-    m = infer_model('openai:gpt-5', lambda x: provider_class)
+    m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
     assert m._provider is provider_class  # type: ignore
@@ -274,20 +263,14 @@ def test_infer_str_unknown():
     [
         pytest.param('openai:gpt-5', ('openai', 'gpt-5'), id='provider:model'),
         pytest.param('anthropic:claude-3', ('anthropic', 'claude-3'), id='anthropic:model'),
-        pytest.param('gpt-4', ('openai', 'gpt-4'), id='legacy-gpt'),
-        pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
-        pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
-        pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google-gla', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gpt-4', (None, 'gpt-4'), id='no-prefix'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
     ],
 )
 def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        assert parse_model_id(model_id) == expected
+    assert parse_model_id(model_id) == expected
 
 
 @pytest.mark.parametrize(
@@ -296,12 +279,15 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('openai:gpt-5', False, id='openai'),
         pytest.param('anthropic:claude-sonnet-4-5', False, id='anthropic'),
         pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', False, id='gateway-google-cloud'),
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
         pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
         pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
-        pytest.param('together:model-without-slash', True, id='together-no-slash'),
+        # Together (OpenAI-compatible) returns the OpenAI default profile for a slashless name
+        # rather than crashing — like `nebius` above — so it's not `DEFAULT_PROFILE`.
+        pytest.param('together:model-without-slash', False, id='together-no-slash'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):
@@ -323,16 +309,10 @@ def test_infer_model_profile(model_id: str, is_default: bool):
             id='anthropic',
         ),
         pytest.param(
-            'google-gla:gemini-2.0-flash',
-            'pydantic_ai.providers.google.GoogleProvider',
-            'gemini-2.0-flash',
-            id='google-gla',
-        ),
-        pytest.param(
             'google:gemini-2.0-flash',
             'pydantic_ai.providers.google.GoogleProvider',
             'gemini-2.0-flash',
-            id='google-shorthand',
+            id='google',
         ),
     ],
 )
@@ -382,4 +362,112 @@ def test_custom_provider_instance_method_model_profile():
     assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
-    assert isinstance(profile, ModelProfile)
+    assert isinstance(profile, dict)
+
+
+def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]]]:
+    """Flatten each `ModelRequest`'s parts to `(type, content)` tuples for compact assertions."""
+    return [
+        [(type(part).__name__, getattr(part, 'content', None)) for part in message.parts]
+        for message in messages
+        if isinstance(message, ModelRequest)
+    ]
+
+
+@pytest.mark.parametrize(
+    'supports_inline,messages,expected',
+    [
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [('UserPromptPart', '<system>Be terse.</system>'), ('UserPromptPart', 'ok?')],
+            ],
+            id='wraps-non-leading-system-prompt',
+        ),
+        pytest.param(
+            True,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='ok?')]),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [('SystemPromptPart', 'Be terse.'), ('UserPromptPart', 'ok?')],
+            ],
+            id='no-op-when-inline-supported',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(content='A'),
+                        SystemPromptPart(content='B'),
+                        UserPromptPart(content='c'),
+                    ]
+                ),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [
+                    ('UserPromptPart', '<system>A</system>'),
+                    ('UserPromptPart', '<system>B</system>'),
+                    ('UserPromptPart', 'c'),
+                ],
+            ],
+            id='wraps-multiple-non-leading-system-prompts',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+            ],
+            [[('SystemPromptPart', 'You are helpful.'), ('UserPromptPart', 'hi')]],
+            id='keeps-leading-system-prompt',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[UserPromptPart(content='follow up')]),
+            ],
+            [
+                [('SystemPromptPart', 'You are helpful.'), ('UserPromptPart', 'hi')],
+                [('UserPromptPart', 'follow up')],
+            ],
+            id='no-non-leading-system-prompt-to-wrap',
+        ),
+        pytest.param(
+            False,
+            [ModelRequest(parts=[SystemPromptPart(content='hi'), UserPromptPart(content='hello')])],
+            [[('SystemPromptPart', 'hi'), ('UserPromptPart', 'hello')]],
+            id='single-leading-request',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelResponse(parts=[TextPart(content='earlier reply')]),
+                ModelRequest(parts=[SystemPromptPart(content='Server prompt'), UserPromptPart(content='Follow up')]),
+            ],
+            [[('SystemPromptPart', 'Server prompt'), ('UserPromptPart', 'Follow up')]],
+            id='first-request-is-leading-after-orphan-response',
+        ),
+        pytest.param(False, [], [], id='no-request'),
+    ],
+)
+def test_prepare_messages_system_prompt_wrapping(
+    supports_inline: bool, messages: list[ModelMessage], expected: list[list[tuple[str, object]]]
+):
+    model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
+    assert _request_parts(model.prepare_messages(messages)) == expected
