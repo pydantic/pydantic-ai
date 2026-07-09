@@ -563,6 +563,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.function = function
         self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -585,8 +587,6 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        _validate_max_retries(max_retries)
-        _validate_timeout(timeout)
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
