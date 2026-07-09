@@ -21388,31 +21388,22 @@ async def test_ephemeral_part_keeps_cacheable_region_stable_across_requests() ->
     assert second[: len(cacheable_first)] == cacheable_first
 
 
-async def test_add_ephemeral_part_rejected_outside_before_model_request() -> None:
-    """`add_ephemeral_part` raises when called from a hook that runs after the outgoing messages are
-    finalized (`wrap_model_request`/`after_model_request`/`on_model_request_error`), where parts would
-    otherwise be silently dropped. `FunctionModel` unit test: it exercises the pre-request guard, which a
-    cassette cannot cover.
+def test_add_ephemeral_part_rejected_outside_before_model_request() -> None:
+    """`add_ephemeral_part` raises on a context that doesn't accept ephemeral parts -- i.e. the ones the
+    framework hands to `wrap_model_request`/`after_model_request`/`on_model_request_error`, which run after
+    the outgoing messages are finalized so added parts would be silently dropped. Only the
+    `before_model_request` context sets `_accepts_ephemeral_parts=True`. Direct unit test of the guard (not
+    a VCR test): it pins the pre-request guard, which a cassette cannot observe.
     """
-
-    @dataclass
-    class _LateContributor(AbstractCapability[Any]):
-        async def wrap_model_request(
-            self,
-            ctx: RunContext[Any],
-            *,
-            request_context: ModelRequestContext,
-            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
-        ) -> ModelResponse:
-            request_context.add_ephemeral_part('too late')
-            return await handler(request_context)
-
-    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return make_text_response('done')  # pragma: no cover - guard raises before the model is called
-
-    agent = Agent(FunctionModel(model_fn), capabilities=[_LateContributor()])
+    # Default `_accepts_ephemeral_parts=False`, mirroring every context except `before_model_request`.
+    request_context = ModelRequestContext(
+        model=FunctionModel(lambda m, i: make_text_response('unused')),  # pragma: no cover
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
     with pytest.raises(UserError, match='can only be called from `before_model_request`'):
-        await agent.run('hi')
+        request_context.add_ephemeral_part('too late')
 
 
 # endregion
