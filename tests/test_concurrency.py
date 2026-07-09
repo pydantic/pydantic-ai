@@ -79,6 +79,28 @@ class TestConcurrencyLimiter:
         with pytest.raises(UserError, match=f'max_running must be >= 1, got {max_running}'):
             ConcurrencyLimit(max_running=max_running)
 
+    @pytest.mark.parametrize('max_queued', [-1, -5])
+    async def test_invalid_max_queued_limiter(self, max_queued: int):
+        """Test that negative max_queued is rejected when creating the limiter."""
+        with pytest.raises(UserError, match=f'max_queued must be >= 0, got {max_queued}'):
+            ConcurrencyLimiter(max_running=5, max_queued=max_queued)
+
+    @pytest.mark.parametrize('max_queued', [-1, -5])
+    async def test_invalid_max_queued_config(self, max_queued: int):
+        """Test that negative max_queued config values fail eagerly."""
+        with pytest.raises(UserError, match=f'max_queued must be >= 0, got {max_queued}'):
+            ConcurrencyLimit(max_running=5, max_queued=max_queued)
+
+    async def test_zero_max_queued_limiter(self):
+        """Test that max_queued=0 (zero queue depth) is accepted by the limiter."""
+        limiter = ConcurrencyLimiter(max_running=5, max_queued=0)
+        assert limiter._max_queued == 0
+
+    async def test_zero_max_queued_config(self):
+        """Test that max_queued=0 (zero queue depth) is accepted by the config."""
+        limit = ConcurrencyLimit(max_running=5, max_queued=0)
+        assert limit.max_queued == 0
+
     async def test_waiting_count_tracking(self):
         """Test that waiting_count is accurately tracked."""
         limiter = ConcurrencyLimiter(max_running=1)
