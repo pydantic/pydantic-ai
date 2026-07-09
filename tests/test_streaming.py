@@ -3962,7 +3962,7 @@ async def test_tool_raises_call_deferred():
         assert await result.validate_response_output(responses[0]) == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0, tool_calls=1))
         assert result.timestamp == IsNow(tz=timezone.utc)
         assert result.is_complete
 

@@ -257,7 +257,7 @@ async def test_multi_agent_usage_no_incr():
     async def delegate_to_other_agent2(ctx: RunContext, sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage
-        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
+        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9, tool_calls=1))
         return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
