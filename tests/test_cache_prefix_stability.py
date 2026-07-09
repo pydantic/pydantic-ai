@@ -34,6 +34,11 @@ from .conftest import try_import
 with try_import() as ag_ui_imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
 
+with try_import() as ag_ui_reasoning_successful:
+    # `ReasoningMessage` (the 0.1.13 reasoning carrier) landed in ag-ui-protocol 0.1.13; older installs
+    # (e.g. the `lowest-versions` CI job, pinned to 0.1.10) lack it, so the thinking-at-0.1.13 dump path is skipped.
+    from ag_ui.core import ReasoningMessage  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -110,7 +115,9 @@ async def test_openai_tool_call_roundtrip_wire_stable(
         pytest.param(
             _ag_ui_roundtrip_latest,
             id='ag_ui-0_1_13',
-            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
+            marks=pytest.mark.skipif(
+                not ag_ui_reasoning_successful(), reason='ag-ui-protocol < 0.1.13 (no ReasoningMessage)'
+            ),
         ),
     ],
 )
