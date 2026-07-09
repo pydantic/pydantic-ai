@@ -12534,3 +12534,18 @@ async def test_image_output_validators_run_stream():
 
 
 # endregion
+
+
+def test_agent_rejects_non_positive_tool_timeout():
+    with pytest.raises(UserError, match='tool_timeout must be > 0'):
+        Agent('test', tool_timeout=0)
+
+
+def test_agent_rejects_negative_tool_timeout():
+    with pytest.raises(UserError, match='tool_timeout must be > 0'):
+        Agent('test', tool_timeout=-1)
+
+
+def test_agent_accepts_none_tool_timeout():
+    agent = Agent('test', tool_timeout=None)
+    assert agent._tool_timeout is None
