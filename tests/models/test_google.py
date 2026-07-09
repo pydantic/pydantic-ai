@@ -4285,7 +4285,9 @@ async def test_gemini_streamed_response_initializes_provider_details_from_servic
 
 async def test_gemini_streamed_response_initializes_provider_details_from_traffic_type():
     chunk = _generate_response_with_texts('stream-traffic-type', ['hello'])
-    chunk.usage_metadata.traffic_type = TrafficType.ON_DEMAND_FLEX
+    usage_metadata = chunk.usage_metadata
+    assert usage_metadata is not None
+    usage_metadata.traffic_type = TrafficType.ON_DEMAND_FLEX
 
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
