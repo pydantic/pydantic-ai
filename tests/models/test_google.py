@@ -105,6 +105,7 @@ with try_import() as imports_successful:
         ModalityTokenCount,
         Part,
         SafetyRating,
+        TrafficType,
         UploadToFileSearchStoreConfigDict,
     )
 
@@ -4258,6 +4259,82 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
 
     events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
+
+
+async def test_gemini_streamed_response_initializes_provider_details_from_service_tier():
+    chunk = _generate_response_with_texts('stream-service-tier', ['hello'])
+    chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='test-provider',
+        _provider_url='',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='hello'))])
+    assert streamed_response.provider_details == {'service_tier': 'flex', 'finish_reason': 'STOP'}
+
+
+async def test_gemini_streamed_response_initializes_provider_details_from_traffic_type():
+    chunk = _generate_response_with_texts('stream-traffic-type', ['hello'])
+    chunk.usage_metadata.traffic_type = TrafficType.ON_DEMAND_FLEX
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='test-provider',
+        _provider_url='',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='hello'))])
+    assert streamed_response.provider_details == {'traffic_type': 'ON_DEMAND_FLEX', 'finish_reason': 'STOP'}
+
+
+async def test_gemini_streamed_response_initializes_provider_details_from_prompt_feedback():
+    chunk = GenerateContentResponse(
+        response_id='stream-blocked',
+        prompt_feedback=GenerateContentResponsePromptFeedback(
+            block_reason=BlockedReason.PROHIBITED_CONTENT,
+            block_reason_message='The prompt was blocked.',
+        ),
+    )
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='test-provider',
+        _provider_url='',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+
+    assert events == []
+    assert streamed_response.finish_reason == 'content_filter'
+    assert streamed_response.provider_response_id == 'stream-blocked'
+    assert streamed_response.provider_details == {
+        'block_reason': 'PROHIBITED_CONTENT',
+        'block_reason_message': 'The prompt was blocked.',
+    }
 
 
 def _usage_chunk(
