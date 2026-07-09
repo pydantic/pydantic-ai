@@ -43,7 +43,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     usage: RunUsage
     """LLM usage associated with the run."""
     usage_limits: UsageLimits | None = None
-    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, or `None` if the run wasn't started with any.
+    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
+
+    During a run this is always set: if no limits were passed, the run enforces the default
+    [`UsageLimits()`][pydantic_ai.usage.UsageLimits] (e.g. `request_limit=50`). It is only `None` on a
+    bare/synthetic `RunContext` that isn't backed by a run.
 
     This reflects the limits the run is already enforcing, so tools and capabilities can disclose or
     adapt to the run's budget (e.g. a budget-disclosure capability) without having to be configured
