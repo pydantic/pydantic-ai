@@ -827,7 +827,12 @@ async def test_output_tool_allowed_at_limit() -> None:
 
 
 async def test_failed_tool_calls_not_counted() -> None:
-    """Test that failed tool calls (raising ModelRetry) are not counted in usage or against limits."""
+    """Test that tool calls that raise ModelRetry are still counted in usage.
+
+    Even though a tool call raises ModelRetry and is retried, the call was made
+    and should be counted against usage limits. This test verifies the counter
+    is incremented before the try/except guard.
+    """
     test_agent = Agent(TestModel())
 
     call_count = 0
@@ -840,9 +845,9 @@ async def test_failed_tool_calls_not_counted() -> None:
             raise ModelRetry('Temporary failure, please retry')
         return f'{x}-success'
 
-    result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
+    result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=2))
     assert call_count == 2
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=2))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
