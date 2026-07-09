@@ -50,6 +50,9 @@ logfire = [
     'logfire>=4.31.0',
     "pydantic-ai-slim[spec]>=2.1.0",
 ]
+dynamic-workflow = [
+    "pydantic-monty>=0.0.16",
+]
 acp = [
     # The SDK breaks across minors, so cap per minor.
     "agent-client-protocol>=0.11,<0.12",

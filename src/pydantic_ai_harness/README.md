@@ -15,7 +15,7 @@ Pydantic AI's [capabilities](https://ai.pydantic.dev/capabilities/) and [hooks](
 
 The [capability matrix](#capability-matrix) tracks where we are. [Tell us what to prioritize.](#help-us-prioritize)
 
-**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [Capability matrix](#capability-matrix) · [An ecosystem agent](#an-ecosystem-agent) · [Help us prioritize](#help-us-prioritize) · [Build your own](#build-your-own) · [Contributing](#contributing) · [Version policy](#version-policy) · [Pydantic AI references](#pydantic-ai-references) · [License](#license)
+**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [DynamicWorkflow](#orchestrating-sub-agents-dynamicworkflow) · [Capability matrix](#capability-matrix) · [An ecosystem agent](#an-ecosystem-agent) · [Help us prioritize](#help-us-prioritize) · [Build your own](#build-your-own) · [Contributing](#contributing) · [Version policy](#version-policy) · [Pydantic AI references](#pydantic-ai-references) · [License](#license)
 
 ## Installation
 
@@ -26,9 +26,10 @@ uv add pydantic-ai-harness
 Extras for specific capabilities:
 
 ```bash
-uv add "pydantic-ai-harness[codemode]"   # CodeMode (adds the Monty sandbox)
-uv add "pydantic-ai-harness[logfire]"     # ManagedPrompt (Logfire-managed prompts)
-uv add "pydantic-ai-harness[acp]"         # ACP (serve an agent to editors over the Agent Client Protocol)
+uv add "pydantic-ai-harness[codemode]"          # CodeMode (adds the Monty sandbox)
+uv add "pydantic-ai-harness[dynamic-workflow]"  # DynamicWorkflow (adds the Monty sandbox)
+uv add "pydantic-ai-harness[logfire]"           # ManagedPrompt (Logfire-managed prompts)
+uv add "pydantic-ai-harness[acp]"               # ACP (serve an agent to editors over the Agent Client Protocol)
 ```
 
 The `code-mode` extra is also supported as an alias.
@@ -95,6 +96,46 @@ practices and warning of a "normalization of deviance" as engineers stop reviewi
 
 **[See this run as a public Logfire trace →](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox -- it's the easiest way to understand what code mode actually did.
 
+## Orchestrating sub-agents: DynamicWorkflow
+
+`CodeMode` gives the model one script for its *tools*. `DynamicWorkflow` does the same for *sub-agents*. Without it, an orchestrator delegates one tool call at a time: call a sub-agent, wait, read the result into context, think, call the next one. Ten delegations cost ten model round-trips, and every intermediate result flows through the orchestrator's context whether it needed to see it or not.
+
+With it, the model writes one Python script in which each sub-agent is an async function, and the whole tree runs in a single tool call:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.dynamic_workflow import DynamicWorkflow
+
+reviewer = Agent('anthropic:claude-sonnet-4-6', name='reviewer', description='Reviews code for bugs.')
+summarizer = Agent('anthropic:claude-sonnet-4-6', name='summarizer', description='Summarizes findings.')
+
+orchestrator = Agent(
+    'anthropic:claude-opus-4-7',
+    capabilities=[DynamicWorkflow(agents=[reviewer, summarizer])],
+)
+```
+
+The script the model writes looks like this -- fan out, chain, and only the last line's value returns to its context:
+
+```python
+import asyncio
+
+reports = await asyncio.gather(
+    reviewer(task="Review auth.py for bugs:\n<file contents>"),
+    reviewer(task="Review parser.py for bugs:\n<file contents>"),
+)
+await summarizer(task="Summarize these findings:\n" + "\n\n".join(reports))
+```
+
+It composes with the rest of the harness:
+
+- **Budgets**: `max_agent_calls` is an exact, host-enforced ceiling on sub-agent runs (it holds even under concurrent fan-out), and by default the whole tree's token spend lands on the parent run's `usage`.
+- **On-demand**: `defer_loading=True` keeps the catalog out of the prompt until the model loads the capability, and `reveal()` adds a sub-agent mid-run without disturbing the prompt cache.
+
+`DynamicWorkflow` ships under `experimental` while planned extensions (structured sub-agent inputs, durable workflows) settle the call contract; importing it emits a `HarnessExperimentalWarning`.
+
+[Full tutorial →](pydantic_ai_harness/experimental/dynamic_workflow/)
+
 ## Capability matrix
 
 We studied leading coding agents, agent frameworks, and Claw-style assistants to map every capability area that matters for production agents. Each one is tracked as an [issue](https://github.com/pydantic/pydantic-ai-harness/issues) in this repo.
@@ -122,7 +163,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | | **Checkpointing** | Snapshot, resume (`continue_run`), and fork (`fork_run`) a run | :white_check_mark: [Docs](pydantic_ai_harness/experimental/step_persistence/) (experimental) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Media externalization** | Offload large `BinaryContent` to content-addressed stores (building blocks) | :white_check_mark: [Docs](pydantic_ai_harness/experimental/media/) (experimental) | |
 | **Agent orchestration** | **Sub-agents** | Delegate subtasks to specialized child agents | :white_check_mark: [Docs](pydantic_ai_harness/experimental/subagents/) (experimental) | [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (vstorm&#8209;co) |
-| | **Dynamic workflows** | Author and run typed multi-agent workflows as sandboxed code | :construction: [PR&nbsp;#273](https://github.com/pydantic/pydantic-ai-harness/pull/273) | |
+| | **Dynamic workflow** | Orchestrate sub-agents from a model-written Python script -- fan-out, chaining, voting in one tool call | :white_check_mark: [Docs](pydantic_ai_harness/experimental/dynamic_workflow/) (experimental) | |
 | | **Skills** | Progressive tool loading -- search, activate, deactivate | :construction: [PR&nbsp;#183](https://github.com/pydantic/pydantic-ai-harness/pull/183) | [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills) (DougTrajano), [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Planning** | Break complex tasks into structured plans before execution | :white_check_mark: [Docs](pydantic_ai_harness/experimental/planning/) (experimental) | |
 | | **Runtime authoring** | Let an agent author, validate, and load real capabilities at runtime | :white_check_mark: [Docs](pydantic_ai_harness/experimental/authoring/) (experimental) | |

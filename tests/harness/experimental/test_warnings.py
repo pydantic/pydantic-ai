@@ -12,7 +12,7 @@ from pydantic_ai_harness.experimental._warn import warn_experimental
 
 
 class TestExperimentalWarning:
-    def test_message_names_feature_and_carries_silence_snippet(self):
+    def test_message_names_feature_and_carries_silence_snippet(self) -> None:
         with pytest.warns(HarnessExperimentalWarning) as rec:
             warn_experimental('compaction')
         assert len(rec) == 1
@@ -21,7 +21,7 @@ class TestExperimentalWarning:
         # The message must hand the user the exact, category-wide silence line.
         assert "warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)" in msg
 
-    def test_one_filter_silences_every_capability(self):
+    def test_one_filter_silences_every_capability(self) -> None:
         # A single category filter mutes all experimental warnings — no per-capability lines.
         with warnings.catch_warnings():
             warnings.simplefilter('error')  # baseline: any warning is an error
@@ -29,13 +29,14 @@ class TestExperimentalWarning:
             warn_experimental('compaction')
             warn_experimental('some_future_capability')  # also silenced, same filter
 
-    def test_importing_a_capability_warns(self):
-        module = importlib.import_module('pydantic_ai_harness.experimental.compaction')
+    @pytest.mark.parametrize('feature', ['compaction', 'subagents', 'dynamic_workflow'])
+    def test_importing_a_capability_warns(self, feature: str) -> None:
+        module = importlib.import_module(f'pydantic_ai_harness.experimental.{feature}')
         with pytest.warns(HarnessExperimentalWarning):
             importlib.reload(module)
 
     @pytest.mark.parametrize('feature', ['step_persistence', 'media'])
-    def test_importing_step_persistence_or_media_warns(self, feature: str):
+    def test_importing_step_persistence_or_media_warns(self, feature: str) -> None:
         module = importlib.import_module(f'pydantic_ai_harness.experimental.{feature}')
         with pytest.warns(HarnessExperimentalWarning, match=feature):
             importlib.reload(module)

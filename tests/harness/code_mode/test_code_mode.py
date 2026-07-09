@@ -31,12 +31,12 @@ from pydantic_monty import NOT_HANDLED, MountDir, OSAccess, OsFunction
 from typing_extensions import TypedDict
 
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness._monty_exec import PrintCapture
 from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
     _TOOL_SEARCH_ADDENDUM,
     _global_mode_is_sequential,
-    _PrintCapture,
     _sanitize_tool_name,
 )
 
@@ -744,6 +744,34 @@ class TestCodeMode:
         assert 'load_capability' not in description
         assert 'load_capability' in tools
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
+
+    async def test_code_execution_tool_not_sandboxed(self) -> None:
+        """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
+
+        Folding one code-execution tool into `run_code` would make the model pass a script as a
+        string argument to a function inside another script. Such a tool (e.g. DynamicWorkflow's
+        `run_workflow`) is a peer of `run_code`, exposed alongside it, not inside it.
+        """
+        td_run_workflow = ToolDefinition(
+            name='run_workflow',
+            description='Run an orchestration script.',
+            parameters_json_schema={'type': 'object', 'properties': {'code': {'type': 'string'}}, 'required': ['code']},
+            return_schema={'type': 'string'},
+            metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+        )
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_run_workflow])
+        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        # Ordinary tools are still sandboxed...
+        assert 'async def get_user' in description
+        # ...but the code-execution tool stays native and is not folded into run_code.
+        assert 'run_workflow' not in description
+        assert 'run_workflow' in tools
 
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""
@@ -1533,6 +1561,34 @@ class TestCodeMode:
         assert 'debug info' in msg
         assert '[stdout before error]' in msg
 
+    async def test_duplicate_future_in_gather_is_retryable(self) -> None:
+        # Awaiting the same tool call twice in one gather makes the Monty VM panic; that panic
+        # must surface as a retry (with the corrupt REPL dropped), not tear down the agent run.
+        wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        code = 'import asyncio\nf = add(a=1, b=2)\nawait asyncio.gather(f, f)'
+        with pytest.raises(ModelRetry, match='aborted inside the sandbox'):
+            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        assert wrapper._repl is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_non_panic_base_exception_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The panic guard catches BaseException but must re-raise anything that is not a VM panic.
+        class _Boom(BaseException):
+            pass
+
+        async def _boom(self: Any, state: Any) -> Any:
+            raise _Boom('boom')
+
+        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', _boom)
+        wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(_Boom):
+            await wrapper.call_tool('run_code', {'code': 'await add(a=1, b=2)'}, ctx, tools['run_code'])
+
     # ---------------------------------------------------------------------------
     # Sequential tool resolution
     # ---------------------------------------------------------------------------
@@ -1779,13 +1835,13 @@ class TestCodeMode:
     # ---------------------------------------------------------------------------
 
     def test_print_capture_concatenates_chunks_in_order(self) -> None:
-        """`_PrintCapture` accumulates print-callback chunks and joins them on read.
+        """`PrintCapture` accumulates print-callback chunks and joins them on read.
 
         Lives in the production module rather than as a closure inside `call_tool` so
         coverage.py sees it execute even when Monty's Rust-side worker thread bypasses
         the per-thread tracer hooks. This unit test exercises it directly.
         """
-        capture = _PrintCapture()
+        capture = PrintCapture()
         assert capture.joined == ''
         capture('stdout', 'hello')
         capture('stdout', ' ')
