@@ -13,7 +13,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry
+from .exceptions import ModelRetry, UserError
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
 from .native_tools import AbstractNativeTool
@@ -575,6 +575,10 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        if self.max_retries is not None and self.max_retries < 0:
+            raise UserError(f'max_retries must be >= 0, got {self.max_retries}')
+        if self.timeout is not None and self.timeout <= 0:
+            raise UserError(f'timeout must be > 0, got {self.timeout}')
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
