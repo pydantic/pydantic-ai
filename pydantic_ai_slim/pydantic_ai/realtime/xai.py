@@ -11,7 +11,7 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
   `conversation.item.input_audio_transcription.updated` snapshots plus a final `.completed`, rather
   than OpenAI's incremental `.delta` events (see [`map_event`][pydantic_ai.realtime.xai.map_event]);
 - no output truncation (`conversation.item.truncate` is unsupported), so
-  [`RealtimeCapabilities.output_truncation`][pydantic_ai.realtime.RealtimeCapabilities.output_truncation]
+  [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
   is `False` while cancellation-based interruption still works.
 
 Requires the `websockets` package (the `realtime` optional group) and `xai-sdk` (the `xai` group, for
@@ -44,9 +44,9 @@ from ..providers import infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ._base import (
-    RealtimeCapabilities,
     RealtimeEvent,
     RealtimeModel,
+    RealtimeModelProfile,
     ReconnectPolicy,
 )
 from ._openai_protocol import (
@@ -121,7 +121,7 @@ class XaiRealtimeModel(RealtimeModel):
             with `commit_audio()` + `create_response()`.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
-            `SessionError` instead.
+            `SessionErrorEvent` instead.
     """
 
     model: str = 'grok-voice-latest'
@@ -152,15 +152,15 @@ class XaiRealtimeModel(RealtimeModel):
         return self.model
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
-        # `output_truncation=False`: xAI has no `conversation.item.truncate`, so barge-in cancels the
-        # response (`interruption`) but can't sync the transcript to a mid-audio playback point.
-        return RealtimeCapabilities(
-            image_input=False,
-            manual_turn_control=True,
-            interruption=True,
-            output_truncation=False,
-            session_seeding=True,
+    def profile(self) -> RealtimeModelProfile:
+        # `supports_output_truncation=False`: xAI has no `conversation.item.truncate`, so barge-in cancels the
+        # response (`supports_interruption`) but can't sync the transcript to a mid-audio playback point.
+        return RealtimeModelProfile(
+            supports_image_input=False,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=False,
+            supports_session_seeding=True,
         )
 
     def _session_config(
@@ -230,7 +230,7 @@ class XaiRealtimeModel(RealtimeModel):
         try:
             ws = await dial()
             # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-            # re-seed: server state is lost on drop and a `Reconnected` starts a fresh turn.
+            # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
             for item in seed_items(messages or ()):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield XaiRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)

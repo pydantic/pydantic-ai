@@ -19,7 +19,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Literal
 
-from typing_extensions import TypeAliasType
+from typing_extensions import TypeAliasType, TypedDict
 
 from ..messages import (
     FunctionToolCallEvent,
@@ -184,7 +184,7 @@ class ToolCall:
 
 
 @dataclass
-class TurnComplete:
+class TurnCompleteEvent:
     """The model finished (or was interrupted during) its turn."""
 
     interrupted: bool = False
@@ -195,7 +195,7 @@ class TurnComplete:
 
 
 @dataclass
-class SpeechStarted:
+class SpeechStartedEvent:
     """The provider detected that the user started speaking.
 
     Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
@@ -207,7 +207,7 @@ class SpeechStarted:
 
 
 @dataclass
-class SpeechStopped:
+class SpeechStoppedEvent:
     """The provider detected that the user stopped speaking.
 
     Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
@@ -218,7 +218,7 @@ class SpeechStopped:
 
 
 @dataclass
-class SessionUsage:
+class SessionUsageEvent:
     """Token usage reported by the provider for a completed model response."""
 
     usage: RequestUsage
@@ -243,7 +243,7 @@ class RateLimit:
 
 
 @dataclass
-class RateLimits:
+class RateLimitsEvent:
     """An updated rate-limit snapshot, typically emitted at the start of each response."""
 
     limits: list[RateLimit]
@@ -254,7 +254,7 @@ class RateLimits:
 
 
 @dataclass
-class Reconnected:
+class ReconnectedEvent:
     """The connection dropped and was automatically re-established.
 
     Session configuration (instructions, tools, voice, ...) is restored, but server-side conversation
@@ -266,7 +266,7 @@ class Reconnected:
 
 
 @dataclass
-class SessionError:
+class SessionErrorEvent:
     """A provider-reported error occurred in the session."""
 
     message: str
@@ -293,7 +293,7 @@ class WebSource:
 
 
 @dataclass
-class Sources:
+class SourcesEvent:
     """Web sources the model grounded its response on (search results or fetched URLs).
 
     Emitted by providers that report grounding metadata — e.g. Gemini Live when the agent uses
@@ -314,11 +314,11 @@ class Sources:
 class Grounding:
     """Native tool call/return parts reconstructed from a grounded turn's provider metadata.
 
-    The history-facing companion to [`Sources`][pydantic_ai.realtime.Sources]: where `Sources` carries a
+    The history-facing companion to [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent]: where `SourcesEvent` carries a
     flattened citation list for a UI, this carries the exact
     [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair(s) a classic
-    [`Model`][pydantic_ai.models.Model] request produces for the same grounding — the flattened `Sources`
+    [`Model`][pydantic_ai.models.Model] request produces for the same grounding — the flattened `SourcesEvent`
     drops fields (a source's `domain`, a fetch's retrieval status) and merges search and URL-context
     results, so it can't reproduce those parts faithfully. The session folds these into the turn's
     assistant [`ModelResponse`][pydantic_ai.messages.ModelResponse] rather than yielding them, so a
@@ -339,15 +339,15 @@ RealtimeEvent = TypeAliasType(
     | Transcript
     | InputTranscript
     | ToolCall
-    | TurnComplete
-    | SpeechStarted
-    | SpeechStopped
-    | SessionUsage
-    | RateLimits
-    | Reconnected
-    | Sources
+    | TurnCompleteEvent
+    | SpeechStartedEvent
+    | SpeechStoppedEvent
+    | SessionUsageEvent
+    | RateLimitsEvent
+    | ReconnectedEvent
+    | SourcesEvent
     | Grounding
-    | SessionError,
+    | SessionErrorEvent,
 )
 """Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].
 
@@ -374,14 +374,14 @@ RealtimeSessionEvent = TypeAliasType(
     | PartEndEvent
     | FunctionToolCallEvent
     | FunctionToolResultEvent
-    | TurnComplete
-    | SpeechStarted
-    | SpeechStopped
-    | SessionUsage
-    | RateLimits
-    | Reconnected
-    | Sources
-    | SessionError,
+    | TurnCompleteEvent
+    | SpeechStartedEvent
+    | SpeechStoppedEvent
+    | SessionUsageEvent
+    | RateLimitsEvent
+    | ReconnectedEvent
+    | SourcesEvent
+    | SessionErrorEvent,
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
 
@@ -395,35 +395,46 @@ control-plane events.
 """
 
 
-@dataclass(frozen=True)
-class RealtimeCapabilities:
-    """What a [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] supports.
+class RealtimeModelProfile(TypedDict):
+    """Describes what a [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] supports, so a session can tailor its behavior to the model.
 
-    A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] queries these flags to reject
-    unsupported operations with a clear error *before* sending them, rather than letting the provider
-    fail mid-session. Read them via [`RealtimeModel.capabilities`][pydantic_ai.realtime.RealtimeModel.capabilities];
+    Mirrors the shape and `supports_`-prefixed naming of
+    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] for the standard request-response
+    [`Model`][pydantic_ai.models.Model], which realtime models don't share a hierarchy with.
+
+    A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] reads these flags to reject unsupported
+    operations with a clear error *before* sending them, rather than letting the provider fail
+    mid-session. Read a model's via [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile];
     each flag maps to the session methods a provider may not support.
+
+    Every field is required (`total=True`): a model returns its profile wholesale, so each provider
+    states support for every capability explicitly rather than relying on defaults. The set of fields is
+    open-ended — new realtime behaviors are added as new keys over time.
     """
 
-    image_input: bool = False
-    """Whether the model accepts image/video frames via [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]."""
-    manual_turn_control: bool = False
+    supports_image_input: bool
+    """Whether the model accepts discrete image/video frames via
+    [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]. Continuous visual input (a live
+    video stream consumed as such rather than as sampled frames), if a model offers it, would be a
+    separate capability."""
+    supports_manual_turn_control: bool
     """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
     [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
-    [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] (push-to-talk). When `False` the
-    provider only supports automatic voice activity detection."""
-    interruption: bool = False
+    [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] (push-to-talk). When `False`
+    the model drives turn-taking itself — most commonly via automatic voice activity detection, though a
+    model may also decide on its own when to speak."""
+    supports_interruption: bool
     """Whether the model supports server-side interruption — cancelling the model's in-progress response
     via [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]."""
-    output_truncation: bool = False
+    supports_output_truncation: bool
     """Whether the model can truncate its in-progress audio output to the point the user actually heard,
     via [`truncate_output`][pydantic_ai.realtime.RealtimeSession.truncate_output] and the `audio_end_ms`
     argument of [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt].
 
-    Distinct from [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption]: a provider may
-    support cancelling a response (barge-in) without supporting output truncation. OpenAI supports both;
-    xAI Grok Voice supports cancellation but not truncation."""
-    session_seeding: bool = False
+    Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
+    a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI
+    supports both; xAI Grok Voice supports cancellation but not truncation."""
+    supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
 
 
@@ -493,7 +504,7 @@ class RealtimeModel(ABC):
 
     @property
     @abstractmethod
-    def capabilities(self) -> RealtimeCapabilities:
+    def profile(self) -> RealtimeModelProfile:
         """The operations this model supports, so a session can reject unsupported ones up front."""
         raise NotImplementedError
 
@@ -503,14 +514,14 @@ class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
-    voice, ...) re-applied, emitting a [`Reconnected`][pydantic_ai.realtime.Reconnected] event. What
+    voice, ...) re-applied, emitting a [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event. What
     server-side state survives depends on the provider: OpenAI Realtime starts a fresh turn (the audio
     buffer and prior turns are lost), while Gemini Live restores conversation state when
     `enable_session_resumption=True` (a prerequisite for reconnecting there).
     """
 
     max_attempts: int = 3
-    """Number of re-dial attempts before giving up with a non-recoverable `SessionError`."""
+    """Number of re-dial attempts before giving up with a non-recoverable `SessionErrorEvent`."""
     base_delay: float = 0.5
     """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
     max_delay: float = 30.0

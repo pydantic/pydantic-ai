@@ -45,15 +45,15 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
-    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
-    Reconnected,
+    RealtimeModelProfile,
+    ReconnectedEvent,
     ReconnectPolicy,
-    SessionError,
-    SessionUsage,
+    SessionErrorEvent,
+    SessionUsageEvent,
     TextInput,
     ToolResult,
     TruncateOutput,
@@ -249,7 +249,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     except ValueError as e:
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
-                        yield SessionError(message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True)
+                        yield SessionErrorEvent(message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True)
                         continue
                     for event in events:
                         yield event
@@ -258,12 +258,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 if self._reconnect is None or self._dial is None:
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than raising.
-                    yield SessionError(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
+                    yield SessionErrorEvent(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield Reconnected()
+                    yield ReconnectedEvent()
                     continue
-                yield SessionError(
+                yield SessionErrorEvent(
                     message=f'OpenAI realtime connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
@@ -292,7 +292,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # so the session accounts for all tokens, then defer a pending response if needed.
             usage = _map_usage(obj(data.get('response')))
             if usage is not None:
-                events.append(SessionUsage(usage=usage))
+                events.append(SessionUsageEvent(usage=usage))
             if self._pending_response:
                 self._pending_response = False
                 # A cancelled response means the user barged in: a new turn is starting, so
@@ -354,7 +354,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         output_speed: Playback speed multiplier for generated audio (0.25-1.5). `None` uses the default.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
-            `SessionError` instead.
+            `SessionErrorEvent` instead.
     """
 
     model: str = 'gpt-realtime'
@@ -389,13 +389,13 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self.model
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
-        return RealtimeCapabilities(
-            image_input=True,
-            manual_turn_control=True,
-            interruption=True,
-            output_truncation=True,
-            session_seeding=True,
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
         )
 
     def _session_config(
@@ -473,7 +473,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         try:
             ws = await dial()
             # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
-            # re-seed: server state is lost on drop and a `Reconnected` starts a fresh turn.
+            # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
             for item in seed_items(messages or ()):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)

@@ -36,14 +36,14 @@ from ._base import (
     AudioDelta,
     InputTranscript,
     RateLimit,
-    RateLimits,
+    RateLimitsEvent,
     RealtimeEvent,
-    SessionError,
-    SpeechStarted,
-    SpeechStopped,
+    SessionErrorEvent,
+    SpeechStartedEvent,
+    SpeechStoppedEvent,
     ToolCall,
     Transcript,
-    TurnComplete,
+    TurnCompleteEvent,
     user_prompt_text,
 )
 
@@ -139,8 +139,8 @@ def loads_obj(raw: str) -> dict[str, Any]:
     return cast('dict[str, Any]', data)
 
 
-def _map_rate_limits(data: dict[str, Any]) -> RateLimits:
-    """Map a `rate_limits.updated` event to a [`RateLimits`][pydantic_ai.realtime.RateLimits]."""
+def _map_rate_limits(data: dict[str, Any]) -> RateLimitsEvent:
+    """Map a `rate_limits.updated` event to a [`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent]."""
     entries = data.get('rate_limits')
     limits: list[RateLimit] = []
     for entry in cast('list[Any]', entries) if isinstance(entries, list) else []:
@@ -157,7 +157,7 @@ def _map_rate_limits(data: dict[str, Any]) -> RateLimits:
                 reset_seconds=float(reset) if isinstance(reset, (int, float)) and not isinstance(reset, bool) else None,
             )
         )
-    return RateLimits(limits=limits)
+    return RateLimitsEvent(limits=limits)
 
 
 def _is_function_call_only(output: Any) -> bool:
@@ -173,15 +173,15 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
-    `TurnComplete` here would prematurely signal the end of the turn.
+    `TurnCompleteEvent` here would prematurely signal the end of the turn.
     """
     if not isinstance(data.get('response'), dict):
-        return TurnComplete(interrupted=False)
+        return TurnCompleteEvent(interrupted=False)
     response = obj(data.get('response'))
     output = response.get('output')
     if _is_function_call_only(output):
         return None
-    return TurnComplete(interrupted=response.get('status') == 'cancelled')
+    return TurnCompleteEvent(interrupted=response.get('status') == 'cancelled')
 
 
 def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
@@ -223,10 +223,10 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
         )
 
     if event_type == 'input_audio_buffer.speech_started':
-        return SpeechStarted()
+        return SpeechStartedEvent()
 
     if event_type == 'input_audio_buffer.speech_stopped':
-        return SpeechStopped()
+        return SpeechStoppedEvent()
 
     if event_type == 'rate_limits.updated':
         return _map_rate_limits(data)
@@ -236,7 +236,7 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
 
     if event_type == 'error':
         error = obj(data.get('error'))
-        return SessionError(
+        return SessionErrorEvent(
             message=_error_message(data.get('error')),
             type=_str_field(error, 'type') or None,
             code=_str_field(error, 'code') or None,

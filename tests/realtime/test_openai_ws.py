@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeCapabilities, SessionError, TurnComplete
+from pydantic_ai.realtime import RealtimeModelProfile, SessionErrorEvent, TurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -54,14 +54,14 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     async with agent.realtime_session(model=model, audio_retention='output') as session:
         await session.send_text('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnComplete):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'SessionUsage', 'PartEndEvent', 'TurnComplete']
+        ['PartStartEvent', 'PartDeltaEvent', 'SessionUsageEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
@@ -92,9 +92,9 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     async with agent.realtime_session(model=model) as session:
         await session.send_text('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnComplete):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
@@ -148,14 +148,14 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     async with agent.realtime_session(model=model, message_history=history) as session:
         await session.send_text('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnComplete):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
-    # `SessionError`; assert none occurred so a broken seed payload fails the test loudly.
-    assert [event for event in events if isinstance(event, SessionError)] == []
+    # `SessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(
@@ -183,13 +183,17 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
-def test_capabilities_allow_seeding() -> None:
+def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
 
     Kept as a plain unit assertion (not a cassette test) because it pins an intrinsic capability flag
     that a recording wouldn't protect.
     """
-    caps = OpenAIRealtimeModel('gpt-realtime').capabilities
-    assert caps == RealtimeCapabilities(
-        image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
+    profile = OpenAIRealtimeModel('gpt-realtime').profile
+    assert profile == RealtimeModelProfile(
+        supports_image_input=True,
+        supports_manual_turn_control=True,
+        supports_interruption=True,
+        supports_output_truncation=True,
+        supports_session_seeding=True,
     )

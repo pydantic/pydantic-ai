@@ -68,7 +68,7 @@ provider differences are worth knowing: Gemini expects **16 kHz** PCM input audi
 sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
 [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image] for "show me this" interactions). xAI
 Grok Voice supports cancellation-based barge-in but not output truncation (see
-[Capabilities](#capabilities)), and reports no per-response token usage.
+[model profile](#model-profile)), and reports no per-response token usage.
 
 ## Quickstart
 
@@ -129,14 +129,14 @@ The remaining realtime control-plane events:
 
 | Event | Meaning |
 | --- | --- |
-| [`SpeechStarted`][pydantic_ai.realtime.SpeechStarted] | The provider detected the user started speaking (barge-in). |
-| [`SpeechStopped`][pydantic_ai.realtime.SpeechStopped] | The user stopped speaking; the model is about to respond. |
-| [`TurnComplete`][pydantic_ai.realtime.TurnComplete] | The model finished a turn (`interrupted=True` if the user barged in). |
-| [`SessionUsage`][pydantic_ai.realtime.SessionUsage] | Token usage for a completed model response (see [Usage and cost](#usage-and-cost)). |
-| [`RateLimits`][pydantic_ai.realtime.RateLimits] | An updated rate-limit snapshot from the provider. |
-| [`Reconnected`][pydantic_ai.realtime.Reconnected] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
-| [`Sources`][pydantic_ai.realtime.Sources] | Web pages the model grounded its answer on, when using a built-in web tool (see [Built-in tools](#built-in-tools-web-search)). |
-| [`SessionError`][pydantic_ai.realtime.SessionError] | The provider reported an error (`recoverable=False` means the connection dropped). |
+| [`SpeechStartedEvent`][pydantic_ai.realtime.SpeechStartedEvent] | The provider detected the user started speaking (barge-in). |
+| [`SpeechStoppedEvent`][pydantic_ai.realtime.SpeechStoppedEvent] | The user stopped speaking; the model is about to respond. |
+| [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn (`interrupted=True` if the user barged in). |
+| [`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent] | Token usage for a completed model response (see [Usage and cost](#usage-and-cost)). |
+| [`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent] | An updated rate-limit snapshot from the provider. |
+| [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
+| [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent] | Web pages the model grounded its answer on, when using a built-in web tool (see [Built-in tools](#built-in-tools-web-search)). |
+| [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported an error (`recoverable=False` means the connection dropped). |
 
 ## Message history
 
@@ -182,7 +182,7 @@ async def main(prior_history):
 Seeding is a **text/transcript projection**: the prior conversation's transcripts and text are
 replayed to the provider as initial conversation items, but audio is not (see
 [Not yet supported](#not-yet-supported)). Seeding requires a provider that accepts it — see
-[Capabilities](#capabilities).
+[model profile](#model-profile).
 
 ### Retaining audio
 
@@ -290,9 +290,11 @@ By default the provider uses server-side voice activity detection
 ([`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]): it decides when the user has started and
 stopped speaking, commits the audio, and triggers a response — and interrupts the model when the
 user barges in. [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] uses a model to decide turn
-boundaries instead.
+boundaries instead. Detection-driven turns and [push-to-talk](#push-to-talk-manual-turn-taking) are
+the common cases, but not the only ones — some models take a more active role, deciding on their own
+when to speak (Gemini's `proactive_audio` is one example).
 
-When the user barges in you get a [`SpeechStarted`][pydantic_ai.realtime.SpeechStarted] event; stop
+When the user barges in you get a [`SpeechStartedEvent`][pydantic_ai.realtime.SpeechStartedEvent] event; stop
 playing any buffered model audio immediately, and call
 [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt] to cancel the model's in-progress
 response. Pass `audio_end_ms` (how many milliseconds of the response the user actually heard) so the
@@ -301,15 +303,15 @@ user never heard:
 
 ```python {test="skip" lint="skip"}
 async for event in session:
-    if isinstance(event, SpeechStarted):
+    if isinstance(event, SpeechStartedEvent):
         speaker.flush()  # drop buffered audio locally
         await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
 `interrupt()` is server-side only — it does not flush your local playback buffer; that is the
 caller's responsibility. Explicit `interrupt()` and manual turn-taking require provider support (see
-[Capabilities](#capabilities)); Gemini Live handles barge-in automatically and exposes neither. The
-`audio_end_ms` truncation additionally needs [`output_truncation`](#capabilities), which xAI Grok
+[model profile](#model-profile)); Gemini Live handles barge-in automatically and exposes neither. The
+`audio_end_ms` truncation additionally needs [`supports_output_truncation`](#model-profile), which xAI Grok
 Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
 ### Push-to-talk (manual turn-taking)
@@ -327,34 +329,38 @@ async with agent.realtime_session(model=model) as session:
     await session.create_response()
 ```
 
-## Capabilities
+## Model profile
 
 Realtime providers differ in what they support, so features like manual turn-taking and barge-in
 aren't universal. Each model reports its support through
-[`RealtimeModel.capabilities`][pydantic_ai.realtime.RealtimeModel.capabilities], a frozen
-[`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities]:
+[`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile], a
+[`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] — the realtime counterpart to the
+[`ModelProfile`][pydantic_ai.profiles.ModelProfile] of a standard [`Model`][pydantic_ai.models.Model]:
 
-| [`RealtimeCapabilities`][pydantic_ai.realtime.RealtimeCapabilities] flag | Gates | OpenAI | Gemini | xAI |
+| [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] flag | Gates | OpenAI | Gemini | xAI |
 | --- | --- | :---: | :---: | :---: |
-| [`image_input`][pydantic_ai.realtime.RealtimeCapabilities.image_input] | [`send_image`](#images) | ✅ | ✅ | ❌ |
-| [`manual_turn_control`][pydantic_ai.realtime.RealtimeCapabilities.manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ | ✅ |
-| [`interruption`][pydantic_ai.realtime.RealtimeCapabilities.interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
-| [`output_truncation`][pydantic_ai.realtime.RealtimeCapabilities.output_truncation] | [`truncate_output` / `interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
-| [`session_seeding`][pydantic_ai.realtime.RealtimeCapabilities.session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
+| [`supports_image_input`][pydantic_ai.realtime.RealtimeModelProfile.supports_image_input] | [`send_image`](#images) | ✅ | ✅ | ❌ |
+| [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control] | [`commit_audio`/`clear_audio`/`create_response`](#push-to-talk-manual-turn-taking) | ✅ | ❌ | ✅ |
+| [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
+| [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`truncate_output` / `interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
+| [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
+
+The profile grows new flags over time as realtime models gain behaviors, so treat it as open-ended
+rather than a fixed list of everything a realtime model might do.
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
 cancelling a response (`interrupt()`) but not truncating its audio to the point the user actually
-heard, so `output_truncation` is off — `truncate_output()` and `interrupt(audio_end_ms=…)` raise while
-`interrupt()` works. Calling a method the model doesn't support raises a clear
-[`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on
-`capabilities` up front rather than handle a mid-session failure:
+heard, so `supports_output_truncation` is off — `truncate_output()` and `interrupt(audio_end_ms=…)`
+raise while `interrupt()` works. Calling a method the model doesn't support raises a clear
+[`UserError`][pydantic_ai.exceptions.UserError] *before* anything is sent, so you can branch on the
+model's `profile` up front rather than handle a mid-session failure:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel('gpt-realtime')
-if model.capabilities.interruption:
+if model.profile['supports_interruption']:
     await session.interrupt(audio_end_ms=speaker.played_ms())
 ```
 
@@ -405,7 +411,7 @@ search the web and read a page mid-conversation:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
-from pydantic_ai.realtime import Sources
+from pydantic_ai.realtime import SourcesEvent
 from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
@@ -415,7 +421,7 @@ async with agent.realtime_session(
     capabilities=[WebSearch()],
 ) as session:
     async for event in session:
-        if isinstance(event, Sources):
+        if isinstance(event, SourcesEvent):
             # Cite what the model grounded its answer on.
             for source in event.sources:
                 print(source.title, source.url)
@@ -425,7 +431,7 @@ async with agent.realtime_session(
 combining it with `WebSearch` on Gemini 2.5.
 
 When the model grounds an answer on web results, the session emits a
-[`Sources`][pydantic_ai.realtime.Sources] event carrying the search queries and the
+[`SourcesEvent`][pydantic_ai.realtime.SourcesEvent] event carrying the search queries and the
 [`WebSource`][pydantic_ai.realtime.WebSource] pages it used — surface these as citations in your UI.
 The same grounding is also recorded in [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages]
 as the built-in-tool call/return parts a classic run would produce, so it survives the handoff to
@@ -459,8 +465,8 @@ The session accumulates token usage as the model responds. Read it from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage] — a
 [`RunUsage`][pydantic_ai.usage.RunUsage] with input/output tokens (including audio and cached
 breakdowns) and tool-call counts. Each completed response is also surfaced as a
-[`SessionUsage`][pydantic_ai.realtime.SessionUsage] event, and providers may emit
-[`RateLimits`][pydantic_ai.realtime.RateLimits] snapshots.
+[`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent] event, and providers may emit
+[`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent] snapshots.
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(model=model) as session:
@@ -472,7 +478,7 @@ async with agent.realtime_session(model=model) as session:
 Pass `usage` to accumulate into a shared [`RunUsage`][pydantic_ai.usage.RunUsage] (e.g. to total a
 voice session and follow-up text runs together), and `usage_limits` to cap a session. Token and
 tool-call limits are enforced as usage accrues; on breach the session emits a non-recoverable
-[`SessionError`][pydantic_ai.realtime.SessionError] and ends.
+[`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] and ends.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -507,7 +513,7 @@ logfire.instrument_pydantic_ai()
 A long-lived connection can drop. Pass a
 [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently re-dial with
 exponential backoff, re-apply the session configuration, and emit a
-[`Reconnected`][pydantic_ai.realtime.Reconnected] event:
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] event:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime import ReconnectPolicy
@@ -517,9 +523,9 @@ model = OpenAIRealtimeModel('gpt-realtime', reconnect=ReconnectPolicy(max_attemp
 ```
 
 Reconnecting restores the session configuration but **not** server-side conversation state (the
-audio buffer and prior turns) — treat a `Reconnected` event as the start of a fresh turn. Without a
+audio buffer and prior turns) — treat a `ReconnectedEvent` event as the start of a fresh turn. Without a
 policy (the default), a dropped connection surfaces as a non-recoverable
-[`SessionError`][pydantic_ai.realtime.SessionError] (`recoverable=False`) and ends the stream, so the
+[`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] (`recoverable=False`) and ends the stream, so the
 app can restart the session itself.
 
 Gemini reconnects via **session resumption**, which *does* restore conversation state. Enable it with

@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import PartStartEvent, SessionError, TurnComplete
+from pydantic_ai.realtime import PartStartEvent, SessionErrorEvent, TurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -58,14 +58,14 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
     async with agent.realtime_session(model=model, audio_retention='output') as session:
         await session.send_text('Say a short greeting.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnComplete):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
@@ -85,7 +85,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
     Unlike OpenAI in text mode, Grok Voice *speaks* before it calls a tool, so the tool call arrives in
-    the same (mixed audio + function-call) response that fires the first `TurnComplete`; the model then
+    the same (mixed audio + function-call) response that fires the first `TurnCompleteEvent`; the model then
     speaks the answer in a second turn. The loop runs until the tool result has come back and the model
     has finished the follow-up turn.
     """
@@ -103,7 +103,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
     async with agent.realtime_session(model=model) as session:
         await session.send_text('What is the weather in London?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
                 # The tool call rides in the first (mixed) turn, so stop only once the model has spoken
                 # a follow-up turn *after* the tool result — the actual answer.
@@ -111,7 +111,7 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
                     seen_result = True
                 elif isinstance(event, PartStartEvent) and seen_result:
                     spoke_after_result = True
-                elif isinstance(event, TurnComplete) and spoke_after_result:
+                elif isinstance(event, TurnCompleteEvent) and spoke_after_result:
                     break
 
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
@@ -167,14 +167,14 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
     async with agent.realtime_session(model=model, message_history=history) as session:
         await session.send_text('What is my name and favorite color?')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnComplete
+            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnComplete):
+                if isinstance(event, TurnCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
-    # `SessionError`; assert none occurred so a broken seed payload fails the test loudly.
-    assert [event for event in events if isinstance(event, SessionError)] == []
+    # `SessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(

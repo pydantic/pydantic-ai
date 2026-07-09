@@ -54,22 +54,22 @@ from ._base import (
     Grounding,
     ImageInput,
     InputTranscript,
-    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
-    Reconnected,
+    RealtimeModelProfile,
+    ReconnectedEvent,
     ReconnectPolicy,
-    SessionError,
-    SessionUsage,
-    Sources,
-    SpeechStarted,
+    SessionErrorEvent,
+    SessionUsageEvent,
+    SourcesEvent,
+    SpeechStartedEvent,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
-    TurnComplete,
+    TurnCompleteEvent,
     WebSource,
     reconnect_with_backoff,
     user_prompt_text,
@@ -188,11 +188,11 @@ def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     )
 
 
-def _map_grounding(content: genai_types.LiveServerContent) -> Sources | None:
+def _map_grounding(content: genai_types.LiveServerContent) -> SourcesEvent | None:
     """Extract web citations from Gemini grounding / URL-context metadata, if any.
 
     Combines the web pages from Google Search grounding (`grounding_metadata`) and the URLs fetched via
-    URL context (`url_context_metadata`) into a single [`Sources`][pydantic_ai.realtime.Sources] event.
+    URL context (`url_context_metadata`) into a single [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent] event.
     """
     sources: list[WebSource] = []
     queries: list[str] = []
@@ -209,7 +209,7 @@ def _map_grounding(content: genai_types.LiveServerContent) -> Sources | None:
                 sources.append(WebSource(url=meta.retrieved_url))
     if not sources and not queries:
         return None
-    return Sources(sources=sources, queries=queries)
+    return SourcesEvent(sources=sources, queries=queries)
 
 
 def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: str) -> list[ModelResponsePart]:
@@ -220,7 +220,7 @@ def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: 
     [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair for Google Search grounding
     and another for URL context. Companion to `_map_grounding`, which builds the UI-facing (and lossy)
-    [`Sources`][pydantic_ai.realtime.Sources] event; the session folds these parts into the turn's
+    [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent] event; the session folds these parts into the turn's
     `ModelResponse`.
     """
     parts: list[ModelResponsePart] = []
@@ -279,7 +279,7 @@ class GoogleRealtimeModel(RealtimeModel):
 
     Generation parameters (`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`) and the Google-specific
     `google_thinking_config` / `google_video_resolution` are read from `model_settings` at connect time,
-    consistent with the rest of pydantic-ai. The fields here cover session capabilities.
+    consistent with the rest of pydantic-ai. The fields here cover session configuration.
 
     Authentication and the underlying `google-genai` client come from a
     [`Provider`][pydantic_ai.providers.Provider], mirroring [`GoogleModel`][pydantic_ai.models.google.GoogleModel].
@@ -353,15 +353,15 @@ class GoogleRealtimeModel(RealtimeModel):
         return self.model
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
+    def profile(self) -> RealtimeModelProfile:
         # Gemini Live drives turns with automatic VAD only (no manual commit/create) and has no
-        # server-side response cancel/truncate, so `manual_turn_control` and `interruption` are off.
-        return RealtimeCapabilities(
-            image_input=True,
-            manual_turn_control=False,
-            interruption=False,
-            output_truncation=False,
-            session_seeding=True,
+        # server-side response cancel/truncate, so `supports_manual_turn_control` and `supports_interruption` are off.
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=False,
+            supports_interruption=False,
+            supports_output_truncation=False,
+            supports_session_seeding=True,
         )
 
     def _speech_config(self) -> genai_types.SpeechConfig | None:
@@ -522,7 +522,7 @@ class GoogleRealtimeModel(RealtimeModel):
             session = await dial(None)
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `Reconnected` starts a fresh turn.
+            # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
             if turns := _seed_turns(messages or ()):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
@@ -612,12 +612,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield SessionError(message=f'Gemini realtime connection closed: {e}', recoverable=False)
+                    yield SessionErrorEvent(message=f'Gemini realtime connection closed: {e}', recoverable=False)
                     return
                 if await self._try_reconnect():
-                    yield Reconnected()
+                    yield ReconnectedEvent()
                     continue
-                yield SessionError(
+                yield SessionErrorEvent(
                     message=f'Gemini realtime connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
@@ -661,15 +661,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 Transcript(text=content.output_transcription.text, is_final=bool(content.output_transcription.finished))
             )
         if content.interrupted:
-            events.append(SpeechStarted())
+            events.append(SpeechStartedEvent())
         if (sources := _map_grounding(content)) is not None:
             events.append(sources)
-        # Emit the same grounding as history-facing native tool parts alongside the UI `Sources`
-        # event: `Sources` is lossy, so history is reconstructed from the raw metadata instead.
+        # Emit the same grounding as history-facing native tool parts alongside the UI `SourcesEvent`
+        # event: `SourcesEvent` is lossy, so history is reconstructed from the raw metadata instead.
         if grounding_parts := _map_grounding_parts(content, self._provider_name):
             events.append(Grounding(parts=grounding_parts))
         if content.turn_complete:
-            events.append(TurnComplete(interrupted=False))
+            events.append(TurnCompleteEvent(interrupted=False))
         return events
 
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeEvent]:
@@ -686,7 +686,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._tool_calls[call_id] = (name, call.id)
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.usage_metadata is not None:
-            events.append(SessionUsage(usage=_map_usage(message.usage_metadata)))
+            events.append(SessionUsageEvent(usage=_map_usage(message.usage_metadata)))
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

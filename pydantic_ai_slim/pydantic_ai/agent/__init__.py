@@ -2718,7 +2718,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 exposed as `session.usage`. A fresh one is used when omitted.
             usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Token and
                 tool-call limits are enforced as usage accrues; on breach the session emits a
-                non-recoverable [`SessionError`][pydantic_ai.realtime.SessionError] and ends.
+                non-recoverable [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] and ends.
             metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
                 available to tools and capabilities.
             conversation_id: Optional conversation id, set on the run context and the telemetry span
@@ -2865,8 +2865,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return str(result.return_value)
                 return str(result)
 
-            model_capabilities = model.capabilities
-            if message_history and not model_capabilities.session_seeding:
+            model_profile = model.profile
+            if message_history and not model_profile['supports_session_seeding']:
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
@@ -2890,7 +2890,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     message_history=message_history,
-                    capabilities=model_capabilities,
+                    profile=model_profile,
                     conversation_id=conversation_id,
                 )
 

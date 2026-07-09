@@ -18,9 +18,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
-    RealtimeCapabilities,
-    Reconnected,
-    SessionError,
+    RealtimeModelProfile,
+    ReconnectedEvent,
+    SessionErrorEvent,
     ToolCall,
     Transcript,
 )
@@ -79,14 +79,14 @@ def test_connection_map_event_override_matches_module() -> None:
 # --- capabilities --------------------------------------------------------------------------------
 
 
-def test_capabilities() -> None:
+def test_profile() -> None:
     """xAI supports cancellation-based interruption but not output truncation, and no image input."""
-    assert _model().capabilities == RealtimeCapabilities(
-        image_input=False,
-        manual_turn_control=True,
-        interruption=True,
-        output_truncation=False,
-        session_seeding=True,
+    assert _model().profile == RealtimeModelProfile(
+        supports_image_input=False,
+        supports_manual_turn_control=True,
+        supports_interruption=True,
+        supports_output_truncation=False,
+        supports_session_seeding=True,
     )
 
 
@@ -314,7 +314,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
 
-    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
 
 
@@ -323,7 +323,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     """A failed reconnect through `connect()`'s dial leaves nothing to close on teardown.
 
     The dial nulls `cm` before re-dialing, so when the re-dial fails (an expected `OSError`) and the
-    session ends via a `SessionError`, teardown finds `cm` already `None` and skips the close.
+    session ends via a `SessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
     """
     dropped = _DropAfterHandshake([_created(), _updated()])
 
@@ -353,7 +353,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
 
-    assert any(isinstance(e, SessionError) and not e.recoverable for e in events)
+    assert any(isinstance(e, SessionErrorEvent) and not e.recoverable for e in events)
 
 
 @pytest.mark.anyio

@@ -17,16 +17,16 @@ from pydantic_ai.realtime import (
     Grounding,
     ImageInput,
     InputTranscript,
-    Reconnected,
-    SessionError,
-    SessionUsage,
-    Sources,
-    SpeechStarted,
+    ReconnectedEvent,
+    SessionErrorEvent,
+    SessionUsageEvent,
+    SourcesEvent,
+    SpeechStartedEvent,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
-    TurnComplete,
+    TurnCompleteEvent,
     WebSource,
 )
 from pydantic_ai.settings import ModelSettings
@@ -170,10 +170,15 @@ def test_provider_instance_is_reused() -> None:
     assert model.client is provider.client
 
 
-def test_capabilities() -> None:
-    caps = GoogleRealtimeModel().capabilities
+def test_profile() -> None:
+    profile = GoogleRealtimeModel().profile
     # Gemini Live has no manual turn control or server-side interruption (automatic VAD only).
-    assert (caps.image_input, caps.manual_turn_control, caps.interruption, caps.session_seeding) == (
+    assert (
+        profile['supports_image_input'],
+        profile['supports_manual_turn_control'],
+        profile['supports_interruption'],
+        profile['supports_session_seeding'],
+    ) == (
         True,
         False,
         False,
@@ -362,8 +367,8 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         Transcript(text='Sunny', is_final=False),
-        SpeechStarted(),
-        TurnComplete(interrupted=False),
+        SpeechStartedEvent(),
+        TurnCompleteEvent(interrupted=False),
     ]
 
 
@@ -377,15 +382,15 @@ def test_map_tool_call_and_usage() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         ToolCall(tool_call_id='c1', tool_name='calc', args=json.dumps({'x': 1})),
-        SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
+        SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
 
 
 def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
-    # A grounded turn produces two events from the same metadata: the UI-facing `Sources` (flattened,
+    # A grounded turn produces two events from the same metadata: the UI-facing `SourcesEvent` (flattened,
     # lossy) and `Grounding` carrying the native tool parts for history. The `Grounding` parts must
     # match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
-    # including a source's `domain` and a fetch's retrieval status, which `Sources` drops), so a grounded
+    # including a source's `domain` and a fetch's retrieval status, which `SourcesEvent` drops), so a grounded
     # voice turn's history is indistinguishable from a classic run's. Kept as a unit test because a
     # cassette can't reliably force the model to ground and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
@@ -399,7 +404,7 @@ def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
                             uri='https://example.com', title='Example', domain='example.com'
                         )
                     ),
-                    genai_types.GroundingChunk(web=None),  # ignored by `Sources`: no web chunk
+                    genai_types.GroundingChunk(web=None),  # ignored by `SourcesEvent`: no web chunk
                     genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(uri=None)),  # ignored: no uri
                 ],
             ),
@@ -409,13 +414,13 @@ def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
                         retrieved_url='https://fetched.example',
                         url_retrieval_status=genai_types.UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS,
                     ),
-                    genai_types.UrlMetadata(retrieved_url=None),  # ignored by `Sources`: no url
+                    genai_types.UrlMetadata(retrieved_url=None),  # ignored by `SourcesEvent`: no url
                 ]
             ),
         )
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        Sources(
+        SourcesEvent(
             sources=[
                 WebSource(url='https://example.com', title='Example'),
                 WebSource(url='https://fetched.example'),
@@ -434,7 +439,7 @@ def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
                     tool_name='web_search',
                     content=[
                         {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
-                        # Unlike `Sources`, grounding history keeps every non-None `web` chunk verbatim
+                        # Unlike `SourcesEvent`, grounding history keeps every non-None `web` chunk verbatim
                         # (the `web=None` chunk is dropped, the uri-less one round-trips), matching classic.
                         {'domain': None, 'title': None, 'uri': None},
                     ],
@@ -535,14 +540,14 @@ async def test_connect_streams_events() -> None:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-live-2.5-flash'
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
-    # non-recoverable `SessionError` before the stream ends (see `test_iter_ends_on_api_error_close`).
+    # non-recoverable `SessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
     assert events[:4] == [
         Transcript(text='hi', is_final=True),
-        TurnComplete(interrupted=False),
+        TurnCompleteEvent(interrupted=False),
         Transcript(text='bye', is_final=True),
-        TurnComplete(interrupted=False),
+        TurnCompleteEvent(interrupted=False),
     ]
-    assert isinstance(events[-1], SessionError) and events[-1].recoverable is False
+    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
 async def test_connect_seeds_message_history() -> None:
@@ -612,12 +617,12 @@ async def test_connect_wires_reconnect_only_with_resumption() -> None:
 
 async def test_iter_ends_on_api_error_close() -> None:
     # The SDK surfaces a server-closed socket as an `APIError`; without a reconnect policy iteration
-    # should end (not raise) but first surface a non-recoverable `SessionError` so callers can tell a
+    # should end (not raise) but first surface a non-recoverable `SessionErrorEvent` so callers can tell a
     # dropped connection from a completed turn (mirroring the OpenAI provider).
     session = _RecordingSession([[_turn('hi')]], close_exc=genai_errors.APIError(1011, {'message': 'go away'}))
     events = [e async for e in _conn(session)]
-    assert events[:2] == [Transcript(text='hi', is_final=True), TurnComplete(interrupted=False)]
-    assert isinstance(events[-1], SessionError) and events[-1].recoverable is False
+    assert events[:2] == [Transcript(text='hi', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
 
 
 # --- config: voice / tone / turn-taking knobs --------------------------------
@@ -775,8 +780,12 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
-    assert events[:3] == [Reconnected(), Transcript(text='back', is_final=True), TurnComplete(interrupted=False)]
-    assert isinstance(events[-1], SessionError) and events[-1].recoverable is False
+    assert events[:3] == [
+        ReconnectedEvent(),
+        Transcript(text='back', is_final=True),
+        TurnCompleteEvent(interrupted=False),
+    ]
+    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
     # reconnect resumed from the stored handle; one success + two failed attempts.
     assert handles == ['h1', 'h1', 'h1']
 
@@ -788,8 +797,8 @@ async def test_reconnect_applies_jitter() -> None:
         cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=True)
     )
     events = [e async for e in conn]
-    assert events[0] == Reconnected()
-    assert isinstance(events[-1], SessionError)
+    assert events[0] == ReconnectedEvent()
+    assert isinstance(events[-1], SessionErrorEvent)
 
 
 async def test_connect_reconnect_closes_previous_session() -> None:
@@ -837,8 +846,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     )
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
-    assert events[0] == Reconnected()
-    assert events[1:3] == [Transcript(text='back', is_final=True), TurnComplete(interrupted=False)]
-    assert isinstance(events[-1], SessionError)
+    assert events[0] == ReconnectedEvent()
+    assert events[1:3] == [Transcript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]
+    assert isinstance(events[-1], SessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]

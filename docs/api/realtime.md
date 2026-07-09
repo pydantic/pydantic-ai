@@ -61,14 +61,14 @@ vocabulary yielded by a connection:
 [`Transcript`][pydantic_ai.realtime.Transcript],
 [`InputTranscript`][pydantic_ai.realtime.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.ToolCall],
-[`TurnComplete`][pydantic_ai.realtime.TurnComplete],
-[`SpeechStarted`][pydantic_ai.realtime.SpeechStarted],
-[`SpeechStopped`][pydantic_ai.realtime.SpeechStopped],
-[`SessionUsage`][pydantic_ai.realtime.SessionUsage],
-[`RateLimits`][pydantic_ai.realtime.RateLimits],
-[`Reconnected`][pydantic_ai.realtime.Reconnected],
-[`Sources`][pydantic_ai.realtime.Sources],
-[`SessionError`][pydantic_ai.realtime.SessionError].
+[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent],
+[`SpeechStartedEvent`][pydantic_ai.realtime.SpeechStartedEvent],
+[`SpeechStoppedEvent`][pydantic_ai.realtime.SpeechStoppedEvent],
+[`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent],
+[`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent],
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent],
+[`SourcesEvent`][pydantic_ai.realtime.SourcesEvent],
+[`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent].
 
 **Session events** — [`RealtimeSessionEvent`][pydantic_ai.realtime.RealtimeSessionEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
@@ -80,8 +80,8 @@ session. The session translates codec events into the shared vocabulary from
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as the
-control-plane events above (`TurnComplete`, `SpeechStarted`, `SpeechStopped`, `SessionUsage`,
-`RateLimits`, `Reconnected`, `Sources`, `SessionError`).
+control-plane events above (`TurnCompleteEvent`, `SpeechStartedEvent`, `SpeechStoppedEvent`, `SessionUsageEvent`,
+`RateLimitsEvent`, `ReconnectedEvent`, `SourcesEvent`, `SessionErrorEvent`).
 
 ::: pydantic_ai.realtime
 

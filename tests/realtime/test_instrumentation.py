@@ -29,16 +29,16 @@ from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
-    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
+    RealtimeModelProfile,
     RealtimeSession,
-    SessionUsage,
+    SessionUsageEvent,
     ToolCall,
     Transcript,
-    TurnComplete,
+    TurnCompleteEvent,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -75,8 +75,14 @@ class _Model(RealtimeModel):
         return 'gpt-realtime'
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
-        return RealtimeCapabilities(image_input=True, manual_turn_control=True, interruption=True, session_seeding=True)
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=False,
+            supports_session_seeding=True,
+        )
 
     @asynccontextmanager
     async def connect(
@@ -141,7 +147,7 @@ async def test_nested_agent_run_nests_under_session_span() -> None:
         return str(result.output)
 
     agent.instrument = settings
-    conn = _Connection([ToolCall(tool_call_id='c', tool_name='analyze', args='{}'), TurnComplete()])
+    conn = _Connection([ToolCall(tool_call_id='c', tool_name='analyze', args='{}'), TurnCompleteEvent()])
     async with agent.realtime_session(model=_Model(conn)) as session:
         _ = [e async for e in session]
 
@@ -165,8 +171,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     async with agent.realtime_session(model=_Model(conn)) as session:
@@ -205,7 +211,9 @@ async def test_include_content_false_omits_args_and_result() -> None:
     settings, exporter = _settings(include_content=False)
     agent = _weather_agent()
     agent.instrument = settings
-    conn = _Connection([ToolCall(tool_call_id='c', tool_name='get_weather', args='{"city": "Paris"}'), TurnComplete()])
+    conn = _Connection(
+        [ToolCall(tool_call_id='c', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
+    )
     async with agent.realtime_session(model=_Model(conn)) as session:
         _ = [e async for e in session]
     tool = next(s for s in exporter.get_finished_spans() if s.name == 'execute_tool get_weather')
@@ -230,8 +238,8 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
             Transcript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
             Transcript(text='it is sunny'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     async with agent.realtime_session(model=_Model(conn)) as session:
@@ -279,7 +287,9 @@ async def test_instrument_and_explicit_capability_no_double_tool_spans() -> None
     settings, exporter = _settings()
     agent = _weather_agent(capabilities=[Instrumentation(settings=settings)])
     agent.instrument = settings
-    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), TurnComplete()])
+    conn = _Connection(
+        [ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), TurnCompleteEvent()]
+    )
     async with agent.realtime_session(model=_Model(conn)) as session:
         _ = [e async for e in session]
     tool_spans = [s for s in exporter.get_finished_spans() if s.name == 'execute_tool get_weather']
@@ -298,8 +308,8 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     async with agent.realtime_session(model=_Model(conn)) as session:
@@ -322,8 +332,8 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     async with agent.realtime_session(model=_Model(conn)) as session:
@@ -347,7 +357,7 @@ async def test_session_captures_transcript_messages() -> None:
         [
             InputTranscript(text='hello there', is_final=True),
             Transcript(text='hi, how can I help?', is_final=True),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
@@ -365,7 +375,7 @@ async def test_session_captures_transcript_messages() -> None:
 
 async def test_include_content_false_omits_transcript_messages() -> None:
     settings, exporter = _settings(include_content=False)
-    conn = _Connection([InputTranscript(text='secret', is_final=True), TurnComplete()])
+    conn = _Connection([InputTranscript(text='secret', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = [e async for e in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
@@ -379,7 +389,7 @@ async def test_session_span_sets_conversation_id() -> None:
     settings, exporter = _settings()
     agent = _weather_agent()
     agent.instrument = settings
-    conn = _Connection([TurnComplete()])
+    conn = _Connection([TurnCompleteEvent()])
     async with agent.realtime_session(model=_Model(conn), conversation_id='conv-123') as session:
         _ = [e async for e in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
@@ -389,7 +399,7 @@ async def test_session_span_sets_conversation_id() -> None:
 
 async def test_session_span_omits_conversation_id_when_unset() -> None:
     settings, exporter = _settings()
-    conn = _Connection([TurnComplete()])
+    conn = _Connection([TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = [e async for e in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
@@ -399,7 +409,7 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
 
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
-    conn = _Connection([TurnComplete()])  # no model/agent name, no Usage event
+    conn = _Connection([TurnCompleteEvent()])  # no model/agent name, no Usage event
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)
     _ = [e async for e in session]
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime')
@@ -416,7 +426,7 @@ async def test_chat_span_closed_for_contentless_response() -> None:
     # Audio with no transcript opens a `chat` span (first content) but finalizes with no response
     # parts, so the span closes without attaching messages.
     settings, exporter = _settings()
-    conn = _Connection([AudioDelta(data=b'\x00\x01'), TurnComplete()])
+    conn = _Connection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
     _ = [e async for e in session]
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
@@ -432,8 +442,8 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
         [
             InputTranscript(text='hi', is_final=True),
             Transcript(text='hello'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
@@ -457,8 +467,8 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         [
             InputTranscript(text='hello there', is_final=True),
             Transcript(text='hi, how can I help?'),
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
-            TurnComplete(),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
@@ -505,7 +515,7 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
         [
             InputTranscript(text='my secret', is_final=True),
             Transcript(text='secret answer'),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
@@ -535,7 +545,7 @@ async def test_direct_session_runs_tool_via_runner() -> None:
             Transcript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
             Transcript(text='it is sunny'),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
@@ -556,7 +566,7 @@ async def test_direct_session_runs_tool_via_runner() -> None:
 async def test_chat_span_without_model_name() -> None:
     """Without a model name, the `chat` span is named just `chat` and omits `gen_ai.request.model`."""
     settings, exporter = _settings()
-    conn = _Connection([Transcript(text='hello'), TurnComplete()])
+    conn = _Connection([Transcript(text='hello'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings)  # no model_name
     _ = [e async for e in session]
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat')

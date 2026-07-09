@@ -43,24 +43,24 @@ from ._base import (
     Grounding,
     ImageInput,
     InputTranscript,
-    RateLimits,
-    RealtimeCapabilities,
+    RateLimitsEvent,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
+    RealtimeModelProfile,
     RealtimeSessionEvent,
-    Reconnected,
-    SessionError,
-    SessionUsage,
-    Sources,
-    SpeechStarted,
-    SpeechStopped,
+    ReconnectedEvent,
+    SessionErrorEvent,
+    SessionUsageEvent,
+    SourcesEvent,
+    SpeechStartedEvent,
+    SpeechStoppedEvent,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
     TruncateOutput,
-    TurnComplete,
+    TurnCompleteEvent,
 )
 
 if TYPE_CHECKING:
@@ -73,14 +73,18 @@ ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 # retained audio is tagged as `audio/pcm`.
 _PCM_MEDIA_TYPE = 'audio/pcm'
 
-# Fallback for a session created without a model's capabilities (e.g. directly, in tests): assume
-# everything is supported so no guard fires. Real sessions receive `model.capabilities`.
-_ALL_CAPABILITIES = RealtimeCapabilities(
-    image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
+# Fallback for a session created without a model's profile (e.g. directly, in tests): assume
+# everything is supported so no guard fires. Real sessions receive `model.profile`.
+_FULL_PROFILE = RealtimeModelProfile(
+    supports_image_input=True,
+    supports_manual_turn_control=True,
+    supports_interruption=True,
+    supports_output_truncation=True,
+    supports_session_seeding=True,
 )
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
-# `SessionUsage`, which `_handle_pump_event` peels off first (they drive tool execution and usage
+# `SessionUsageEvent`, which `_handle_pump_event` peels off first (they drive tool execution and usage
 # accounting before delegating). Splitting the union lets `_translate_event` end in `assert_never`, so
 # a new non-pump variant added to `RealtimeEvent` is caught at type-check time — either the call site
 # (where the residual no longer fits this alias) or the `assert_never` flags it.
@@ -88,14 +92,14 @@ _TranslatableEvent: TypeAlias = (
     AudioDelta
     | Transcript
     | InputTranscript
-    | TurnComplete
-    | SpeechStarted
-    | SpeechStopped
-    | RateLimits
-    | Reconnected
-    | Sources
+    | TurnCompleteEvent
+    | SpeechStartedEvent
+    | SpeechStoppedEvent
+    | RateLimitsEvent
+    | ReconnectedEvent
+    | SourcesEvent
     | Grounding
-    | SessionError
+    | SessionErrorEvent
 )
 
 
@@ -190,14 +194,14 @@ class RealtimeSession:
         usage_limits: UsageLimits | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         message_history: Sequence[ModelMessage] | None = None,
-        capabilities: RealtimeCapabilities | None = None,
+        profile: RealtimeModelProfile | None = None,
         conversation_id: str | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
         self._background_tools = frozenset(background_tools)
         self._instrumentation = instrumentation
-        self._capabilities = capabilities if capabilities is not None else _ALL_CAPABILITIES
+        self._profile = profile if profile is not None else _FULL_PROFILE
         self._model_name = model_name
         self._agent_name = agent_name
         self._conversation_id = conversation_id
@@ -269,27 +273,27 @@ class RealtimeSession:
 
     async def send_image(self, data: bytes, *, mime_type: str = 'image/jpeg') -> None:
         """Send an image frame as conversation context (e.g. a video frame)."""
-        self._require_capability(self._capabilities.image_input, 'send_image', 'image input')
+        self._require_capability(self._profile['supports_image_input'], 'send_image', 'image input')
         await self._connection.send(ImageInput(data=data, mime_type=mime_type))
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
-        self._require_capability(self._capabilities.manual_turn_control, 'commit_audio', 'manual turn-taking')
+        self._require_capability(self._profile['supports_manual_turn_control'], 'commit_audio', 'manual turn-taking')
         await self._connection.send(CommitAudio())
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
-        self._require_capability(self._capabilities.manual_turn_control, 'clear_audio', 'manual turn-taking')
+        self._require_capability(self._profile['supports_manual_turn_control'], 'clear_audio', 'manual turn-taking')
         await self._connection.send(ClearAudio())
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
-        self._require_capability(self._capabilities.manual_turn_control, 'create_response', 'manual turn-taking')
+        self._require_capability(self._profile['supports_manual_turn_control'], 'create_response', 'manual turn-taking')
         await self._connection.send(CreateResponse())
 
     async def truncate_output(self, audio_end_ms: int) -> None:
         """Truncate the model's current audio output at `audio_end_ms` (see `TruncateOutput`)."""
-        self._require_capability(self._capabilities.output_truncation, 'truncate_output', 'output truncation')
+        self._require_capability(self._profile['supports_output_truncation'], 'truncate_output', 'output truncation')
         await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
@@ -303,11 +307,11 @@ class RealtimeSession:
             audio_end_ms: Milliseconds of the current output audio that were actually played. When
                 given, the output item is truncated to this point before the response is cancelled.
         """
-        self._require_capability(self._capabilities.interruption, 'interrupt', 'interruption')
+        self._require_capability(self._profile['supports_interruption'], 'interrupt', 'interruption')
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op.
         if audio_end_ms is not None:
-            if not self._capabilities.output_truncation:
+            if not self._profile['supports_output_truncation']:
                 raise UserError(
                     'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
                     'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'
@@ -494,22 +498,32 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             return self._handle_assistant_audio(event.data)
         if isinstance(event, Transcript):
-            # `is_final` doesn't end the part — the turn ends on `TurnComplete`; a final transcript just
+            # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas.
             return self._handle_assistant_transcript(event.text)
         if isinstance(event, InputTranscript):
             return self._handle_input_transcript(event.text, event.is_final)
-        if isinstance(event, TurnComplete):
+        if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
         if isinstance(event, Grounding):
             # Fold grounding into the current response's history (see `_finalize_response`) without
-            # yielding it: the paired `Sources` event carries the same grounding for the UI.
+            # yielding it: the paired `SourcesEvent` event carries the same grounding for the UI.
             self._ensure_chat_span()
             self._grounding_parts.extend(event.parts)
             return []
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
-        if isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError)):
+        if isinstance(
+            event,
+            (
+                SpeechStartedEvent,
+                SpeechStoppedEvent,
+                ReconnectedEvent,
+                RateLimitsEvent,
+                SourcesEvent,
+                SessionErrorEvent,
+            ),
+        ):
             return [event]
         assert_never(event)
 
@@ -591,25 +605,25 @@ class RealtimeSession:
 
     # --- streaming --------------------------------------------------------------------------------
 
-    def _tool_call_limit_error(self) -> SessionError | None:
-        """A non-recoverable `SessionError` if running one more tool would breach the limits, else `None`."""
+    def _tool_call_limit_error(self) -> SessionErrorEvent | None:
+        """A non-recoverable `SessionErrorEvent` if running one more tool would breach the limits, else `None`."""
         if self._usage_limits is None:
             return None
         projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
         try:
             self._usage_limits.check_before_tool_call(projected)
         except UsageLimitExceeded as e:
-            return SessionError(message=str(e), type='usage_limit_exceeded', recoverable=False)
+            return SessionErrorEvent(message=str(e), type='usage_limit_exceeded', recoverable=False)
         return None
 
-    def _token_limit_error(self) -> SessionError | None:
-        """A non-recoverable `SessionError` if accumulated token usage breaches the limits, else `None`."""
+    def _token_limit_error(self) -> SessionErrorEvent | None:
+        """A non-recoverable `SessionErrorEvent` if accumulated token usage breaches the limits, else `None`."""
         if self._usage_limits is None:
             return None
         try:
             self._usage_limits.check_tokens(self.usage)
         except UsageLimitExceeded as e:
-            return SessionError(message=str(e), type='usage_limit_exceeded', recoverable=False)
+            return SessionErrorEvent(message=str(e), type='usage_limit_exceeded', recoverable=False)
         return None
 
     async def _run_background_tool(
@@ -652,7 +666,7 @@ class RealtimeSession:
                 for out in self._complete_tool_call(call_part, result):
                     await queue.put(out)
             return False
-        if isinstance(event, SessionUsage):
+        if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
             self.usage.requests += 1
             self._pending_response_usage = self._pending_response_usage + event.usage

@@ -68,7 +68,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
-from pydantic_ai.realtime import RealtimeCapabilities, RealtimeConnection, RealtimeModel, RealtimeSession
+from pydantic_ai.realtime import RealtimeConnection, RealtimeModel, RealtimeModelProfile, RealtimeSession
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -2198,9 +2198,13 @@ class _FakeRealtimeModel(RealtimeModel):
         return 'fake-realtime'
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
-        return RealtimeCapabilities(
-            image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
         )
 
     @asynccontextmanager

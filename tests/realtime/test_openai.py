@@ -22,18 +22,18 @@ from pydantic_ai.realtime import (
     ImageInput,
     InputTranscript,
     RateLimit,
-    RateLimits,
-    Reconnected,
-    SessionError,
-    SessionUsage,
-    SpeechStarted,
-    SpeechStopped,
+    RateLimitsEvent,
+    ReconnectedEvent,
+    SessionErrorEvent,
+    SessionUsageEvent,
+    SpeechStartedEvent,
+    SpeechStoppedEvent,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
     TruncateOutput,
-    TurnComplete,
+    TurnCompleteEvent,
     openai as rt_openai,
 )
 from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
@@ -107,11 +107,11 @@ def _response_done(response: Any) -> dict[str, Any]:
 
 
 def test_map_response_done_normal() -> None:
-    assert map_event(_response_done({'status': 'completed', 'output': []})) == TurnComplete(interrupted=False)
+    assert map_event(_response_done({'status': 'completed', 'output': []})) == TurnCompleteEvent(interrupted=False)
 
 
 def test_map_response_done_cancelled() -> None:
-    assert map_event(_response_done({'status': 'cancelled'})) == TurnComplete(interrupted=True)
+    assert map_event(_response_done({'status': 'cancelled'})) == TurnCompleteEvent(interrupted=True)
 
 
 def test_map_response_done_function_call_only_is_skipped() -> None:
@@ -122,30 +122,30 @@ def test_map_response_done_function_call_only_is_skipped() -> None:
 
 def test_map_response_done_mixed_output_is_turn_complete() -> None:
     data = _response_done({'status': 'completed', 'output': [{'type': 'function_call'}, {'type': 'message'}]})
-    assert map_event(data) == TurnComplete(interrupted=False)
+    assert map_event(data) == TurnCompleteEvent(interrupted=False)
 
 
 def test_map_response_done_without_response_object() -> None:
-    assert map_event({'type': 'response.done'}) == TurnComplete(interrupted=False)
+    assert map_event({'type': 'response.done'}) == TurnCompleteEvent(interrupted=False)
 
 
 def test_map_error_event_with_message() -> None:
-    assert map_event({'type': 'error', 'error': {'message': 'bad'}}) == SessionError(message='bad')
+    assert map_event({'type': 'error', 'error': {'message': 'bad'}}) == SessionErrorEvent(message='bad')
 
 
 def test_map_error_event_without_message_serializes_payload() -> None:
-    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == SessionError(
+    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == SessionErrorEvent(
         message=json.dumps({'code': 'x'}), code='x'
     )
 
 
 def test_map_error_event_non_dict_payload() -> None:
-    assert map_event({'type': 'error', 'error': 'plain'}) == SessionError(message='plain')
+    assert map_event({'type': 'error', 'error': 'plain'}) == SessionErrorEvent(message='plain')
 
 
 def test_map_error_event_with_type_and_code_is_recoverable() -> None:
     event = map_event({'type': 'error', 'error': {'message': 'bad', 'type': 'invalid_request_error', 'code': 'c1'}})
-    assert event == SessionError(message='bad', type='invalid_request_error', code='c1', recoverable=True)
+    assert event == SessionErrorEvent(message='bad', type='invalid_request_error', code='c1', recoverable=True)
 
 
 def test_map_rate_limits() -> None:
@@ -159,7 +159,7 @@ def test_map_rate_limits() -> None:
             ],
         }
     )
-    assert event == RateLimits(
+    assert event == RateLimitsEvent(
         limits=[
             RateLimit(name='requests', limit=100, remaining=99, reset_seconds=1.5),
             RateLimit(name='tokens', limit=None, remaining=None, reset_seconds=2.0),
@@ -168,7 +168,7 @@ def test_map_rate_limits() -> None:
 
 
 def test_map_rate_limits_non_list() -> None:
-    assert map_event({'type': 'rate_limits.updated'}) == RateLimits(limits=[])
+    assert map_event({'type': 'rate_limits.updated'}) == RateLimitsEvent(limits=[])
 
 
 def test_map_usage_full_payload() -> None:
@@ -205,11 +205,11 @@ def test_map_usage_minimal_and_missing() -> None:
 
 
 def test_map_speech_started() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_started'}) == SpeechStarted()
+    assert map_event({'type': 'input_audio_buffer.speech_started'}) == SpeechStartedEvent()
 
 
 def test_map_speech_stopped() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == SpeechStopped()
+    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == SpeechStoppedEvent()
 
 
 def test_map_unknown_event_returns_none() -> None:
@@ -455,7 +455,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
 @pytest.mark.anyio
 async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     # A malformed frame (invalid JSON, a valid-JSON-but-non-object frame, then a bad base64 audio
-    # payload) surfaces as a recoverable SessionError and the session keeps streaming rather than
+    # payload) surfaces as a recoverable SessionErrorEvent and the session keeps streaming rather than
     # tearing down. The non-object case guards against `json.loads` returning a list/str/number, which
     # would otherwise raise `AttributeError` from a later `.get()` and escape the recoverable path.
     bad_json = 'not json'
@@ -467,8 +467,13 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
-    assert [type(e).__name__ for e in events] == ['SessionError', 'SessionError', 'SessionError', 'AudioDelta']
-    assert all(isinstance(e, SessionError) and e.recoverable for e in events[:3])
+    assert [type(e).__name__ for e in events] == [
+        'SessionErrorEvent',
+        'SessionErrorEvent',
+        'SessionErrorEvent',
+        'AudioDelta',
+    ]
+    assert all(isinstance(e, SessionErrorEvent) and e.recoverable for e in events[:3])
     assert events[-1] == AudioDelta(data=b'\x09')
 
 
@@ -640,8 +645,8 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
     assert events == [
-        SessionUsage(usage=RequestUsage(input_tokens=3, output_tokens=2)),
-        TurnComplete(interrupted=False),
+        SessionUsageEvent(usage=RequestUsage(input_tokens=3, output_tokens=2)),
+        TurnCompleteEvent(interrupted=False),
     ]
 
 
@@ -656,8 +661,8 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = [e async for e in conn]
-    # function-call-only → no TurnComplete, but usage is still surfaced
-    assert events == [SessionUsage(usage=RequestUsage(output_tokens=5))]
+    # function-call-only → no TurnCompleteEvent, but usage is still surfaced
+    assert events == [SessionUsageEvent(usage=RequestUsage(output_tokens=5))]
 
 
 class DroppingWebSocket(FakeWebSocket):
@@ -675,7 +680,7 @@ async def test_connection_closed_yields_fatal_error() -> None:
     events = [e async for e in conn]
     assert len(events) == 1
     error = events[0]
-    assert isinstance(error, SessionError)
+    assert isinstance(error, SessionErrorEvent)
     assert error.recoverable is False
 
 
@@ -694,7 +699,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
     )
     events = [e async for e in conn]
-    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -741,7 +746,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
 
-    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+    assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
@@ -758,7 +763,7 @@ async def test_reconnect_gives_up_after_max_attempts() -> None:
     events = [e async for e in conn]
     assert len(events) == 1
     error = events[0]
-    assert isinstance(error, SessionError)
+    assert isinstance(error, SessionErrorEvent)
     assert error.recoverable is False
     assert 'reconnect failed' in error.message
 
@@ -963,7 +968,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     model = OpenAIRealtimeModel('gpt-realtime')
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
-    assert events == [TurnComplete(interrupted=False)]
+    assert events == [TurnCompleteEvent(interrupted=False)]
 
 
 async def test_connect_rejects_native_tools() -> None:
@@ -1023,12 +1028,12 @@ def test_azure_provider_is_rejected() -> None:
         OpenAIRealtimeModel('gpt-realtime', provider=provider)
 
 
-def test_capabilities() -> None:
-    caps = OpenAIRealtimeModel('gpt-realtime').capabilities
+def test_profile() -> None:
+    profile = OpenAIRealtimeModel('gpt-realtime').profile
     assert (
-        caps.image_input,
-        caps.manual_turn_control,
-        caps.interruption,
-        caps.output_truncation,
-        caps.session_seeding,
+        profile['supports_image_input'],
+        profile['supports_manual_turn_control'],
+        profile['supports_interruption'],
+        profile['supports_output_truncation'],
+        profile['supports_session_seeding'],
     ) == (True, True, True, True, True)

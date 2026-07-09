@@ -45,21 +45,21 @@ from pydantic_ai.realtime import (
     Grounding,
     ImageInput,
     InputTranscript,
-    RealtimeCapabilities,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
+    RealtimeModelProfile,
     RealtimeSession,
-    SessionError,
-    SessionUsage,
-    Sources,
+    SessionErrorEvent,
+    SessionUsageEvent,
+    SourcesEvent,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
     TruncateOutput,
-    TurnComplete,
+    TurnCompleteEvent,
     WebSource,
 )
 from pydantic_ai.settings import ModelSettings
@@ -74,6 +74,24 @@ pytestmark = pytest.mark.anyio
 
 async def _noop_runner(name: str, args: dict[str, Any], call_id: str) -> str:  # pragma: no cover
     raise AssertionError('tool runner should not be called')
+
+
+def _profile(
+    *,
+    supports_image_input: bool = True,
+    supports_manual_turn_control: bool = True,
+    supports_interruption: bool = True,
+    supports_output_truncation: bool = True,
+    supports_session_seeding: bool = True,
+) -> RealtimeModelProfile:
+    """A full-support profile with per-field overrides, so a guard test can flip one flag off."""
+    return RealtimeModelProfile(
+        supports_image_input=supports_image_input,
+        supports_manual_turn_control=supports_manual_turn_control,
+        supports_interruption=supports_interruption,
+        supports_output_truncation=supports_output_truncation,
+        supports_session_seeding=supports_session_seeding,
+    )
 
 
 class FakeRealtimeConnection(RealtimeConnection):
@@ -97,11 +115,9 @@ class FakeRealtimeConnection(RealtimeConnection):
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
-    def __init__(self, connection: FakeRealtimeConnection, *, capabilities: RealtimeCapabilities | None = None) -> None:
+    def __init__(self, connection: FakeRealtimeConnection, *, profile: RealtimeModelProfile | None = None) -> None:
         self._connection = connection
-        self._capabilities = capabilities or RealtimeCapabilities(
-            image_input=True, manual_turn_control=True, interruption=True, output_truncation=True, session_seeding=True
-        )
+        self._profile = profile or _profile()
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
@@ -113,8 +129,8 @@ class FakeRealtimeModel(RealtimeModel):
         return 'fake-realtime'
 
     @property
-    def capabilities(self) -> RealtimeCapabilities:
-        return self._capabilities
+    def profile(self) -> RealtimeModelProfile:
+        return self._profile
 
     @asynccontextmanager
     async def connect(
@@ -144,7 +160,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
             Transcript(text='Hi ', is_final=False),
             Transcript(text='there', is_final=False),
             Transcript(text='Hi there', is_final=True),  # provider repeats the full text
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -155,7 +171,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
             PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hi ')),
             PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='there')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hi there')),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     assert session.new_messages() == snapshot(
@@ -171,7 +187,7 @@ async def test_assistant_transcript_partials_then_final() -> None:
 
 async def test_assistant_transcript_final_only() -> None:
     # A provider that only sends a single final transcript still yields a delta then the completed part.
-    conn = FakeRealtimeConnection([Transcript(text='Hello world', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection([Transcript(text='Hello world', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = [e async for e in session]
     assert events == snapshot(
@@ -179,7 +195,7 @@ async def test_assistant_transcript_final_only() -> None:
             PartStartEvent(index=0, part=SpeechPart(speaker='assistant', transcript='')),
             PartDeltaEvent(index=0, delta=SpeechPartDelta(transcript_delta='Hello world')),
             PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='Hello world')),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
 
@@ -204,11 +220,13 @@ async def test_user_transcript_final_becomes_request() -> None:
 
 
 async def test_audio_delta_streams_and_transcript_pairs() -> None:
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), Transcript(text='hi', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [AudioDelta(data=b'\x00\x01'), Transcript(text='hi', is_final=True), TurnCompleteEvent()]
+    )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = [e async for e in session]
     assert [type(e).__name__ for e in events] == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
     # transcript_only (default): the completed part keeps the transcript but not the audio bytes.
     assert session.new_messages() == snapshot(
@@ -223,18 +241,20 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
 
 
 async def test_control_events_pass_through() -> None:
-    conn = FakeRealtimeConnection([TurnComplete(interrupted=True), SessionError(message='oops')])
+    conn = FakeRealtimeConnection([TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')])
     session = RealtimeSession(conn, _noop_runner)
     events = [e async for e in session]
-    assert events == [TurnComplete(interrupted=True), SessionError(message='oops')]
+    assert events == [TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')]
 
 
 async def test_interrupted_turn_keeps_partial_transcript() -> None:
     # A barge-in cancels the turn; the completed part reflects the partial transcript seen so far.
-    conn = FakeRealtimeConnection([Transcript(text='the answer is ', is_final=False), TurnComplete(interrupted=True)])
+    conn = FakeRealtimeConnection(
+        [Transcript(text='the answer is ', is_final=False), TurnCompleteEvent(interrupted=True)]
+    )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = [e async for e in session]
-    assert events[-1] == TurnComplete(interrupted=True)
+    assert events[-1] == TurnCompleteEvent(interrupted=True)
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
@@ -255,7 +275,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
             InputTranscript(text="what's the weather in Paris", is_final=True),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             Transcript(text="It's sunny in Paris", is_final=True),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
 
@@ -279,7 +299,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
             'PartStartEvent',  # assistant answer start
             'PartDeltaEvent',
             'PartEndEvent',  # assistant answer end
-            'TurnComplete',
+            'TurnCompleteEvent',
         ]
     )
     assert conn.sent == [ToolResult(tool_call_id='tc_1', output='Sunny, 22C')]
@@ -376,7 +396,7 @@ async def test_background_tool_does_not_block_other_events() -> None:
         [
             ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
             Transcript(text='let me check', is_final=False),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ],
         release=release,
     )
@@ -397,7 +417,7 @@ async def test_background_tool_does_not_block_other_events() -> None:
             'PartStartEvent',  # assistant transcript
             'PartDeltaEvent',
             'PartEndEvent',
-            'TurnComplete',
+            'TurnCompleteEvent',
             'FunctionToolResultEvent',
         ]
     )
@@ -618,10 +638,10 @@ async def test_manual_turn_control_helpers_forward_to_connection() -> None:
 async def test_session_accumulates_usage_and_requests() -> None:
     conn = FakeRealtimeConnection(
         [
-            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=5)),
-            SessionUsage(usage=RequestUsage(input_tokens=3, output_tokens=2)),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=5)),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=3, output_tokens=2)),
             Transcript(text='ok', is_final=True),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
@@ -636,7 +656,7 @@ async def test_session_accumulates_usage_and_requests() -> None:
 
 
 async def test_session_counts_tool_calls() -> None:
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='{}'), TurnCompleteEvent()])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'ok'
@@ -674,7 +694,7 @@ async def test_interrupt_without_audio_end_ms_only_cancels() -> None:
 async def test_manual_turn_control_guard() -> None:
     # A model without manual turn control (e.g. Gemini Live) rejects push-to-talk verbs up front.
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(manual_turn_control=False))
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_manual_turn_control=False))
     for method in (session.commit_audio, session.clear_audio, session.create_response):
         with pytest.raises(UserError, match='does not support manual turn-taking'):
             await method()
@@ -684,7 +704,7 @@ async def test_manual_turn_control_guard() -> None:
 async def test_interruption_guard() -> None:
     # A model without interruption (e.g. Gemini Live) rejects barge-in cancellation up front.
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(interruption=False))
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_interruption=False))
     with pytest.raises(UserError, match='does not support interruption'):
         await session.interrupt()
     assert conn.sent == []
@@ -694,9 +714,7 @@ async def test_output_truncation_guard() -> None:
     # A model that supports cancellation but not output truncation (e.g. xAI Grok Voice) rejects
     # `truncate_output()` and `interrupt(audio_end_ms=...)`, while a plain `interrupt()` still cancels.
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(
-        conn, _noop_runner, capabilities=RealtimeCapabilities(interruption=True, output_truncation=False)
-    )
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
     with pytest.raises(UserError, match='does not support output truncation'):
         await session.truncate_output(100)
     with pytest.raises(UserError, match='does not support output truncation'):
@@ -708,7 +726,7 @@ async def test_output_truncation_guard() -> None:
 
 async def test_image_input_guard() -> None:
     conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner, capabilities=RealtimeCapabilities(image_input=False))
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
     with pytest.raises(UserError, match='does not support image input'):
         await session.send_image(b'\xff\xd8')
     assert conn.sent == []
@@ -731,7 +749,7 @@ async def test_audio_retention_output_keeps_assistant_audio() -> None:
             AudioDelta(data=b'\x00\x01'),
             AudioDelta(data=b'\x02\x03'),
             Transcript(text='hi', is_final=True),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='output')
@@ -778,10 +796,15 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
 async def test_empty_assistant_turn_produces_no_response() -> None:
     # Audio with no transcript and no retention leaves the assistant part contentless, so the turn
     # finalizes without appending a `ModelResponse`.
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnComplete()])
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01'), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     events = [e async for e in session]
-    assert [type(e).__name__ for e in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnComplete']
+    assert [type(e).__name__ for e in events] == [
+        'PartStartEvent',
+        'PartDeltaEvent',
+        'PartEndEvent',
+        'TurnCompleteEvent',
+    ]
     # The finalized part carries no transcript and no audio, so it isn't recorded.
     end = next(e for e in events if isinstance(e, PartEndEvent))
     assert isinstance(end.part, SpeechPart) and end.part.transcript is None and end.part.audio is None
@@ -801,7 +824,7 @@ async def test_empty_input_transcript_produces_no_request() -> None:
 
 
 async def test_transcript_only_default_drops_audio() -> None:
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), Transcript(text='hi', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     _ = [e async for e in session]
     response = session.new_messages()[0]
@@ -815,7 +838,7 @@ async def test_transcript_only_default_drops_audio() -> None:
 
 async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier')])]
-    conn = FakeRealtimeConnection([Transcript(text='reply', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection([Transcript(text='reply', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m', message_history=seed)
     _ = [e async for e in session]
     assert session.all_messages() == snapshot(
@@ -840,7 +863,7 @@ async def test_all_messages_includes_seed_new_messages_excludes_it() -> None:
 
 
 async def test_snapshot_is_a_copy() -> None:
-    conn = FakeRealtimeConnection([Transcript(text='one', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection([Transcript(text='one', is_final=True), TurnCompleteEvent()])
     session = RealtimeSession(conn, _noop_runner, model_name='m')
     _ = [e async for e in session]
     snapshot = session.new_messages()
@@ -857,7 +880,7 @@ async def test_handoff_to_standard_agent_run() -> None:
         [
             InputTranscript(text='hello', is_final=True),
             Transcript(text='hi there', is_final=True),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gpt-realtime')
@@ -897,23 +920,23 @@ def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
 
 
 async def test_grounding_folds_into_response_and_keeps_sources_event() -> None:
-    # A grounded turn emits both `Sources` (UI) and `Grounding` (history). The session yields `Sources`
+    # A grounded turn emits both `SourcesEvent` (UI) and `Grounding` (history). The session yields `SourcesEvent`
     # unchanged but folds `Grounding` into the assistant `ModelResponse`, ahead of the speech, mirroring
     # the classic `GoogleModel` — so `all_messages()` carries the native tool parts, not just the speech.
     grounding = _grounding_parts()
-    sources = Sources(sources=[WebSource(url='https://example.com', title='Example')], queries=['weather rome'])
+    sources = SourcesEvent(sources=[WebSource(url='https://example.com', title='Example')], queries=['weather rome'])
     conn = FakeRealtimeConnection(
         [
             Transcript(text='It is sunny in Rome', is_final=True),
             sources,
             Grounding(parts=list(grounding)),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
     events = [e async for e in session]
 
-    # `Sources` passes through for the UI; `Grounding` is folded into history, never yielded.
+    # `SourcesEvent` passes through for the UI; `Grounding` is folded into history, never yielded.
     assert sources in events
     assert not any(isinstance(e, Grounding) for e in events)
 
@@ -935,7 +958,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
             InputTranscript(text='weather in rome?', is_final=True),
             Transcript(text='It is sunny in Rome', is_final=True),
             Grounding(parts=list(_grounding_parts())),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
@@ -995,7 +1018,7 @@ async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
         return f'Hello {name}!'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc_5', tool_name='greet', args='{"name": "Alice"}'), TurnComplete()]
+        [ToolCall(tool_call_id='tc_5', tool_name='greet', args='{"name": "Alice"}'), TurnCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
 
@@ -1015,7 +1038,7 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
         ModelRequest(parts=[UserPromptPart(content='earlier question')]),
         ModelResponse(parts=[TextPart(content='earlier answer')]),
     ]
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, message_history=seed) as session:
         _ = [e async for e in session]
@@ -1026,8 +1049,8 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
 async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None:
     # A model that can't seed a session rejects `message_history` up front, before dialing.
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
-    model = FakeRealtimeModel(conn, capabilities=RealtimeCapabilities(session_seeding=False))
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
+    model = FakeRealtimeModel(conn, profile=_profile(supports_session_seeding=False))
     seed = [ModelRequest(parts=[UserPromptPart(content='earlier question')])]
     with pytest.raises(UserError, match='does not support seeding a session'):
         async with agent.realtime_session(model=model, message_history=seed):
@@ -1036,7 +1059,7 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([AudioDelta(data=b'\x07'), Transcript(text='hi', is_final=True), TurnComplete()])
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x07'), Transcript(text='hi', is_final=True), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, audio_retention='output') as session:
         _ = [e async for e in session]
@@ -1048,7 +1071,7 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
 
 async def test_agent_realtime_session_additional_instructions() -> None:
     agent: Agent[None, str] = Agent(instructions='Default')
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, instructions='Custom') as session:
         _ = [e async for e in session]
@@ -1057,7 +1080,7 @@ async def test_agent_realtime_session_additional_instructions() -> None:
 
 async def test_agent_realtime_session_default_instructions_empty() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
@@ -1066,7 +1089,9 @@ async def test_agent_realtime_session_default_instructions_empty() -> None:
 
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), TurnCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
@@ -1082,7 +1107,7 @@ async def test_agent_realtime_session_tool_exception() -> None:
     def explode() -> str:
         raise ValueError('nope')
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='explode', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='explode', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
@@ -1100,7 +1125,9 @@ async def test_agent_realtime_session_validates_and_coerces_args() -> None:
         seen = x
         return str(x * 2)
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "21"}'), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "21"}'), TurnCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
@@ -1118,7 +1145,7 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
         return str(x * 2)
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "not a number"}'), TurnComplete()]
+        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "not a number"}'), TurnCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
@@ -1139,7 +1166,7 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
         return f'sunny in {city}'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='tc', tool_name='weather', args='{"city": "forbidden"}'), TurnComplete()]
+        [ToolCall(tool_call_id='tc', tool_name='weather', args='{"city": "forbidden"}'), TurnCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
@@ -1156,7 +1183,7 @@ async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
     def info() -> ToolReturn:
         return ToolReturn(return_value='the-value', content=['extra context'])
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
@@ -1179,7 +1206,7 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='danger', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='danger', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, capabilities=[HandleDeferredToolCalls(handler=deny)]) as session:
         events = [e async for e in session]
@@ -1202,7 +1229,7 @@ async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:
 
         return ts
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='whoami', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='whoami', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, deps='alice') as session:
         events = [e async for e in session]
@@ -1221,7 +1248,9 @@ async def test_agent_realtime_session_stub_model_visible_to_tools() -> None:
         seen_name = ctx.model.model_name
         return f'system={ctx.model.system}'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
@@ -1241,7 +1270,9 @@ async def test_agent_realtime_session_uses_text_model_when_set() -> None:
         seen_system = ctx.model.system
         return 'ok'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='inspect_model', args='{}'), TurnCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
@@ -1258,7 +1289,7 @@ async def test_agent_realtime_session_background_tools_end_to_end() -> None:
         return 'background result'
 
     conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='bg', tool_name='slow_lookup', args='{}'), TurnComplete()],
+        [ToolCall(tool_call_id='bg', tool_name='slow_lookup', args='{}'), TurnCompleteEvent()],
         release=release,
     )
     model = FakeRealtimeModel(conn)
@@ -1266,7 +1297,7 @@ async def test_agent_realtime_session_background_tools_end_to_end() -> None:
         events = [e async for e in session]
 
     assert [type(e).__name__ for e in events] == snapshot(
-        ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'TurnComplete', 'FunctionToolResultEvent']
+        ['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent', 'TurnCompleteEvent', 'FunctionToolResultEvent']
     )
     result = events[-1]
     assert isinstance(result, FunctionToolResultEvent)
@@ -1275,7 +1306,7 @@ async def test_agent_realtime_session_background_tools_end_to_end() -> None:
 
 async def test_agent_realtime_session_forwards_model_settings() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     settings = ModelSettings(temperature=0.5)
     async with agent.realtime_session(model=model, model_settings=settings) as session:
@@ -1286,7 +1317,7 @@ async def test_agent_realtime_session_forwards_model_settings() -> None:
 async def test_agent_realtime_session_merges_agent_and_call_model_settings() -> None:
     """Call-time `model_settings` layer over the agent-level default, mirroring `run`/`iter`."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1, max_tokens=100))
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
         _ = [e async for e in session]
@@ -1296,7 +1327,7 @@ async def test_agent_realtime_session_merges_agent_and_call_model_settings() -> 
 async def test_agent_realtime_session_applies_model_settings_override() -> None:
     """`Agent.override(model_settings=...)` reaches the realtime connection, mirroring `run`/`iter`."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1))
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     with agent.override(model_settings=ModelSettings(temperature=0.9)):
         async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
@@ -1324,7 +1355,7 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     def extra() -> str:
         return 'Dynamic'
 
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
@@ -1339,7 +1370,7 @@ async def test_agent_realtime_session_additional_toolsets() -> None:
     def extra_tool() -> str:
         return 'x'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='extra_tool', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='extra_tool', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, toolsets=[extra_toolset]) as session:
         events = [e async for e in session]
@@ -1350,7 +1381,9 @@ async def test_agent_realtime_session_additional_toolsets() -> None:
 
 async def test_agent_realtime_session_external_usage_accumulates() -> None:
     usage = RunUsage()
-    conn = FakeRealtimeConnection([SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=3)), TurnComplete()])
+    conn = FakeRealtimeConnection(
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)), TurnCompleteEvent()]
+    )
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
     async with agent.realtime_session(model=model, usage=usage) as session:
@@ -1362,14 +1395,14 @@ async def test_agent_realtime_session_external_usage_accumulates() -> None:
 
 async def test_agent_realtime_session_token_limit_emits_session_error() -> None:
     conn = FakeRealtimeConnection(
-        [SessionUsage(usage=RequestUsage(input_tokens=100, output_tokens=100)), TurnComplete()]
+        [SessionUsageEvent(usage=RequestUsage(input_tokens=100, output_tokens=100)), TurnCompleteEvent()]
     )
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
     async with agent.realtime_session(model=model, usage_limits=UsageLimits(total_tokens_limit=50)) as session:
         events = [e async for e in session]
     assert len(events) == 1
-    assert isinstance(events[0], SessionError)
+    assert isinstance(events[0], SessionErrorEvent)
     assert events[0].recoverable is False and events[0].type == 'usage_limit_exceeded'
 
 
@@ -1380,12 +1413,12 @@ async def test_agent_realtime_session_tool_call_limit_emits_session_error() -> N
     def greet() -> str:  # pragma: no cover - never runs: the limit trips first
         return 'hi'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, usage_limits=UsageLimits(tool_calls_limit=0)) as session:
         events = [e async for e in session]
     assert len(events) == 1
-    assert isinstance(events[0], SessionError) and events[0].recoverable is False
+    assert isinstance(events[0], SessionErrorEvent) and events[0].recoverable is False
 
 
 async def test_agent_realtime_session_usage_limits_within_budget() -> None:
@@ -1397,22 +1430,22 @@ async def test_agent_realtime_session_usage_limits_within_budget() -> None:
 
     conn = FakeRealtimeConnection(
         [
-            SessionUsage(usage=RequestUsage(input_tokens=1, output_tokens=1)),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=1, output_tokens=1)),
             ToolCall(tool_call_id='t1', tool_name='greet', args='{}'),
-            TurnComplete(),
+            TurnCompleteEvent(),
         ]
     )
     model = FakeRealtimeModel(conn)
     limits = UsageLimits(total_tokens_limit=1000, tool_calls_limit=10)
     async with agent.realtime_session(model=model, usage_limits=limits) as session:
         events = [e async for e in session]
-    assert not any(isinstance(e, SessionError) for e in events)
+    assert not any(isinstance(e, SessionErrorEvent) for e in events)
     assert any(isinstance(e, FunctionToolResultEvent) for e in events)
 
 
 async def test_agent_realtime_session_native_tools_from_capability() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, capabilities=[NativeTool(WebSearchTool())]) as session:
         _ = [e async for e in session]
@@ -1425,7 +1458,7 @@ async def test_agent_realtime_session_local_capability_tool_declared() -> None:
         return f'content of {url}'  # pragma: no cover - not executed in this wiring test
 
     agent: Agent[None, str] = Agent(capabilities=[WebFetch(native=False, local=fetch)])
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
@@ -1466,7 +1499,7 @@ async def test_agent_realtime_session_capability_tool_hooks() -> None:
     def greet() -> str:
         return 'hi'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     cap = _HookCapability()
     async with agent.realtime_session(model=model, capabilities=[cap]) as session:
@@ -1483,7 +1516,7 @@ async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
     def whoami(ctx: RunContext) -> str:
         return f'{ctx.conversation_id}|{ctx.metadata}'
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='whoami', args='{}'), TurnComplete()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='whoami', args='{}'), TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, conversation_id='conv-1', metadata={'tier': 'gold'}) as session:
         events = [e async for e in session]
@@ -1494,7 +1527,7 @@ async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
 
 async def test_agent_realtime_session_native_tools_override_honored() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     with agent.override(native_tools=[WebSearchTool()]):
         async with agent.realtime_session(model=model) as session:
@@ -1508,7 +1541,7 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
 
     inner: Agent[None, str] = Agent(instructions='Inner')
     wrapper = WrapperAgent(inner)
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with wrapper.realtime_session(model=model) as session:
         _ = [e async for e in session]
@@ -1517,7 +1550,7 @@ async def test_wrapper_agent_realtime_session_proxies() -> None:
 
 async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection([TurnComplete()])
+    conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
