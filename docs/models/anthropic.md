@@ -582,3 +582,10 @@ agent = Agent(
 ```
 
 Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you explicitly select a tool version that the model does not support.
+
+## Downloading Code Execution Files
+
+Enable [`AnthropicModelSettings.anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files] to automatically download files generated during code execution from the Anthropic Files API and return them as [`FilePart`][pydantic_ai.messages.FilePart] objects (available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]).
+
+!!! note
+    Anthropic only exposes a downloadable file when the model **runs code** (via `bash_code_execution`) that writes a file. If the model instead uses the text editor tool to create a file, no downloadable file is produced and no `FilePart` is returned. If you rely on this feature, prompt the model to run code that writes the file to disk (e.g. "write and run Python code that saves the result to a CSV file"), rather than only asking it to "create a file".
