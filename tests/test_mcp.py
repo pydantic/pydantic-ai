@@ -1363,6 +1363,7 @@ class TestToolErrorStructuredMessage:
         """ToolError wrapping an McpError should extract the underlying error code."""
         from mcp.shared.exceptions import McpError
         from mcp.types import ErrorData
+
         from pydantic_ai.mcp import ToolError, _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
 
         mcpe = McpError(ErrorData(code=-32603, message='internal error'))
