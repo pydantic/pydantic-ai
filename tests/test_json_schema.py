@@ -124,3 +124,72 @@ def test_simplify_nullable_union_with_boolean_member():
     schema = {'anyOf': [True, {'type': 'null'}]}
     result = _PassthroughTransformer(schema, simplify_nullable_unions=True).walk()
     assert result == {'anyOf': [True, {'type': 'null'}]}
+
+
+def test_allof_members_are_recursed():
+    """allOf composition members should be recursed into by the walker, like anyOf/oneOf.
+
+    This is a unit test because the walker is an internal helper and the regression is
+    about its recursion shape, not a provider payload a VCR cassette would catch.
+    """
+
+    visited: list[dict[str, Any]] = []
+
+    class _VisitingTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if 'type' in schema and schema.get('type') == 'object':
+                visited.append(schema)
+            return schema
+
+    schema = {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+    }
+
+    result = _VisitingTransformer(deepcopy(schema)).walk()
+
+    # Both allOf members were recursed into (their object subschemas were visited).
+    assert visited == [
+        {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+        {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+    ]
+
+    # The allOf structure is preserved with transformed members.
+    assert result == {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+    }
+
+
+def test_allof_with_refs_is_inlined():
+    """InlineDefsJsonSchemaTransformer should inline $ref members inside allOf.
+
+    Before the fix, allOf members were never recursed into, so $ref resolution and
+    inlining were bypassed for them. This is a unit test pinning the internal walk
+    shape because the schema transformer is an internal helper used by providers.
+    """
+
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+
+    schema = {
+        'allOf': [
+            {'$ref': '#/$defs/Foo'},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+        '$defs': {
+            'Foo': {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    # The $ref inside allOf was inlined; no $defs should remain since there are no
+    # recursive refs and inlining is preferred.
+    assert '$defs' not in result
+    assert 'allOf' in result
+    assert result['allOf'][0] == {'type': 'object', 'properties': {'a': {'type': 'string'}}}
+    assert result['allOf'][1] == {'type': 'object', 'properties': {'b': {'type': 'integer'}}}
