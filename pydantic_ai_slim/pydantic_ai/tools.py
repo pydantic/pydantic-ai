@@ -435,6 +435,16 @@ ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
 
+def _validate_max_retries(max_retries: int | None) -> None:
+    if max_retries is not None and max_retries < 0:
+        raise UserError(f'max_retries must be >= 0, got {max_retries}')
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and timeout <= 0:
+        raise UserError(f'timeout must be > 0, got {timeout}')
+
+
 @dataclass(init=False)
 class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
@@ -575,10 +585,8 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        if self.max_retries is not None and self.max_retries < 0:
-            raise UserError(f'max_retries must be >= 0, got {self.max_retries}')
-        if self.timeout is not None and self.timeout <= 0:
-            raise UserError(f'timeout must be > 0, got {self.timeout}')
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
