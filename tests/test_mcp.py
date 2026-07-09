@@ -1347,6 +1347,7 @@ class TestToolErrorStructuredMessage:
     def test_mcp_error_includes_code(self):
         from mcp.shared.exceptions import McpError
         from mcp.types import ErrorData
+
         from pydantic_ai.mcp import _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
 
         err = McpError(ErrorData(code=-32603, message='internal error'))
@@ -1355,6 +1356,7 @@ class TestToolErrorStructuredMessage:
 
     def test_non_mcp_falls_back_to_str(self):
         from pydantic_ai.mcp import _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
+
         assert _build_tool_error_message(ValueError('boom')) == 'boom'
 
 
