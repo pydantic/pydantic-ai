@@ -27,8 +27,8 @@ def _validate_max_running(max_running: int) -> None:
         raise UserError(f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.')
 
 
-def _validate_max_queued(max_queued: int) -> None:
-    if max_queued < 0:
+def _validate_max_queued(max_queued: int | None) -> None:
+    if max_queued is not None and max_queued < 0:
         raise UserError(f'max_queued must be >= 0, got {max_queued}. Use None for unlimited queue.')
 
 
@@ -89,8 +89,7 @@ class ConcurrencyLimit:
 
     def __post_init__(self) -> None:
         _validate_max_running(self.max_running)
-        if self.max_queued is not None:
-            _validate_max_queued(self.max_queued)
+        _validate_max_queued(self.max_queued)
 
 
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
@@ -122,8 +121,7 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             UserError: If `max_running` is less than 1.
         """
         _validate_max_running(max_running)
-        if max_queued is not None:
-            _validate_max_queued(max_queued)
+        _validate_max_queued(max_queued)
         self._limiter = anyio.CapacityLimiter(max_running)
         self._max_queued = max_queued
         self._name = name

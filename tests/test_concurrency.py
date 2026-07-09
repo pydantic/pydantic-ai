@@ -15,6 +15,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from logfire.testing import CaptureLogfire
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
@@ -609,17 +611,16 @@ class TestConcurrencyLimiterName:
         attrs = spans[0]['attributes']
         assert attrs['max_queued'] == 5
 
-    def test_concurrency_limit_rejects_negative_max_queued(self):
+    @pytest.mark.parametrize(
+        'factory',
+        [
+            lambda: ConcurrencyLimit(max_running=5, max_queued=-1),
+            lambda: ConcurrencyLimiter(max_running=5, max_queued=-1),
+        ],
+    )
+    def test_rejects_negative_max_queued(self, factory: Callable[[], object]):
         with pytest.raises(UserError, match='max_queued must be >= 0'):
-            ConcurrencyLimit(max_running=5, max_queued=-1)
-
-    def test_concurrency_limiter_rejects_negative_max_queued(self):
-        with pytest.raises(UserError, match='max_queued must be >= 0'):
-            ConcurrencyLimiter(max_running=5, max_queued=-1)
-
-    def test_concurrency_limit_accepts_none_max_queued(self):
-        limit = ConcurrencyLimit(max_running=5, max_queued=None)
-        assert limit.max_queued is None
+            factory()
 
     def test_concurrency_limit_accepts_zero_max_queued(self):
         limit = ConcurrencyLimit(max_running=5, max_queued=0)
