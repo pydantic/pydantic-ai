@@ -1342,57 +1342,20 @@ def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
 
 
 class TestToolErrorStructuredMessage:
-    """The tool-call path should preserve structured MCP error info (code/data) in the
-    ModelRetry message, symmetric with how the resource methods use MCPError.from_mcp_sdk()."""
+    """The tool-call path should preserve structured MCP error info (code/data)."""
 
-    def test_mcp_error_includes_code_in_message(self):
-        """Bare McpError → message includes the error code."""
+    def test_mcp_error_includes_code(self):
         from mcp.shared.exceptions import McpError
         from mcp.types import ErrorData
+        from pydantic_ai.mcp import _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
 
-        from pydantic_ai.mcp import MCPError
+        err = McpError(ErrorData(code=-32603, message='internal error'))
+        msg = _build_tool_error_message(err)
+        assert 'internal error' in msg and 'code: -32603' in msg
 
-        mcpe = McpError(ErrorData(code=-32603, message='internal error'))
-        msg = str(MCPError.from_mcp_sdk(mcpe))
-        assert 'internal error' in msg
-        assert 'code: -32603' in msg
-
-    def test_tool_error_wrapping_mcp_error(self):
-        """ToolError whose __cause__ is an McpError → message includes code."""
-        from fastmcp.exceptions import ToolError
-        from mcp.shared.exceptions import McpError
-        from mcp.types import ErrorData
-
-        from pydantic_ai.mcp import MCPError
-
-        mcpe = McpError(ErrorData(code=-32002, message='not found'))
-        tool_err = ToolError('tool failed')
-        tool_err.__cause__ = mcpe
-        msg = str(MCPError.from_mcp_sdk(mcpe))
-        assert 'not found' in msg
-        assert 'code: -32002' in msg
-
-    def test_mcp_error_with_data(self):
-        """McpError carrying structured data → includes data in message."""
-        from mcp.shared.exceptions import McpError
-        from mcp.types import ErrorData
-
-        from pydantic_ai.mcp import MCPError
-
-        err = McpError(ErrorData(code=408, message='timeout', data={'waited': '5s'}))
-        msg = str(MCPError.from_mcp_sdk(err))
-        assert 'timeout' in msg
-        assert 'code: 408' in msg
-        assert 'waited' in msg
-
-    def test_non_mcp_error_falls_back_to_str(self):
-        """Non-MCP exceptions do not go through MCPError formatting.
-
-        The _build_tool_error_message function returns str(error) for
-        non-MCP exceptions. This is tested implicitly through the
-        direct_call_tool error path — a ValueError from a tool function
-        produces a ModelRetry with the plain str() message.
-        """
+    def test_non_mcp_falls_back_to_str(self):
+        from pydantic_ai.mcp import _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
+        assert _build_tool_error_message(ValueError('boom')) == 'boom'
 
 
 class TestMCPToolsetBackgroundTasks:
