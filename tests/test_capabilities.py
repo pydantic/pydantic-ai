@@ -21407,7 +21407,10 @@ async def test_add_ephemeral_part_rejected_outside_before_model_request() -> Non
             request_context.add_ephemeral_part('too late')
             return await handler(request_context)
 
-    agent = Agent(FunctionModel(lambda m, i: make_text_response('done')), capabilities=[_LateContributor()])
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')  # pragma: no cover - guard raises before the model is called
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_LateContributor()])
     with pytest.raises(UserError, match='can only be called from `before_model_request`'):
         await agent.run('hi')
 
