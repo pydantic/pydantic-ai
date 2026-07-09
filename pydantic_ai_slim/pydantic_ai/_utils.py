@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import uuid
+import warnings
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -807,11 +808,17 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
 
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
-    try:
-        event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
+    # `asyncio.get_event_loop()` is deprecated (and warns or raises) when there is
+    # no running event loop, so obtain the loop via the event loop policy instead.
+    # The DeprecationWarning is suppressed to stay clean on Python 3.14+ where the
+    # policy method itself still emits it.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)
+        try:
+            event_loop = asyncio.get_event_loop_policy().get_event_loop()
+        except RuntimeError:  # pragma: lax no cover
+            event_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(event_loop)
     return event_loop
 
 

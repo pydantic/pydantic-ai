@@ -8,6 +8,7 @@ import importlib
 import os
 import sys
 import threading
+import warnings
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
@@ -16,7 +17,7 @@ from typing import Any
 import pytest
 
 import pydantic_ai._utils as utils_module
-from pydantic_ai import UserError
+from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
@@ -28,6 +29,7 @@ from pydantic_ai._utils import (
     strip_markdown_fences,
     using_thread_executor,
 )
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
@@ -923,3 +925,25 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+def test_run_sync_does_not_emit_event_loop_deprecation_warning():
+    """`agent.run_sync` must obtain the event loop without a DeprecationWarning.
+
+    `asyncio.get_event_loop()` is deprecated (and warns or raises) when there is
+    no running event loop, so the internal `get_event_loop` helper now uses the
+    event loop policy instead (issue #1196).
+    """
+
+    async def noop_tool(ctx: object) -> str:
+        return 'ok'
+
+    agent = Agent(TestModel(), tools=[noop_tool])
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter('always')
+        agent.run_sync('hello')
+
+    event_loop_warnings = [
+        w for w in recorded if issubclass(w.category, DeprecationWarning) and 'event loop' in str(w.message).lower()
+    ]
+    assert event_loop_warnings == []
