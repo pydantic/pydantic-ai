@@ -1,8 +1,8 @@
 ---
 name: pydantic-ai-harness
-description: Extend Pydantic AI agents with batteries-included capabilities from pydantic-ai-harness -- currently Code Mode, which collapses many tool calls into one sandboxed Python execution. Use when the user mentions pydantic-ai-harness, CodeMode, Monty, code mode, or tool sandboxing, when they want an agent to run agent-written Python, or when a Pydantic AI agent would benefit from orchestrating multiple tool calls in a single sandboxed script.
+description: Extend Pydantic AI agents with batteries-included capabilities from pydantic-ai-harness -- Code Mode (collapse many tool calls into one sandboxed Python execution), a filesystem and shell, sub-agents, planning, context compaction, and more. Use when the user mentions pydantic-ai-harness, CodeMode, Monty, code mode, or tool sandboxing, when they want first-party filesystem/shell/sub-agent/planning/compaction capabilities for a Pydantic AI agent, when they want an agent to run agent-written Python, or when a Pydantic AI agent would benefit from orchestrating multiple tool calls in a single sandboxed script.
 license: MIT
-compatibility: Requires Python 3.10+ and pydantic-ai-slim>=1.95.1
+compatibility: Requires Python 3.10+ and pydantic-ai-slim>=2.1.0
 metadata:
   version: "0.1.0"
   author: pydantic
@@ -33,13 +33,24 @@ Do **not** use this skill for:
 
 ## Supported Capabilities
 
+`CodeMode` has a full reference below; it is the flagship capability and the one this skill goes deep on.
+The rest ship today and each has its own README with API and examples.
+
+**Stable** (imported from `pydantic_ai_harness`):
+
 | Capability | Description | Reference |
 |---|---|---|
 | `CodeMode` | Wraps eligible tools into a single sandboxed `run_code` tool so the model orchestrates them in Python | [Code Mode](./references/CODE-MODE.md) |
+| `FileSystem` | Read, write, edit, and search files under a root directory, with traversal prevention | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/filesystem) |
+| `Shell` | Run commands in a subprocess with allowlists, a default denylist, timeouts, and env masking | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/shell) |
+| `ManagedPrompt` | Back an agent's instructions with a Logfire-managed prompt | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/logfire) |
 
-More capability areas are tracked in the
-[capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix); as they stabilize,
-this skill grows to cover them.
+**Experimental** (imported from `pydantic_ai_harness.experimental`, may change in any release): `SubAgents`,
+`Planning`, a compaction family (`SlidingWindow`, `SummarizingCompaction`, ...), `OverflowingToolOutput`,
+`RepoContext`, `StepPersistence`, `PyaiDocs`, `RuntimeAuthoring`, and an ACP server adapter.
+
+The full, current list with links and status is in the
+[capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Install
 
@@ -53,7 +64,7 @@ Each capability declares its own extra. Code Mode needs the Monty sandbox:
 uv add "pydantic-ai-harness[codemode]"   # `code-mode` is also accepted as an alias
 ```
 
-Requires Python 3.10+ and `pydantic-ai-slim>=1.95.1`.
+Requires Python 3.10+ and `pydantic-ai-slim>=2.1.0`.
 
 ## Quick Start
 
