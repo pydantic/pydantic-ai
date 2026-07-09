@@ -718,6 +718,8 @@ When the model returns an empty response and `None` is an allowed output type, t
 
 `output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning a response with no text output — either an empty response, or one containing only [thinking](thinking.md) content, which some reasoning models emit after completing their work through a tool call. There's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
+Note that text the model returned alongside a tool call is never reused as the run's output. Such text usually announces the tool call ("I'll look that up for you") rather than concluding the run, so treating it as the output would end the run on the wrong message. If the model produces no output of its own after the tool call, the agent asks it for one. Including `None` in the `output_type` is how you tell the agent that finishing without a final message is a valid outcome, rather than something to retry.
+
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
 - **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty or thinking-only model response is still also treated as `None`, as with `str | None`.
