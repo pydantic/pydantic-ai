@@ -688,14 +688,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # consistent ordering.
             self.output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
-
-        self._populate_deferred_calls(
-            tool_calls,
-            deferred_calls_by_index=deferred_calls_by_index,
-            deferred_metadata_by_index=deferred_metadata_by_index,
-            deferred_calls=deferred_calls,
-            deferred_metadata=deferred_metadata,
-        )
+            # Deferred calls must also survive sibling exceptions.
+            self._populate_deferred_calls(
+                tool_calls,
+                deferred_calls_by_index=deferred_calls_by_index,
+                deferred_metadata_by_index=deferred_metadata_by_index,
+                deferred_calls=deferred_calls,
+                deferred_metadata=deferred_metadata,
+            )
 
     def _populate_deferred_calls(
         self,
@@ -1083,12 +1083,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 for i in executable_indices:  # pragma: no branch
                     if i in function_user_parts:
                         self.output_parts.append(function_user_parts[i])
-
-        self._populate_deferred_calls(
-            self.tool_calls,
-            deferred_calls_by_index=deferred_by_index,
-            deferred_metadata_by_index=deferred_meta_by_index,
-            deferred_calls=self.deferred_calls,
-            deferred_metadata=self.deferred_metadata,
-        )
-        self.ctx.state.output_retries_used += self.output_retries_increment
+                # Preserve deferred calls and output retries on exception.
+                self._populate_deferred_calls(
+                    self.tool_calls,
+                    deferred_calls_by_index=deferred_by_index,
+                    deferred_metadata_by_index=deferred_meta_by_index,
+                    deferred_calls=self.deferred_calls,
+                    deferred_metadata=self.deferred_metadata,
+                )
+                self.ctx.state.output_retries_used += self.output_retries_increment
