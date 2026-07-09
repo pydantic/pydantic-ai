@@ -474,12 +474,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
+                    # A non-`None` `error` (the AG-UI carrier for a failed/denied return) signals a
+                    # non-success outcome; AG-UI has no failed/denied distinction, so it maps to 'failed'.
                     tool_kind = None
+                    outcome: Literal['success', 'failed', 'denied'] = 'success'
                     if tool_msg.error is None:
                         encrypted_tool_kind = (
                             parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
                         )
                         tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
+                    else:
+                        outcome = 'failed'
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -491,6 +496,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                                 tool_kind=tool_kind,
+                                outcome=outcome,
                             )
                         )
                     else:
@@ -503,6 +509,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
+                                outcome=outcome,
                             )
                         )
 
@@ -658,11 +665,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
+                # `outcome` has no AG-UI-native carrier, so failed/denied returns are signaled through the
+                # spec's `ToolMessage.error` field (a non-`None` error implies a non-success outcome on reload).
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
+                        error=part.model_response_str() if part.outcome != 'success' else None,
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
@@ -830,7 +840,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
           existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
-          success to its readers), so those reload as plain `ToolReturnPart`.
+          success to its readers), so those reload as plain `ToolReturnPart`. The `outcome`
+          discriminator (`failed`/`denied`) is preserved via `ToolMessage.error` (both map to
+          `'failed'` on reload, since AG-UI has no denied/failed distinction).
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed

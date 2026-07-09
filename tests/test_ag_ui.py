@@ -1608,6 +1608,45 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+@pytest.mark.parametrize('outcome', ['failed', 'denied'])
+def test_dump_load_roundtrip_tool_return_outcome(outcome: Literal['success', 'failed', 'denied']) -> None:
+    """`ToolReturnPart.outcome` survives a dump/load round-trip via `ToolMessage.error`.
+
+    AG-UI has no failed/denied distinction, so both encode through the spec's `error` field and
+    reload as `'failed'` (matching the Vercel adapter's symmetric mapping).
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='boom', outcome=outcome)]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.error is not None
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    return_part = message_part(reloaded, ToolReturnPart, message_index=1)
+    assert return_part.outcome == 'failed'
+
+
+def test_dump_load_roundtrip_tool_return_success_has_no_error() -> None:
+    """A successful `ToolReturnPart` dumps with `ToolMessage.error=None` so it reloads as success."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='ok')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.error is None
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    return_part = message_part(reloaded, ToolReturnPart, message_index=1)
+    assert return_part.outcome == 'success'
+
+
 def test_dump_load_roundtrip_load_capability() -> None:
     """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.11.
 
