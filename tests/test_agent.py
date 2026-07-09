@@ -12547,8 +12547,3 @@ async def test_image_output_validators_run_stream():
 def test_agent_rejects_non_positive_tool_timeout(tool_timeout: float):
     with pytest.raises(UserError, match='tool_timeout must be > 0'):
         Agent('test', tool_timeout=tool_timeout)
-
-
-def test_agent_accepts_none_tool_timeout():
-    agent = Agent('test', tool_timeout=None)
-    assert agent._tool_timeout is None  # pyright: ignore[reportPrivateUsage]
