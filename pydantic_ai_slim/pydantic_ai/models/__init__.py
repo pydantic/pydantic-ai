@@ -208,6 +208,15 @@ class ModelRequestContext:
     the ephemeral tail falls outside the cached region.
     """
 
+    _accepts_ephemeral_parts: bool = field(default=False, repr=False)
+    """Whether `add_ephemeral_part` may be called on this context.
+
+    Only the `before_model_request` context renders `ephemeral_parts` (they're appended to the outgoing
+    request before it's sent). The `wrap_model_request`, `after_model_request`, and `on_model_request_error`
+    contexts run once the outgoing messages are finalized, so parts added there would be silently dropped --
+    `add_ephemeral_part` raises instead of failing quietly.
+    """
+
     def add_ephemeral_part(self, content: str | UserContent) -> None:
         """Append per-request context that reaches the model without being persisted to history.
 
@@ -227,6 +236,12 @@ class ModelRequestContext:
                 after the latest user message for this request only. Frame text with your own delimiter (e.g. a
                 `<system-reminder>` tag) so the model reads it as context rather than user speech.
         """
+        if not self._accepts_ephemeral_parts:
+            raise UserError(
+                '`add_ephemeral_part` can only be called from `before_model_request`; '
+                'other model-request hooks run after the outgoing messages are finalized, '
+                'so parts added there would be silently dropped.'
+            )
         self.ephemeral_parts.append(content)
 
 

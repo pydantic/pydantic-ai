@@ -950,6 +950,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages=ctx.state.message_history[:],
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
+            _accepts_ephemeral_parts=True,
         )
         messages_before_processing = len(request_context.messages)
         self.last_request_context = request_context

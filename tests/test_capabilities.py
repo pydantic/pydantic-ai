@@ -21236,6 +21236,14 @@ def _last_request(messages: list[ModelMessage]) -> ModelRequest:
     return next(m for m in reversed(messages) if isinstance(m, ModelRequest))
 
 
+# These are `FunctionModel` unit tests rather than VCR cassette tests on purpose: they pin the *internal
+# outgoing-request payload shape* (where the `CachePoint` sits, the ephemeral tail's structure, and the
+# byte-stability of the cacheable prefix) by capturing the exact `list[ModelMessage]` the model was handed.
+# A cassette records the serialized wire request but not this pre-serialization structure or the
+# history-vs-outgoing split, so it could not reliably catch a regression that moves the `CachePoint` or
+# leaks an ephemeral part into persisted history.
+
+
 async def test_ephemeral_part_reaches_provider_but_not_history() -> None:
     """An ephemeral part is appended (behind a `CachePoint`) to the outgoing request, but never persisted."""
     seen: list[list[ModelMessage]] = []
@@ -21342,6 +21350,66 @@ async def test_no_ephemeral_parts_leaves_request_untouched() -> None:
 
     sent = _last_request(seen[0])
     assert sent.parts == snapshot([UserPromptPart(content='hi', timestamp=IsDatetime())])
+
+
+async def test_ephemeral_part_keeps_cacheable_region_stable_across_requests() -> None:
+    """Across two consecutive requests sharing the same history, the messages *before* the ephemeral
+    `CachePoint` are byte-identical -- so the cacheable prefix is stable and only the ephemeral tail is
+    re-read each turn (per the `AGENTS.md` prompt-cache-stability rule). This is a `FunctionModel` unit
+    test rather than a VCR test because it asserts the byte-identity of the pre-`CachePoint` region across
+    two outgoing requests, which a cassette (one recorded request) cannot pin.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_EphemeralNotice(note='ctx')])
+    result = await agent.run('hi')
+    # Second request continues the conversation so the shared prefix grows the same way each turn.
+    await agent.run('again', message_history=result.all_messages())
+
+    def strip_ephemeral_tail(last: ModelRequest) -> ModelRequest:
+        # Drop the trailing ephemeral `UserPromptPart` (the one carrying the `CachePoint` + contributed
+        # content) so what remains is exactly the region a cache-supporting provider keeps stable.
+        assert last.parts and isinstance(last.parts[-1], UserPromptPart)
+        content = last.parts[-1].content
+        assert isinstance(content, list) and content and isinstance(content[0], CachePoint)
+        return replace(last, parts=last.parts[:-1])
+
+    # The cacheable region of request 1 (its 'hi' `ModelRequest` minus the ephemeral tail) must reappear
+    # byte-identical as the corresponding leading messages of request 2 -- the ephemeral tail never enters
+    # history, so a per-request injection that moved with history length would break this equality.
+    first = seen[0]
+    second = seen[1]
+    assert isinstance(first[-1], ModelRequest)
+    cacheable_first = [*first[:-1], strip_ephemeral_tail(first[-1])]
+    assert second[: len(cacheable_first)] == cacheable_first
+
+
+async def test_add_ephemeral_part_rejected_outside_before_model_request() -> None:
+    """`add_ephemeral_part` raises when called from a hook that runs after the outgoing messages are
+    finalized (`wrap_model_request`/`after_model_request`/`on_model_request_error`), where parts would
+    otherwise be silently dropped. `FunctionModel` unit test: it exercises the pre-request guard, which a
+    cassette cannot cover.
+    """
+
+    @dataclass
+    class _LateContributor(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        ) -> ModelResponse:
+            request_context.add_ephemeral_part('too late')
+            return await handler(request_context)
+
+    agent = Agent(FunctionModel(lambda m, i: make_text_response('done')), capabilities=[_LateContributor()])
+    with pytest.raises(UserError, match='can only be called from `before_model_request`'):
+        await agent.run('hi')
 
 
 # endregion
