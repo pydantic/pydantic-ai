@@ -149,6 +149,13 @@ def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) 
     return {'document': {'name': name, 'format': format, 'source': source}}
 
 
+# Content-block kinds that may appear in a user message alongside a `toolResult` block. Used as the
+# permissive default for `bedrock_tool_result_colocatable_content` (no model restriction).
+_ALL_TOOL_RESULT_COLOCATABLE_CONTENT: frozenset[Literal['text', 'image', 'document', 'video']] = frozenset(
+    {'text', 'image', 'document', 'video'}
+)
+
+
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
@@ -209,6 +216,67 @@ LatestBedrockModelNames = Literal[
     'mistral.mixtral-8x7b-instruct-v0:1',
     'mistral.mistral-large-2402-v1:0',
     'mistral.mistral-large-2407-v1:0',
+    # Anthropic (models that require a cross-region inference profile)
+    'us.anthropic.claude-opus-4-1-20250805-v1:0',
+    'us.anthropic.claude-opus-4-5-20251101-v1:0',
+    'us.anthropic.claude-opus-4-6-v1',
+    'global.anthropic.claude-opus-4-6-v1',
+    'us.anthropic.claude-opus-4-7',
+    'global.anthropic.claude-opus-4-7',
+    'us.anthropic.claude-opus-4-8',
+    'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-5',
+    'us.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5',
+    # Amazon Nova
+    'us.amazon.nova-premier-v1:0',
+    'global.amazon.nova-2-lite-v1:0',
+    # Meta Llama 4
+    'us.meta.llama4-maverick-17b-instruct-v1:0',
+    'us.meta.llama4-scout-17b-instruct-v1:0',
+    # Mistral
+    'mistral.mistral-small-2402-v1:0',
+    'mistral.mistral-large-3-675b-instruct',
+    'mistral.ministral-3-3b-instruct',
+    'mistral.ministral-3-8b-instruct',
+    'mistral.ministral-3-14b-instruct',
+    'mistral.magistral-small-2509',
+    'mistral.devstral-2-123b',
+    'mistral.pixtral-large-2502-v1:0',
+    'us.mistral.pixtral-large-2502-v1:0',
+    # DeepSeek
+    'deepseek.r1-v1:0',
+    'deepseek.v3.2',
+    # Qwen
+    'qwen.qwen3-32b-v1:0',
+    'qwen.qwen3-coder-30b-a3b-v1:0',
+    'qwen.qwen3-coder-next',
+    'qwen.qwen3-next-80b-a3b',
+    'qwen.qwen3-vl-235b-a22b',
+    # Google Gemma
+    'google.gemma-3-4b-it',
+    'google.gemma-3-12b-it',
+    'google.gemma-3-27b-it',
+    # MiniMax
+    'minimax.minimax-m2',
+    'minimax.minimax-m2.1',
+    'minimax.minimax-m2.5',
+    # NVIDIA Nemotron
+    'nvidia.nemotron-nano-9b-v2',
+    'nvidia.nemotron-nano-12b-v2',
+    'nvidia.nemotron-nano-3-30b',
+    'nvidia.nemotron-super-3-120b',
+    # Writer Palmyra (require a cross-region inference profile)
+    'us.writer.palmyra-x4-v1:0',
+    'us.writer.palmyra-x5-v1:0',
+    # Z.AI GLM
+    'zai.glm-4.7',
+    'zai.glm-4.7-flash',
+    'zai.glm-5',
+    # Moonshot AI Kimi
+    'moonshot.kimi-k2-thinking',
+    'moonshotai.kimi-k2.5',
 ]
 """Latest Bedrock models."""
 
@@ -954,6 +1022,30 @@ class BedrockConverseModel(Model[BaseClient]):
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
+
+        # Content-block kinds that may share a user turn with a `toolResult` block for this model.
+        colocatable_content = profile.get(
+            'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
+        )
+
+        # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
+        supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
+
+        # Media returned from a tool that can't live inside a `toolResult` block (see
+        # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
+        # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
+        # immediately following it, with nothing else sharing that turn, so such sibling media can't be
+        # placed there. When the media kind can't co-locate with a `toolResult` for this model, we collect
+        # it across the whole consecutive tool-return group and flush it as a separate user message after
+        # the grouped tool results; the merge pass below then separates it with a synthetic assistant turn.
+        # Media that this model does allow alongside a `toolResult` stays co-located in the same turn.
+        deferred_media_content: list[ContentBlockUnionTypeDef] = []
+
+        def flush_deferred_media() -> None:
+            if deferred_media_content:
+                bedrock_messages.append({'role': 'user', 'content': [*deferred_media_content]})
+                deferred_media_content.clear()
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
@@ -961,6 +1053,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
+                        flush_deferred_media()
                         bedrock_messages.extend(
                             await self._map_user_prompt(
                                 part,
@@ -971,7 +1064,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         tool_result_content: list[Any] = []
-                        sibling_content: list[ContentBlockUnionTypeDef] = []
+                        colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
@@ -1011,8 +1104,15 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
-                                    sibling_content.append(file_block)
+                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    if kind in colocatable_content:
+                                        # This model allows the media alongside the `toolResult`; keep it in the same turn.
+                                        colocated_media_content.append(media_note)
+                                        colocated_media_content.append(file_block)
+                                    else:
+                                        # The media can't share the `toolResult`'s turn; defer it to a later user turn.
+                                        deferred_media_content.append(media_note)
+                                        deferred_media_content.append(file_block)
                             elif isinstance(item, str):
                                 tool_result_content.append({'text': item})
                             else:
@@ -1022,39 +1122,35 @@ class BedrockConverseModel(Model[BaseClient]):
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
 
-                        user_content: list[ContentBlockUnionTypeDef] = [
+                        success_result: ToolResultBlockOutputTypeDef = {
+                            'toolUseId': part.tool_call_id,
+                            'content': tool_result_content,
+                        }
+                        if supports_tool_result_status:
+                            success_result['status'] = 'success'
+                        bedrock_messages.append(
                             {
-                                'toolResult': {
-                                    'toolUseId': part.tool_call_id,
-                                    'content': tool_result_content,
-                                    'status': 'success',
-                                }
+                                'role': 'user',
+                                'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
-                        ]
-                        user_content.extend(sibling_content)
-                        bedrock_messages.append({'role': 'user', 'content': user_content})
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
+                            flush_deferred_media()
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
-                            bedrock_messages.append(
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {
-                                            'toolResult': {
-                                                'toolUseId': part.tool_call_id,
-                                                'content': [{'text': part.model_response()}],
-                                                'status': 'error',
-                                            }
-                                        }
-                                    ],
-                                }
-                            )
+                            error_result: ToolResultBlockOutputTypeDef = {
+                                'toolUseId': part.tool_call_id,
+                                'content': [{'text': part.model_response()}],
+                            }
+                            if supports_tool_result_status:
+                                error_result['status'] = 'error'
+                            bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
@@ -1116,7 +1212,15 @@ class BedrockConverseModel(Model[BaseClient]):
             else:
                 assert_never(message)
 
-        # Merge together sequential user messages.
+        # Flush any tool-return media that trails the conversation (the common case: history ends with
+        # tool returns and no following assistant turn).
+        flush_deferred_media()
+
+        # Merge together sequential user messages. Some models reject a user message that co-locates a
+        # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
+        # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
+        # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
+        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1125,11 +1229,24 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Add the new user content onto the existing user message.
-                last_content = list(last_message['content'])
-                last_content.extend(current_message['content'])
-                last_message['content'] = last_content
-                continue
+                merged_content = [*last_message['content'], *current_message['content']]
+                has_tool_result = any('toolResult' in block for block in merged_content)
+                has_non_colocatable = any(
+                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    for block in merged_content
+                )
+                if has_tool_result and has_non_colocatable:
+                    # The `toolResult` can't share this model's turn with the other content. Bedrock
+                    # re-merges consecutive same-role turns, so a bare split isn't enough; separate the
+                    # two user turns with a synthetic assistant turn. Several models reject whitespace-only
+                    # text, so use a period.
+                    processed_messages.append({'role': 'assistant', 'content': [{'text': '.'}]})
+                else:
+                    # Add the new user content onto the existing user message.
+                    last_content = list(last_message['content'])
+                    last_content.extend(current_message['content'])
+                    last_message['content'] = last_content
+                    continue
 
             # Add the entire message to the list of messages.
             processed_messages.append(current_message)
@@ -1165,12 +1282,17 @@ class BedrockConverseModel(Model[BaseClient]):
                         last_user_content, self._get_cache_point(cache_messages)
                     )
 
-        # Bedrock requires conversations to start with a user message.
-        # This can happen when there are no messages at all (only system prompt/instructions),
-        # or when message_history starts with an assistant response (e.g. from a previous
-        # system-prompt-only run). Prepend a synthetic user message in either case.
-        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
-        if not processed_messages or processed_messages[0]['role'] != 'user':
+        # Bedrock's Converse API requires at least one message, so an empty conversation (only a
+        # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
+        # families also reject a conversation that starts with an assistant turn (e.g. a
+        # `message_history` that begins with a `ModelResponse`) with "A conversation must start with
+        # a user message...", so we synthesize a leading user turn for them too. Anthropic and Qwen
+        # accept a leading assistant turn, so we leave their history untouched.
+        # Note: several models reject whitespace-only text, so we use a period.
+        if not processed_messages or (
+            processed_messages[0]['role'] != 'user'
+            and not profile.get('bedrock_supports_leading_assistant_message', False)
+        ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages

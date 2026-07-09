@@ -11,6 +11,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelResponse,
 )
+from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
@@ -18,6 +19,20 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from ._types import TaskConfig, default_task_config
+
+
+def _stamp_response_provenance(response: ModelResponse, messages: list[ModelMessage]) -> None:
+    """Stamp the producing run's `run_id`/`conversation_id` on the response before Prefect persists it.
+
+    The agent graph only fills these after the task returns, so without this the cached payload has
+    them unset and a cache replay in a different conversation would be re-stamped as if it were
+    produced there. Server-side state guards (e.g. OpenAI `openai_conversation_id='auto'`) rely on a
+    replayed response keeping its original `conversation_id` to avoid continuing another
+    conversation's provider-side state.
+    """
+    if messages:  # pragma: no branch
+        final_request = messages[-1]
+        fill_run_metadata(response, run_id=final_request.run_id, conversation_id=final_request.conversation_id)
 
 
 class PrefectModel(WrapperModel):
@@ -44,6 +59,7 @@ class PrefectModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
             response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
+            _stamp_response_provenance(response, messages)
             return response
 
         self._wrapped_request = wrapped_request
@@ -70,6 +86,7 @@ class PrefectModel(WrapperModel):
                 async for _ in streamed_response:
                     pass
             response = streamed_response.get()
+            _stamp_response_provenance(response, messages)
             return response
 
         self._wrapped_request_stream = request_stream_task

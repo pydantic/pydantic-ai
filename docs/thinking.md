@@ -45,10 +45,10 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
-| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
+| Groq | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='medium'`) | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='high'`) | gpt-oss: unified effort → `reasoning_effort` (`low`/`medium`/`high`, via `extra_body`; always-on, so `thinking=False` is silently ignored); qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
-| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |
+| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
@@ -249,7 +249,9 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-Two composable [model settings](agent.md#model-run-settings) control thinking: [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] selects how thinking parts are returned (the formats above), and [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] (sent to Groq as `reasoning_effort`) controls how much the model reasons:
+The unified [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting works across providers: it selects `reasoning_format='parsed'` so thinking parts are returned, and for the gpt-oss family its effort level also drives Groq's `reasoning_effort` (`minimal`/`low` → `'low'`, `medium` → `'medium'`, `high`/`xhigh` → `'high'`, `True` → `'medium'`).
+
+Two composable [model settings](agent.md#model-run-settings) give finer control: [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] selects how thinking parts are returned (the formats above), and [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] (sent to Groq as `reasoning_effort`) controls how much the model reasons, taking precedence over the unified `thinking` mapping:
 
 ```python {title="groq_thinking_part.py"}
 from pydantic_ai import Agent
@@ -262,10 +264,10 @@ agent = Agent(model, model_settings=settings)
 ```
 
 !!! note
-    Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'` — and when `thinking=False` is combined with an explicit `groq_reasoning_effort` on qwen3, the disable wins and `groq_reasoning_effort` is ignored (with a warning).
+    Most Groq reasoning models do not support truly disabling thinking. When `thinking=False` is set via the unified setting, the behavior is family-specific: the qwen3 family truly disables reasoning via `reasoning_effort='none'` (and when combined with an explicit `groq_reasoning_effort` on qwen3, the disable wins and `groq_reasoning_effort` is ignored, with a warning); the gpt-oss family reasons always-on and cannot be disabled, so `thinking=False` is silently ignored; other reasoning models send `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally.
 
 !!! note
-    The accepted `groq_reasoning_effort` values are family-specific: the qwen3 family accepts `'none'` and `'default'`, while the gpt-oss family accepts `'low'`, `'medium'`, and `'high'` (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)). The unified `thinking` setting controls `reasoning_format` and is deliberately not mapped to `reasoning_effort`, since the valid values differ per model family.
+    The accepted `reasoning_effort` values are family-specific (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)): the gpt-oss family accepts `'low'`, `'medium'`, and `'high'`, so unified `thinking` effort levels map onto those; the qwen3 family accepts only `'none'` and `'default'`, so unified enable-levels there control `reasoning_format` but send no `reasoning_effort` (there is no gradation to map). An explicit `groq_reasoning_effort` always takes precedence over the unified mapping.
 
 ## OpenRouter
 

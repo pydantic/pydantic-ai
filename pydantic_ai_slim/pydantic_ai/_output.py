@@ -1122,7 +1122,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         discriminated_json_schemas: list[ObjectJsonSchema] = []
         for object_key, json_schema in zip(self._processors.keys(), json_schemas):
             title = json_schema.pop('title', None)
-            description = json_schema.pop('description', None)
+            # Don't shadow the outer `description` parameter: it carries the union's own
+            # description (e.g. from `NativeOutput(..., description=...)`) into `super().__init__()` below.
+            json_schema_description = json_schema.pop('description', None)
 
             discriminated_json_schema = {
                 'type': 'object',
@@ -1138,8 +1140,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             }
             if title:  # pragma: no branch
                 discriminated_json_schema['title'] = title
-            if description:
-                discriminated_json_schema['description'] = description
+            if json_schema_description:
+                discriminated_json_schema['description'] = json_schema_description
 
             discriminated_json_schemas.append(discriminated_json_schema)
 

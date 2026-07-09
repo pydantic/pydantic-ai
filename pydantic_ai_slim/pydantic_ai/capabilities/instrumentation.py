@@ -19,6 +19,7 @@ from pydantic_ai._instrumentation import (
     open_model_request_span,
     safe_to_json,
     serialize_any,
+    time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
@@ -277,7 +278,10 @@ class Instrumentation(AbstractCapability[Any]):
             self._last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
-            finish(response)
+            # For streaming requests, the agent graph's handler reports TTFT through
+            # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
+            # for non-streaming requests this reads the `None` default.
+            finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
             return response
 
     # ------------------------------------------------------------------

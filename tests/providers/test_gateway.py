@@ -69,7 +69,63 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
-        assert provider.client._client == http_client  # type: ignore
+        assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_init_with_http_client_preserves_existing_event_hooks():
+    # Unit (not VCR): this checks local HTTPX hook merging by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise hook ordering or preservation.
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async def existing_response_hook(response: httpx.Response) -> None:
+        response.headers['X-Existing-Response-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(
+        event_hooks={'request': [existing_request_hook], 'response': [existing_response_hook]}
+    ) as http_client:
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+        assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert existing_request_hook in http_client.event_hooks['request']
+        assert existing_response_hook in http_client.event_hooks['response']
+
+        request = httpx.Request('GET', provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer foobar'
+
+        response = httpx.Response(200, request=request)
+        for hook in http_client.event_hooks['response']:
+            await hook(response)
+
+        assert response.headers['X-Existing-Response-Hook'] == 'kept'
+
+
+async def test_init_with_http_client_replaces_existing_gateway_hook():
+    # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
+    # cassette playback would not exercise Gateway hook deduplication.
+    async def existing_request_hook(request: httpx.Request) -> None:
+        request.headers['X-Existing-Request-Hook'] = 'kept'
+
+    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
+        first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
+        second_provider = gateway_provider(
+            'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
+        )
+
+        assert first_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
+        assert http_client.event_hooks['request'][0] == existing_request_hook
+        assert len(http_client.event_hooks['request']) == 2
+
+        request = httpx.Request('GET', second_provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+
+        assert request.headers['X-Existing-Request-Hook'] == 'kept'
+        assert request.headers['Authorization'] == 'Bearer second'
 
 
 @pytest.fixture
@@ -183,22 +239,22 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 )
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = OpenAIResponsesModel('gpt-5', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = GoogleModel('gemini-1.5-flash', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = AnthropicModel('claude-sonnet-4-5', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
-    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):

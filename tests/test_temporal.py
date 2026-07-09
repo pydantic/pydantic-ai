@@ -161,7 +161,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsInt, IsStr
+    from .conftest import IsDatetime, IsInt, IsStr, message
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -1516,8 +1516,7 @@ async def test_dynamic_toolset_outside_workflow():
 
 
 def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
 
 
@@ -1585,8 +1584,7 @@ def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: Agent
     # First request: call a tool to force a second model-request step.
     # Second request (carrying the tool return): echo the instructions, which by then must
     # reflect the current step — proving the cache is repopulated by `get_tools` each step.
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     if any(isinstance(part, ToolReturnPart) for part in request.parts):
         return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
     return ModelResponse(parts=[ToolCallPart('noop', {})])
@@ -4742,6 +4740,69 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')
+
+
+@nested_multimodal_tool_return_agent.tool
+def get_nested_multimodal_content(ctx: RunContext) -> dict[str, str | MultiModalContent]:
+    """Return multimodal content nested inside a mapping."""
+    return {
+        'caption': 'see attached',
+        'attachment': BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        'source': DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    }
+
+
+nested_multimodal_tool_return_temporal_agent = TemporalAgent(
+    nested_multimodal_tool_return_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class NestedMultiModalToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await nested_multimodal_tool_return_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_nested_multimodal_tool_return_survives_temporal(client: Client):
+    """Nested multimodal values in tool returns survive the Temporal activity boundary."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NestedMultiModalToolReturnWorkflow],
+        plugins=[AgentPlugin(nested_multimodal_tool_return_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            NestedMultiModalToolReturnWorkflow.run,
+            args=['inspect attachment'],
+            id='test_nested_multimodal_tool_return',
+            task_queue=TASK_QUEUE,
+        )
+
+    tool_return = next(
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_nested_multimodal_content'
+    )
+    tool_return_content_obj = tool_return.content
+    assert isinstance(tool_return_content_obj, dict)
+    tool_return_content = cast(dict[str, object], tool_return_content_obj)
+    assert tool_return_content['caption'] == 'see attached'
+
+    attachment = tool_return_content['attachment']
+    assert isinstance(attachment, BinaryImage)
+    assert attachment.media_type == 'image/png'
+    assert attachment.data == b'\x89PNG'
+
+    source = tool_return_content['source']
+    assert isinstance(source, DocumentUrl)
+    assert source.media_type == 'application/pdf'
+    assert source.url == 'https://example.com/doc/12345'
 
 
 async def test_text_content_serialization_in_workflow(client: Client):

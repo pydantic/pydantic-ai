@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
@@ -725,6 +726,9 @@ class StreamedResponse(ABC):
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
+    _first_chunk_monotonic: float | None = field(default=None, init=False)
+    """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
+    was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -807,6 +811,9 @@ class StreamedResponse(ABC):
                 # iteration.
                 try:
                     async for event in iterator:
+                        if self._first_chunk_monotonic is None:
+                            # First event surfaced to the consumer: stamp the monotonic clock.
+                            self._first_chunk_monotonic = time.perf_counter()
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
@@ -934,6 +941,18 @@ class StreamedResponse(ABC):
     def cancelled(self) -> bool:
         """Whether the stream has been cancelled via `cancel()`."""
         return self._cancelled
+
+    def time_to_first_chunk(self, request_start: float) -> float | None:
+        """Seconds from `request_start` to the first chunk surfaced to the consumer, or `None` if nothing was yielded.
+
+        `request_start` must be a `time.perf_counter()` reading taken when the request was issued.
+        The first-chunk instant is stamped on the first `async for` pull, so the result reflects when
+        the consumer *received* the first event: it includes any consumer-side iteration delay
+        (debouncing, batching, or awaiting other work) on top of the chunk's transit time, which for
+        eager consumers is negligible.
+        """
+        first_chunk = self._first_chunk_monotonic
+        return first_chunk - request_start if first_chunk is not None else None
 
 
 class CompletedStreamedResponse(StreamedResponse):
@@ -1184,7 +1203,7 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses'):
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

@@ -157,7 +157,7 @@ else:
         MistralProvider = None
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, message_part
 
 pytestmark = pytest.mark.anyio
 
@@ -376,10 +376,7 @@ def test_result_pydantic_model_validation_error():
         ]
     )
 
-    user_retry = result.all_messages()[2]
-    assert isinstance(user_retry, ModelRequest)
-    retry_prompt = user_retry.parts[0]
-    assert isinstance(retry_prompt, RetryPromptPart)
+    retry_prompt = message_part(result.all_messages(), RetryPromptPart, message_index=2)
     assert retry_prompt.model_response() == snapshot("""\
 1 validation error:
 ```json
@@ -3675,14 +3672,20 @@ def test_empty_response():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[],
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=63, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3724,14 +3727,20 @@ def test_empty_response_without_recovery():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[],
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or include your response in a tool call.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=71),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -4252,11 +4261,11 @@ def test_set_model(env: TestEnv):
 
 
 def test_override_model_no_model():
-    agent = Agent()
+    agent = Agent(output_type=tuple[int, str])
 
-    with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
-        with agent.override(model='test'):
-            agent.run_sync('Hello')
+    with agent.override(model='test'):
+        result = agent.run_sync('Hello')
+    assert result.output == snapshot((0, 'a'))
 
 
 async def test_agent_name():
@@ -6487,8 +6496,7 @@ class TestMultipleToolCalls:
             with pytest.raises(RuntimeError, match='tool-failure'):
                 agent.run_sync('test')
 
-        interrupted = messages[-1]
-        assert isinstance(interrupted, ModelRequest)
+        interrupted = message(messages, ModelRequest, index=-1)
         assert interrupted.state == 'interrupted'
         # The completed tool's return part and its user-content part both surface.
         assert interrupted.parts == snapshot(
@@ -7266,8 +7274,7 @@ def test_dynamic_system_prompt_none_return():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
     # The None value should have a '' placeholder due to keeping a reference to the dynamic prompt
     assert '' in sys_texts
@@ -7277,8 +7284,7 @@ def test_dynamic_system_prompt_none_return():
     with capture_run_messages() as messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
     # The None value should have a '' placeholder due to keep a reference to the dynamic prompt
     assert '' not in sys_texts
@@ -7296,8 +7302,7 @@ def test_system_prompt_none_return_are_omitted():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     sys_texts = [p.content for p in base_req.parts if isinstance(p, SystemPromptPart)]
     # The None value should be omitted
     assert 'STATIC' in sys_texts
@@ -7543,8 +7548,7 @@ def test_image_url_serializable_missing_media_type():
 
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
-    part = messages[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(messages, UserPromptPart)
     content = part.content[1]
     assert isinstance(content, ImageUrl)
     assert content.media_type == 'image/jpeg'
@@ -7624,8 +7628,7 @@ def test_image_url_serializable():
 
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
-    part = messages[0].parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(messages, UserPromptPart)
     content = part.content[1]
     assert isinstance(content, ImageUrl)
     assert content.media_type == 'image/jpeg'
@@ -10057,8 +10060,7 @@ async def test_user_prompt_with_deferred_tool_results():
         # Second call: model responds to tool results and user prompt
         else:
             # Verify we received both tool results and user prompt
-            last_request = messages[-1]
-            assert isinstance(last_request, ModelRequest)
+            last_request = message(messages, ModelRequest, index=-1)
             has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
             has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
             assert has_tool_return, 'Expected tool return part in request'
@@ -10277,16 +10279,14 @@ def test_override_instructions_basic():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions == 'SHOULD_BE_IGNORED'
 
     with agent.override(instructions='OVERRIDE'):
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE'
 
 
@@ -10301,10 +10301,8 @@ def test_override_reset_after_context():
     with capture_run_messages() as messages_orig:
         agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req_new = messages_new[0]
-    assert isinstance(req_new, ModelRequest)
-    req_orig = messages_orig[0]
-    assert isinstance(req_orig, ModelRequest)
+    req_new = message(messages_new, ModelRequest)
+    req_orig = message(messages_orig, ModelRequest)
     assert req_new.instructions == 'NEW'
     assert req_orig.instructions == 'ORIG'
 
@@ -10321,8 +10319,7 @@ def test_override_none_clears_instructions():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions is None
 
 
@@ -10340,8 +10337,7 @@ def test_override_instructions_callable_replaces_functions():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions is not None
     assert 'BASE_FN' in base_req.instructions
 
@@ -10349,8 +10345,7 @@ def test_override_instructions_callable_replaces_functions():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE_FN'
     assert 'BASE_FN' not in req.instructions
 
@@ -10367,8 +10362,7 @@ async def test_override_instructions_async_callable():
         with capture_run_messages() as messages:
             await agent.run('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'ASYNC_FN'
 
 
@@ -10386,8 +10380,7 @@ def test_override_instructions_sequence_mixed_types():
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
     assert 'BASE' not in req.instructions
 
@@ -10400,8 +10393,7 @@ async def test_override_concurrent_isolation():
         with agent.override(instructions=instr):
             with capture_run_messages() as messages:
                 await agent.run('Hi', model=TestModel(custom_output_text='ok'))
-            req = messages[0]
-            assert isinstance(req, ModelRequest)
+            req = message(messages, ModelRequest)
             return req.instructions
 
     a, b = await asyncio.gather(
@@ -10421,8 +10413,7 @@ def test_override_replaces_instructions():
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'NEW_INSTR'
 
 
@@ -10438,10 +10429,8 @@ def test_override_nested_contexts():
             with capture_run_messages() as inner_messages:
                 agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    outer_req = outer_messages[0]
-    assert isinstance(outer_req, ModelRequest)
-    inner_req = inner_messages[0]
-    assert isinstance(inner_req, ModelRequest)
+    outer_req = message(outer_messages, ModelRequest)
+    inner_req = message(inner_messages, ModelRequest)
 
     assert outer_req.instructions == 'OUTER'
     assert inner_req.instructions == 'INNER'
@@ -10455,8 +10444,7 @@ async def test_override_async_run():
         with capture_run_messages() as messages:
             await agent.run('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'ASYNC_OVERRIDE'
 
 
@@ -10477,8 +10465,7 @@ def test_override_with_dynamic_prompts():
     with capture_run_messages() as base_messages:
         agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
 
-    base_req = base_messages[0]
-    assert isinstance(base_req, ModelRequest)
+    base_req = message(base_messages, ModelRequest)
     assert base_req.instructions == 'DYNAMIC_INSTR'
 
     # Override should take precedence over dynamic instructions but leave system prompts intact
@@ -10486,8 +10473,7 @@ def test_override_with_dynamic_prompts():
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-    req = messages[0]
-    assert isinstance(req, ModelRequest)
+    req = message(messages, ModelRequest)
     assert req.instructions == 'OVERRIDE_INSTR'
     sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
     # The dynamic system prompt should still be present since overrides target instructions only
@@ -10739,6 +10725,202 @@ def test_agent_override_native_tools_preserves_runtime_additive_tools():
     assert model.last_model_request_parameters.native_tools == snapshot(
         [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
     )
+
+
+def test_agent_rejects_conflicting_agent_level_native_tool_ids():
+    """Two agent-level native tools sharing an id but with conflicting definitions fail at construction.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        Agent(
+            model=TestModel(),
+            capabilities=[
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+            ],
+        )
+
+
+def test_agent_allows_identical_agent_level_native_tools():
+    """Identical duplicates within a layer are allowed and collapsed by the model-layer dedup.
+
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
+    """
+    model = TestModel()
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api')),
+            NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/api')),
+        ],
+    )
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello')
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [MCPServerTool(id='api', url='https://mcp.example.com/api')]
+    )
+
+
+def test_agent_rejects_conflicting_run_level_native_tool_ids():
+    """Two run-level native tools sharing an id but with conflicting definitions fail at run time.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync(
+            'Hello',
+            capabilities=[
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api')),
+                NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api')),
+            ],
+        )
+
+
+def test_agent_rejects_conflicting_override_native_tool_ids():
+    """Two `override(native_tools=...)` tools sharing an id but with conflicting definitions fail.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    with (
+        agent.override(
+            native_tools=[
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'),
+                MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'),
+            ]
+        ),
+        pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"),
+    ):
+        agent.run_sync('Hello')
+
+
+def test_agent_rejects_conflicting_dynamic_capability_native_tool_ids():
+    """Native tools contributed by `for_run()` are validated within the run-capabilities layer.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+
+    def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
+
+    def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
+
+    with pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"):
+        agent.run_sync('Hello', capabilities=[cap_a, cap_b])
+
+
+def test_agent_rejects_conflicting_agent_level_dynamic_capability_native_tool_ids():
+    """Conflicting native tools contributed by agent-level capability functions only materialize
+    in `for_run`, so they escape the construction-time check but are caught when the resolved
+    base layer is validated at run time.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+
+    def cap_a(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-a/api'))
+
+    def cap_b(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return NativeTool(MCPServerTool(id='api', url='https://mcp.example.com/tenant-b/api'))
+
+    agent = Agent(model=TestModel(), capabilities=[cap_a, cap_b])
+
+    with pytest.raises(
+        UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions in agent capabilities"
+    ):
+        agent.run_sync('Hello')
+
+
+def test_agent_rejects_conflicting_override_spec_native_tool_ids():
+    """Native tools from `override(spec=...)` capabilities are validated as the base layer.
+
+    Unit test rather than VCR: the guard raises before any request a cassette could record.
+    """
+    agent = Agent(model=TestModel())
+    spec = {
+        'capabilities': [
+            {
+                'NativeTool': {
+                    'tool': {'kind': 'mcp_server', 'id': 'api', 'url': 'https://mcp.example.com/tenant-a/api'}
+                }
+            },
+            {
+                'NativeTool': {
+                    'tool': {'kind': 'mcp_server', 'id': 'api', 'url': 'https://mcp.example.com/tenant-b/api'}
+                }
+            },
+        ]
+    }
+
+    with (
+        agent.override(spec=spec),
+        pytest.raises(UserError, match="Native tool id 'mcp_server:api' maps to conflicting definitions"),
+    ):
+        agent.run_sync('Hello')
+
+
+@pytest.mark.parametrize('instrument', [False, True])
+def test_agent_override_native_tools_preserves_dynamic_capability_tools(instrument: bool):
+    """Native tools that only materialize in `for_run` (here from a capability function) are
+    preserved under `override(native_tools=...)`, which replaces only the agent's baseline tools.
+
+    With `instrument=True`, the Instrumentation capability joins the resolved layers as part of
+    the baseline, and must not be attributed to the preserved per-run layer.
+
+    Unit test rather than VCR: it pins the `native_tools` request parameters ahead of the
+    `TestModel` pre-request guard, which no cassette would reliably catch.
+    """
+    model = TestModel()
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
+    agent.instrument = instrument
+
+    def dynamic_cap(ctx: RunContext) -> AbstractCapability:
+        return NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))
+
+    with (
+        agent.override(native_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello', capabilities=[dynamic_cap])
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
+    )
+
+
+async def test_agent_capability_for_run_called_once_per_run():
+    """`AbstractCapability.for_run` is documented as called once per run and may have per-run
+    side effects, so agent-level and run-level capabilities must each be resolved exactly once —
+    including when `for_run` returns a fresh instance for per-run state isolation.
+
+    Unit test rather than VCR: resolution counts are internal and wouldn't show up in any
+    request payload a cassette could pin.
+    """
+    for_run_calls: dict[str, int] = {}
+
+    class CountingCapability(AbstractCapability):
+        def __init__(self, name: str):
+            self.name = name
+
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            for_run_calls[self.name] = for_run_calls.get(self.name, 0) + 1
+            return CountingCapability(self.name)
+
+    agent = Agent(TestModel(), capabilities=[CountingCapability('agent')])
+    await agent.run('Hello', capabilities=[CountingCapability('run')])
+
+    assert for_run_calls == {'agent': 1, 'run': 1}
 
 
 async def test_run_with_unapproved_tool_call_in_history():
@@ -11085,6 +11267,73 @@ async def test_agent_allows_none_output_after_tool():
                 parts=[],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_thinking_only():
+    """Test that Agent(output_type=str | None) succeeds on a thinking-only response after a tool call.
+
+    Some models emit only a ThinkingPart after completing the task via a tool call, with nothing to
+    add. Forcing a retry only produces unnecessary follow-up text, so this is accepted as a None result.
+    Uses FunctionModel because no real provider reliably emits a thinking-only final response on demand.
+    """
+    call_count = 0
+
+    async def tool_then_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[ThinkingPart(content='Task complete, nothing more to add.')])
+
+    model = FunctionModel(function=tool_then_thinking_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_thinking_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Task complete, nothing more to add.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='function:tool_then_thinking_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
