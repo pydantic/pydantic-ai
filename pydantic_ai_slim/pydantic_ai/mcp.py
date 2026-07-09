@@ -397,7 +397,9 @@ class PromptArgument:
     """A human-readable description of the argument."""
 
     required: bool | None = None
-    """Whether the argument is required or optional. If not specified, the server may determine this based on context."""
+    """Whether the argument is required or optional.
+    If not specified, the server may determine this based on context.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
