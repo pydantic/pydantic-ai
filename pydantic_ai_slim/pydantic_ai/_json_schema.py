@@ -115,6 +115,9 @@ class JsonSchemaTransformer(ABC):
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        # Recurse into allOf subschemas (applicators defined by JSON Schema)
+        schema = self._handle_union(schema, 'allOf')
+
         # Apply the base transform
         schema = self.transform(schema)
 
@@ -153,7 +156,7 @@ class JsonSchemaTransformer(ABC):
 
         return schema
 
-    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
+    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf', 'allOf']) -> JsonSchema:
         try:
             members = schema.pop(union_kind)
         except KeyError:
