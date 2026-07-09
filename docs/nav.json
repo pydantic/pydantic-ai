@@ -56,7 +56,9 @@
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter"
+      "models/openrouter",
+      "models/snowflake",
+      "models/zai"
     ]
   },
   {
@@ -426,7 +428,9 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
+              "api/models/snowflake",
               "api/models/test",
+              "api/models/zai",
               "api/models/wrapper"
             ]
           },
