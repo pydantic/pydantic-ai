@@ -21397,7 +21397,7 @@ def test_add_ephemeral_part_rejected_outside_before_model_request() -> None:
     """
     # Default `_accepts_ephemeral_parts=False`, mirroring every context except `before_model_request`.
     request_context = ModelRequestContext(
-        model=FunctionModel(lambda m, i: make_text_response('unused')),  # pragma: no cover
+        model=FunctionModel(lambda m, i: make_text_response('unused')),
         messages=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
