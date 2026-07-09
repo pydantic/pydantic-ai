@@ -11507,6 +11507,67 @@ async def test_stream_cancel(allow_model_requests: None):
     )
 
 
+async def test_background_marker_stamped_from_terminal_event_only(allow_model_requests: None):
+    """The `background` marker is stamped even when a segment's only status event is terminal.
+
+    A resumed `retrieve(stream=True)` segment can start mid-stream (no `ResponseCreatedEvent`) and reach
+    only a terminal `ResponseCompletedEvent`; the marker must still be stamped from it, or
+    `cancel_suspended_response` couldn't cancel the server-side job. Unit-style because the resumed-stream
+    shape isn't reachable through a normal `agent.run`, and the background cassettes all stamp on
+    `response.created` first — so nothing else pins the terminal-only path.
+    """
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_bg',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        background=True,
+    )
+
+    # No `created`/`in_progress`/`queued` event: the segment starts with output and ends on `completed`.
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=0,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=1,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=2,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_details or {}).get('background') is True
+
+
 async def test_cancel_suspended_response_only_cancels_background_jobs(allow_model_requests: None):
     """`cancel_suspended_response` calls `responses.cancel` only for background jobs.
 
