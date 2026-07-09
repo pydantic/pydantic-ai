@@ -454,6 +454,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
+        if self._tool_timeout is not None and self._tool_timeout <= 0:
+            raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
 
@@ -2404,12 +2406,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         model_: models.Model
         if some_model := self._override_model.get():
-            # we don't want `override()` to cover up errors from the model not being defined, hence this check
-            if model is None and self.model is None:
-                raise exceptions.UserError(
-                    '`model` must either be set on the agent or included when calling it. '
-                    '(Even when `override(model=...)` is customizing the model that will actually be called)'
-                )
             model_ = some_model.value
         elif model is not None:
             model_ = models.infer_model(model)

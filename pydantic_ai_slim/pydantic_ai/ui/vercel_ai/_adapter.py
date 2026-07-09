@@ -137,10 +137,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """UI adapter for the Vercel AI protocol."""
 
     _: KW_ONLY
-    sdk_version: Literal[5, 6] = 5
+    sdk_version: Literal[5, 6, 7] = 5
     """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
 
     Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
+    `sdk_version=7` emits the same wire as 6 (v7's data-stream protocol equals v6's); it is
+    accepted so the value reflects the client's real SDK major and reserves it for future
+    v7-only chunks.
     """
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
@@ -166,7 +169,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         request: Request,
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
-        sdk_version: Literal[5, 6] = 5,
+        sdk_version: Literal[5, 6, 7] = 5,
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -198,7 +201,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         request: Request,
         *,
         agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
-        sdk_version: Literal[5, 6] = 5,
+        sdk_version: Literal[5, 6, 7] = 5,
         server_message_id: str | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
@@ -639,7 +642,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         cls,
         msg: ModelResponse,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
-        sdk_version: Literal[5, 6] = 5,
+        sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
@@ -799,7 +802,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _dump_tool_call_part(
         part: ToolCallPart,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
-        sdk_version: Literal[5, 6] = 5,
+        sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -900,7 +903,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
-        sdk_version: Literal[5, 6] = 5,
+        sdk_version: Literal[5, 6, 7] = 5,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -916,8 +919,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 message index (incremented per UIMessage appended), and should return a unique
                 string ID. If not provided, uses `provider_response_id` for responses,
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
-            sdk_version: Vercel AI SDK version to target. Defaults to 5 for backwards compatibility.
-                Set to 6 to emit tool approval parts for deferred tool calls.
+            sdk_version: Vercel AI SDK version to target: 5, 6, or 7. Defaults to 5 for backwards
+                compatibility. Set to 6 to emit tool approval parts for deferred tool calls; 7 emits
+                identically to 6 (v7's data-stream protocol equals v6's).
 
         Returns:
             A list of UIMessage objects in Vercel AI format

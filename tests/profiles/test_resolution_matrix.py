@@ -1294,7 +1294,11 @@ def test_alibaba_qwen():
 
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
@@ -1304,7 +1308,11 @@ def test_alibaba_qwen_audio():
 
     profile = AlibabaProvider.model_profile('qwen3-audio-0809-online')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 

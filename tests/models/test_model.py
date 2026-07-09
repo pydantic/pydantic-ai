@@ -130,6 +130,18 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
+        {
+            'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+            'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
+            'OPENAI_API_VERSION': '2024-12-01-preview',
+        },
+        'azure-responses:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'azure',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'google:gemini-1.5-flash',
         'gemini-1.5-flash',
