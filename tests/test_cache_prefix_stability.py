@@ -3,19 +3,23 @@
 A UI-driven app (Vercel AI / AG-UI) holds conversation history in the protocol's own
 message shape and re-submits it every turn. The server turns it back into Pydantic AI
 messages with `load_messages` and sends those to the provider. If that round-trip
-(`ModelMessages -> dump_messages -> load_messages`) changes the *provider request bytes*,
-the cacheable prefix moves and the provider's prompt cache silently misses — no error,
-just a bigger bill and higher latency (the PR #4338 class of bug).
+(`ModelMessages -> dump_messages -> load_messages`) changes the provider request, the
+cacheable prefix moves and the provider's prompt cache silently misses — no error, just a
+bigger bill and higher latency (the PR #4338 class of bug).
 
 Each test records a real conversation, round-trips the resulting history through an adapter,
 then sends the same follow-up prompt twice — once with the original history, once with the
-round-tripped one — and compares the two recorded request bodies byte-for-byte. Equal bodies
-mean the round-trip preserved the cacheable prefix. Coverage targets the PR #5873 wire-fidelity
-risks: tool-call arg serialization and thinking signatures.
+round-tripped one — and compares the two recorded request bodies. Note the comparison is over
+the re-serialized JSON, not the raw wire bytes: the project's cassette serializer stores each
+JSON body as a parsed structure and replays it via `json.dumps` (see `tests/json_body_serializer`),
+so whitespace-only differences are normalized away. What survives — and what these tests guard —
+is the structural and field-value drift a lossy round-trip actually produces: dropped or reordered
+blocks, a changed tool-arg representation, a missing thinking signature. Coverage targets the
+PR #5873 wire-fidelity risks: tool-call arg serialization and thinking signatures.
 
-On real provider data the round-trips are byte-faithful, so these are regression guards. The one
-real byte-change is AG-UI < 0.1.13 dropping `ThinkingPart` (no reasoning carrier before 0.1.13);
-that test asserts the prefix *changes*, documenting the protocol-version limitation.
+On real provider data these round-trips are faithful, so the equality tests are regression guards.
+The one real change is AG-UI < 0.1.13 dropping `ThinkingPart` (no reasoning carrier before 0.1.13);
+that test asserts the request *changes*, documenting the protocol-version limitation.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 def _post_bodies(vcr: Cassette) -> list[bytes | str]:
-    """Raw bodies of the POST requests recorded in `vcr`, in order."""
+    """Bodies of the POST requests recorded in `vcr`, in order."""
     return [request.body for request in vcr.requests if request.method == 'POST']  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
@@ -85,7 +89,7 @@ async def test_openai_tool_call_roundtrip_wire_stable(
     vcr: Cassette,
     roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
-    """A real OpenAI tool call re-sends byte-identically after a UI round-trip.
+    """A real OpenAI tool call re-sends with an identical request body after a UI round-trip.
 
     OpenAI carries `arguments` as a JSON string; a round-trip that reconstructed it differently
     would move the cacheable prefix under OpenAI's exact-prefix caching.
@@ -127,7 +131,7 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
     vcr: Cassette,
     roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
-    """A real Anthropic thinking block (with its signature) re-sends byte-identically after a round-trip."""
+    """A real Anthropic thinking block (with its signature) re-sends with an identical request body after a round-trip."""
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     generator = Agent(model, model_settings=settings)
