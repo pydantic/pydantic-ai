@@ -10,13 +10,13 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
-    Grounding,
     ImageInput,
     InputTranscript,
+    NativeToolParts,
     ReconnectedEvent,
     SessionErrorEvent,
     SessionUsageEvent,
@@ -33,7 +33,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -122,9 +122,14 @@ def test_native_tool_web_fetch_maps_to_url_context() -> None:
     assert tool.url_context is not None
 
 
+def test_native_tool_code_execution_maps_to_code_execution() -> None:
+    tool = rt_google._native_tool_to_genai(CodeExecutionTool())  # pyright: ignore[reportPrivateUsage]
+    assert tool.code_execution is not None
+
+
 def test_native_tool_unsupported_raises() -> None:
-    with pytest.raises(UserError, match='WebSearchTool and WebFetchTool'):
-        rt_google._native_tool_to_genai(CodeExecutionTool())  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='WebSearchTool, WebFetchTool, and CodeExecutionTool'):
+        rt_google._native_tool_to_genai(ImageGenerationTool())  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_combines_function_and_native_tools() -> None:
@@ -386,10 +391,10 @@ def test_map_tool_call_and_usage() -> None:
     ]
 
 
-def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
+def test_map_grounding_and_url_context_to_sources_and_native_tool_parts() -> None:
     # A grounded turn produces two events from the same metadata: the UI-facing `SourcesEvent` (flattened,
-    # lossy) and `Grounding` carrying the native tool parts for history. The `Grounding` parts must
-    # match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
+    # lossy) and `NativeToolParts` carrying the native tool parts for history. The `NativeToolParts` parts
+    # must match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
     # including a source's `domain` and a fetch's retrieval status, which `SourcesEvent` drops), so a grounded
     # voice turn's history is indistinguishable from a classic run's. Kept as a unit test because a
     # cassette can't reliably force the model to ground and the recording key only exposes audio-out.
@@ -427,7 +432,7 @@ def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
             ],
             queries=['weather rome'],
         ),
-        Grounding(
+        NativeToolParts(
             parts=[
                 NativeToolCallPart(
                     tool_name='web_search',
@@ -463,6 +468,56 @@ def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
                         {'retrieved_url': None, 'url_retrieval_status': None},
                     ],
                     tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+            ]
+        ),
+    ]
+
+
+def test_map_code_execution_to_native_tool_parts() -> None:
+    # When Gemini Live runs code, the executed code and its result arrive as `executable_code` /
+    # `code_execution_result` parts on the model turn. They map to a `NativeToolCallPart` /
+    # `NativeToolReturnPart` pair byte-identical to the classic `GoogleModel`'s (tool_name
+    # `code_execution`, `args`/`content` from the SDK models' JSON dump), sharing a single `tool_call_id`
+    # so the return pairs with its call, and are carried on `NativeToolParts` for history — not yielded
+    # live. The spoken transcript still comes through as its own `Transcript`. Kept as a unit test because
+    # a cassette can't reliably force the model to run code and the recording key only exposes audio-out.
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            model_turn=genai_types.Content(
+                parts=[
+                    genai_types.Part(
+                        executable_code=genai_types.ExecutableCode(
+                            code='print(1 + 1)', language=genai_types.Language.PYTHON
+                        )
+                    ),
+                    genai_types.Part(
+                        code_execution_result=genai_types.CodeExecutionResult(
+                            outcome=genai_types.Outcome.OUTCOME_OK, output='2\n'
+                        )
+                    ),
+                    genai_types.Part(text='The answer is 2.'),
+                ]
+            )
+        )
+    )
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        Transcript(text='The answer is 2.', is_final=False),
+        NativeToolParts(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
+                    tool_call_id=(code_id := IsSameStr()),
+                    provider_name='google',
+                ),
+                NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
+                    tool_call_id=code_id,
                     timestamp=IsDatetime(),
                     provider_name='google',
                 ),

@@ -311,25 +311,27 @@ class SourcesEvent:
 
 
 @dataclass
-class Grounding:
-    """Native tool call/return parts reconstructed from a grounded turn's provider metadata.
+class NativeToolParts:
+    """Native tool call/return parts reconstructed from a turn's provider metadata, for history.
 
-    The history-facing companion to [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent]: where `SourcesEvent` carries a
-    flattened citation list for a UI, this carries the exact
-    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
+    Carries the exact [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair(s) a classic
-    [`Model`][pydantic_ai.models.Model] request produces for the same grounding — the flattened `SourcesEvent`
-    drops fields (a source's `domain`, a fetch's retrieval status) and merges search and URL-context
-    results, so it can't reproduce those parts faithfully. The session folds these into the turn's
-    assistant [`ModelResponse`][pydantic_ai.messages.ModelResponse] rather than yielding them, so a
-    grounded voice turn's [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages] matches a
-    classic [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] turn.
+    [`Model`][pydantic_ai.models.Model] request produces for the same provider activity — web grounding
+    (Google Search / URL context) and code execution — so a voice turn's
+    [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages] matches a classic
+    [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] turn. The session folds these into the turn's
+    assistant [`ModelResponse`][pydantic_ai.messages.ModelResponse] rather than yielding them.
+
+    For web grounding this is the history-facing companion to the UI-facing
+    [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent]: `SourcesEvent` carries a flattened citation list
+    that drops fields (a source's `domain`, a fetch's retrieval status) and merges search and URL-context
+    results, so it can't reproduce those parts faithfully. Code execution has no such UI companion.
     """
 
     parts: list[ModelResponsePart]
     """The native tool call/return parts to fold into the assistant response's history."""
 
-    event_kind: Literal['grounding'] = 'grounding'
+    event_kind: Literal['native_tool_parts'] = 'native_tool_parts'
     """Event type identifier, used as a discriminator."""
 
 
@@ -346,7 +348,7 @@ RealtimeEvent = TypeAliasType(
     | RateLimitsEvent
     | ReconnectedEvent
     | SourcesEvent
-    | Grounding
+    | NativeToolParts
     | SessionErrorEvent,
 )
 """Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].

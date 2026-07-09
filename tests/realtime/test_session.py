@@ -42,9 +42,9 @@ from pydantic_ai.realtime import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
-    Grounding,
     ImageInput,
     InputTranscript,
+    NativeToolParts,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -920,25 +920,26 @@ def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
 
 
 async def test_grounding_folds_into_response_and_keeps_sources_event() -> None:
-    # A grounded turn emits both `SourcesEvent` (UI) and `Grounding` (history). The session yields `SourcesEvent`
-    # unchanged but folds `Grounding` into the assistant `ModelResponse`, ahead of the speech, mirroring
-    # the classic `GoogleModel` — so `all_messages()` carries the native tool parts, not just the speech.
+    # A grounded turn emits both `SourcesEvent` (UI) and `NativeToolParts` (history). The session yields
+    # `SourcesEvent` unchanged but folds `NativeToolParts` into the assistant `ModelResponse`, ahead of the
+    # speech, mirroring the classic `GoogleModel` — so `all_messages()` carries the native tool parts, not
+    # just the speech.
     grounding = _grounding_parts()
     sources = SourcesEvent(sources=[WebSource(url='https://example.com', title='Example')], queries=['weather rome'])
     conn = FakeRealtimeConnection(
         [
             Transcript(text='It is sunny in Rome', is_final=True),
             sources,
-            Grounding(parts=list(grounding)),
+            NativeToolParts(parts=list(grounding)),
             TurnCompleteEvent(),
         ]
     )
     session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
     events = [e async for e in session]
 
-    # `SourcesEvent` passes through for the UI; `Grounding` is folded into history, never yielded.
+    # `SourcesEvent` passes through for the UI; `NativeToolParts` is folded into history, never yielded.
     assert sources in events
-    assert not any(isinstance(e, Grounding) for e in events)
+    assert not any(isinstance(e, NativeToolParts) for e in events)
 
     assert session.new_messages() == [
         ModelResponse(
@@ -957,7 +958,7 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
         [
             InputTranscript(text='weather in rome?', is_final=True),
             Transcript(text='It is sunny in Rome', is_final=True),
-            Grounding(parts=list(_grounding_parts())),
+            NativeToolParts(parts=list(_grounding_parts())),
             TurnCompleteEvent(),
         ]
     )
@@ -998,6 +999,81 @@ async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='and now?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def _code_execution_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
+    """The native tool parts a code-execution Gemini turn produces (see `test_google.py` for the mapping)."""
+    return [
+        NativeToolCallPart(
+            tool_name='code_execution',
+            args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
+            tool_call_id='c1',
+            provider_name='google',
+        ),
+        NativeToolReturnPart(
+            tool_name='code_execution',
+            content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
+            tool_call_id='c1',
+            provider_name='google',
+        ),
+    ]
+
+
+async def test_code_execution_history_hands_off_with_native_parts_intact() -> None:
+    # A code-execution voice turn writes the `NativeToolCallPart`/`NativeToolReturnPart` pair into history
+    # (ahead of the speech, like the classic `GoogleModel`), and those parts survive the `all_messages()`
+    # → `agent.run` handoff untouched by `Model.prepare_messages` — the same path grounding takes.
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='what is 1 + 1?', is_final=True),
+            Transcript(text='The answer is 2.', is_final=True),
+            NativeToolParts(parts=list(_code_execution_parts())),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    _ = [e async for e in session]
+
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.extend(messages)
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    agent = Agent(FunctionModel(respond))
+    await agent.run('and 2 + 2?', message_history=session.all_messages())
+
+    assert received == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='what is 1 + 1?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
+                        tool_call_id='c1',
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
+                        tool_call_id='c1',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='The answer is 2.'),
+                ],
+                model_name='gemini-live-2.5-flash',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and 2 + 2?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

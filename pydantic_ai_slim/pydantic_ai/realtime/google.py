@@ -30,6 +30,7 @@ except ImportError as _import_error:
         'you can use the `google` optional group - `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+from .._utils import generate_tool_call_id
 from ..exceptions import UserError
 from ..messages import (
     ModelMessage,
@@ -40,10 +41,16 @@ from ..messages import (
     UserPromptPart,
 )
 
-# Reuse the classic `GoogleModel`'s grounding mappers so a grounded realtime turn's native tool parts
-# are byte-identical in shape to a classic request's, rather than duplicating the mapping and risking drift.
-from ..models.google import _map_grounding_metadata, _map_url_context_metadata  # pyright: ignore[reportPrivateUsage]
-from ..native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
+# Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
+# native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
+# mapping and risking drift.
+from ..models.google import (
+    _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
+    _map_executable_code,  # pyright: ignore[reportPrivateUsage]
+    _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
+    _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
+)
+from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -51,9 +58,9 @@ from ..usage import RequestUsage
 from ._base import (
     AudioDelta,
     AudioInput,
-    Grounding,
     ImageInput,
     InputTranscript,
+    NativeToolParts,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -175,16 +182,24 @@ def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     """Map a pydantic-ai native tool to a Gemini built-in `Tool`.
 
-    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search and
-    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context; other native tools raise a
-    `UserError`.
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search,
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context, and
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to Gemini's code execution tool;
+    other native tools raise a `UserError`.
+
+    Note: some Gemini native-audio Live models reject certain built-in tools at connect time. That's a
+    request-time concern surfaced by the API; capturing whatever code-execution parts the model emits
+    (see `_map_server_content`) is always safe and needs no tool to have been requested.
     """
     if isinstance(tool, WebSearchTool):
         return genai_types.Tool(google_search=genai_types.GoogleSearch())
     if isinstance(tool, WebFetchTool):
         return genai_types.Tool(url_context=genai_types.UrlContext())
+    if isinstance(tool, CodeExecutionTool):
+        return genai_types.Tool(code_execution=genai_types.ToolCodeExecution())
     raise UserError(
-        f'Gemini Live does not support the native tool {type(tool).__name__!r} (only WebSearchTool and WebFetchTool).'
+        f'Gemini Live does not support the native tool {type(tool).__name__!r} '
+        '(only WebSearchTool, WebFetchTool, and CodeExecutionTool).'
     )
 
 
@@ -548,8 +563,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self._session = session
-        # Provider name stamped onto grounding-derived native tool parts, matching the classic
-        # `GoogleModel` (`NativeToolCallPart.provider_name`), so a grounded turn's history is provider-tagged
+        # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
+        # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
         self._provider_name = provider_name
         # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
@@ -557,6 +572,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # id-less calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
         self._call_index = 0
+        # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
+        # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
+        # streaming path, which threads a single id from the code part to its result.
+        self._code_execution_tool_call_id: str | None = None
         # `dial` re-establishes a configured session from the latest resumption handle; with a
         # `reconnect` policy it recovers a dropped connection.
         self._dial = dial
@@ -640,12 +659,33 @@ class GoogleRealtimeConnection(RealtimeConnection):
         return True
 
     def _map_server_content(self, content: genai_types.LiveServerContent) -> list[RealtimeEvent]:
-        """Translate a `server_content` message (audio/transcripts/grounding/turn boundary) to events."""
+        """Translate a `server_content` message (audio/transcripts/native tools/turn boundary) to events."""
         events: list[RealtimeEvent] = []
+        # Native tool call/return parts reconstructed for history (code execution here, web grounding
+        # below), folded into the turn's `ModelResponse` by the session rather than yielded live.
+        native_tool_parts: list[ModelResponsePart] = []
         if content.model_turn is not None:
             for part in content.model_turn.parts or []:
                 if part.inline_data is not None and part.inline_data.data:
                     events.append(AudioDelta(data=part.inline_data.data))
+                elif part.executable_code is not None:
+                    # Reuse the classic `GoogleModel` mapper so the code-execution call part is
+                    # byte-identical; generate and stash the id to pair the following result with it.
+                    self._code_execution_tool_call_id = generate_tool_call_id()
+                    native_tool_parts.append(
+                        _map_executable_code(
+                            part.executable_code, self._provider_name, self._code_execution_tool_call_id
+                        )
+                    )
+                elif part.code_execution_result is not None:
+                    # The result always follows its `executable_code` part, so the id is set (mirrors the
+                    # classic streaming path's assertion).
+                    assert self._code_execution_tool_call_id is not None
+                    native_tool_parts.append(
+                        _map_code_execution_result(
+                            part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
+                        )
+                    )
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
                     # text alongside the spoken answer, and it must not leak into the transcript.
@@ -664,10 +704,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
             events.append(SpeechStartedEvent())
         if (sources := _map_grounding(content)) is not None:
             events.append(sources)
-        # Emit the same grounding as history-facing native tool parts alongside the UI `SourcesEvent`
-        # event: `SourcesEvent` is lossy, so history is reconstructed from the raw metadata instead.
-        if grounding_parts := _map_grounding_parts(content, self._provider_name):
-            events.append(Grounding(parts=grounding_parts))
+        # Emit grounding as history-facing native tool parts alongside the UI `SourcesEvent` event:
+        # `SourcesEvent` is lossy, so history is reconstructed from the raw metadata instead.
+        native_tool_parts += _map_grounding_parts(content, self._provider_name)
+        if native_tool_parts:
+            events.append(NativeToolParts(parts=native_tool_parts))
         if content.turn_complete:
             events.append(TurnCompleteEvent(interrupted=False))
         return events

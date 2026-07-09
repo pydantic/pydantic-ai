@@ -433,13 +433,16 @@ combining it with `WebSearch` on Gemini 2.5.
 When the model grounds an answer on web results, the session emits a
 [`SourcesEvent`][pydantic_ai.realtime.SourcesEvent] event carrying the search queries and the
 [`WebSource`][pydantic_ai.realtime.WebSource] pages it used — surface these as citations in your UI.
-The same grounding is also recorded in [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages]
-as the built-in-tool call/return parts a classic run would produce, so it survives the handoff to
+The grounding (and any code the model ran via
+[`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]) is also recorded in
+[`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages] as the built-in-tool call/return
+parts a classic run would produce, so it survives the handoff to
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
 
-Only `WebSearch` / `WebFetch` (web search and URL context) are supported on Gemini Live today; other
-native tools raise a `UserError`. The OpenAI realtime provider does not support native tools yet (it
-raises `UserError`).
+Gemini Live supports `WebSearch` / `WebFetch` (web search and URL context) and code execution (add
+[`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] via
+[`NativeTool`][pydantic_ai.capabilities.NativeTool]) today; other native tools raise a `UserError`. The
+OpenAI realtime provider does not support native tools yet (it raises `UserError`).
 
 !!! warning "`WebFetch` (URL context) isn't supported natively on native-audio models"
     The `gemini-live-2.5-flash-native-audio` model supports `WebSearch` (Grounding with Google Search)
