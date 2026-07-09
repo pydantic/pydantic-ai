@@ -56,7 +56,7 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', DeprecationWarning)
         try:
-            event_loop = asyncio.get_event_loop_policy().get_event_loop()
+            event_loop = asyncio.get_event_loop_policy().get_event_loop()  # pyright: ignore[reportDeprecated]
         except RuntimeError:
             event_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(event_loop)
