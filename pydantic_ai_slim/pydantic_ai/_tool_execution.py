@@ -1083,12 +1083,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 for i in executable_indices:  # pragma: no branch
                     if i in function_user_parts:
                         self.output_parts.append(function_user_parts[i])
-                # Preserve deferred calls and output retries on exception.
-                self._populate_deferred_calls(
-                    self.tool_calls,
-                    deferred_calls_by_index=deferred_by_index,
-                    deferred_metadata_by_index=deferred_meta_by_index,
-                    deferred_calls=self.deferred_calls,
-                    deferred_metadata=self.deferred_metadata,
-                )
-                self.ctx.state.output_retries_used += self.output_retries_increment
+            # Always preserve deferred calls and output retries.
+            self._populate_deferred_calls(
+                self.tool_calls,
+                deferred_calls_by_index=deferred_by_index,
+                deferred_metadata_by_index=deferred_meta_by_index,
+                deferred_calls=self.deferred_calls,
+                deferred_metadata=self.deferred_metadata,
+            )
+            self.ctx.state.output_retries_used += self.output_retries_increment
