@@ -80,7 +80,7 @@ class ConcurrencyLimit:
 
     Args:
         max_running: Maximum number of concurrent operations allowed. Must be >= 1.
-        max_queued: Maximum number of operations waiting in the queue.
+        max_queued: Maximum number of operations waiting in the queue. Must be >= 0.
             If None, the queue is unlimited. If exceeded, raises `ConcurrencyLimitExceeded`.
     """
 
@@ -112,13 +112,13 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
 
         Args:
             max_running: Maximum number of concurrent operations. Must be >= 1.
-            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded.
+            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded. Must be >= 0.
             name: Optional name for this limiter, used for observability when sharing
                 a limiter across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
 
         Raises:
-            UserError: If `max_running` is less than 1.
+            UserError: If `max_running` is less than 1, or `max_queued` is less than 0.
         """
         _validate_max_running(max_running)
         _validate_max_queued(max_queued)
