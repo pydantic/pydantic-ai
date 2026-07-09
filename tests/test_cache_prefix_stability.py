@@ -62,7 +62,7 @@ def _ag_ui_roundtrip_0_1_10(history: list[ModelMessage]) -> list[ModelMessage]:
     return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.10'))
 
 
-@pytest.mark.skipif(not openai_imports_successful, reason='openai not installed')
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 @pytest.mark.parametrize(
     'roundtrip',
     [
@@ -70,7 +70,7 @@ def _ag_ui_roundtrip_0_1_10(history: list[ModelMessage]) -> list[ModelMessage]:
         pytest.param(
             _ag_ui_roundtrip_latest,
             id='ag_ui',
-            marks=pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed'),
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
         ),
     ],
 )
@@ -102,7 +102,7 @@ async def test_openai_tool_call_roundtrip_wire_stable(
     assert roundtripped_body == original_body
 
 
-@pytest.mark.skipif(not anthropic_imports_successful, reason='anthropic not installed')
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 @pytest.mark.parametrize(
     'roundtrip',
     [
@@ -110,7 +110,7 @@ async def test_openai_tool_call_roundtrip_wire_stable(
         pytest.param(
             _ag_ui_roundtrip_latest,
             id='ag_ui-0_1_13',
-            marks=pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed'),
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
         ),
     ],
 )
@@ -134,8 +134,8 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
     assert roundtripped_body == original_body
 
 
-@pytest.mark.skipif(not anthropic_imports_successful, reason='anthropic not installed')
-@pytest.mark.skipif(not ag_ui_imports_successful, reason='ag-ui-protocol not installed')
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
 async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
     allow_model_requests: None,
     anthropic_api_key: str,
