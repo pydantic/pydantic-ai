@@ -164,10 +164,7 @@ def _build_tool_error_message(error: BaseException) -> str:
         mcpe = error.__cause__
 
     if mcpe is not None:
-        err = mcpe.error
-        if err.data:
-            return f'{err.message} (code: {err.code}, data: {err.data})'
-        return f'{err.message} (code: {err.code})'
+        return str(MCPError.from_mcp_sdk(mcpe))
 
     return str(error)
 
