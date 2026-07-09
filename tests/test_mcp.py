@@ -1359,6 +1359,18 @@ class TestToolErrorStructuredMessage:
 
         assert _build_tool_error_message(ValueError('boom')) == 'boom'
 
+    def test_tool_error_wrapping_mcp_error(self):
+        """ToolError wrapping an McpError should extract the underlying error code."""
+        from mcp.shared.exceptions import McpError
+        from mcp.types import ErrorData
+        from pydantic_ai.mcp import ToolError, _build_tool_error_message  # pyright: ignore[reportPrivateUsage]
+
+        mcpe = McpError(ErrorData(code=-32603, message='internal error'))
+        tool_err = ToolError('tool failed')
+        tool_err.__cause__ = mcpe
+        msg = _build_tool_error_message(tool_err)
+        assert 'internal error' in msg and 'code: -32603' in msg
+
 
 class TestMCPToolsetBackgroundTasks:
     """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
