@@ -12541,3 +12541,9 @@ async def test_image_output_validators_run_stream():
 
 
 # endregion
+
+
+@pytest.mark.parametrize('tool_timeout', [0, -1])
+def test_agent_rejects_non_positive_tool_timeout(tool_timeout: float):
+    with pytest.raises(UserError, match='tool_timeout must be > 0'):
+        Agent('test', tool_timeout=tool_timeout)
