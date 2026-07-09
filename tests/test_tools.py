@@ -4466,3 +4466,17 @@ def test_tool_rejects_negative_timeout():
 def test_tool_accepts_none_timeout():
     tool = Tool(lambda: None, timeout=None)
     assert tool.timeout is None
+
+
+# --- ToolOutput parameter validation -------------------------------------------
+
+
+def test_tooloutput_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        ToolOutput(int, max_retries=-1)
+
+
+@pytest.mark.parametrize('max_retries', [0, None])
+def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
+    out = ToolOutput(int, max_retries=max_retries)
+    assert out.max_retries == max_retries
