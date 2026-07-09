@@ -931,8 +931,8 @@ def test_run_sync_does_not_emit_event_loop_deprecation_warning():
     """`agent.run_sync` must obtain the event loop without a DeprecationWarning.
 
     `asyncio.get_event_loop()` is deprecated (and warns or raises) when there is
-    no running event loop, so the internal `get_event_loop` helper now uses the
-    event loop policy instead (issue #1196).
+    no running event loop, so the internal `get_event_loop` helper now uses
+    `asyncio.get_running_loop()` with a `new_event_loop()` fallback (issue #1196).
     """
 
     async def noop_tool(ctx: object) -> str:
