@@ -4433,3 +4433,36 @@ def test_include_return_schema_on_toolset_tool():
 
 
 # endregion
+
+
+# --- Tool parameter validation -------------------------------------------------
+
+
+def test_tool_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        Tool(lambda: None, max_retries=-1)
+
+
+def test_tool_accepts_zero_max_retries():
+    tool = Tool(lambda: None, max_retries=0)
+    assert tool.max_retries == 0
+
+
+def test_tool_accepts_none_max_retries():
+    tool = Tool(lambda: None, max_retries=None)
+    assert tool.max_retries is None
+
+
+def test_tool_rejects_non_positive_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=0)
+
+
+def test_tool_rejects_negative_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=-1)
+
+
+def test_tool_accepts_none_timeout():
+    tool = Tool(lambda: None, timeout=None)
+    assert tool.timeout is None
