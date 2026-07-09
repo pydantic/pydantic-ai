@@ -9,10 +9,12 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
+    Grounding,
     ImageInput,
     InputTranscript,
     Reconnected,
@@ -31,7 +33,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -379,7 +381,13 @@ def test_map_tool_call_and_usage() -> None:
     ]
 
 
-def test_map_grounding_and_url_context_to_sources() -> None:
+def test_map_grounding_and_url_context_to_sources_and_grounding() -> None:
+    # A grounded turn produces two events from the same metadata: the UI-facing `Sources` (flattened,
+    # lossy) and `Grounding` carrying the native tool parts for history. The `Grounding` parts must
+    # match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
+    # including a source's `domain` and a fetch's retrieval status, which `Sources` drops), so a grounded
+    # voice turn's history is indistinguishable from a classic run's. Kept as a unit test because a
+    # cassette can't reliably force the model to ground and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
         server_content=genai_types.LiveServerContent(
@@ -387,16 +395,21 @@ def test_map_grounding_and_url_context_to_sources() -> None:
                 web_search_queries=['weather rome'],
                 grounding_chunks=[
                     genai_types.GroundingChunk(
-                        web=genai_types.GroundingChunkWeb(uri='https://example.com', title='Example')
+                        web=genai_types.GroundingChunkWeb(
+                            uri='https://example.com', title='Example', domain='example.com'
+                        )
                     ),
-                    genai_types.GroundingChunk(web=None),  # ignored: no web chunk
+                    genai_types.GroundingChunk(web=None),  # ignored by `Sources`: no web chunk
                     genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(uri=None)),  # ignored: no uri
                 ],
             ),
             url_context_metadata=genai_types.UrlContextMetadata(
                 url_metadata=[
-                    genai_types.UrlMetadata(retrieved_url='https://fetched.example'),
-                    genai_types.UrlMetadata(retrieved_url=None),  # ignored: no url
+                    genai_types.UrlMetadata(
+                        retrieved_url='https://fetched.example',
+                        url_retrieval_status=genai_types.UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS,
+                    ),
+                    genai_types.UrlMetadata(retrieved_url=None),  # ignored by `Sources`: no url
                 ]
             ),
         )
@@ -408,7 +421,48 @@ def test_map_grounding_and_url_context_to_sources() -> None:
                 WebSource(url='https://fetched.example'),
             ],
             queries=['weather rome'],
-        )
+        ),
+        Grounding(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather rome']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
+                        # Unlike `Sources`, grounding history keeps every non-None `web` chunk verbatim
+                        # (the `web=None` chunk is dropped, the uri-less one round-trips), matching classic.
+                        {'domain': None, 'title': None, 'uri': None},
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+                NativeToolCallPart(
+                    tool_name='web_fetch',
+                    args={'urls': ['https://fetched.example']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_fetch',
+                    content=[
+                        {
+                            'retrieved_url': 'https://fetched.example',
+                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                        },
+                        {'retrieved_url': None, 'url_retrieval_status': None},
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+            ]
+        ),
     ]
 
 

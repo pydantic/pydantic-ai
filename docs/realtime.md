@@ -427,6 +427,9 @@ combining it with `WebSearch` on Gemini 2.5.
 When the model grounds an answer on web results, the session emits a
 [`Sources`][pydantic_ai.realtime.Sources] event carrying the search queries and the
 [`WebSource`][pydantic_ai.realtime.WebSource] pages it used — surface these as citations in your UI.
+The same grounding is also recorded in [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages]
+as the built-in-tool call/return parts a classic run would produce, so it survives the handoff to
+[`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
 
 Only `WebSearch` / `WebFetch` (web search and URL context) are supported on Gemini Live today; other
 native tools raise a `UserError`. The OpenAI realtime provider does not support native tools yet (it

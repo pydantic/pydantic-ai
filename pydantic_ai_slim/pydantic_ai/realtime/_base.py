@@ -25,6 +25,7 @@ from ..messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelResponsePart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -309,6 +310,29 @@ class Sources:
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass
+class Grounding:
+    """Native tool call/return parts reconstructed from a grounded turn's provider metadata.
+
+    The history-facing companion to [`Sources`][pydantic_ai.realtime.Sources]: where `Sources` carries a
+    flattened citation list for a UI, this carries the exact
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair(s) a classic
+    [`Model`][pydantic_ai.models.Model] request produces for the same grounding — the flattened `Sources`
+    drops fields (a source's `domain`, a fetch's retrieval status) and merges search and URL-context
+    results, so it can't reproduce those parts faithfully. The session folds these into the turn's
+    assistant [`ModelResponse`][pydantic_ai.messages.ModelResponse] rather than yielding them, so a
+    grounded voice turn's [`all_messages`][pydantic_ai.realtime.RealtimeSession.all_messages] matches a
+    classic [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] turn.
+    """
+
+    parts: list[ModelResponsePart]
+    """The native tool call/return parts to fold into the assistant response's history."""
+
+    event_kind: Literal['grounding'] = 'grounding'
+    """Event type identifier, used as a discriminator."""
+
+
 RealtimeEvent = TypeAliasType(
     'RealtimeEvent',
     AudioDelta
@@ -322,6 +346,7 @@ RealtimeEvent = TypeAliasType(
     | RateLimits
     | Reconnected
     | Sources
+    | Grounding
     | SessionError,
 )
 """Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].

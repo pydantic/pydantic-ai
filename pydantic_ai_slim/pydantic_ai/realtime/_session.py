@@ -40,6 +40,7 @@ from ._base import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
+    Grounding,
     ImageInput,
     InputTranscript,
     RateLimits,
@@ -93,6 +94,7 @@ _TranslatableEvent: TypeAlias = (
     | RateLimits
     | Reconnected
     | Sources
+    | Grounding
     | SessionError
 )
 
@@ -218,6 +220,10 @@ class RealtimeSession:
         # In-flight assistant response being assembled. Parts finalize into `_response_parts`, which
         # becomes a `ModelResponse` at the turn boundary (or when a tool call splits the turn).
         self._response_parts: list[ModelResponsePart] = []
+        # Native tool parts from a grounded turn (search/URL-context), buffered as they arrive mid-turn
+        # and prepended to the response at finalization so history reads grounding-then-speech, mirroring
+        # the classic `GoogleModel` response order.
+        self._grounding_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
         self._pending_response_usage = RequestUsage()
@@ -370,15 +376,19 @@ class RealtimeSession:
         response: ModelResponse | None = None
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
-        if self._response_parts:
+        # Grounding native tool parts lead the response (call+return, then speech), matching the classic
+        # `GoogleModel`, which prepends grounding parts ahead of the assistant's text.
+        parts = [*self._grounding_parts, *self._response_parts]
+        if parts:
             response = ModelResponse(
-                parts=self._response_parts,
+                parts=parts,
                 usage=self._pending_response_usage,
                 model_name=self._model_name,
             )
             self._history.append(response)
         self._end_chat_span(input_messages, response)
         self._response_parts = []
+        self._grounding_parts = []
         self._pending_response_usage = RequestUsage()
 
     def _ensure_chat_span(self) -> None:
@@ -491,6 +501,12 @@ class RealtimeSession:
             return self._handle_input_transcript(event.text, event.is_final)
         if isinstance(event, TurnComplete):
             return self._handle_turn_complete(event)
+        if isinstance(event, Grounding):
+            # Fold grounding into the current response's history (see `_finalize_response`) without
+            # yielding it: the paired `Sources` event carries the same grounding for the UI.
+            self._ensure_chat_span()
+            self._grounding_parts.extend(event.parts)
+            return []
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(event, (SpeechStarted, SpeechStopped, Reconnected, RateLimits, Sources, SessionError)):

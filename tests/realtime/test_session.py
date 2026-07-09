@@ -20,6 +20,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -40,6 +42,7 @@ from pydantic_ai.realtime import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
+    Grounding,
     ImageInput,
     InputTranscript,
     RealtimeCapabilities,
@@ -50,19 +53,21 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     SessionError,
     SessionUsage,
+    Sources,
     TextInput,
     ToolCall,
     ToolResult,
     Transcript,
     TruncateOutput,
     TurnComplete,
+    WebSource,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime
+from ..conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -871,6 +876,108 @@ async def test_handoff_to_standard_agent_run() -> None:
                 parts=[SpeechPart(speaker='assistant', transcript='hi there')],
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
+    """The native tool parts a grounded Gemini turn produces (see `test_google.py` for the mapping)."""
+    return [
+        NativeToolCallPart(
+            tool_name='web_search', args={'queries': ['weather rome']}, tool_call_id='g1', provider_name='google'
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[{'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'}],
+            tool_call_id='g1',
+            provider_name='google',
+        ),
+    ]
+
+
+async def test_grounding_folds_into_response_and_keeps_sources_event() -> None:
+    # A grounded turn emits both `Sources` (UI) and `Grounding` (history). The session yields `Sources`
+    # unchanged but folds `Grounding` into the assistant `ModelResponse`, ahead of the speech, mirroring
+    # the classic `GoogleModel` — so `all_messages()` carries the native tool parts, not just the speech.
+    grounding = _grounding_parts()
+    sources = Sources(sources=[WebSource(url='https://example.com', title='Example')], queries=['weather rome'])
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='It is sunny in Rome', is_final=True),
+            sources,
+            Grounding(parts=list(grounding)),
+            TurnComplete(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    events = [e async for e in session]
+
+    # `Sources` passes through for the UI; `Grounding` is folded into history, never yielded.
+    assert sources in events
+    assert not any(isinstance(e, Grounding) for e in events)
+
+    assert session.new_messages() == [
+        ModelResponse(
+            parts=[*grounding, SpeechPart(speaker='assistant', transcript='It is sunny in Rome')],
+            model_name='gemini-live-2.5-flash',
+            timestamp=IsDatetime(),
+        )
+    ]
+
+
+async def test_grounded_history_hands_off_with_native_parts_intact() -> None:
+    # The native tool parts from a grounded voice turn survive the `all_messages()` → `agent.run` handoff:
+    # `Model.prepare_messages` passes `NativeToolCallPart`/`NativeToolReturnPart` through untouched (only
+    # the `SpeechPart`s are converted to the plain user-prompt / text shapes any model can consume).
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='weather in rome?', is_final=True),
+            Transcript(text='It is sunny in Rome', is_final=True),
+            Grounding(parts=list(_grounding_parts())),
+            TurnComplete(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    _ = [e async for e in session]
+
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.extend(messages)
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    agent = Agent(FunctionModel(respond))
+    await agent.run('and now?', message_history=session.all_messages())
+
+    assert received == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='weather in rome?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather rome']},
+                        tool_call_id='g1',
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[{'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'}],
+                        tool_call_id='g1',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='It is sunny in Rome'),
+                ],
+                model_name='gemini-live-2.5-flash',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and now?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

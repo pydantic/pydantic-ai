@@ -34,10 +34,15 @@ from ..exceptions import UserError
 from ..messages import (
     ModelMessage,
     ModelRequest,
+    ModelResponsePart,
     SpeechPart,
     TextPart,
     UserPromptPart,
 )
+
+# Reuse the classic `GoogleModel`'s grounding mappers so a grounded realtime turn's native tool parts
+# are byte-identical in shape to a classic request's, rather than duplicating the mapping and risking drift.
+from ..models.google import _map_grounding_metadata, _map_url_context_metadata  # pyright: ignore[reportPrivateUsage]
 from ..native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
@@ -46,6 +51,7 @@ from ..usage import RequestUsage
 from ._base import (
     AudioDelta,
     AudioInput,
+    Grounding,
     ImageInput,
     InputTranscript,
     RealtimeCapabilities,
@@ -204,6 +210,27 @@ def _map_grounding(content: genai_types.LiveServerContent) -> Sources | None:
     if not sources and not queries:
         return None
     return Sources(sources=sources, queries=queries)
+
+
+def _map_grounding_parts(content: genai_types.LiveServerContent, provider_name: str) -> list[ModelResponsePart]:
+    """Reconstruct the native tool call/return parts for a grounded turn, for history.
+
+    Reuses [`GoogleModel`][pydantic_ai.models.google.GoogleModel]'s grounding mappers so a grounded
+    realtime turn's history is byte-identical in shape to a classic request's — a
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] pair for Google Search grounding
+    and another for URL context. Companion to `_map_grounding`, which builds the UI-facing (and lossy)
+    [`Sources`][pydantic_ai.realtime.Sources] event; the session folds these parts into the turn's
+    `ModelResponse`.
+    """
+    parts: list[ModelResponsePart] = []
+    search_call, search_return = _map_grounding_metadata(content.grounding_metadata, provider_name)
+    if search_call and search_return:
+        parts += [search_call, search_return]
+    fetch_call, fetch_return = _map_url_context_metadata(content.url_context_metadata, provider_name)
+    if fetch_call and fetch_return:
+        parts += [fetch_call, fetch_return]
+    return parts
 
 
 def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
@@ -500,6 +527,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,
+                provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
             )
@@ -515,10 +543,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self,
         session: AsyncSession,
         *,
+        provider_name: str = 'google',
         dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
         reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self._session = session
+        # Provider name stamped onto grounding-derived native tool parts, matching the classic
+        # `GoogleModel` (`NativeToolCallPart.provider_name`), so a grounded turn's history is provider-tagged
+        # identically whether it came from a realtime session or a classic run.
+        self._provider_name = provider_name
         # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
         # Gemini requires. Calls Gemini sends without an id get a unique internal id so parallel
         # id-less calls don't collide.
@@ -606,36 +639,43 @@ class GoogleRealtimeConnection(RealtimeConnection):
             return False
         return True
 
+    def _map_server_content(self, content: genai_types.LiveServerContent) -> list[RealtimeEvent]:
+        """Translate a `server_content` message (audio/transcripts/grounding/turn boundary) to events."""
+        events: list[RealtimeEvent] = []
+        if content.model_turn is not None:
+            for part in content.model_turn.parts or []:
+                if part.inline_data is not None and part.inline_data.data:
+                    events.append(AudioDelta(data=part.inline_data.data))
+                elif part.text and not part.thought:
+                    # Skip thinking parts: native-audio models stream their reasoning as `thought`
+                    # text alongside the spoken answer, and it must not leak into the transcript.
+                    events.append(Transcript(text=part.text, is_final=False))
+        if content.input_transcription is not None and content.input_transcription.text:
+            events.append(
+                InputTranscript(
+                    text=content.input_transcription.text, is_final=bool(content.input_transcription.finished)
+                )
+            )
+        if content.output_transcription is not None and content.output_transcription.text:
+            events.append(
+                Transcript(text=content.output_transcription.text, is_final=bool(content.output_transcription.finished))
+            )
+        if content.interrupted:
+            events.append(SpeechStarted())
+        if (sources := _map_grounding(content)) is not None:
+            events.append(sources)
+        # Emit the same grounding as history-facing native tool parts alongside the UI `Sources`
+        # event: `Sources` is lossy, so history is reconstructed from the raw metadata instead.
+        if grounding_parts := _map_grounding_parts(content, self._provider_name):
+            events.append(Grounding(parts=grounding_parts))
+        if content.turn_complete:
+            events.append(TurnComplete(interrupted=False))
+        return events
+
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
-        content = message.server_content
-        if content is not None:
-            if content.model_turn is not None:
-                for part in content.model_turn.parts or []:
-                    if part.inline_data is not None and part.inline_data.data:
-                        events.append(AudioDelta(data=part.inline_data.data))
-                    elif part.text and not part.thought:
-                        # Skip thinking parts: native-audio models stream their reasoning as `thought`
-                        # text alongside the spoken answer, and it must not leak into the transcript.
-                        events.append(Transcript(text=part.text, is_final=False))
-            if content.input_transcription is not None and content.input_transcription.text:
-                events.append(
-                    InputTranscript(
-                        text=content.input_transcription.text, is_final=bool(content.input_transcription.finished)
-                    )
-                )
-            if content.output_transcription is not None and content.output_transcription.text:
-                events.append(
-                    Transcript(
-                        text=content.output_transcription.text, is_final=bool(content.output_transcription.finished)
-                    )
-                )
-            if content.interrupted:
-                events.append(SpeechStarted())
-            if (sources := _map_grounding(content)) is not None:
-                events.append(sources)
-            if content.turn_complete:
-                events.append(TurnComplete(interrupted=False))
+        if message.server_content is not None:
+            events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:
             for call in message.tool_call.function_calls or []:
                 name = call.name or ''
