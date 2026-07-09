@@ -1387,7 +1387,7 @@ class TestToolErrorStructuredMessage:
 
     def test_non_mcp_error_falls_back_to_str(self):
         """Non-MCP exceptions do not go through MCPError formatting.
-        
+
         The _build_tool_error_message function returns str(error) for
         non-MCP exceptions. This is tested implicitly through the
         direct_call_tool error path — a ValueError from a tool function
