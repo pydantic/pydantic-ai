@@ -810,6 +810,42 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
     )
 
 
+@pytest.mark.anyio
+async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
+    from pydantic_ai._cli import ask_agent
+
+    result = mocker.Mock()
+    result.output = 'hello'
+    result.all_messages.return_value = []
+
+    agent = mocker.Mock()
+    agent.run = mocker.AsyncMock(return_value=result)
+
+    model_settings = ModelSettings(temperature=0)
+    usage_limits = UsageLimits(request_limit=5)
+
+    messages = await ask_agent(
+        agent,
+        'Hello',
+        stream=False,
+        console=Console(file=StringIO()),
+        code_theme='monokai',
+        model='test',
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+    )
+
+    agent.run.assert_awaited_once_with(
+        'Hello',
+        message_history=None,
+        deps=None,
+        model='test',
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+    )
+    assert messages == []
+
+
 def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
     """Test web command with --html-source flag."""
     env.set('OPENAI_API_KEY', 'test')
