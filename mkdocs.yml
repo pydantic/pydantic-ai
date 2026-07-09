@@ -142,6 +142,7 @@ nav:
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
+          - examples/customer-support.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
