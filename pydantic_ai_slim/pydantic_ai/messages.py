@@ -3115,7 +3115,7 @@ class ToolCallPartDelta:
         return ToolCallPart(
             self.tool_name_delta,
             self.args_delta,
-            self.tool_call_id or _generate_tool_call_id(),
+            self.tool_call_id if self.tool_call_id is not None else _generate_tool_call_id(),
             provider_name=self.provider_name,
             provider_details=self.provider_details,
         )
@@ -3190,7 +3190,7 @@ class ToolCallPartDelta:
             return ToolCallPart(
                 delta.tool_name_delta,
                 delta.args_delta,
-                delta.tool_call_id or _generate_tool_call_id(),
+                delta.tool_call_id if delta.tool_call_id is not None else _generate_tool_call_id(),
                 provider_name=delta.provider_name,
                 provider_details=delta.provider_details,
             )
