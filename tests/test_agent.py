@@ -12548,4 +12548,4 @@ def test_agent_rejects_negative_tool_timeout():
 
 def test_agent_accepts_none_tool_timeout():
     agent = Agent('test', tool_timeout=None)
-    assert agent._tool_timeout is None
+    assert agent._tool_timeout is None  # pyright: ignore[reportPrivateUsage]
