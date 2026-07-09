@@ -1724,3 +1724,4 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         toolsets.append(toolset.prefixed(name))
 
     return toolsets
+
