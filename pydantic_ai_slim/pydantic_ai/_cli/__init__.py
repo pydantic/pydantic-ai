@@ -11,7 +11,7 @@ from typing import Any
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, usage as _usage
+from .. import __version__, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
@@ -336,6 +336,7 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
@@ -365,7 +366,16 @@ async def run_chat(
         else:
             try:
                 messages = await ask_agent(
-                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                    agent,
+                    text,
+                    stream,
+                    console,
+                    code_theme,
+                    deps=deps,
+                    messages=messages,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
                 )
             except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
@@ -384,6 +394,7 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> list[ModelMessage]:
@@ -391,14 +402,26 @@ async def ask_agent(
 
     if not stream:
         with status:
-            result = await agent.run(prompt, message_history=messages, deps=deps)
+            result = await agent.run(
+                prompt,
+                message_history=messages,
+                deps=deps,
+                model=model,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
         return result.all_messages()
 
     with status, ExitStack() as stack:
         async with agent.iter(
-            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+            prompt,
+            message_history=messages,
+            deps=deps,
+            model=model,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:

@@ -4249,6 +4249,13 @@ def test_override_model_no_model():
     assert result.output == snapshot((0, 'a'))
 
 
+def test_run_without_model():
+    agent = Agent()
+
+    with pytest.raises(UserError, match=r'`model` must either be set on the agent or included when calling it\.'):
+        agent.run_sync('Hello')
+
+
 async def test_agent_name():
     my_agent = Agent('test')
 
