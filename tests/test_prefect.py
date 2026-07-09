@@ -1499,6 +1499,48 @@ def test_prefect_durability_idempotent_for_agent() -> None:
     assert agent.run is first_run
 
 
+def test_resolve_tool_task_config_reads_metadata() -> None:
+    """Per-tool Prefect config from `tool_def.metadata['prefect']` takes priority over the by-name dict."""
+    from pydantic_ai.durable_exec.prefect._toolset import resolve_tool_task_config
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets import ToolsetTool
+
+    metadata_config = TaskConfig(timeout_seconds=120.0)
+
+    fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
+
+    def fn_tool() -> str:
+        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+
+    fn_toolset.add_function(fn_tool, metadata={'prefect': metadata_config})
+    tool_def = ToolDefinition(name='fn_tool', metadata={'prefect': metadata_config})
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=tool_def,
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    # Metadata wins over the per-tool (deprecated `PrefectAgent`) dict.
+    resolved = resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': TaskConfig(timeout_seconds=1.0)})
+    assert resolved is metadata_config
+
+    # `False` in metadata disables task wrapping.
+    tool.tool_def.metadata = {'prefect': False}
+    assert resolve_tool_task_config(tool, 'fn_tool', {}) is False
+
+    # No metadata: an explicit `None` in the fallback dict disables wrapping, a missing key uses the base config.
+    tool.tool_def.metadata = None
+    assert resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': None}) is False
+    assert resolve_tool_task_config(tool, 'fn_tool', {}) == {}
+
+    # Invalid metadata (e.g. a string from a misuse like `metadata={'prefect': '5s'}`)
+    # raises `UserError` instead of silently passing the wrong shape to Prefect.
+    tool.tool_def.metadata = {'prefect': '5s'}
+    with pytest.raises(UserError, match=r"Tool 'fn_tool' has invalid 'prefect' metadata"):
+        resolve_tool_task_config(tool, 'fn_tool', {})
+
+
 @pytest.mark.parametrize('kind', ['function', 'mcp'])
 def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     """Wrapped leaf toolsets without an `id` fail loudly at construction.

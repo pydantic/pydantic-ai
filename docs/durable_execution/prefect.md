@@ -138,34 +138,45 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
 
-You can customize tool task behavior using `tool_task_config` (applies to all tools) or `tool_task_config_by_name` (per-tool configuration):
+A default [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] for all tools can be passed as `tool_task_config` to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] constructor. Per-tool config lives on the tool's [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — `PrefectDurability` looks for a `'prefect'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability. See the [capabilities documentation][pydantic_ai.capabilities.SetToolMetadata] for the full selector vocabulary.
 
-```python {title="prefect_durability_config.py" test="skip"}
+```python {title="prefect_per_tool_config.py" test="skip"}
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
+from pydantic_ai.toolsets import FunctionToolset
+
+toolset = FunctionToolset(id='research')
+
+
+@toolset.tool(metadata={'prefect': TaskConfig(timeout_seconds=10.0)})  # (1)!
+def fetch_data(url: str) -> str:
+    ...
+
+
+@toolset.tool(metadata={'prefect': False})  # (2)!
+def simple_tool() -> str:
+    ...
+
 
 agent = Agent(
     'openai:gpt-5.2',
-    name='my_agent',
+    name='research',
+    toolsets=[toolset],
     capabilities=[
-        PrefectDurability(
-            tool_task_config=TaskConfig(retries=3),  # Default for all tools
-            tool_task_config_by_name={
-                'fetch_data': TaskConfig(timeout_seconds=10.0),  # Specific to fetch_data
-                'simple_tool': None,  # Disable task wrapping for simple_tool
-            },
+        SetToolMetadata(  # (3)!
+            tools=['fetch_data', 'fetch_dataset'],
+            prefect=TaskConfig(timeout_seconds=10.0),
         ),
+        PrefectDurability(tool_task_config=TaskConfig(retries=3)),  # (4)!
     ],
 )
-
-
-@agent.tool_plain
-def fetch_data(url: str) -> str:
-    # This tool will be wrapped as a Prefect task
-    ...
 ```
 
-Set a tool's config to `None` in `tool_task_config_by_name` to disable task wrapping for that specific tool.
+1. Inline: declare the task config alongside the tool definition. Per-tool config merges on top of the base `tool_task_config`.
+2. Set `'prefect': False` to skip task wrapping entirely for that tool.
+3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
+4. `tool_task_config` sets the default config for every tool.
 
 ### Streaming
 
@@ -189,8 +200,7 @@ You can customize Prefect task behavior, such as retries and timeouts, by passin
 
 - `mcp_task_config`: Configuration for MCP server communication tasks
 - `model_task_config`: Configuration for model request tasks
-- `tool_task_config`: Default configuration for all tool calls
-- `tool_task_config_by_name`: Per-tool task configuration (overrides `tool_task_config`)
+- `tool_task_config`: Default configuration for all tool calls (per-tool overrides go on the tool's `'prefect'` metadata — see [Tool Wrapping](#tool-wrapping) above)
 - `event_stream_handler_task_config`: Configuration for event stream handler tasks (applies when running inside a Prefect flow)
 
 Available `TaskConfig` options:

@@ -1,16 +1,46 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, cast
 
-from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 
 from ._types import TaskConfig
 
-if TYPE_CHECKING:
-    pass
+
+def resolve_tool_task_config(
+    tool: ToolsetTool[Any] | None,
+    tool_name: str,
+    tool_task_config: Mapping[str, TaskConfig | None],
+) -> TaskConfig | Literal[False]:
+    """Resolve per-tool Prefect task config.
+
+    Reads `tool.tool_def.metadata['prefect']` first, then falls back to the explicit
+    `tool_task_config` dict keyed by tool name. Returns a `TaskConfig` dict (possibly
+    empty), or `False` to skip task wrapping.
+    """
+    # Metadata set on the tool (via @toolset.tool(metadata={'prefect': ...}), with_metadata, or
+    # the `SetToolMetadata` capability) is the primary path.
+    if tool is not None and tool.tool_def.metadata is not None:
+        metadata_config = tool.tool_def.metadata.get('prefect')
+        if metadata_config is False:
+            return False
+        if metadata_config is not None:
+            if not isinstance(metadata_config, dict):
+                raise UserError(
+                    f"Tool {tool_name!r} has invalid 'prefect' metadata: expected a dict "
+                    f'(`TaskConfig`) or `False`, got {type(metadata_config).__name__}.'
+                )
+            return cast('TaskConfig', metadata_config)
+    # Fallback: per-tool dict passed to the deprecated `PrefectAgent`. An explicit `None`
+    # disables wrapping; a missing key means "use the base config".
+    if tool_name in tool_task_config:
+        fallback = tool_task_config[tool_name]
+        return False if fallback is None else fallback
+    return {}
 
 
 class PrefectWrapperToolset(WrapperToolset[AgentDepsT], ABC):

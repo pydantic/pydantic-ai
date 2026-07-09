@@ -66,7 +66,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
-        tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
     ):
         """Create a PrefectDurability capability.
@@ -77,8 +76,11 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             event_stream_handler: Optional handler for streaming events.
             model_task_config: Prefect task config for model request tasks.
             mcp_task_config: Prefect task config for MCP server tasks.
-            tool_task_config: Default Prefect task config for tool call tasks.
-            tool_task_config_by_name: Per-tool task configs keyed by tool name.
+            tool_task_config: Default Prefect task config for tool call tasks. Per-tool
+                overrides are configured via tool metadata, e.g.
+                `@my_toolset.tool(metadata={'prefect': TaskConfig(...)})` (or `False` to skip
+                task wrapping), or via the
+                [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
             event_stream_handler_task_config: Prefect task config for event handler tasks.
         """
         self.name = ''
@@ -88,7 +90,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
-        self._tool_task_config_by_name = tool_task_config_by_name or {}
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
         self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
@@ -251,7 +252,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 ts,
                 self._mcp_task_config,
                 self._tool_task_config,
-                self._tool_task_config_by_name,
+                {},  # per-tool config comes from tool metadata on the capability path
             )
             if isinstance(wrapped, PrefectWrapperToolset):
                 # Without an ID the wrapper can't be swapped in at run time (see
