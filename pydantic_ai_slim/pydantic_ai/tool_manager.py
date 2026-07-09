@@ -745,6 +745,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = validated.call.tool_name
 
+        usage.tool_calls += 1
         try:
             tool_result = await self.toolset.call_tool(
                 name,
@@ -758,8 +759,6 @@ class ToolManager(Generic[AgentDepsT]):
             self._check_max_retries(name, validated.tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
-
-        usage.tool_calls += 1
 
         return tool_result
 
