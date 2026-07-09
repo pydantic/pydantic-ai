@@ -142,6 +142,36 @@ class MCPError(RuntimeError):
         return f'{self.message} (code: {self.code})'
 
 
+def _build_tool_error_message(error: BaseException) -> str:
+    """Build a ModelRetry message from a tool error, preserving structured MCP error info.
+
+    When the underlying error is an `McpError` (from the MCP SDK), the message
+    includes the error code and data so the model can self-correct by code instead of
+    parsing human-readable strings. This mirrors how the resource methods preserve
+    structured error info via `MCPError.from_mcp_sdk()`.
+
+    Args:
+        error: The tool error (ToolError, McpError, or nested in ExceptionGroup).
+
+    Returns:
+        A message string for ModelRetry, optionally including structured error details.
+    """
+    # Extract the underlying McpError if available.
+    mcpe: mcp_exceptions.McpError | None = None
+    if isinstance(error, mcp_exceptions.McpError):
+        mcpe = error
+    elif isinstance(error, ToolError) and isinstance(error.__cause__, mcp_exceptions.McpError):
+        mcpe = error.__cause__
+
+    if mcpe is not None:
+        err = mcpe.error
+        if err.data:
+            return f'{err.message} (code: {err.code}, data: {err.data})'
+        return f'{err.message} (code: {err.code})'
+
+    return str(error)
+
+
 @dataclass(repr=False, kw_only=True)
 class ResourceAnnotations:
     """Additional properties describing MCP entities.
@@ -1200,7 +1230,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'retry':
-                    raise exceptions.ModelRetry(message=str(e)) from e
+                    raise exceptions.ModelRetry(message=_build_tool_error_message(e)) from e
                 raise
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
@@ -1219,7 +1249,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 error: BaseException = matched
                 while isinstance(error, _utils.BaseExceptionGroup):
                     error = error.exceptions[0]
-                raise exceptions.ModelRetry(message=str(error)) from eg
+                raise exceptions.ModelRetry(message=_build_tool_error_message(error)) from eg
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).

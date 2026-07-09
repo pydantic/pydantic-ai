@@ -1341,6 +1341,59 @@ def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
     assert deprecation_messages == [], deprecation_messages
 
 
+class TestToolErrorStructuredMessage:
+    """The tool-call path should preserve structured MCP error info (code/data) in the
+    ModelRetry message, symmetric with how the resource methods use MCPError.from_mcp_sdk()."""
+
+    def test_mcp_error_includes_code_in_message(self):
+        """Bare McpError → message includes the error code."""
+        from mcp.shared.exceptions import McpError
+        from mcp.types import ErrorData
+
+        from pydantic_ai.mcp import _build_tool_error_message
+
+        err = McpError(ErrorData(code=-32603, message='internal error'))
+        msg = _build_tool_error_message(err)
+        assert 'internal error' in msg
+        assert 'code: -32603' in msg
+
+    def test_tool_error_wrapping_mcp_error(self):
+        """ToolError whose __cause__ is an McpError → message includes code."""
+        from fastmcp.exceptions import ToolError
+        from mcp.shared.exceptions import McpError
+        from mcp.types import ErrorData
+
+        from pydantic_ai.mcp import _build_tool_error_message
+
+        mcpe = McpError(ErrorData(code=-32002, message='not found'))
+        tool_err = ToolError('tool failed')
+        tool_err.__cause__ = mcpe
+        msg = _build_tool_error_message(tool_err)
+        assert 'not found' in msg
+        assert 'code: -32002' in msg
+
+    def test_mcp_error_with_data(self):
+        """McpError carrying structured data → includes data in message."""
+        from mcp.shared.exceptions import McpError
+        from mcp.types import ErrorData
+
+        from pydantic_ai.mcp import _build_tool_error_message
+
+        err = McpError(ErrorData(code=408, message='timeout', data={'waited': '5s'}))
+        msg = _build_tool_error_message(err)
+        assert 'timeout' in msg
+        assert 'code: 408' in msg
+        assert 'waited' in msg
+
+    def test_non_mcp_error_falls_back_to_str(self):
+        """Non-MCP exception → plain str(error) fallback."""
+        from pydantic_ai.mcp import _build_tool_error_message
+
+        err = ValueError('something went wrong')
+        msg = _build_tool_error_message(err)
+        assert msg == 'something went wrong'
+
+
 class TestMCPToolsetBackgroundTasks:
     """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
     `execution.taskSupport` and routes the call accordingly:
