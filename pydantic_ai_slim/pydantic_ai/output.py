@@ -132,8 +132,9 @@ class ToolOutput(Generic[OutputDataT]):
     """Whether the model can incrementally build this output tool's arguments before finalizing.
 
     When enabled, calls to this output tool with arguments update a buffer and return validation
-    feedback to the model instead of ending the run. Calling the same output tool with no arguments
-    submits the buffered value through the normal output pipeline.
+    feedback to the model instead of ending the run. Set `submit_as_final=True` on the output tool
+    call to submit the provided arguments immediately, or to submit the current buffer when no output
+    fields are provided.
     """
 
     def __init__(

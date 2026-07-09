@@ -382,7 +382,7 @@ agent = Agent(
 )
 ```
 
-With buffered output enabled for an output tool, a call to that tool with arguments updates the buffer and returns validation feedback to the model instead of ending the run. Pydantic AI also exposes generated buffer tools such as `read_final_result_buffer` and `patch_final_result_buffer` so the model can inspect and update the draft with JSON Patch operations. Calling the same output tool with no arguments submits the buffered value through the normal output validation and processing pipeline.
+With buffered output enabled for an output tool, a call to that tool with arguments updates the buffer and returns validation feedback to the model instead of ending the run. Pydantic AI also exposes generated buffer tools such as `read_final_result_buffer` and `patch_final_result_buffer` so the model can inspect and update the draft with JSON Patch operations. Include `submit_as_final=True` in the output tool arguments to submit those arguments immediately, or call the output tool with only `submit_as_final=True` to submit the current buffer through the normal output validation and processing pipeline.
 
 ##### Parallel Output Tool Calls
 

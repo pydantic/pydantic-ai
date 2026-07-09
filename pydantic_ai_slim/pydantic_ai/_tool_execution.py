@@ -382,12 +382,21 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if self._is_empty_output_tool_call(call):
             return await self._submit_buffered_output(call)
 
-        buffer = self.ctx.state.output_buffers.setdefault(call.tool_name, OutputBufferState())
         raw_args = call.args_as_dict()
+        output_args, submit_as_final = _output.split_buffered_output_args(raw_args)
+        if submit_as_final and not output_args:
+            return await self._submit_buffered_output(call)
+
+        buffer = self.ctx.state.output_buffers.setdefault(call.tool_name, OutputBufferState())
+        raw_args = output_args
         buffer.raw_args = raw_args
         buffer.revision += 1
 
         part = await self._validate_buffered_output(call, raw_args, buffer=buffer)
+        if submit_as_final and buffer.validation_error is None:
+            submit_call = dataclasses.replace(call, args=raw_args)
+            return await self._run_unbuffered_output_tool_call(submit_call)
+
         return _OutputCallResult(call=call, args_valid=buffer.validation_error is None, return_part=part)
 
     async def _submit_buffered_output(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:

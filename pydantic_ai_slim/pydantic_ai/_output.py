@@ -73,9 +73,22 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 _BUFFER_STATUS_VALID = 'valid'
 _BUFFER_STATUS_INVALID = 'invalid'
+_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY = 'submit_as_final'
+_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_SCHEMA: ObjectJsonSchema = {
+    'type': 'boolean',
+    'description': 'Set to true to submit these arguments, or the current buffer, as the final output.',
+}
 _EMPTY_OBJECT_JSON_SCHEMA: ObjectJsonSchema = {
     'type': 'object',
     'properties': {},
+    'additionalProperties': False,
+}
+_BUFFERED_OUTPUT_SUBMIT_ONLY_JSON_SCHEMA: ObjectJsonSchema = {
+    'type': 'object',
+    'properties': {
+        _BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY: _BUFFERED_OUTPUT_SUBMIT_AS_FINAL_SCHEMA,
+    },
+    'required': [_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY],
     'additionalProperties': False,
 }
 _EDITOR_ARGS_VALIDATOR = cast(SchemaValidator, TypeAdapter(dict[str, Any]).validator)
@@ -1442,6 +1455,30 @@ def _buffer_status(tool_name: str, buffer: OutputBufferState | None, *, status: 
     return payload
 
 
+def split_buffered_output_args(args: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Return output args without buffered-output control fields, plus the submit flag."""
+    if _BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY not in args:
+        return args, False
+
+    output_args = dict(args)
+    submit_as_final = output_args.pop(_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY)
+    return output_args, submit_as_final is True
+
+
+def _with_buffered_submit_schema(schema: ObjectJsonSchema) -> ObjectJsonSchema:
+    output_schema = deepcopy(schema)
+    properties = output_schema.setdefault('properties', {})
+    if _BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY in properties:
+        raise UserError(
+            f'Buffered output reserves `{_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY}` for final submission. '
+            'Rename the output field or disable buffering for this output tool.'
+        )
+    properties[_BUFFERED_OUTPUT_SUBMIT_AS_FINAL_KEY] = _BUFFERED_OUTPUT_SUBMIT_AS_FINAL_SCHEMA
+    return {
+        'anyOf': [output_schema, _BUFFERED_OUTPUT_SUBMIT_ONLY_JSON_SCHEMA],
+    }
+
+
 def _buffer_validation_error(
     tool_name: str, error: ToolRetryError | ModelRetry | ValidationError
 ) -> _messages.RetryPromptPart:
@@ -1650,7 +1687,7 @@ class BufferedOutputEditorToolset(AbstractToolset[AgentDepsT]):
             return f'Read the current buffered arguments for output tool {output_tool_name!r}.'
         return (
             f'Apply JSON Patch operations to the buffered arguments for output tool {output_tool_name!r}. '
-            f'Call {output_tool_name!r} with no arguments to submit the buffer.'
+            f'Call {output_tool_name!r} with `submit_as_final` set to true to submit the buffer.'
         )
 
 
@@ -1787,11 +1824,11 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description=(
                     f'{tool_def.description or DEFAULT_OUTPUT_TOOL_DESCRIPTION} '
                     'When buffered output is enabled, call this tool with arguments to update the buffer; '
-                    'call it with no arguments to submit the current buffer.'
+                    'set `submit_as_final` to true to submit these arguments as the final output. '
+                    'To submit the current buffer without changing it, call this tool with only '
+                    '`submit_as_final` set to true.'
                 ),
-                parameters_json_schema={
-                    'anyOf': [tool_def.parameters_json_schema, _EMPTY_OBJECT_JSON_SCHEMA],
-                },
+                parameters_json_schema=_with_buffered_submit_schema(tool_def.parameters_json_schema),
             )
             if tool_def.name in self.buffered_tool_names
             else tool_def
