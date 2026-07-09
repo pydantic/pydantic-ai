@@ -1056,7 +1056,7 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses'):
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

@@ -693,9 +693,9 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces content.
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. But with `str` in the `output_type` — including the default — the model is required to end its final turn with text. If it considers its work finished and has nothing left to say, it will return an empty response, or one containing only [thinking](thinking.md) content (as [Anthropic](models/anthropic.md) models notably do), and Pydantic AI will ask it to produce text anyway.
 
-To instead treat an empty response as a successful run, include `None` in the `output_type`:
+Include `None` in the `output_type` when finishing without a final message is a valid outcome for your agent, and you'd rather receive `None` than have the model say something for the sake of saying it:
 
 ```python {title="optional_output.py"}
 from pydantic_ai import Agent
