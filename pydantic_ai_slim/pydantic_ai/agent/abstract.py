@@ -1639,9 +1639,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1649,9 +1649,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
-            model: Optional model to use for the agent run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1685,9 +1685,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1695,9 +1695,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
-            model: Optional model to use for the agent run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
