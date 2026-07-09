@@ -49,18 +49,12 @@ except ImportError:  # pragma: no cover
 
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
-    # `asyncio.get_event_loop()` is deprecated (and warns or raises) when there is
-    # no running event loop, so obtain the loop via the event loop policy instead.
-    # The DeprecationWarning is suppressed to stay clean on Python 3.14+ where the
-    # policy method itself still emits it.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        try:
-            event_loop = asyncio.get_event_loop_policy().get_event_loop()  # pyright: ignore[reportDeprecated]
-        except RuntimeError:
-            event_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(event_loop)
-    return event_loop
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+        return event_loop
 
 
 _T = TypeVar('_T')
