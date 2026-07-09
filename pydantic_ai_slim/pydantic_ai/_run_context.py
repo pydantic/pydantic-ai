@@ -45,10 +45,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, or `None` if the run wasn't started with any.
 
-    Read-only by convention: this reflects the limits the run is already enforcing, so tools and
-    capabilities can disclose or adapt to the run's budget (e.g. a budget-disclosure capability)
-    without having to be configured with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage]
-    to compute how much budget remains. Mutating it here does *not* change what the run enforces.
+    This reflects the limits the run is already enforcing, so tools and capabilities can disclose or
+    adapt to the run's budget (e.g. a budget-disclosure capability) without having to be configured
+    with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage] to compute
+    how much budget remains. Treat it as read-only: it is the live object the run enforces against, so
+    mutating a field here *would* change what the run enforces on subsequent requests.
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
