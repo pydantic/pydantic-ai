@@ -1274,11 +1274,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     else:
                         assert_never(part)
 
-                # Use compaction content as text fallback when the response has no other
-                # actionable text (e.g. Anthropic pause_after_compaction=True)
-                if not text and compaction_text:
-                    text = compaction_text
-
                 try:
                     # We generally prioritize at least executing tool calls if they are present.
                     # This accounts for cases like Anthropic returns that might contain a text response
@@ -1288,7 +1283,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # tool calls, that output is already the final result, so `_handle_tool_calls` skips those
                     # tools and ends the run — matching the way `'early'` skips function tools once an output
                     # tool call succeeds. (Output and deferred tool calls are always executed so their results
-                    # aren't dropped.)
+                    # aren't dropped.) Compaction content is deliberately excluded here: a response that
+                    # compacts and calls a tool is mid-task, so it should not preempt the tool call.
                     alternatives: list[str] = []
                     if tool_calls:
                         response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
@@ -1310,6 +1306,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         alternatives.append('return an image')
 
                     if text_processor := output_schema.text_processor:
+                        # Use compaction content as text fallback when the response has no other
+                        # actionable text (e.g. Anthropic pause_after_compaction=True).
+                        if not text and compaction_text:
+                            text = compaction_text
                         if text:
                             self._next_node = await self._handle_text_response(ctx, text, text_processor)
                             return

@@ -23,6 +23,7 @@ from pydantic_ai import (
     BinaryImage,
     CallDeferred,
     CombinedToolset,
+    CompactionPart,
     DocumentUrl,
     ExternalToolset,
     FilePart,
@@ -4588,6 +4589,55 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test graceful structured output')
 
         assert result.output == OutputType(value='after tool')
+        assert tool_called == ['regular_tool']
+
+    def test_early_strategy_prefers_plain_text_output_over_tool_calls(self):
+        """Under 'early' with `output_type=str`, the first plain-text output the model returns is the final
+        result even alongside a function tool call, so the tool is skipped."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[TextPart(content='the answer'), ToolCallPart('regular_tool', {'x': 1})])
+            return ModelResponse(parts=[TextPart(content='after tool')])  # pragma: no cover
+
+        agent = Agent(FunctionModel(return_model), output_type=str, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early plain text')
+
+        assert result.output == 'the answer'
+        assert tool_called == []
+
+    def test_early_strategy_does_not_treat_compaction_as_output(self):
+        """Under 'early', compaction content must not preempt a co-emitted function tool call: a response that
+        compacts context and calls a tool is mid-task, so the tool runs rather than the summary winning."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        CompactionPart(content='summary of the conversation', provider_name='anthropic'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='after tool')])
+
+        agent = Agent(FunctionModel(return_model), output_type=str, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early compaction')
+
+        assert result.output == 'after tool'
         assert tool_called == ['regular_tool']
 
     def test_early_strategy_does_not_preempt_output_tool_calls(self):
