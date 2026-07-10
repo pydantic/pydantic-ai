@@ -753,10 +753,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
         betas.update(native_tool_betas)
-        if self._messages_use_anthropic_uploaded_file(messages):
-            betas.add(_ANTHROPIC_FILES_API_BETA)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
@@ -815,10 +813,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         model_settings: AnthropicModelSettings,
         anthropic_profile: AnthropicModelProfile,
+        messages: list[ModelMessage],
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set
+        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set,
+        auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
         and ensuring `User-Agent` is set.
         """
         extra_headers = dict(model_settings.get('extra_headers', {}))
@@ -839,6 +839,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
+
+        if self._messages_use_anthropic_uploaded_file(messages):
+            betas.add(_ANTHROPIC_FILES_API_BETA)
 
         return betas, extra_headers
 
@@ -952,10 +955,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
         betas.update(native_tool_betas)
-        if self._messages_use_anthropic_uploaded_file(messages):
-            betas.add(_ANTHROPIC_FILES_API_BETA)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         if isinstance(self.client, AsyncAnthropicBedrock):
