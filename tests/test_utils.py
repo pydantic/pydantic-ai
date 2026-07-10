@@ -10,6 +10,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from importlib.metadata import distributions
 from typing import Any
 
@@ -21,6 +22,7 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -923,3 +925,48 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+class _NonBoolNe:
+    """Object whose `__ne__` returns a non-bool with an exploding `__bool__`."""
+
+    def __ne__(self, other: object) -> _NonBoolNe:
+        return self
+
+    def __bool__(self) -> bool:
+        raise ValueError('ambiguous')
+
+
+@dataclass(repr=False)
+class _WithNonBoolField:
+    __repr__ = dataclasses_no_defaults_repr
+    value: _NonBoolNe
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """`repr()` must not crash when a required field holds a value whose `!=` returns a non-bool.
+
+    Regression test for #6415: `dataclasses_no_defaults_repr` used
+    `getattr(self, f.name) != f.default` in an `if` clause, which relies on the
+    implicit `bool()` of the result. For a required field `f.default` is
+    `dataclasses.MISSING`; comparing a numpy array (or any object whose `__ne__`
+    returns a non-bool) against `MISSING` makes the implicit `bool()` raise
+    `ValueError`. This test uses a pure-Python stand-in so no numpy dependency is
+    needed.
+    """
+    instance = _WithNonBoolField(value=_NonBoolNe())
+    result = repr(instance)
+    assert result.startswith('_WithNonBoolField(value=')
+
+
+@dataclass(repr=False)
+class _WithDefault:
+    __repr__ = dataclasses_no_defaults_repr
+    value: int = 0
+    other: str = 'default'
+
+
+def test_dataclasses_no_defaults_repr_excludes_default():
+    """Fields equal to their default are excluded when the comparison is well-defined."""
+    assert repr(_WithDefault()) == '_WithDefault()'
+    assert repr(_WithDefault(value=1)) == '_WithDefault(value=1)'

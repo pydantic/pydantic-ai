@@ -21,7 +21,7 @@ from collections.abc import (
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
@@ -539,10 +539,24 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
-    """Exclude fields with values equal to the field default."""
-    kv_pairs = (
-        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
-    )
+    """Exclude fields with values equal to the field default.
+
+    Always includes required fields (those with no default), and tolerates values
+    whose ``!=`` comparison returns a non-``bool`` (e.g. numpy arrays) without raising.
+    """
+
+    def _show(f: Any) -> bool:
+        if not f.repr:
+            return False
+        if f.default is MISSING and f.default_factory is MISSING:
+            return True  # required field: always show
+        default = f.default if f.default is not MISSING else f.default_factory()
+        try:
+            return bool(getattr(self, f.name) != default)
+        except Exception:
+            return True  # non-bool or exploding __bool__: include the field
+
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if _show(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
