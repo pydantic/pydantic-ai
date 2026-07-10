@@ -396,6 +396,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             supports_interruption=True,
             supports_output_truncation=True,
             supports_session_seeding=True,
+            supported_native_tools=frozenset(),
         )
 
     def _session_config(
@@ -443,11 +444,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: ModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        if native_tools:
-            raise UserError(
-                f'The OpenAI realtime provider does not support native tools yet (got '
-                f'{", ".join(type(t).__name__ for t in native_tools)}).'
-            )
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._provider.client.api_key}'}
         session_config = self._session_config(instructions, tools, model_settings)

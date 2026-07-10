@@ -2826,6 +2826,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_native = [t for cap in extra_capabilities for t in cap.get_native_tools() if _keep_native(t)]
             native_tools = [t for t in override_native.value if _keep_native(t)] + extra_native
 
+        # Validate the full native-tool set (capability-contributed and `override(native_tools=...)`)
+        # against the model's declared support up front — mirroring the classic model's
+        # `supported_native_tools` check — so an unsupported tool fails with a clear error here, before
+        # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
+        # back (e.g. to a local tool); the session itself does not fall back automatically.
+        model_profile = model.profile
+        supported_native_tools = model_profile['supported_native_tools']
+        if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
+            unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
+            supported = ', '.join(sorted(t.__name__ for t in supported_native_tools)) or 'none'
+            raise exceptions.UserError(
+                f'The {model.model_name!r} realtime model does not support the {unsupported} native tool(s). '
+                f'Supported native tools: {supported}.'
+            )
+
         toolset = self._get_toolset(output_toolset=None, additional_toolsets=toolsets, run_capability=run_capability)
         toolset = await toolset.for_run(run_context)
         async with toolset:
@@ -2865,7 +2880,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return str(result.return_value)
                 return str(result)
 
-            model_profile = model.profile
             if message_history and not model_profile['supports_session_seeding']:
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '

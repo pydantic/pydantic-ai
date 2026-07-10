@@ -31,6 +31,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
     AudioDelta,
@@ -74,13 +75,15 @@ ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 _PCM_MEDIA_TYPE = 'audio/pcm'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
-# everything is supported so no guard fires. Real sessions receive `model.profile`.
+# everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
+# validated up front by `Agent.realtime_session`, not the session, so this field is inert here.
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
     supports_manual_turn_control=True,
     supports_interruption=True,
     supports_output_truncation=True,
     supports_session_seeding=True,
+    supported_native_tools=SUPPORTED_NATIVE_TOOLS,
 )
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and

@@ -82,6 +82,7 @@ class _Model(RealtimeModel):
             supports_interruption=True,
             supports_output_truncation=False,
             supports_session_seeding=True,
+            supported_native_tools=frozenset(),
         )
 
     @asynccontextmanager

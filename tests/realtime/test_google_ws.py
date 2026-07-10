@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -187,4 +188,5 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
     )

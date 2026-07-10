@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
@@ -127,9 +129,19 @@ def test_native_tool_code_execution_maps_to_code_execution() -> None:
     assert tool.code_execution is not None
 
 
-def test_native_tool_unsupported_raises() -> None:
-    with pytest.raises(UserError, match='WebSearchTool, WebFetchTool, and CodeExecutionTool'):
-        rt_google._native_tool_to_genai(ImageGenerationTool())  # pyright: ignore[reportPrivateUsage]
+async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
+    # A native tool outside Gemini's `supported_native_tools` fails up front with the uniform error,
+    # before the Live session connects — the rejection lives in `Agent.realtime_session`, not the mapping.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(
+        UserError,
+        match=r'does not support the ImageGenerationTool native tool\(s\)\. '
+        r'Supported native tools: CodeExecutionTool, WebFetchTool, WebSearchTool\.',
+    ):
+        async with agent.realtime_session(
+            model=GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]
+        ):
+            pass  # pragma: no cover - validation raises before yielding
 
 
 def test_config_combines_function_and_native_tools() -> None:
@@ -189,6 +201,7 @@ def test_profile() -> None:
         False,
         True,
     )
+    assert profile['supported_native_tools'] == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
 
 # --- config ------------------------------------------------------------------

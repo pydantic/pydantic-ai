@@ -161,6 +161,7 @@ class XaiRealtimeModel(RealtimeModel):
             supports_interruption=True,
             supports_output_truncation=False,
             supports_session_seeding=True,
+            supported_native_tools=frozenset(),
         )
 
     def _session_config(
@@ -199,11 +200,6 @@ class XaiRealtimeModel(RealtimeModel):
         model_settings: ModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[XaiRealtimeConnection]:
-        if native_tools:
-            raise UserError(
-                f'The xAI realtime provider does not support native tools yet (got '
-                f'{", ".join(type(t).__name__ for t in native_tools)}).'
-            )
         # The `model` query parameter is required: without it the server silently falls back to a default.
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._api_key}'}

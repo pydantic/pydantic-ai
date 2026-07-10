@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -83,6 +83,9 @@ def _profile(
     supports_interruption: bool = True,
     supports_output_truncation: bool = True,
     supports_session_seeding: bool = True,
+    supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
+        {WebSearchTool, WebFetchTool, CodeExecutionTool}
+    ),
 ) -> RealtimeModelProfile:
     """A full-support profile with per-field overrides, so a guard test can flip one flag off."""
     return RealtimeModelProfile(
@@ -91,6 +94,7 @@ def _profile(
         supports_interruption=supports_interruption,
         supports_output_truncation=supports_output_truncation,
         supports_session_seeding=supports_session_seeding,
+        supported_native_tools=supported_native_tools,
     )
 
 
@@ -1527,6 +1531,22 @@ async def test_agent_realtime_session_native_tools_from_capability() -> None:
         _ = [e async for e in session]
     assert model.last_native_tools is not None
     assert any(isinstance(t, WebSearchTool) for t in model.last_native_tools)
+
+
+async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
+    # A native tool the model doesn't support (per its `supported_native_tools` profile) fails up front
+    # with the uniform error, before connecting — even when contributed by a capability. This is the
+    # signal a caller/capability needs to fall back; the session doesn't fall back automatically.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([])
+    model = FakeRealtimeModel(conn, profile=_profile(supported_native_tools=frozenset()))
+    with pytest.raises(
+        UserError,
+        match=r"'fake-realtime' realtime model does not support the WebSearchTool native tool\(s\)\. "
+        r'Supported native tools: none\.',
+    ):
+        async with agent.realtime_session(model=model, capabilities=[NativeTool(WebSearchTool())]):
+            pass  # pragma: no cover - validation raises before yielding
 
 
 async def test_agent_realtime_session_local_capability_tool_declared() -> None:

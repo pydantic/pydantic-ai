@@ -11,6 +11,10 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime import (
     AudioDelta,
@@ -971,15 +975,18 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     assert events == [TurnCompleteEvent(interrupted=False)]
 
 
-async def test_connect_rejects_native_tools() -> None:
-    # The OpenAI realtime provider doesn't support native tools yet → clear error before dialing.
-    from pydantic_ai.exceptions import UserError
-    from pydantic_ai.native_tools import WebSearchTool
-
-    model = OpenAIRealtimeModel('gpt-realtime')
-    with pytest.raises(UserError, match='native tools'):
-        async with model.connect(instructions='x', native_tools=[WebSearchTool()]):
-            pass  # pragma: no cover - connect raises before yielding
+async def test_agent_realtime_session_rejects_native_tools() -> None:
+    # OpenAI realtime supports no native tools, so any native tool fails up front with the uniform
+    # error, before dialing — the check lives in `Agent.realtime_session`, keyed on the model profile.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(
+        UserError,
+        match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
+    ):
+        async with agent.realtime_session(
+            model=OpenAIRealtimeModel('gpt-realtime'), capabilities=[NativeTool(WebSearchTool())]
+        ):
+            pass  # pragma: no cover - validation raises before yielding
 
 
 # --- provider resolution & capabilities -------------------------------------------------------
@@ -1020,7 +1027,6 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
 
 
 def test_azure_provider_is_rejected() -> None:
-    from pydantic_ai.exceptions import UserError
     from pydantic_ai.providers.azure import AzureProvider
 
     provider = AzureProvider(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
@@ -1037,3 +1043,4 @@ def test_profile() -> None:
         profile['supports_output_truncation'],
         profile['supports_session_seeding'],
     ) == (True, True, True, True, True)
+    assert profile['supported_native_tools'] == frozenset()

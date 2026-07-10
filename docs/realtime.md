@@ -11,10 +11,6 @@ Pydantic AI exposes this through a small provider-agnostic layer in
 as the high-level entry point: it reuses the agent's tools and instructions and runs the tool-call
 loop for you.
 
-!!! note "Beta Feature"
-    Realtime support is in beta. The API is stable enough to build on, but may still be refined in
-    future releases as more providers and use cases are covered.
-
 !!! note "Realtime is separate from the text `Model`"
     A realtime session is not a `Model` request. It opens a connection you stream audio into and
     iterate events out of. Use a realtime model for the conversational surface, and a normal text
@@ -38,7 +34,7 @@ Authentication, base URL, and HTTP client come from the `provider` argument, mir
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: pass `provider='openai'` (the
 default, reads `OPENAI_API_KEY`) or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
 instance for a custom key, base URL, or client. OpenAI-compatible endpoints that expose a realtime
-API work too; Azure OpenAI is not yet supported.
+API work too; Azure OpenAI is not supported.
 
 The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
 the `google-genai` SDK, available via the `google` optional group:
@@ -199,8 +195,8 @@ the raw PCM audio bytes (as [`BinaryContent`][pydantic_ai.messages.BinaryContent
 | `'both'` | Both sides' audio. |
 
 Retained audio is kept on the history parts, but when you [hand off](#delegating-to-a-text-agent) to a
-standard model it is currently forwarded as the transcript text, not the audio itself: audio
-forwarding requires the target model's profile to declare audio-input support, which none do yet.
+standard model it is forwarded as the transcript text, not the audio itself: audio
+forwarding requires the target model's profile to declare audio-input support, which none do.
 
 ## Configuring the session
 
@@ -290,9 +286,9 @@ By default the provider uses server-side voice activity detection
 ([`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]): it decides when the user has started and
 stopped speaking, commits the audio, and triggers a response — and interrupts the model when the
 user barges in. [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] uses a model to decide turn
-boundaries instead. Detection-driven turns and [push-to-talk](#push-to-talk-manual-turn-taking) are
-the common cases, but not the only ones — some models take a more active role, deciding on their own
-when to speak (Gemini's `proactive_audio` is one example).
+boundaries instead. [Push-to-talk](#push-to-talk-manual-turn-taking) drives turns manually instead of
+by detection. Gemini's native-audio models also decide on their own when to speak, via
+`proactive_audio`.
 
 When the user barges in you get a [`SpeechStartedEvent`][pydantic_ai.realtime.SpeechStartedEvent] event; stop
 playing any buffered model audio immediately, and call
@@ -344,9 +340,6 @@ aren't universal. Each model reports its support through
 | [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption] | [`interrupt`](#turn-taking-and-barge-in) | ✅ | ❌ | ✅ |
 | [`supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation] | [`truncate_output` / `interrupt(audio_end_ms=…)`](#turn-taking-and-barge-in) | ✅ | ❌ | ❌ |
 | [`supports_session_seeding`][pydantic_ai.realtime.RealtimeModelProfile.supports_session_seeding] | [`message_history=`](#message-history) | ✅ | ✅ | ✅ |
-
-The profile grows new flags over time as realtime models gain behaviors, so treat it as open-ended
-rather than a fixed list of everything a realtime model might do.
 
 Gemini Live drives turns with automatic VAD only and interrupts server-side on its own, so it
 exposes neither the manual turn verbs nor an explicit `interrupt()`. xAI Grok Voice supports
@@ -441,8 +434,11 @@ parts a classic run would produce, so it survives the handoff to
 
 Gemini Live supports `WebSearch` / `WebFetch` (web search and URL context) and code execution (add
 [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] via
-[`NativeTool`][pydantic_ai.capabilities.NativeTool]) today; other native tools raise a `UserError`. The
-OpenAI realtime provider does not support native tools yet (it raises `UserError`).
+[`NativeTool`][pydantic_ai.capabilities.NativeTool]). The OpenAI and xAI realtime providers support no
+native tools. Each model declares the tools it runs server-side in its
+[`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools] profile;
+passing an unsupported one raises a [`UserError`][pydantic_ai.exceptions.UserError] naming what the
+model does support, before the session connects.
 
 !!! warning "`WebFetch` (URL context) isn't supported natively on native-audio models"
     The `gemini-live-2.5-flash-native-audio` model supports `WebSearch` (Grounding with Google Search)
@@ -630,7 +626,7 @@ talking while the analysis runs.
 
 ## Not yet supported
 
-Realtime is in beta, and some capabilities are intentionally out of scope for now:
+Some capabilities are intentionally out of scope:
 
 - **Browser-direct transport (WebRTC).** Sessions run server-side over WebSocket; there is no direct browser-to-provider WebRTC path.
 - **Telephony (SIP).** Connecting a session to a phone call over SIP is not built in.

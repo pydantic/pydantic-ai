@@ -31,7 +31,6 @@ except ImportError as _import_error:
     ) from _import_error
 
 from .._utils import generate_tool_call_id
-from ..exceptions import UserError
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -180,12 +179,14 @@ def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
 
 
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
-    """Map a pydantic-ai native tool to a Gemini built-in `Tool`.
+    """Map a supported Gemini built-in native tool to a genai `Tool`.
 
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search,
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context, and
-    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to Gemini's code execution tool;
-    other native tools raise a `UserError`.
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to Gemini's code execution tool.
+    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates native tools against
+    the model's [`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools]
+    profile before connecting, so only these three reach this mapping.
 
     Note: some Gemini native-audio Live models reject certain built-in tools at connect time. That's a
     request-time concern surfaced by the API; capturing whatever code-execution parts the model emits
@@ -195,12 +196,8 @@ def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
         return genai_types.Tool(google_search=genai_types.GoogleSearch())
     if isinstance(tool, WebFetchTool):
         return genai_types.Tool(url_context=genai_types.UrlContext())
-    if isinstance(tool, CodeExecutionTool):
-        return genai_types.Tool(code_execution=genai_types.ToolCodeExecution())
-    raise UserError(
-        f'Gemini Live does not support the native tool {type(tool).__name__!r} '
-        '(only WebSearchTool, WebFetchTool, and CodeExecutionTool).'
-    )
+    # Only `CodeExecutionTool` remains, per the profile's `supported_native_tools`.
+    return genai_types.Tool(code_execution=genai_types.ToolCodeExecution())
 
 
 def _map_grounding(content: genai_types.LiveServerContent) -> SourcesEvent | None:
@@ -377,6 +374,7 @@ class GoogleRealtimeModel(RealtimeModel):
             supports_interruption=False,
             supports_output_truncation=False,
             supports_session_seeding=True,
+            supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         )
 
     def _speech_config(self) -> genai_types.SpeechConfig | None:

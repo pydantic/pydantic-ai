@@ -14,7 +14,10 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
@@ -87,6 +90,7 @@ def test_profile() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_session_seeding=True,
+        supported_native_tools=frozenset(),
     )
 
 
@@ -255,13 +259,16 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
 
 @pytest.mark.anyio
-async def test_connect_rejects_native_tools() -> None:
-    from pydantic_ai.native_tools import WebSearchTool
-
-    model = _model()
-    with pytest.raises(UserError, match='does not support native tools'):
-        async with model.connect(instructions='hi', native_tools=[WebSearchTool()]):
-            pass  # pragma: no cover
+async def test_agent_realtime_session_rejects_native_tools() -> None:
+    # xAI Grok Voice supports no native tools, so any native tool fails up front with the uniform
+    # error, before dialing — the check lives in `Agent.realtime_session`, keyed on the model profile.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(
+        UserError,
+        match=r'does not support the WebSearchTool native tool\(s\)\. Supported native tools: none\.',
+    ):
+        async with agent.realtime_session(model=_model(), capabilities=[NativeTool(WebSearchTool())]):
+            pass  # pragma: no cover - validation raises before yielding
 
 
 @pytest.mark.anyio

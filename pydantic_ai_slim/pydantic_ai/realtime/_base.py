@@ -410,21 +410,17 @@ class RealtimeModelProfile(TypedDict):
     each flag maps to the session methods a provider may not support.
 
     Every field is required (`total=True`): a model returns its profile wholesale, so each provider
-    states support for every capability explicitly rather than relying on defaults. The set of fields is
-    open-ended — new realtime behaviors are added as new keys over time.
+    states support for every capability explicitly rather than relying on defaults.
     """
 
     supports_image_input: bool
     """Whether the model accepts discrete image/video frames via
-    [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]. Continuous visual input (a live
-    video stream consumed as such rather than as sampled frames), if a model offers it, would be a
-    separate capability."""
+    [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]."""
     supports_manual_turn_control: bool
     """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
     [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
     [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] (push-to-talk). When `False`
-    the model drives turn-taking itself — most commonly via automatic voice activity detection, though a
-    model may also decide on its own when to speak."""
+    the model drives turn-taking itself via automatic voice activity detection."""
     supports_interruption: bool
     """Whether the model supports server-side interruption — cancelling the model's in-progress response
     via [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt]."""
@@ -438,6 +434,14 @@ class RealtimeModelProfile(TypedDict):
     supports both; xAI Grok Voice supports cancellation but not truncation."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supported_native_tools: frozenset[type[AbstractNativeTool]]
+    """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
+
+    [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] validates the session's native
+    tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
+    that names any the model doesn't support — mirroring the classic
+    [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
 
 
 class RealtimeConnection(ABC):
@@ -487,7 +491,9 @@ class RealtimeModel(ABC):
             instructions: System instructions for the session.
             tools: Tool definitions the model may invoke.
             native_tools: Provider-native tools (e.g. [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool])
-                the model runs server-side. Providers raise `UserError` for ones they don't support.
+                the model runs server-side. These are validated against the model's
+                [`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools]
+                profile before `connect` is called.
             model_settings: Optional provider-specific settings.
             messages: Optional prior conversation to seed the session with, projected to the provider's
                 initial conversation items. Only text/transcript content is seeded (v1): audio is not
