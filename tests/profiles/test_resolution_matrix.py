@@ -118,6 +118,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_supports_file_urls': False,
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
+    'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
@@ -278,6 +279,37 @@ def test_openai_gpt_5_4():
     )
 
 
+def test_openai_gpt_5_6():
+    """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
+
+    GPT-5.6 reasons on by default at 'medium' (`openai_reasoning_enabled_by_default`) yet can be
+    turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
+    `thinking_always_enabled` (that flag is derived to False). `phase` and `tool_search` stay off
+    until confirmed for GPT-5.6. Reasoning behavior verified against the Responses API.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_mode': True,
+        }
+    )
+
+
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
@@ -346,6 +378,7 @@ def test_openai_o3_mini():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
+            'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
         }
     )

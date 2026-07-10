@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from typing import Any, Literal, cast
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -55,11 +57,12 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -272,6 +275,71 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
     assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
+
+
+async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: the real GPT-5.6 Responses API accepts `reasoning.mode='pro'` end to end.
+
+    The mock tests above pin the request shape; this records the real request and response so the
+    `reasoning.mode` wire contract is validated against the provider. The request-body assertion
+    guards against a serialization regression that the cassette matcher would not catch on its own.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_mode='pro')
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
+
+
+@pytest.mark.parametrize(
+    ('settings', 'temperature_kept'),
+    [
+        # GPT-5.6 reasons on by default at 'medium', so an omitted effort drops sampling params.
+        (OpenAIResponsesModelSettings(temperature=0.5), False),
+        # `effort='none'` turns reasoning off, so sampling params are kept (real API accepts them).
+        (OpenAIResponsesModelSettings(temperature=0.5, openai_reasoning_effort='none'), True),
+        # An active effort drops sampling params.
+        (OpenAIResponsesModelSettings(temperature=0.5, openai_reasoning_effort='low'), False),
+    ],
+)
+async def test_openai_responses_gpt_5_6_sampling_params(
+    allow_model_requests: None, settings: 'OpenAIResponsesModelSettings', temperature_kept: bool
+) -> None:
+    """Not a VCR test: pins GPT-5.6 sampling-param handling before the request is sent.
+
+    GPT-5.6 defaults to reasoning on at 'medium' yet accepts `effort='none'`. The probe against the
+    real API confirmed sampling is rejected while reasoning is active and accepted when it is off;
+    this pins that pydantic-ai drops/keeps `temperature` to match, which a cassette would not verify.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        await Agent(model=model, model_settings=settings).run('Hello')
+
+    temperature = get_mock_responses_kwargs(mock_client)[0].get('temperature', omit)
+    warned = any('Sampling parameters' in str(w.message) for w in caught)
+    if temperature_kept:
+        assert temperature == 0.5
+        assert not warned
+    else:
+        assert temperature is omit
+        assert warned
 
 
 async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:

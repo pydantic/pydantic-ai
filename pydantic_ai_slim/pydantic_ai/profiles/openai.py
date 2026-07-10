@@ -135,11 +135,21 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
 
-    openai_supports_reasoning_effort_none: bool
-    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'. Default: `False`.
+    openai_reasoning_enabled_by_default: bool
+    """Whether the model reasons by default when `reasoning_effort` is omitted. Default: `False`.
 
-    Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
-    When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported."""
+    True for models whose default effort is active (e.g. 'medium'), such as the o-series, the original
+    GPT-5, and GPT-5.6, and False for GPT-5.1..5.5 which default to `reasoning_effort='none'`. This decides
+    whether sampling parameters must be dropped when no effort is set, and is independent of whether reasoning
+    can be turned off (`openai_supports_reasoning_effort_none`)."""
+
+    openai_supports_reasoning_effort_none: bool
+    """Whether the model accepts `reasoning_effort='none'` and allows sampling parameters (temperature, top_p, etc.)
+    while reasoning is off. Default: `False`.
+
+    GPT-5.1..5.5 and GPT-5.6 support turning reasoning off via `effort='none'`, and sampling params are accepted
+    in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported. Whether
+    the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` for this model and provider. Default: `False`."""
@@ -191,11 +201,15 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
+    # GPT-5.1..5.5 default to `reasoning={"effort": "none"}` (reasoning off), which allows sampling params.
     is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
 
-    # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
-    # see https://platform.openai.com/docs/guides/reasoning
+    # GPT-5.6 (sol/terra/luna) defaults to reasoning on at 'medium' like the original GPT-5, but unlike
+    # it also accepts `effort='none'` to turn reasoning off (verified against the Responses API).
+    is_gpt_5_6 = model_name.startswith('gpt-5.6')
+
+    # The original GPT-5 family (and GPT-5.6): reasoning on by default at 'medium', no `effort='none'` on
+    # the original GPT-5. See https://platform.openai.com/docs/guides/reasoning
     is_gpt_5 = model_name.startswith('gpt-5') and not is_gpt_5_1_plus
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models.
@@ -208,9 +222,18 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # gpt-5.3-chat-latest is non-reasoning unlike other 5.1+ chat variants
     is_gpt_5_3_chat = model_name.startswith('gpt-5.3-chat')
 
-    thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
+    # Three orthogonal reasoning facts, each mapped to its own profile flag below:
+    #   1. reasoning is ON by default when `reasoning_effort` is omitted (default effort is active, e.g. 'medium').
+    reasoning_enabled_by_default = is_o_series or (is_gpt_5 and '-chat' not in model_name)
+    #   2. reasons at all.
+    supports_reasoning = (reasoning_enabled_by_default or is_gpt_5_1_plus) and not is_gpt_5_3_chat
+    #   3. reasoning can be turned off: model accepts `effort='none'` and allows sampling params when off.
+    reasoning_can_be_disabled = supports_reasoning and (is_gpt_5_1_plus or is_gpt_5_6)
 
-    supports_reasoning = (thinking_always_enabled or is_gpt_5_1_plus) and not is_gpt_5_3_chat
+    # A model's reasoning "cannot be turned off" (base `thinking_always_enabled`) exactly when it reasons but
+    # is not disableable. Until GPT-5.6, "on by default" and "cannot disable" always coincided; GPT-5.6 is the
+    # first that is on by default yet disableable, so the two are tracked separately now.
+    thinking_always_enabled = supports_reasoning and not reasoning_can_be_disabled
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -245,7 +268,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
-        openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        openai_reasoning_enabled_by_default=reasoning_enabled_by_default,
+        openai_supports_reasoning_effort_none=reasoning_can_be_disabled,
         openai_supports_phase=supports_phase,
         supported_native_tools=supported_native_tools,
     )
