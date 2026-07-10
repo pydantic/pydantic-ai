@@ -210,7 +210,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
     end_strategy: EndStrategy
-    """The strategy for handling function tool calls the model requests alongside an output tool.
+    """The strategy for handling function tool calls the model requests alongside a result that ends the run.
+
+    That result usually comes from an output tool call, but with `NativeOutput`, `PromptedOutput`, plain
+    text, or image output it comes from the text or image the model returns in the same response.
 
     Defaults to `'graceful'`. See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for the behavior of
     each strategy.

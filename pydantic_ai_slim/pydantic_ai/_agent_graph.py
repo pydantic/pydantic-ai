@@ -1288,7 +1288,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     alternatives: list[str] = []
                     if tool_calls:
                         response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
-                        async for event in self._handle_tool_calls(ctx, tool_calls, response_output):
+                        async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
                             yield event
                         return
                     elif output_schema.toolset:
@@ -1339,6 +1339,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
+        *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
@@ -1351,17 +1352,23 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries
-        # a valid non-tool output (native/prompted/text output, or an image) and every co-emitted tool call is
-        # a plain function tool, that output is the final result and the tools are recorded as skipped. Output
-        # and deferred (external/unapproved) tool calls are excluded so their results aren't dropped.
+        # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
+        # valid non-tool output (native/prompted/text output, or an image) and every co-emitted tool call is a
+        # plain function tool, that output is the final result and the tools are recorded as skipped.
+        #
+        # We check the tool kinds here (rather than letting `process_tool_calls` sort it out) for two reasons:
+        # output tools and deferred (external/unapproved) tool calls must run so their results aren't dropped,
+        # and `_process_response_output` runs the output validators, so we only want to invoke it once we know
+        # the response output can actually win. `for_run_step` above populated the tool defs used here.
         final_result: result.FinalResult[NodeRunEndT] | None = None
         if response_output is not None and all(
             (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
             for call in tool_calls
         ):
             text, files = response_output
-            final_result = await self._process_response_output(ctx, text, files, ctx.deps.output_schema)
+            final_result = await self._process_response_output(
+                ctx, text=text, files=files, output_schema=ctx.deps.output_schema
+            )
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
@@ -1410,6 +1417,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _process_response_output(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        *,
         text: str,
         files: list[_messages.BinaryContent],
         output_schema: _output.OutputSchema[NodeRunEndT],
