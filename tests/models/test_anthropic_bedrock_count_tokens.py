@@ -181,6 +181,28 @@ async def test_anthropic_bedrock_count_tokens_before_request(
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True))
 
 
+@pytest.mark.vcr('test_anthropic_bedrock_count_tokens_real_api.yaml')
+async def test_anthropic_bedrock_per_request_count_tokens_before_request(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock
+):
+    """The per-request variant of the pre-request guard: `per_request_input_tokens_limit`.
+
+    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 18 tokens).
+    With a per-request limit below that count, the pre-request check raises `UsageLimitExceeded`
+    before any message request, so only the count-tokens call is played back.
+    """
+    model = AnthropicModel(
+        'anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=AnthropicProvider(anthropic_client=bedrock_client),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 10'):
+        await agent.run(
+            'hello', usage_limits=UsageLimits(per_request_input_tokens_limit=10, count_tokens_before_request=True)
+        )
+
+
 @pytest.mark.vcr()
 async def test_anthropic_bedrock_count_tokens_rejects_server_tools(
     allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock

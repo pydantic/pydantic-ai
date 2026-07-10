@@ -1036,6 +1036,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
+            ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+
         ctx.deps.usage_limits.check_before_request(usage)
 
         return model, model_settings or None, model_request_parameters, messages, run_context
@@ -1101,6 +1103,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
         ctx.state.message_history.append(response)
 
     async def _build_retry_node(

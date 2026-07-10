@@ -28,7 +28,7 @@ class UsageBase:
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
     ] = 0
-    """Number of input/prompt tokens."""
+    """Number of input/prompt tokens, including both cached and uncached tokens."""
 
     cache_write_tokens: int = 0
     """Number of tokens written to the cache."""
@@ -275,9 +275,29 @@ class UsageLimits:
     """The maximum number of output/response tokens allowed."""
     total_tokens_limit: int | None = None
     """The maximum number of tokens allowed in requests and responses combined."""
+    per_request_input_tokens_limit: int | None = None
+    """The maximum number of input/prompt tokens allowed per individual request.
+
+    Unlike `input_tokens_limit` which is cumulative across the entire run, this
+    limit is checked against each request's input token count independently —
+    ahead of the request when `count_tokens_before_request=True`, otherwise against
+    the provider-reported `input_tokens` of the response.
+
+    This provides a guard against oversized contexts (which hurt model performance
+    and incur high costs on cache misses), complementing the runaway-loop
+    protection that cumulative limits provide.
+
+    Note that `input_tokens` (and therefore this limit) includes cached-prefix tokens,
+    normalized consistently across providers: a request served largely from cache still
+    counts its full context size toward this limit. This caps context size, not cache-miss cost.
+
+    Set `count_tokens_before_request=True` to enforce this preemptively; otherwise the
+    request is sent before the limit is checked, so the oversized request is still
+    billed (matching `input_tokens_limit`).
+    """
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `input_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` and `per_request_input_tokens_limit` ahead of time.
 
     This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
     and is disabled by default.
@@ -293,13 +313,19 @@ class UsageLimits:
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.
 
-        If this returns `False`, the `check_tokens` method will never raise an error.
+        If this returns `False`, the `check_tokens` and `check_per_request_input_tokens` methods will never raise an error.
 
         This is useful because if we have token limits, we need to check them after receiving each streamed message.
         If there are no limits, we can skip that processing in the streaming response iterator.
         """
         return any(
-            limit is not None for limit in (self.input_tokens_limit, self.output_tokens_limit, self.total_tokens_limit)
+            limit is not None
+            for limit in (
+                self.input_tokens_limit,
+                self.output_tokens_limit,
+                self.total_tokens_limit,
+                self.per_request_input_tokens_limit,
+            )
         )
 
     def check_before_request(self, usage: RunUsage) -> None:
@@ -343,6 +369,18 @@ class UsageLimits:
         if tool_calls_limit is not None and tool_calls > tool_calls_limit:
             raise UsageLimitExceeded(
                 f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
+            )
+
+    def check_per_request_input_tokens(self, request_input_tokens: int) -> None:
+        """Raises a `UsageLimitExceeded` if the per-request input tokens exceed the limit.
+
+        This checks a single request's input token count — not the cumulative
+        `RunUsage.input_tokens` — against `per_request_input_tokens_limit`.
+        """
+        limit = self.per_request_input_tokens_limit
+        if limit is not None and request_input_tokens > limit:
+            raise UsageLimitExceeded(
+                f'Exceeded the per_request_input_tokens_limit of {limit} ({request_input_tokens=})'
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

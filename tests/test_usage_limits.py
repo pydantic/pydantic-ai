@@ -993,3 +993,75 @@ def test_usage_limits_explicit_zero():
 
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# ── per_request_input_tokens_limit ──────────────────────────────────────
+
+
+def test_per_request_input_tokens_limit_post_response() -> None:
+    """When count_tokens_before_request=False (default), the limit is checked
+    against the provider-reported input_tokens after the response."""
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5))
+
+
+def test_per_request_input_tokens_limit_not_exceeded() -> None:
+    """When per-request input tokens are below the limit, no error is raised."""
+    test_agent = Agent(TestModel())
+
+    result = test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.output == 'success (no tool calls)'
+
+
+def test_per_request_input_tokens_limit_is_not_cumulative() -> None:
+    """The limit applies to each request's input independently, not the running total.
+
+    A multi-request run whose cumulative input exceeds the limit still succeeds,
+    because no single request's input does. An equivalent cumulative
+    `input_tokens_limit` raises on the same run, which pins the difference.
+    """
+
+    async def tool_a() -> str:
+        return 'done'
+
+    async def tool_b() -> str:
+        return 'done'
+
+    def build_agent() -> Agent[None]:
+        return Agent(TestModel(call_tools=['tool_a', 'tool_b']), tools=[tool_a, tool_b])
+
+    # No single request's input exceeds 100, so the per-request limit does not fire...
+    result = build_agent().run_sync('run tools', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.usage == snapshot(RunUsage(input_tokens=106, output_tokens=14, requests=2, tool_calls=2))
+    assert result.usage.input_tokens > 100  # ...even though the cumulative input does exceed 100
+
+    # An equivalent cumulative limit raises on the same run, proving the checks differ.
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the input_tokens_limit of 100 (input_tokens=106)')
+    ):
+        build_agent().run_sync('run tools', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_per_request_input_tokens_limit_streaming() -> None:
+    """The limit is enforced while streaming, mirroring `input_tokens_limit`.
+
+    `run_stream` fetches the first event on entry, so the limit raises as soon as the
+    request's input token count is known rather than only at the post-response check.
+    Like `input_tokens_limit`, this bites for providers that report input usage at stream
+    start; for those that report it at the end it falls through to the post-response
+    check. `TestModel` reports it up front.
+    """
+    agent = Agent(TestModel(custom_output_text='a longer streamed reply that would be consumed'))
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        # run_stream aborts on entry once the request's input size is known, so the body never runs
+        async with agent.run_stream('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5)):
+            pass  # pragma: no cover
