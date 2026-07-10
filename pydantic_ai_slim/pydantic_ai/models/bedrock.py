@@ -3,8 +3,10 @@ from __future__ import annotations
 import functools
 import typing
 import warnings
+import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
@@ -124,6 +126,53 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         if isinstance(status_code, int):
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+
+
+# `extra_headers` from model settings are sent by injecting them via a boto3 `before-send` event on the runtime
+# client. That event is client-global, so rather than register/unregister per call (which would leak one request's
+# headers onto a concurrent one), we register a single handler per client that reads the current call's headers from
+# a context variable. Context variables are per-task and propagate into the `anyio.to_thread` worker, so concurrent
+# requests never see each other's headers, without any locking.
+_extra_headers: ContextVar[dict[str, str] | None] = ContextVar('bedrock_extra_headers', default=None)
+_clients_with_extra_headers_handler: weakref.WeakSet[BedrockRuntimeClient] = weakref.WeakSet()
+
+
+def _inject_extra_headers(request: Any, **kwargs: Any) -> None:
+    if extra_headers := _extra_headers.get():
+        for key, value in extra_headers.items():
+            request.headers[key] = value
+
+
+def _register_extra_headers_handler(client: BedrockRuntimeClient) -> None:
+    """Register the `before-send` header injector on a client, once.
+
+    Registered up front on every request (not lazily on the first request that sets `extra_headers`) so the handler
+    is always in place before any request is sent. boto3's event emitter caches handler lists per event, and a
+    request sent before registration would cache a list without the injector, silently dropping later headers.
+    """
+    if client not in _clients_with_extra_headers_handler:
+        for operation in ('Converse', 'ConverseStream', 'CountTokens'):
+            client.meta.events.register(f'before-send.bedrock-runtime.{operation}', _inject_extra_headers)
+        _clients_with_extra_headers_handler.add(client)
+
+
+@contextmanager
+def _bedrock_extra_headers(extra_headers: dict[str, str] | None) -> Generator[None]:
+    """Send `extra_headers` with the Bedrock request made inside this context.
+
+    boto3 fires `before-send` after SigV4 signing, so the headers are sent as-is and are not part of the signature.
+    That is what proxy or gateway routing headers need, and it means overriding a signed header (e.g. `host`) would
+    break the signature, so `extra_headers` is for additional custom headers, not for replacing AWS-managed ones.
+    """
+    if not extra_headers:
+        yield
+        return
+
+    token = _extra_headers.set(extra_headers)
+    try:
+        yield
+    finally:
+        _extra_headers.reset(token)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -681,8 +730,10 @@ class BedrockConverseModel(Model[BaseClient]):
             'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {'converse': converse},
         }
-        with _map_api_errors(self.model_name):
-            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+        client = self.client
+        _register_extra_headers_handler(client)
+        with _map_api_errors(self.model_name), _bedrock_extra_headers(settings.get('extra_headers')):
+            response = await anyio.to_thread.run_sync(functools.partial(client.count_tokens, **params))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -914,13 +965,14 @@ class BedrockConverseModel(Model[BaseClient]):
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
-        with _map_api_errors(self.model_name):
+        client = self.client
+        _register_extra_headers_handler(client)
+        extra_headers = model_settings.get('extra_headers') if model_settings else None
+        with _map_api_errors(self.model_name), _bedrock_extra_headers(extra_headers):
             if stream:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(self.client.converse_stream, **params)
-                )
+                model_response = await anyio.to_thread.run_sync(functools.partial(client.converse_stream, **params))
             else:
-                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+                model_response = await anyio.to_thread.run_sync(functools.partial(client.converse, **params))
         return model_response
 
     @staticmethod

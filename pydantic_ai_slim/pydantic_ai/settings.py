@@ -285,6 +285,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Gemini
     * Groq
+    * Bedrock
     * xAI
     """
 
