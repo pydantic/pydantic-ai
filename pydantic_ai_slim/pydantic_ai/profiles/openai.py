@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -52,6 +52,71 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
+
+
+class _ReasoningSupport(NamedTuple):
+    """How an OpenAI model family supports reasoning, as three orthogonal facts."""
+
+    enabled_by_default: bool
+    """Reasoning is on when `reasoning_effort` is omitted (the model's default effort is active, e.g. `'medium'`)."""
+
+    can_be_disabled: bool
+    """The model accepts `reasoning_effort='none'`, which turns reasoning off and allows sampling parameters."""
+
+    supports_mode: bool
+    """The Responses API accepts `reasoning.mode` (`'standard' | 'pro'`) for the model."""
+
+    @property
+    def supported(self) -> bool:
+        """Whether the model reasons at all."""
+        return self.enabled_by_default or self.can_be_disabled
+
+    @property
+    def always_enabled(self) -> bool:
+        """Whether the model reasons and can't be turned off."""
+        return self.enabled_by_default and not self.can_be_disabled
+
+
+_NO_REASONING = _ReasoningSupport(enabled_by_default=False, can_be_disabled=False, supports_mode=False)
+"""The model doesn't reason at all."""
+
+_OPT_IN_REASONING = _ReasoningSupport(enabled_by_default=False, can_be_disabled=True, supports_mode=False)
+"""The model defaults to `reasoning_effort='none'` (reasoning off, sampling parameters allowed) and reasons on request."""
+
+_ALWAYS_ON_REASONING = _ReasoningSupport(enabled_by_default=True, can_be_disabled=False, supports_mode=False)
+"""The model always reasons; it doesn't accept `reasoning_effort='none'`."""
+
+_REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
+    # GPT-5.6 (sol/terra/luna) is the first family that reasons by default (at 'medium') *and* accepts
+    # `effort='none'` to turn reasoning off, and the only one that supports `reasoning.mode`
+    # (verified against the Responses API).
+    'gpt-5.6': _ReasoningSupport(enabled_by_default=True, can_be_disabled=True, supports_mode=True),
+    # gpt-5.3-chat-latest doesn't reason, unlike the other GPT-5.1+ chat variants.
+    'gpt-5.3-chat': _NO_REASONING,
+    'gpt-5.1': _OPT_IN_REASONING,
+    'gpt-5.2': _OPT_IN_REASONING,
+    'gpt-5.3': _OPT_IN_REASONING,
+    'gpt-5.4': _OPT_IN_REASONING,
+    'gpt-5.5': _OPT_IN_REASONING,
+    # gpt-5-chat-latest doesn't reason.
+    'gpt-5-chat': _NO_REASONING,
+    # The original GPT-5 family reasons at 'medium' by default. See https://platform.openai.com/docs/guides/reasoning
+    'gpt-5': _ALWAYS_ON_REASONING,
+    # The o-series.
+    'o': _ALWAYS_ON_REASONING,
+}
+"""Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
+prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
+(e.g. `'gpt-5.3'`), and every newer `gpt-5.x` family before the plain `'gpt-5'` catch-all.
+Models that don't match any prefix don't reason. The full resolved matrix is pinned in
+`tests/profiles/test_openai.py`."""
+
+
+def _reasoning_support(model_name: str) -> _ReasoningSupport:
+    return next(
+        (support for prefix, support in _REASONING_SUPPORT_BY_PREFIX.items() if model_name.startswith(prefix)),
+        _NO_REASONING,
+    )
 
 
 class OpenAIModelProfile(ModelProfile, total=False):
@@ -152,7 +217,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
     openai_responses_supports_reasoning_mode: bool
-    """Whether the Responses API supports `reasoning.mode` for this model and provider. Default: `False`."""
+    """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
+
+    Currently only supported by the GPT-5.6 family."""
 
     openai_responses_requires_function_call_status_none: bool
     """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.
@@ -201,39 +268,12 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    # GPT-5.1..5.5 default to `reasoning={"effort": "none"}` (reasoning off), which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
+    reasoning = _reasoning_support(model_name)
 
-    # GPT-5.6 (sol/terra/luna) defaults to reasoning on at 'medium' like the original GPT-5, but unlike
-    # it also accepts `effort='none'` to turn reasoning off (verified against the Responses API).
-    is_gpt_5_6 = model_name.startswith('gpt-5.6')
-
-    # The original GPT-5 family (and GPT-5.6): reasoning on by default at 'medium', no `effort='none'` on
-    # the original GPT-5. See https://platform.openai.com/docs/guides/reasoning
-    is_gpt_5 = model_name.startswith('gpt-5') and not is_gpt_5_1_plus
-
-    # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models.
+    # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
+    # (its responses label messages with `phase`, as recorded in the reasoning-mode cassette).
     # See https://developers.openai.com/api/docs/guides/prompt-guidance.
-    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5'))
-
-    # always reasoning
-    is_o_series = model_name.startswith('o')
-
-    # gpt-5.3-chat-latest is non-reasoning unlike other 5.1+ chat variants
-    is_gpt_5_3_chat = model_name.startswith('gpt-5.3-chat')
-
-    # Three orthogonal reasoning facts, each mapped to its own profile flag below:
-    #   1. reasoning is ON by default when `reasoning_effort` is omitted (default effort is active, e.g. 'medium').
-    reasoning_enabled_by_default = is_o_series or (is_gpt_5 and '-chat' not in model_name)
-    #   2. reasons at all.
-    supports_reasoning = (reasoning_enabled_by_default or is_gpt_5_1_plus) and not is_gpt_5_3_chat
-    #   3. reasoning can be turned off: model accepts `effort='none'` and allows sampling params when off.
-    reasoning_can_be_disabled = supports_reasoning and (is_gpt_5_1_plus or is_gpt_5_6)
-
-    # A model's reasoning "cannot be turned off" (base `thinking_always_enabled`) exactly when it reasons but
-    # is not disableable. Until GPT-5.6, "on by default" and "cannot disable" always coincided; GPT-5.6 is the
-    # first that is on by default yet disableable, so the two are tracked separately now.
-    thinking_always_enabled = supports_reasoning and not reasoning_can_be_disabled
+    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -242,13 +282,14 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
     supports_image_output = (
-        is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+        model_name.startswith('gpt-5') or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on the
     # GPT-5.4 and GPT-5.5 mainline families. Like the other gates in this function, this
-    # enumerates known versions rather than matching open-endedly, so a future family
-    # (e.g. GPT-5.6) must be added here explicitly; until then it falls back to local search.
+    # enumerates known versions rather than matching open-endedly, so a new family must be
+    # added here explicitly once confirmed (GPT-5.6 hasn't been); until then it falls back
+    # to local search.
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
@@ -262,14 +303,15 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
         supports_inline_system_prompts=True,
-        supports_thinking=supports_reasoning,
-        thinking_always_enabled=thinking_always_enabled,
+        supports_thinking=reasoning.supported,
+        thinking_always_enabled=reasoning.always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
-        openai_supports_encrypted_reasoning_content=supports_reasoning,
-        openai_supports_reasoning=supports_reasoning,
-        openai_reasoning_enabled_by_default=reasoning_enabled_by_default,
-        openai_supports_reasoning_effort_none=reasoning_can_be_disabled,
+        openai_supports_encrypted_reasoning_content=reasoning.supported,
+        openai_supports_reasoning=reasoning.supported,
+        openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
+        openai_supports_reasoning_effort_none=reasoning.can_be_disabled,
+        openai_responses_supports_reasoning_mode=reasoning.supports_mode,
         openai_supports_phase=supports_phase,
         supported_native_tools=supported_native_tools,
     )

@@ -597,12 +597,15 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_reasoning_mode: Literal['standard', 'pro']
-    """The reasoning mode to use for GPT-5.6 models.
+    """The reasoning mode to use, for models that support it (currently the GPT-5.6 family).
 
     `standard` is the default. `pro` performs more model work to improve reliability on difficult
     tasks, at the cost of higher latency and token usage. Reasoning mode is independent of
-    [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
-    This setting is ignored when the active model or provider profile does not support reasoning mode.
+    [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort],
+    and the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting only influences
+    the effort, never the mode. This setting is ignored when the resolved model profile does not
+    support reasoning mode
+    ([`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode]).
 
     See [OpenAI's reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)
     for more details.

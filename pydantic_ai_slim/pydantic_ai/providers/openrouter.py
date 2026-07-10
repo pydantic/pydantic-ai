@@ -161,7 +161,6 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         # future non-Anthropic downstream can enable any of them independently without re-coupling them.
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
-        supports_openai_gpt_5_6 = provider == 'openai' and model_name.startswith('gpt-5.6')
 
         # Three-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
@@ -181,7 +180,6 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
-                openai_responses_supports_reasoning_mode=supports_openai_gpt_5_6,
                 supports_thinking=True,
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
