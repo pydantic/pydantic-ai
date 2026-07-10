@@ -12,7 +12,7 @@ from typing import Any
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, usage as _usage
+from .. import __version__, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
@@ -337,6 +337,7 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
@@ -375,10 +376,11 @@ async def run_chat(
                     stream,
                     console,
                     code_theme,
-                    deps,
-                    messages,
-                    model_settings,
-                    usage_limits,
+                    deps=deps,
+                    messages=messages,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
                     usage=session_usage,
                 )
                 session_turns += 1
@@ -399,6 +401,7 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
     *,
@@ -412,7 +415,15 @@ async def ask_agent(
     try:
         if not stream:
             with status:
-                result = await agent.run(prompt, message_history=messages, deps=deps, usage=turn_usage)
+                result = await agent.run(
+                    prompt,
+                    message_history=messages,
+                    deps=deps,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=turn_usage,
+                )
             content = str(result.output)
             console.print(Markdown(content, code_theme=code_theme))
             return result.all_messages()
@@ -422,6 +433,7 @@ async def ask_agent(
                 prompt,
                 message_history=messages,
                 deps=deps,
+                model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=turn_usage,

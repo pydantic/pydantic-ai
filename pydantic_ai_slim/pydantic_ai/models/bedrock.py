@@ -216,6 +216,67 @@ LatestBedrockModelNames = Literal[
     'mistral.mixtral-8x7b-instruct-v0:1',
     'mistral.mistral-large-2402-v1:0',
     'mistral.mistral-large-2407-v1:0',
+    # Anthropic (models that require a cross-region inference profile)
+    'us.anthropic.claude-opus-4-1-20250805-v1:0',
+    'us.anthropic.claude-opus-4-5-20251101-v1:0',
+    'us.anthropic.claude-opus-4-6-v1',
+    'global.anthropic.claude-opus-4-6-v1',
+    'us.anthropic.claude-opus-4-7',
+    'global.anthropic.claude-opus-4-7',
+    'us.anthropic.claude-opus-4-8',
+    'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-5',
+    'us.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5',
+    # Amazon Nova
+    'us.amazon.nova-premier-v1:0',
+    'global.amazon.nova-2-lite-v1:0',
+    # Meta Llama 4
+    'us.meta.llama4-maverick-17b-instruct-v1:0',
+    'us.meta.llama4-scout-17b-instruct-v1:0',
+    # Mistral
+    'mistral.mistral-small-2402-v1:0',
+    'mistral.mistral-large-3-675b-instruct',
+    'mistral.ministral-3-3b-instruct',
+    'mistral.ministral-3-8b-instruct',
+    'mistral.ministral-3-14b-instruct',
+    'mistral.magistral-small-2509',
+    'mistral.devstral-2-123b',
+    'mistral.pixtral-large-2502-v1:0',
+    'us.mistral.pixtral-large-2502-v1:0',
+    # DeepSeek
+    'deepseek.r1-v1:0',
+    'deepseek.v3.2',
+    # Qwen
+    'qwen.qwen3-32b-v1:0',
+    'qwen.qwen3-coder-30b-a3b-v1:0',
+    'qwen.qwen3-coder-next',
+    'qwen.qwen3-next-80b-a3b',
+    'qwen.qwen3-vl-235b-a22b',
+    # Google Gemma
+    'google.gemma-3-4b-it',
+    'google.gemma-3-12b-it',
+    'google.gemma-3-27b-it',
+    # MiniMax
+    'minimax.minimax-m2',
+    'minimax.minimax-m2.1',
+    'minimax.minimax-m2.5',
+    # NVIDIA Nemotron
+    'nvidia.nemotron-nano-9b-v2',
+    'nvidia.nemotron-nano-12b-v2',
+    'nvidia.nemotron-nano-3-30b',
+    'nvidia.nemotron-super-3-120b',
+    # Writer Palmyra (require a cross-region inference profile)
+    'us.writer.palmyra-x4-v1:0',
+    'us.writer.palmyra-x5-v1:0',
+    # Z.AI GLM
+    'zai.glm-4.7',
+    'zai.glm-4.7-flash',
+    'zai.glm-5',
+    # Moonshot AI Kimi
+    'moonshot.kimi-k2-thinking',
+    'moonshotai.kimi-k2.5',
 ]
 """Latest Bedrock models."""
 
@@ -967,6 +1028,9 @@ class BedrockConverseModel(Model[BaseClient]):
             'bedrock_tool_result_colocatable_content', _ALL_TOOL_RESULT_COLOCATABLE_CONTENT
         )
 
+        # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
+        supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
+
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
         # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
@@ -1058,19 +1122,16 @@ class BedrockConverseModel(Model[BaseClient]):
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
                             )
 
+                        success_result: ToolResultBlockOutputTypeDef = {
+                            'toolUseId': part.tool_call_id,
+                            'content': tool_result_content,
+                        }
+                        if supports_tool_result_status:
+                            success_result['status'] = 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': tool_result_content,
-                                            'status': 'success',
-                                        }
-                                    },
-                                    *colocated_media_content,
-                                ],
+                                'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
                         )
                     elif isinstance(part, RetryPromptPart):
@@ -1079,20 +1140,13 @@ class BedrockConverseModel(Model[BaseClient]):
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
-                            bedrock_messages.append(
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {
-                                            'toolResult': {
-                                                'toolUseId': part.tool_call_id,
-                                                'content': [{'text': part.model_response()}],
-                                                'status': 'error',
-                                            }
-                                        }
-                                    ],
-                                }
-                            )
+                            error_result: ToolResultBlockOutputTypeDef = {
+                                'toolUseId': part.tool_call_id,
+                                'content': [{'text': part.model_response()}],
+                            }
+                            if supports_tool_result_status:
+                                error_result['status'] = 'error'
+                            bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

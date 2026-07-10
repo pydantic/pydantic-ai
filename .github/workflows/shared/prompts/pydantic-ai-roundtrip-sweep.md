@@ -51,21 +51,33 @@ existing suite. The bug must be one you triggered and observed.
 ## Deduplication — mandatory BEFORE filing an issue
 
 The gap may already be tracked by an open **issue** or already fixed by an
-open **PR** — check both. Use the MCP GitHub tools (not `gh` CLI — it's
-blocked by the firewall proxy).
+open **PR** — check both. List them through the proxied `gh` CLI and filter
+locally — the `/search/issues` endpoint is blocked by the firewall proxy and
+there are no `mcp__github__*` tools.
 
-**(a) Existing issues** — by sweep signature and by the specific
-boundary/function you investigated:
-
-```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[roundtrip-sweep]" OR "round-trip" OR "serialize"
-```
-
-**(b) Existing PRs** — a fix may already be open (and even approved). Search
-open PRs touching the failing symbol or file:
+**(a) Existing issues** — first check this sweep's own prior findings with a
+tight, server-side label filter (`?labels=` on the issue-list endpoint is
+allowed even though `/search/issues` is not):
 
 ```
-mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:open <failing symbol / file path>
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=roundtrip-sweep&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "round-trip", "serialize", and the boundary/function you investigated:
+
+```
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+```
+
+**(b) Existing PRs** — a fix may already be open (and even approved). List
+open PRs and scan for one touching the failing symbol or file:
+
+```
+gh api --paginate 'repos/pydantic/pydantic-ai/pulls?state=open&per_page=100' \
+  --jq '.[] | {number, title}'
 ```
 
 If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
@@ -106,3 +118,9 @@ concrete, minimal, failing round-trip reproduction with observed output.
 >
 > ## Evidence
 > - [Captured output / diff; `path:line` references]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real captured output]
+> - **Existing tests checked:** [adapter/serialization tests read; none assert this loss is intentional, and the fix doesn't break them]
+> - **Ruled out by-design:** [programmatic-only field / request-vs-response union placement / maintainer decision checked]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]
