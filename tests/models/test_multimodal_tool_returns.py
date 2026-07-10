@@ -196,13 +196,6 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
         UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
     ),
-    # Anthropic API doesn't support 'file' source type in tool_result blocks
-    ('anthropic', 'image', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
-    ),
-    ('anthropic', 'document', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
-    ),
     # Bedrock UploadedFile audio raises UserError (not NotImplementedError like binary/url)
     ('bedrock_nova', 'audio', 'uploaded_file', None): ExpectError(
         UserError, r'Audio files are not supported for Bedrock UploadedFile'
@@ -320,8 +313,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -386,8 +379,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
