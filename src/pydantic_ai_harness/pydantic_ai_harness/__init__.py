@@ -5,16 +5,45 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .code_mode import CodeMode
     from .filesystem import FileSystem
+    from .guardrails import (
+        GuardrailError,
+        GuardResult,
+        InputBlocked,
+        InputGuard,
+        InputGuardFunc,
+        OutputBlocked,
+        OutputGuard,
+        OutputGuardFunc,
+    )
     from .logfire import ManagedPrompt
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
 
 __all__ = [
     'CodeMode',
     'FileSystem',
+    'GuardResult',
+    'GuardrailError',
+    'InputBlocked',
+    'InputGuard',
+    'InputGuardFunc',
     'LLM_API_KEY_ENV_PATTERNS',
     'ManagedPrompt',
+    'OutputBlocked',
+    'OutputGuard',
+    'OutputGuardFunc',
     'Shell',
 ]
+
+_GUARDRAIL_EXPORTS = {
+    'GuardResult',
+    'GuardrailError',
+    'InputBlocked',
+    'InputGuard',
+    'InputGuardFunc',
+    'OutputBlocked',
+    'OutputGuard',
+    'OutputGuardFunc',
+}
 
 
 def __getattr__(name: str) -> object:
@@ -22,6 +51,10 @@ def __getattr__(name: str) -> object:
         from .code_mode import CodeMode
 
         return CodeMode
+    if name in _GUARDRAIL_EXPORTS:
+        from . import guardrails
+
+        return getattr(guardrails, name)
     if name == 'FileSystem':
         from .filesystem import FileSystem
 

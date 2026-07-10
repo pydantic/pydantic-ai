@@ -1956,7 +1956,7 @@ class TestToolSearchIntegration:
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'later', 'description': 'A deferred-loading tool.'}]},
+                        content={'discovered_tools': [{'name': 'later'}]},
                         tool_call_id='search-1',
                     )
                 ]
@@ -2155,7 +2155,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather', 'description': '...'}]},
+            result={'discovered_tools': [{'name': 'weather'}]},
         )
 
         assert ctx.pending_messages is not None
@@ -2242,7 +2242,7 @@ class TestDynamicCatalog:
             parts=[
                 NativeToolSearchReturnPart(
                     tool_name='tool_search',
-                    content={'discovered_tools': [{'name': 'weather', 'description': 'Get the weather.'}]},
+                    content={'discovered_tools': [{'name': 'weather'}]},
                     tool_call_id='c1',
                 )
             ],
