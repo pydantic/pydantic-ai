@@ -284,8 +284,9 @@ def test_openai_gpt_5_6():
 
     GPT-5.6 reasons on by default at 'medium' (`openai_reasoning_enabled_by_default`) yet can be
     turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
-    `thinking_always_enabled` (that flag is derived to False). `phase` and `tool_search` stay off
-    until confirmed for GPT-5.6. Reasoning behavior verified against the Responses API.
+    `thinking_always_enabled` (that flag is derived to False). `phase` is on (GPT-5.6 responses
+    label messages with it); `tool_search` stays off until confirmed for GPT-5.6. Reasoning
+    behavior verified against the Responses API.
     """
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -306,6 +307,7 @@ def test_openai_gpt_5_6():
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
+            'openai_supports_phase': True,
         }
     )
 

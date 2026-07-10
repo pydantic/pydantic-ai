@@ -12482,6 +12482,7 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
+    assert openai_model_profile('gpt-5.6-sol').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True
