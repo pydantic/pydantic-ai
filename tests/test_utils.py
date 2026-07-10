@@ -937,7 +937,7 @@ class _AmbiguousBool:
 class _ArrayLike:
     """Mimics a numpy array: `!=` returns a value whose `bool()` raises, instead of a plain bool."""
 
-    def __ne__(self, other: object) -> _AmbiguousBool:
+    def __ne__(self, other: object) -> Any:
         return _AmbiguousBool()
 
     def __repr__(self) -> str:
@@ -958,11 +958,15 @@ class _HasDefaultField:
     __repr__ = dataclasses_no_defaults_repr
 
 
+def _empty_int_list() -> list[int]:
+    return []
+
+
 @dataclass(repr=False)
 class _HasMixedFields:
     required: int
     flag: bool = False
-    items: list[int] = field(default_factory=list)
+    items: list[int] = field(default_factory=_empty_int_list)
 
     __repr__ = dataclasses_no_defaults_repr
 
