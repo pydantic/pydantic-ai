@@ -559,6 +559,8 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
         try:
             return bool(getattr(self, f.name) != f.default)
         except Exception:
+            # `repr()` must never raise, regardless of how a field value implements `__ne__`/`__bool__`
+            # (e.g. numpy/pandas return non-bool comparisons), so the broad catch here is intentional.
             return True
 
     kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))

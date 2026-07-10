@@ -958,15 +958,25 @@ class _HasDefaultField:
     __repr__ = dataclasses_no_defaults_repr
 
 
-def _empty_int_list() -> list[int]:
-    return []
+class _CountingIntListFactory:
+    """A `default_factory` that records how many times it is called, to prove `repr()` never calls it."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[int]:
+        self.calls += 1
+        return []
+
+
+_items_factory = _CountingIntListFactory()
 
 
 @dataclass(repr=False)
 class _HasMixedFields:
     required: int
     flag: bool = False
-    items: list[int] = field(default_factory=_empty_int_list)
+    items: list[int] = field(default_factory=_items_factory)
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -977,6 +987,9 @@ def test_dataclasses_no_defaults_repr_non_bool_ne():
     Regression test for #6415: `repr()` of message parts crashed with `ValueError` when a field
     such as `ToolReturnPart.content` held a numpy array. Covers both branches of the helper: a
     required field (no default) and a field with an explicit default that holds such a value.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
     """
     # Required field: value is always shown, and the ambiguous `!=` result must not be evaluated.
     assert repr(_HasRequiredField(content=_ArrayLike())) == '_HasRequiredField(content=ArrayLike())'
@@ -985,8 +998,22 @@ def test_dataclasses_no_defaults_repr_non_bool_ne():
 
 
 def test_dataclasses_no_defaults_repr_omits_defaults():
-    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown."""
+    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown.
+
+    Also asserts `repr()` never calls the `default_factory`: some factories are impure (e.g. `uuid7()`,
+    `now_utc()`), so materializing them during `repr()` would consume randomness/time or mutate state.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
     # `flag` equals its default and is omitted; `items` has only a `default_factory` so it is always shown.
-    assert repr(_HasMixedFields(required=1)) == '_HasMixedFields(required=1, items=[])'
+    instance = _HasMixedFields(required=1)
+    _items_factory.calls = 0  # reset the count incurred while constructing the instance above
+    assert repr(instance) == '_HasMixedFields(required=1, items=[])'
+    assert _items_factory.calls == 0  # repr must not invoke the default_factory
+
     # `flag` differs from its default and is shown.
-    assert repr(_HasMixedFields(required=1, flag=True)) == '_HasMixedFields(required=1, flag=True, items=[])'
+    instance = _HasMixedFields(required=1, flag=True)
+    _items_factory.calls = 0
+    assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
+    assert _items_factory.calls == 0
