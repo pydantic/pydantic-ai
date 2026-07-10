@@ -67,6 +67,24 @@ When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted 
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
+### Inspecting model capabilities
+
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile`. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling or native JSON-schema output before relying on it:
+
+```python
+from pydantic_ai.models.test import TestModel
+
+model = TestModel()
+profile = model.profile
+
+print(profile['supports_tools'])
+#> True
+print(profile['supports_json_schema_output'])
+#> False
+```
+
+Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. See [`ModelProfile`][pydantic_ai.profiles.ModelProfile] for the full set of capability fields (including `supported_native_tools`).
+
 ## HTTP Client Lifecycle
 
 When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
