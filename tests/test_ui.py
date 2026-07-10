@@ -1626,6 +1626,57 @@ def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
     assert [type(p).__name__ for p in mid_response.parts] == ['ToolCallPart']
 
 
+def test_sanitize_messages_strips_dangling_call_exposed_by_dropped_tail():
+    """A dangling tool call re-exposed as the surviving tail by a dropped trailing message is stripped.
+
+    The trailing client `ModelRequest` is only a `SystemPromptPart`, which sanitizes away under the
+    default `manage_system_prompt='server'`. Dropping it makes the preceding `ModelResponse` the real
+    surviving tail, so its unresolved tool call must be stripped even though it wasn't the last message
+    before sanitization.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Working on it'),
+                    ToolCallPart(tool_name='refresh_cache', args={'key': 1}, tool_call_id='call-1'),
+                ]
+            ),
+            ModelRequest(parts=[SystemPromptPart(content='Client system prompt')]),
+        ]
+    )
+
+    # Two warnings fire here (system-prompt strip + dangling call); assert on the dangling one.
+    with pytest.warns(UserWarning) as record:
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    assert any('unresolved tool call' in str(w.message) and 'refresh_cache' in str(w.message) for w in record)
+
+    assert len(sanitized) == 2
+    response = sanitized[-1]
+    assert isinstance(response, ModelResponse)
+    assert [type(p).__name__ for p in response.parts] == ['TextPart']
+
+
+def test_sanitize_messages_keeps_resolved_call_in_tail_exposed_by_dropped_message():
+    """The dropped-tail counterpart: a *resolved* call in the re-exposed tail is preserved for HITL resumption."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 1}, tool_call_id='call-1')]),
+            ModelRequest(parts=[SystemPromptPart(content='Client system prompt')]),
+        ]
+    )
+    deferred_tool_results = DeferredToolResults(approvals={'call-1': True})
+
+    with pytest.warns(UserWarning, match=r'system prompt'):
+        sanitized = adapter.sanitize_messages(adapter.messages, deferred_tool_results=deferred_tool_results)
+
+    response = sanitized[-1]
+    assert isinstance(response, ModelResponse)
+    assert [type(p).__name__ for p in response.parts] == ['ToolCallPart']
+
+
 async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     """End-to-end: a client-submitted history ending in an unresolved tool call has
     that tool call stripped before the agent sees the history, so the agent never
