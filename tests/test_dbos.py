@@ -848,7 +848,7 @@ async def test_capability_contributed_toolset_id_from_capability():
     # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
     dbos_agent = DBOSAgent(agent)
 
-    leaves: list[AbstractToolset[Any]] = []
+    leaves: list[AbstractToolset[object]] = []
     for toolset in dbos_agent.toolsets:
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
