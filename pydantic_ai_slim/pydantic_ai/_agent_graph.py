@@ -1360,6 +1360,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # output tools and deferred (external/unapproved) tool calls must run so their results aren't dropped,
         # and `_process_response_output` runs the output validators, so we only want to invoke it once we know
         # the response output can actually win. `for_run_step` above populated the tool defs used here.
+        #
+        # Deferring to a co-emitted output tool is deliberate: calling an output tool is an explicit "finish
+        # the run" signal, whereas the model's text may just be supporting prose — it doesn't know we might
+        # treat that text as a valid final output — so the output tool should still produce the final result.
         final_result: result.FinalResult[NodeRunEndT] | None = None
         if response_output is not None and all(
             (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
