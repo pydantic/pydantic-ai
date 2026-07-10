@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -60,7 +61,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import APIConnectionError, AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -12077,18 +12078,12 @@ async def test_openai_code_execution_download_multiple_files(allow_model_request
     )
     mock_client = MockOpenAIResponses.create_mock(c)
 
-    mock_file_metadata_1 = MagicMock()
-    mock_file_metadata_1.path = 'output.csv'
-    mock_file_metadata_2 = MagicMock()
-    mock_file_metadata_2.path = 'output.png'
-
     mock_file_content_1 = MagicMock()
     mock_file_content_1.content = b'1,1\n2,4\n'
     mock_file_content_2 = MagicMock()
     mock_file_content_2.content = b'\x89PNG...'
 
     mock_client.containers = MagicMock()  # type: ignore
-    mock_client.containers.files.retrieve = AsyncMock(side_effect=[mock_file_metadata_1, mock_file_metadata_2])
     mock_client.containers.files.content.retrieve = AsyncMock(side_effect=[mock_file_content_1, mock_file_content_2])
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -12139,11 +12134,11 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
         'start_index': 6,
         'end_index': 10,
     }
+    # A non-file annotation (e.g. a URL citation) should be ignored, not downloaded.
     annotation_3 = {
-        'type': 'container_file_citation',
-        'file_id': '',
-        'container_id': 'ctr_1',
-        'filename': 'empty.csv',
+        'type': 'url_citation',
+        'url': 'https://example.com',
+        'title': 'Example',
         'start_index': 11,
         'end_index': 15,
     }
@@ -12218,6 +12213,16 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
             type='response.output_text.annotation.added',
             sequence_number=7,
         ),
+        # The same file cited a second time should not be downloaded again.
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=cast(Annotation, cast(object, annotation_1)),
+            annotation_index=3,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=8,
+        ),
         ResponseTextDoneEvent(
             content_index=0,
             item_id='msg_001',
@@ -12225,7 +12230,7 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
             text='Here are your files.',
             type='response.output_text.done',
             logprobs=[],
-            sequence_number=8,
+            sequence_number=9,
         ),
         ResponseOutputItemDoneEvent(
             item=ResponseOutputMessage(
@@ -12246,21 +12251,16 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
             ),
             output_index=0,
             type='response.output_item.done',
-            sequence_number=9,
+            sequence_number=10,
         ),
         resp.ResponseCompletedEvent(
             response=base_response.model_copy(update={'status': 'completed'}),
             type='response.completed',
-            sequence_number=10,
+            sequence_number=11,
         ),
     ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
-
-    mock_file_metadata_1 = MagicMock()
-    mock_file_metadata_1.path = 'output.csv'
-    mock_file_metadata_2 = MagicMock()
-    mock_file_metadata_2.path = 'output.png'
 
     mock_file_content_1 = MagicMock()
     mock_file_content_1.content = b'1,1\n2,4\n'
@@ -12268,7 +12268,6 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
     mock_file_content_2.content = b'\x89PNG...'
 
     mock_client.containers = MagicMock()  # type: ignore
-    mock_client.containers.files.retrieve = AsyncMock(side_effect=[mock_file_metadata_1, mock_file_metadata_2])
     mock_client.containers.files.content.retrieve = AsyncMock(side_effect=[mock_file_content_1, mock_file_content_2])
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -12377,7 +12376,7 @@ async def test_openai_code_execution_download_no_annotations(allow_model_request
 
 
 async def test_openai_code_execution_download_mixed_annotations(allow_model_requests: None):
-    """When annotations include non-container types (e.g. url_citation), only container_file_citation should be downloaded."""
+    """Only `container_file_citation` annotations are downloaded, and each file only once even if cited repeatedly."""
     url_annotation = {
         'type': 'url_citation',
         'url': 'https://example.com',
@@ -12393,6 +12392,8 @@ async def test_openai_code_execution_download_mixed_annotations(allow_model_requ
         'start_index': 6,
         'end_index': 10,
     }
+    # The same file cited a second time should not be downloaded again.
+    file_annotation_again = {**file_annotation, 'start_index': 11, 'end_index': 15}
     c = response_message(
         [
             ResponseOutputMessage(
@@ -12403,7 +12404,7 @@ async def test_openai_code_execution_download_mixed_annotations(allow_model_requ
                         ResponseOutputText(
                             text='Here is a file and a link.',
                             type='output_text',
-                            annotations=cast(list[Any], [url_annotation, file_annotation]),
+                            annotations=cast(list[Any], [url_annotation, file_annotation, file_annotation_again]),
                         )
                     ],
                 ),
@@ -12415,13 +12416,10 @@ async def test_openai_code_execution_download_mixed_annotations(allow_model_requ
     )
     mock_client = MockOpenAIResponses.create_mock(c)
 
-    mock_file_metadata = MagicMock()
-    mock_file_metadata.path = 'output.csv'
     mock_file_content = MagicMock()
     mock_file_content.content = b'1,1\n2,4\n'
 
     mock_client.containers = MagicMock()  # type: ignore
-    mock_client.containers.files.retrieve = AsyncMock(return_value=mock_file_metadata)
     mock_client.containers.files.content.retrieve = AsyncMock(return_value=mock_file_content)
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -12441,7 +12439,187 @@ async def test_openai_code_execution_download_mixed_annotations(allow_model_requ
     assert files[0].content.media_type == 'text/csv'
     assert files[0].content.data == b'1,1\n2,4\n'
 
-    mock_client.containers.files.retrieve.assert_called_once_with(file_id='oai_file_1', container_id='ctr_1')
+    mock_client.containers.files.content.retrieve.assert_called_once_with(file_id='oai_file_1', container_id='ctr_1')
+
+
+async def test_openai_code_execution_download_failure_skips_file(allow_model_requests: None):
+    """A failed download (e.g. an expired short-lived container) is skipped with a warning, not fatal to the response."""
+    file_annotation = {
+        'type': 'container_file_citation',
+        'file_id': 'oai_file_1',
+        'container_id': 'ctr_1',
+        'filename': 'output.csv',
+        'start_index': 0,
+        'end_index': 5,
+    }
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText(
+                            text='Here is your file.',
+                            type='output_text',
+                            annotations=cast(list[Any], [file_annotation]),
+                        )
+                    ],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock(
+        side_effect=APIConnectionError(request=httpx.Request('GET', 'https://api.openai.com'))
+    )
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.warns(UserWarning, match='Failed to download code execution file'):
+        result = await agent.run(
+            'Create a CSV',
+            model_settings=OpenAIResponsesModelSettings(
+                openai_include_code_execution_outputs=True,
+                openai_download_code_execution_files=True,
+            ),
+        )
+
+    files = [p for p in result.all_messages()[-1].parts if isinstance(p, FilePart)]
+    assert len(files) == 0
+
+
+async def test_openai_code_execution_download_stream_failure_skips_file(allow_model_requests: None):
+    """Streaming: a failed download is skipped with a warning, leaving the rest of the stream intact."""
+    from openai.types import responses as resp
+    from openai.types.responses import (
+        ResponseContentPartAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseOutputTextAnnotationAddedEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+
+    annotation = {
+        'type': 'container_file_citation',
+        'file_id': 'oai_file_1',
+        'container_id': 'ctr_1',
+        'filename': 'output.csv',
+        'start_index': 0,
+        'end_index': 5,
+    }
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=2,
+        ),
+        ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Here is your file.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            logprobs=[],
+            sequence_number=3,
+        ),
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=cast(Annotation, cast(object, annotation)),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=4,
+        ),
+        ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Here is your file.',
+            type='response.output_text.done',
+            logprobs=[],
+            sequence_number=5,
+        ),
+        ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText(
+                            text='Here is your file.', type='output_text', annotations=cast(list[Any], [annotation])
+                        )
+                    ],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=7,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock(
+        side_effect=APIConnectionError(request=httpx.Request('GET', 'https://api.openai.com'))
+    )
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.warns(UserWarning, match='Failed to download code execution file'):
+        async with agent.iter(
+            'Create a CSV',
+            model_settings=OpenAIResponsesModelSettings(
+                openai_include_code_execution_outputs=True,
+                openai_download_code_execution_files=True,
+            ),
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for _ in request_stream:
+                            pass
+
+    assert agent_run.result is not None
+    files = [p for p in agent_run.result.all_messages()[-1].parts if isinstance(p, FilePart)]
+    assert len(files) == 0
 
 
 async def test_openai_code_execution_download_no_annotations_stream(allow_model_requests: None):

@@ -11737,14 +11737,14 @@ async def test_anthropic_code_execution_download_disabled_no_download(allow_mode
 
 
 async def test_anthropic_code_execution_download_empty_content(allow_model_requests: None):
-    """When content array is empty, no FileParts are added."""
+    """When the code execution result has no output files, no FileParts are added."""
     c = completion_message(
         [
             BetaTextBlock(text='Done.', type='text'),
-            BetaCodeExecutionToolResultBlock(
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    type='code_execution_result',
+            BetaBashCodeExecutionToolResultBlock(
+                type='bash_code_execution_tool_result',
+                content=BetaBashCodeExecutionResultBlock(
+                    type='bash_code_execution_result',
                     content=[],
                     return_code=0,
                     stderr='',
@@ -11769,18 +11769,19 @@ async def test_anthropic_code_execution_download_empty_content(allow_model_reque
 
 
 async def test_anthropic_code_execution_download_multiple_files(allow_model_requests: None):
-    """Multiple files are all downloaded."""
+    """Multiple files are all downloaded, and each file only once even if referenced repeatedly."""
     c = completion_message(
         [
             BetaTextBlock(text='Created two files.', type='text'),
-            BetaCodeExecutionToolResultBlock(
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    type='code_execution_result',
+            BetaBashCodeExecutionToolResultBlock(
+                type='bash_code_execution_tool_result',
+                content=BetaBashCodeExecutionResultBlock(
+                    type='bash_code_execution_result',
                     content=[
-                        BetaCodeExecutionOutputBlock(file_id='', type='code_execution_output'),
-                        BetaCodeExecutionOutputBlock(file_id='file_1', type='code_execution_output'),
-                        BetaCodeExecutionOutputBlock(file_id='file_2', type='code_execution_output'),
+                        BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output'),
+                        BetaBashCodeExecutionOutputBlock(file_id='file_2', type='bash_code_execution_output'),
+                        # The same file referenced again should not be downloaded twice.
+                        BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output'),
                     ],
                     return_code=0,
                     stderr='',
@@ -11856,6 +11857,8 @@ async def test_anthropic_code_execution_download_multiple_files_stream(allow_mod
                     content=[
                         BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output'),
                         BetaBashCodeExecutionOutputBlock(file_id='file_2', type='bash_code_execution_output'),
+                        # The same file referenced again should not be downloaded twice.
+                        BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output'),
                     ],
                     return_code=0,
                     stderr='',
@@ -11868,6 +11871,7 @@ async def test_anthropic_code_execution_download_multiple_files_stream(allow_mod
         BetaRawContentBlockStartEvent(
             type='content_block_start',
             index=2,
+            # An error result block references no files.
             content_block=BetaBashCodeExecutionToolResultBlock(
                 tool_use_id='tool_2',
                 type='bash_code_execution_tool_result',
@@ -11924,8 +11928,46 @@ async def test_anthropic_code_execution_download_multiple_files_stream(allow_mod
     assert files[1].content.media_type == 'image/png'
 
 
-async def test_anthropic_code_execution_download_skips_empty_file_id_stream(allow_model_requests: None):
-    """Streaming: empty file_id entries are skipped."""
+async def test_anthropic_code_execution_download_failure_skips_file(allow_model_requests: None):
+    """A failed download (e.g. an expired short-lived container) is skipped with a warning, not fatal to the response."""
+    c = completion_message(
+        [
+            BetaTextBlock(text='Created a file.', type='text'),
+            BetaBashCodeExecutionToolResultBlock(
+                type='bash_code_execution_tool_result',
+                content=BetaBashCodeExecutionResultBlock(
+                    type='bash_code_execution_result',
+                    content=[BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output')],
+                    return_code=0,
+                    stderr='',
+                    stdout='done',
+                ),
+                tool_use_id='tool_1',
+            ),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20, cache_creation_input_tokens=0, cache_read_input_tokens=0),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    mock_client.files = MagicMock()  # type: ignore
+    mock_client.files.download = AsyncMock(  # type: ignore
+        side_effect=APIConnectionError(request=httpx.Request('GET', 'https://api.anthropic.com'))
+    )
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.warns(UserWarning, match='Failed to download code execution file'):
+        result = await agent.run(
+            'Create a file',
+            model_settings=AnthropicModelSettings(anthropic_download_code_execution_files=True),
+        )
+
+    files = [p for p in result.all_messages()[-1].parts if isinstance(p, FilePart)]
+    assert len(files) == 0
+
+
+async def test_anthropic_code_execution_download_stream_failure_skips_file(allow_model_requests: None):
+    """Streaming: a failed download is skipped with a warning, leaving the rest of the stream intact."""
     stream = [
         BetaRawMessageStartEvent(
             type='message_start',
@@ -11954,10 +11996,7 @@ async def test_anthropic_code_execution_download_skips_empty_file_id_stream(allo
                 tool_use_id='tool_1',
                 type='bash_code_execution_tool_result',
                 content=BetaBashCodeExecutionResultBlock(
-                    content=[
-                        BetaBashCodeExecutionOutputBlock(file_id='', type='bash_code_execution_output'),
-                        BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output'),
-                    ],
+                    content=[BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output')],
                     return_code=0,
                     stderr='',
                     stdout='done',
@@ -11975,36 +12014,65 @@ async def test_anthropic_code_execution_download_skips_empty_file_id_stream(allo
     ]
 
     mock_client = MockAnthropic.create_stream_mock(stream)
-
-    mock_file_content = MagicMock()
-    mock_file_content.read = AsyncMock(return_value=b'csv data')
-    mock_metadata = MagicMock()
-    mock_metadata.mime_type = 'text/csv'
-
     mock_client.files = MagicMock()  # type: ignore
-    mock_client.files.download = AsyncMock(return_value=mock_file_content)  # type: ignore
-    mock_client.files.retrieve_metadata = AsyncMock(return_value=mock_metadata)  # type: ignore
+    mock_client.files.download = AsyncMock(  # type: ignore
+        side_effect=APIConnectionError(request=httpx.Request('GET', 'https://api.anthropic.com'))
+    )
 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
-    async with agent.iter(
-        'Create a file',
-        model_settings=AnthropicModelSettings(anthropic_download_code_execution_files=True),
-    ) as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for _ in request_stream:
-                        pass
+    with pytest.warns(UserWarning, match='Failed to download code execution file'):
+        async with agent.iter(
+            'Create a file',
+            model_settings=AnthropicModelSettings(anthropic_download_code_execution_files=True),
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for _ in request_stream:
+                            pass
 
     assert agent_run.result is not None
     files = [p for p in agent_run.result.all_messages()[-1].parts if isinstance(p, FilePart)]
-    assert len(files) == 1
-    assert files[0].id == 'file_1'
-    assert files[0].content.media_type == 'text/csv'
+    assert len(files) == 0
 
-    mock_client.files.download.assert_called_once()  # type: ignore
+
+async def test_anthropic_code_execution_download_file_part_not_sent_back(allow_model_requests: None):
+    """A downloaded `FilePart` in the message history is not sent back to Anthropic on a follow-up request."""
+    c = completion_message(
+        [BetaTextBlock(text='Sure.', type='text')],
+        BetaUsage(input_tokens=10, output_tokens=5, cache_creation_input_tokens=0, cache_read_input_tokens=0),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Create a CSV file.')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Here is your file.'),
+                FilePart(
+                    content=BinaryContent(data=b'1,1\n2,4\n', media_type='text/csv'),
+                    id='file_1',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    await agent.run('Thanks!', message_history=history)
+
+    sent_messages = cast(list[dict[str, Any]], get_mock_chat_completion_kwargs(mock_client)[-1]['messages'])
+    assistant_blocks = [
+        block
+        for message in sent_messages
+        if message['role'] == 'assistant'
+        for block in cast(list[dict[str, Any]], message['content'])
+    ]
+    # The text is sent back, but the file is dropped since Anthropic has no way to accept a model-generated file.
+    assert [block['type'] for block in assistant_blocks] == ['text']
 
 
 @pytest.mark.parametrize(

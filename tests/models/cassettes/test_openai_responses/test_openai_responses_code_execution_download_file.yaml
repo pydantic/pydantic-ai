@@ -40,11 +40,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3855'
+      - '3882'
       content-type:
       - application/json
       openai-processing-ms:
-      - '5214'
+      - '7704'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -55,11 +55,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1783565003
-      created_at: 1783564998
+      completed_at: 1783641992
+      created_at: 1783641985
       error: null
       frequency_penalty: 0.0
-      id: resp_0285654db309dc08006a4f0ac6610c81969ffcd6c7ebbe420a
+      id: resp_01c938e03eade4da006a503781543c8195a5db985bd26dfbf5
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -70,8 +70,8 @@ interactions:
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqTwrLtbXuQ_4gyXhLU99LSk8RmDv36t2ChWXPyDQDsdN0o3Bng6z8nZil_I4KvNeYJp3aXHJVWZBe-kVIr-MTjSAQku7oLdYsIBDGnGx4lNmiBlJstrmNgmjGjP0SpcJzlHpxTdWxYPL7XgqG24Qrd0BwWuilY7pITPhyXEx9Rdo4Gm7eUcK5mtb175OagxePs0rzLhYzDEXcNclw1lqYSN3CJ6_bLlGbngUfBE9AmFo-DaSDofcA6vDawr8dLc5Vv6wNi07dL6McEFyd1htiVVoamfU33nBRclF_zOnRcuZ2ek5tWQfkQtAQjhXSkRVW8EZsWbfArgU0CDLm208zk-COE84vY0eECuECppqd8yRLyFl7JO1RYUCrN6QfVnvUTN0RSyCUizACJ-VFgeIN3eYtQj847Q0XstX2ssynBIH4IYCKTtcPxH15J4-I5fsr6EuHr8aWAAZ0Jy8GhvXB_YLicNGDZ8C8jug_iPgjhXEXiGQB0satCd_-WivAPmZ-Yz85ca6qc19Xkv_kTprcz05Uk1CWf92zjh7tKnLZkc72hTR7px0fSL_0XUzldile41vJ28O1K3q4knmvIocUcCzgbrp1pEoMdD3ud5goL-wQ71uUwdlfuWbOslucvi_ZRK_G_--EUmp-oqi3U9YTAIp_u4ztve40ZIzB9RpBZMFvQHTT-VKCjl0eAOX-s1QFnGjtmdHpzwp9Q1cwI_hw0RuuMRZEJFP_O13Hc6KrcQ3OffQ0NztncrD5Y6aTHImEt3GonQz0FKn0KAx8fV73liLhczA4XijDh1j9ei2MLSf8f-muUmXobN5oXY-Pm753_MrWfYA8xb7svjUd6_8Y_63Mc0pQv2E35UHH6zRxcA_1nlqK6LL9nSe4JkJQHQm3y7sD5XZ3xIeJ99FGz-MpLmc85VpaSsquEzvReKYcCVV2cU0iqRerLidab_AdhZCEkvtV_pU4Ve72uOjLiOO2N3iDvDJb5zSjGd9njmRcBVKuaclsJAZ6tsk1h-gDCpQsdn6T5SH9u1Gue7B2RRhff2tdmtB4x9LfiTAFZF1PYcZfm0-XKy40V41AH7pqoOd-PBdy-Zl4QlQauK4_Fv_0AcCJiBw9es9Czmb3BBQ74ISsdpgAdE9sMzowbc1eIddrwGQG
-        id: rs_0285654db309dc08006a4f0ac7a044819699af6fd648799d92
+        encrypted_content: gAAAAABqUDeJbgy7tlxAW8LjftoWHYnsuTnkCkLtirks1p8r3pR7fRd0ABJaP9YY7ch8JGolorruh43mnq-lUVK-SxXVRsjYE3eMg4cLL8VtwJMiFMAKwT84l-iyA-5TKp4YjFsKdl_AefwxqriAJppAcJ4F_Z_IhRzMTcKpJeK6g30UDBhaP3h2nkCezF6IVZI_GPiXXA7lj39wlPTHWD_XM1ieU2g0VqzCQgK88TZ_VfRlFRVD532y5DkYMZ2k8WhFbxi19Wc_OdXJaKeRnESbBZ0k8TgRyMk4mSNpz87jNdn9mddVJZodz9yd1g9MJhhPUFnNjeAn1gxMU8xls-OabGJKq8LbKH8Ubc5EAj47xm9IWwvzre8VRk3mzgeUtvzqCwEC6Cr3dIAAA5GTCvIO4vLIktSiUlTK-1s7bQ7sb9QXkj47NVEZ12OYHSgk5ZP806nw29a2DiWs70s_lBdf_Y1equ1RjLPxkDdmyCVXd838NmgTAaU0SbuFy_c3EZ1rLl7LcrqZzoBJtQaldBMzx3QQlD1fg4dZFyaLRMQJsp8FnGtyAjLvkKyyJxjYyKLINoK7UI8Yy8aPsZO5IcpBUjqf7JIc6j7JxZyun6MnUXTi9iYj8cJ6vPTIqu71VLPybeaZ5a-i8SrDeOJNRADlR7exwUHOqhB_TgJRG6mr27qu9p5u-nZn5kjfTtfoIFDCK-XN6pw7xS0Gavj1I8UZE1hfuRCBLLLWRTwdWltHCaQcGGs6xda0SWmpep_HydrME3MD_xG701sKzLbtQDOxsm1bWeJo4S3FojTlzmensznkjgpnAMB5Dobe3gUwfqovEts_aKejZMJ87nS3y_agrmZMzy4E1ua8XBFvwGUfFHU_zxgplN5AjAyruiSO-XU5KkOu6d492Q5qpT8_1qtbPfDlYhSPSsLc3VbvXqHRLusthjbDWdoUSJAPq_tApAhzhSkfMMPn0F5Uu_X8dgVBgG9IK2Df7oGCoHO5qpgEh7Jw49LTqTWh2Z-Pe93OcWPA-n9uv8y1BU_Yfx_CJDbr29ydlEpG7L9dHVaLelYJn7O5js6r1o-DAKUM8jOqB9Z93_0u2EcJoy8mXYCSrqVR8_S433_Gz_LJDugiKhENg_q4FlauV-qjBR8R6kOy-mxhYXHSMFQ7
+        id: rs_01c938e03eade4da006a503782a5cc8195858c345146504892
         summary: []
         type: reasoning
       - code: |
@@ -86,8 +86,8 @@ interactions:
                   writer.writerow([n, n**2])
 
           file_path
-        container_id: cntr_6a4f0ac6e7608190a20742cb2eb8635d0cf302147856297d
-        id: ci_0285654db309dc08006a4f0ac83ed08196ad5ced79ce2585f2
+        container_id: cntr_6a503781cc60819088f5e077f8f1789206be6a5b51a64102
+        id: ci_01c938e03eade4da006a50378336848195bbbce6eab1226fac
         outputs:
         - logs: '''/mnt/data/numbers_and_squares.csv'''
           type: logs
@@ -95,16 +95,16 @@ interactions:
         type: code_interpreter_call
       - content:
         - annotations:
-          - container_id: cntr_6a4f0ac6e7608190a20742cb2eb8635d0cf302147856297d
-            end_index: 71
-            file_id: cfile_6a4f0acb1f9481918c9f3a5b6c8ab20f
+          - container_id: cntr_6a503781cc60819088f5e077f8f1789206be6a5b51a64102
+            end_index: 98
+            file_id: cfile_6a50378881308191aafa41e291ebe004
             filename: numbers_and_squares.csv
-            start_index: 30
+            start_index: 57
             type: container_file_citation
           logprobs: []
-          text: 'Done: [Download the CSV file](sandbox:/mnt/data/numbers_and_squares.csv)'
+          text: 'Created the CSV file: [Download numbers_and_squares.csv](sandbox:/mnt/data/numbers_and_squares.csv)'
           type: output_text
-        id: msg_0285654db309dc08006a4f0acac0c08196be3b88c62e1f6880
+        id: msg_01c938e03eade4da006a50378816d88195ac21f26a5c72ea68
         phase: final_answer
         role: assistant
         status: completed
@@ -154,57 +154,11 @@ interactions:
         input_tokens_details:
           cache_write_tokens: 0
           cached_tokens: 0
-        output_tokens: 143
+        output_tokens: 148
         output_tokens_details:
           reasoning_tokens: 36
-        total_tokens: 1518
+        total_tokens: 1523
       user: null
-    status:
-      code: 200
-      message: OK
-- request:
-    body: ''
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      host:
-      - api.openai.com
-    method: GET
-    uri: https://api.openai.com/v1/containers/cntr_6a4f0ac6e7608190a20742cb2eb8635d0cf302147856297d/files/cfile_6a4f0acb1f9481918c9f3a5b6c8ab20f
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '258'
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - '235'
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      bytes: null
-      container_id: cntr_6a4f0ac6e7608190a20742cb2eb8635d0cf302147856297d
-      created_at: 1783565003
-      id: cfile_6a4f0acb1f9481918c9f3a5b6c8ab20f
-      object: container.file
-      path: /mnt/data/numbers_and_squares.csv
-      source: assistant
     status:
       code: 200
       message: OK
@@ -220,7 +174,7 @@ interactions:
       host:
       - api.openai.com
     method: GET
-    uri: https://api.openai.com/v1/containers/cntr_6a4f0ac6e7608190a20742cb2eb8635d0cf302147856297d/files/cfile_6a4f0acb1f9481918c9f3a5b6c8ab20f/content
+    uri: https://api.openai.com/v1/containers/cntr_6a503781cc60819088f5e077f8f1789206be6a5b51a64102/files/cfile_6a50378881308191aafa41e291ebe004/content
   response:
     body:
       string: "number,square\r\n1,1\r\n2,4\r\n3,9\r\n4,16\r\n5,25\r\n"
@@ -238,7 +192,7 @@ interactions:
       content-length:
       - '42'
       openai-processing-ms:
-      - '542'
+      - '784'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
