@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import inspect
 import time
-import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -1822,26 +1821,6 @@ def _insert_synthesized_returns(
     return replace(request, parts=[*request.parts[:insert_at], *synthesized, *request.parts[insert_at:]])
 
 
-def _warn_repaired_history(synthesized_names: list[str], dropped_names: list[str]) -> None:
-    repairs: list[str] = []
-    if synthesized_names:
-        repairs.append(
-            f'synthesized results for tool call(s) {sorted(set(synthesized_names))!r} that never received one'
-        )
-    if dropped_names:
-        repairs.append(
-            f'dropped tool call(s) {sorted(set(dropped_names))!r} whose arguments were cut off mid-stream '
-            f'(text in the same response may still reference them)'
-        )
-    warnings.warn(
-        f'Message history was repaired before being sent to the model: {"; ".join(repairs)}. '
-        f'This is expected when reusing the history of an interrupted or cancelled run. Otherwise, it may '
-        f'indicate missing `deferred_tool_results` or a history processor that removed tool results.',
-        UserWarning,
-        stacklevel=3,
-    )
-
-
 def _repair_dangling_tool_calls(
     messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
 ) -> list[_messages.ModelMessage]:
@@ -1871,8 +1850,9 @@ def _repair_dangling_tool_calls(
     The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
     response they repair and contain no wall-clock or random data, so repairing the same history
     twice (or on every run) yields the same output and never churns provider prompt-cache prefixes.
-    If there is nothing to repair, the input list is returned unchanged; any repair is reported
-    with a `UserWarning`.
+    If there is nothing to repair, the input list is returned unchanged. Repair is silent — like
+    the consecutive-message merge below — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as
+    the mechanism for inspecting what was synthesized.
     """
     dangling_by_response = _dangling_tool_calls_by_response(messages)
     if not repair_last_response:
@@ -1889,8 +1869,6 @@ def _repair_dangling_tool_calls(
     if not dangling_by_response:
         return messages
 
-    synthesized_names: list[str] = []
-    dropped_names: list[str] = []
     repaired: list[_messages.ModelMessage] = []
     synthesized: list[_messages.ToolReturnPart] = []
     for index, message in enumerate(messages):
@@ -1904,7 +1882,6 @@ def _repair_dangling_tool_calls(
             if dangling := dangling_by_response.get(index):
                 incomplete_ids = {part.tool_call_id for part in dangling if _tool_call_args_incomplete(part)}
                 if incomplete_ids:
-                    dropped_names.extend(part.tool_name for part in dangling if part.tool_call_id in incomplete_ids)
                     parts = [
                         part
                         for part in message.parts
@@ -1917,7 +1894,6 @@ def _repair_dangling_tool_calls(
                 for call in dangling:
                     if call.tool_call_id in incomplete_ids:
                         continue
-                    synthesized_names.append(call.tool_name)
                     synthesized.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
@@ -1937,8 +1913,6 @@ def _repair_dangling_tool_calls(
 
     if synthesized:
         repaired.append(_messages.ModelRequest(parts=synthesized))
-
-    _warn_repaired_history(synthesized_names, dropped_names)
 
     return repaired
 

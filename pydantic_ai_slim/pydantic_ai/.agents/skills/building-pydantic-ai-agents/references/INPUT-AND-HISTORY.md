@@ -42,7 +42,7 @@ Important distinctions:
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
-- histories from interrupted runs (or hand-built ones) with dangling tool calls that never got a result are repaired automatically before the next model request: calls with args cut off mid-stream are dropped, other unanswered calls get a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), and a `UserWarning` reports what was repaired — no manual cleanup needed; orphaned/duplicate tool results are not repaired
+- histories from interrupted runs (or hand-built ones) with dangling tool calls that never got a result are repaired automatically before the next model request: calls with args cut off mid-stream are dropped, other unanswered calls get a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`) — no manual cleanup needed; orphaned/duplicate tool results are not repaired
 
 ## Manage Context Size
 

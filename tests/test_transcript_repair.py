@@ -3,8 +3,9 @@
 A run that is cancelled or crashes mid-tool leaves a `ModelResponse` containing `ToolCallPart`s
 with no matching `ToolReturnPart`/`RetryPromptPart` in a following `ModelRequest`, which strict
 providers reject. Before each model request, the framework synthesizes deterministic tool returns
-for such dangling calls and drops calls whose args were cut off mid-stream — warning when it does —
-so interrupted and hand-built histories can be reused directly.
+for such dangling calls and drops calls whose args were cut off mid-stream, so interrupted and
+hand-built histories can be reused directly. Synthesized returns carry the
+`pydantic_ai_synthesized_tool_return` metadata marker so repairs are inspectable in the history.
 
 These tests capture the exact message list the model receives via `FunctionModel` instead of VCR:
 the repair happens in the pre-request history cleaning, and cassette matchers aren't reliably
@@ -43,8 +44,6 @@ pytestmark = pytest.mark.anyio
 
 TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-REPAIRED_WARNING = 'Message history was repaired before being sent to the model'
-
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
     """An agent whose model records the exact message history it receives and replies with text."""
@@ -70,8 +69,7 @@ async def test_dangling_tool_call_gets_synthesized_return():
         ModelResponse(parts=[TextPart('Here is a joke.')], timestamp=TS),
     ]
 
-    with pytest.warns(UserWarning, match=REPAIRED_WARNING):
-        result = await agent.run('Explain?', message_history=message_history)
+    result = await agent.run('Explain?', message_history=message_history)
 
     assert received[0] == snapshot(
         [
@@ -139,8 +137,7 @@ async def test_partially_answered_parallel_tool_calls():
         ),
     ]
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_density', 'get_mass'\]"):
-        await agent.run(message_history=message_history)
+    await agent.run(message_history=message_history)
 
     assert received[0] == snapshot(
         [
@@ -202,12 +199,7 @@ async def test_incomplete_tool_call_args_dropped():
         ModelResponse(parts=[TextPart('OK.')], timestamp=TS),
     ]
 
-    with pytest.warns(
-        UserWarning,
-        match=r"synthesized results for tool call\(s\) \['get_time'\] that never received one; "
-        r"dropped tool call\(s\) \['get_weather'\] whose arguments were cut off mid-stream",
-    ):
-        await agent.run('Thanks.', message_history=message_history)
+    await agent.run('Thanks.', message_history=message_history)
 
     assert received[0] == snapshot(
         [
@@ -255,10 +247,7 @@ async def test_response_with_only_incomplete_tool_call_dropped():
         ModelResponse(parts=[TextPart('Yes.')], timestamp=TS),
     ]
 
-    with pytest.warns(
-        UserWarning, match=r"dropped tool call\(s\) \['get_weather'\] whose arguments were cut off mid-stream"
-    ):
-        await agent.run('Thanks.', message_history=message_history)
+    await agent.run('Thanks.', message_history=message_history)
 
     # With the response dropped, the surrounding requests are merged into one.
     assert received[0] == snapshot(
@@ -338,7 +327,7 @@ async def test_deferred_run_history_not_silently_repaired():
     A run that ends in `DeferredToolRequests` persists a response with an unanswered call followed
     by a 'complete' request with the executed returns. That call may still receive its result via
     `deferred_tool_results`, so it must not be closed out at run start; only the copy sent to the
-    model is repaired, with a warning pointing at the likely mistake.
+    model is repaired.
     """
     received: list[list[ModelMessage]] = []
 
@@ -370,8 +359,7 @@ async def test_deferred_run_history_not_silently_repaired():
     assert isinstance(trailing_request, ModelRequest)
     assert trailing_request.state == 'complete'
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['create_file'\]"):
-        result2 = await agent.run('Never mind.', message_history=message_history)
+    result2 = await agent.run('Never mind.', message_history=message_history)
     assert result2.output == 'All done.'
 
     # The pending call stays open in the persisted history, so it can still be answered or audited...
@@ -404,8 +392,7 @@ async def test_result_before_call_does_not_mask_dangling_call():
         ModelResponse(parts=[TextPart('No idea.')], timestamp=TS),
     ]
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_weather'\]"):
-        await agent.run('Thanks.', message_history=message_history)
+    await agent.run('Thanks.', message_history=message_history)
 
     # The call after the orphaned result is genuinely dangling and gets a synthesized return.
     request = received[0][2]
@@ -487,8 +474,7 @@ async def test_reused_tool_call_id_dangling_call_repaired():
         ModelResponse(parts=[TextPart('OK.')], timestamp=TS),
     ]
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_weather'\]"):
-        await agent.run('Thanks.', message_history=message_history)
+    await agent.run('Thanks.', message_history=message_history)
 
     # The earlier answered call is untouched; the later dangling reuse gets a synthesized return.
     request = received[0][4]
@@ -526,8 +512,7 @@ async def test_reused_tool_call_id_shadowed_open_call_repaired():
         ModelResponse(parts=[TextPart('Rainy!')], timestamp=TS),
     ]
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_weather'\]"):
-        await agent.run('Thanks.', message_history=message_history)
+    await agent.run('Thanks.', message_history=message_history)
 
     # The earlier shadowed call gets the synthesized return; the later call keeps its real result.
     request = received[0][2]
@@ -564,8 +549,7 @@ async def test_dangling_tool_call_followed_by_response():
         ModelResponse(parts=[TextPart('I could not check the weather.')], timestamp=TS, provider_response_id='resp_2'),
     ]
 
-    with pytest.warns(UserWarning, match=REPAIRED_WARNING):
-        result = await agent.run('Try again?', message_history=message_history)
+    result = await agent.run('Try again?', message_history=message_history)
     assert result.output == 'All done.'
 
     assert received[0] == snapshot(
@@ -641,17 +625,15 @@ async def test_repair_is_idempotent_and_deterministic():
     # Determinism: two separate runs over equal inputs repair to byte-identical histories.
     agent_a, received_a = capture_agent()
     agent_b, received_b = capture_agent()
-    with pytest.warns(UserWarning, match=REPAIRED_WARNING):
-        result_a = await agent_a.run('Explain?', message_history=build_history())
-    with pytest.warns(UserWarning, match=REPAIRED_WARNING):
-        await agent_b.run('Explain?', message_history=build_history())
+    result_a = await agent_a.run('Explain?', message_history=build_history())
+    await agent_b.run('Explain?', message_history=build_history())
     repaired_len = len(build_history())
     assert ModelMessagesTypeAdapter.dump_json(received_a[0][:repaired_len]) == ModelMessagesTypeAdapter.dump_json(
         received_b[0][:repaired_len]
     )
 
-    # Idempotency: feeding the repaired history into a new run leaves it untouched (and warns
-    # nothing; a repeated warning would be raised as an error by the test warning filter).
+    # Idempotency: feeding the repaired history into a new run leaves it untouched (verified by
+    # output-equality, since repair is a no-op on an already-repaired history).
     repaired = result_a.all_messages()
     agent_c, received_c = capture_agent()
     await agent_c.run('Once more?', message_history=repaired)
@@ -704,10 +686,7 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
     assert interrupted.state == 'interrupted'
     assert interrupted.tool_calls[0].args == '{"city": "Mex'
 
-    with pytest.warns(
-        UserWarning, match=r"dropped tool call\(s\) \['get_weather'\] whose arguments were cut off mid-stream"
-    ):
-        result2 = await agent.run('Never mind, just say hi.', message_history=messages)
+    result2 = await agent.run('Never mind, just say hi.', message_history=messages)
     assert result2.output == 'No problem!'
     # The incomplete tool call was dropped; the streamed text survives.
     assert received[1] == snapshot(
@@ -759,8 +738,7 @@ async def test_cancelled_stream_with_complete_tool_call_round_trips():
 
     messages = result.all_messages()
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_weather'\]"):
-        result2 = await agent.run('Never mind, just say hi.', message_history=messages)
+    result2 = await agent.run('Never mind, just say hi.', message_history=messages)
     assert result2.output == 'No problem!'
 
     # The dangling call is kept and answered with a synthesized return ahead of the new prompt.
@@ -810,8 +788,7 @@ async def test_interrupted_tool_execution_round_trips():
         with pytest.raises(RuntimeError, match='missing density'):
             await agent.run('Calculate volume and mass.')
 
-    with pytest.warns(UserWarning, match=r"synthesized results for tool call\(s\) \['get_mass'\]"):
-        result = await agent.run(message_history=messages)
+    result = await agent.run(message_history=messages)
     assert result.output == 'The volume is 216.'
 
     # The completed tool return is preserved, and the crashed call is closed out after it.
@@ -856,8 +833,7 @@ async def test_history_processor_output_repaired():
 
     agent = Agent(FunctionModel(model_function), capabilities=[ProcessHistory(truncating_processor)])
 
-    with pytest.warns(UserWarning, match=REPAIRED_WARNING):
-        await agent.run('Explain?')
+    await agent.run('Explain?')
 
     assert received[0] == snapshot(
         [
