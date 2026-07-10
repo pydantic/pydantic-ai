@@ -7951,6 +7951,8 @@ class TestMCPCapability:
         """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable
         execution. Precedence: explicit `id` → native `MCPServerTool` id → host+slug from the URL,
         else `None` when there's nothing to derive from."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
         from fastmcp import FastMCP
 
         from pydantic_ai.mcp import MCPToolset
@@ -7971,7 +7973,7 @@ class TestMCPCapability:
                 'custom-mcp',
             ),
             # `local='https://…'` override with no `url=`: id derived from the override URL,
-            # exercising the `_derive_id` guard against `_resolved_id`'s `url is None` assertion
+            # exercising `_derive_id` deriving from the override URL even when `self.url` is `None`
             (MCP[object](local='https://other.example.com/sse'), 'other.example.com-sse'),
             # non-URL local input (in-process `FastMCP` server) wrapped into an `MCPToolset`,
             # inheriting the explicit id
@@ -7983,6 +7985,21 @@ class TestMCPCapability:
             local = cap.local
             assert isinstance(local, MCPToolset)
             assert local.id == expected_id
+
+    def test_mcp_callable_native_without_url_or_id_errors(self):
+        """A `native=<callable>` factory paired with a local fallback has nothing to derive the
+        `unless_native` marker from (no `url=`, no `id=`, non-`MCPServerTool` native), so
+        `get_toolset()` raises an actionable `UserError` rather than a bare `AssertionError`."""
+
+        async def native_factory(ctx: RunContext[object]) -> MCPServerTool:
+            return MCPServerTool(id='x', url='https://mcp.example.com/api')  # pragma: no cover
+
+        def local_tool() -> str:
+            return 'local'  # pragma: no cover
+
+        cap = MCP[object](native=native_factory, local=local_tool)
+        with pytest.raises(UserError, match='needs a stable `id` to tie the two together'):
+            cap.get_toolset()
 
     async def test_mcp_explicit_native_id_marks_local_fallback(self):
         """An explicit native MCP tool keeps the local fallback tied to that server id."""

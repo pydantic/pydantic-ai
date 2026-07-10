@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -75,6 +76,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -821,6 +823,38 @@ async def test_mcp_toolset_without_id():
         ),
     ):
         DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))
+
+
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so a capability combined with a
+    local MCP server can be used under DBOS instead of tripping the id-less-MCP guard. An `MCP` with
+    no explicit `id` derives one from its URL, which is what lets the contributed leaf pass the guard.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api'),
+        ],
+    )
+    # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
+    # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
+    dbos_agent = DBOSAgent(agent)
+
+    leaves: list[AbstractToolset[Any]] = []
+    for toolset in dbos_agent.toolsets:
+        toolset.apply(leaves.append)
+    # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
+    # capability id.
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
 async def test_dbos_agent():

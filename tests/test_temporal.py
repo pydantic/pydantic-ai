@@ -1424,6 +1424,35 @@ async def test_capability_contributed_toolset_id_from_capability():
     assert 'agent__capability_agent__mcp_server__docs__get_tools' in activity_names
 
 
+async def test_deferred_capability_contributed_toolset_id_from_capability():
+    """A deferred capability (`defer_loading=True`) still stamps its `id` on the contributed leaf
+    toolset, so the derived id survives the deferred-loading wrapper and the toolset is registered as
+    durable activities. Deferred capabilities require an explicit `id`.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='deferred_capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add], defer_loading=True),
+            MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
+        ],
+    )
+    temporal_agent = TemporalAgent(agent)
+
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__deferred_capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__deferred_capability_agent__mcp_server__docs__get_tools' in activity_names
+
+
 # --- DynamicToolset / @agent.toolset tests ---
 
 

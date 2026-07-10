@@ -133,10 +133,17 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     @cached_property
     def _resolved_id(self) -> str:
-        # `_resolved_id` is only read through native paths, which require a URL (enforced in
-        # `__init__`), so derivation from `self.url` always succeeds.
+        # Read by `_default_native()` (only when `native is True`, which requires `url=`) and by
+        # `_native_unique_id()` (whenever `native is not False`, including a `native=<callable>`
+        # factory). The callable-native path can reach here with no `url=`, no `id=`, and a
+        # non-`MCPServerTool` native, leaving nothing to derive a stable id from.
         resolved = self._derive_id(self.url)
-        assert resolved is not None
+        if resolved is None:
+            raise UserError(
+                'MCP(native=<callable>) paired with a local fallback needs a stable `id` to tie the '
+                'two together (the local fallback is tagged with the native id via `unless_native`). '
+                'Pass `url=`, `id=`, or use an explicit `native=MCPServerTool(...)` instead of a callable.'
+            )
         return resolved
 
     def _default_native(self) -> MCPServerTool:
