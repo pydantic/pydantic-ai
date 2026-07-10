@@ -48,6 +48,7 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     ReconnectPolicy,
+    inject_trace_context,
 )
 from ._openai_protocol import (
     expect_event,
@@ -203,6 +204,8 @@ class XaiRealtimeModel(RealtimeModel):
         # The `model` query parameter is required: without it the server silently falls back to a default.
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._api_key}'}
+        # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
+        inject_trace_context(headers)
         session_config = self._session_config(instructions, tools, model_settings)
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection

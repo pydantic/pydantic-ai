@@ -172,6 +172,35 @@ def test_single_ws_user_agent_noop_without_duplicate() -> None:
     assert headers == {'user-agent': 'solo'}
 
 
+def test_ws_trace_context_injects_and_restores_headers() -> None:
+    # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so trace context
+    # is injected into them for the connect only, then removed so the shared client's later HTTP
+    # requests don't carry a stale `traceparent`. The header dict is the SDK's private one, so this is a
+    # direct unit test. (The no-op-without-a-span case is covered by the OpenAI/xAI handshake tests.)
+    pytest.importorskip('opentelemetry.sdk')
+    from types import SimpleNamespace
+
+    from opentelemetry.sdk.trace import TracerProvider
+
+    headers = {'user-agent': 'solo'}
+    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
+    tracer = TracerProvider().get_tracer('test')
+    with tracer.start_as_current_span('root'):
+        with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+            assert 'traceparent' in headers
+        # Injected keys are removed after the handshake; the original headers are untouched.
+        assert headers == {'user-agent': 'solo'}
+
+
+def test_ws_trace_context_noop_without_http_options() -> None:
+    # A custom/fake client without the SDK's private HTTP options simply skips injection.
+    from types import SimpleNamespace
+
+    client = SimpleNamespace(_api_client=None)
+    with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+        pass
+
+
 # --- provider resolution & capabilities --------------------------------------
 
 

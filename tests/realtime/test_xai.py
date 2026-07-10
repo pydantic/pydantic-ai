@@ -259,6 +259,27 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
 
 @pytest.mark.anyio
+async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An active span propagates `traceparent` into the handshake headers (see the OpenAI provider test)."""
+    pytest.importorskip('opentelemetry.sdk')
+    from opentelemetry.sdk.trace import TracerProvider
+
+    ws = FakeWebSocket([_created(), _updated()])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_xai.websockets, 'connect', fake_connect)
+
+    model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'))
+    tracer = TracerProvider().get_tracer('test')
+    with tracer.start_as_current_span('root'):
+        async with model.connect(instructions='hi') as conn:
+            _ = [e async for e in conn]
+
+    assert fake_connect.headers is not None
+    assert fake_connect.headers['Authorization'] == 'Bearer k'
+    assert 'traceparent' in fake_connect.headers
+
+
+@pytest.mark.anyio
 async def test_agent_realtime_session_rejects_native_tools() -> None:
     # xAI Grok Voice supports no native tools, so any native tool fails up front with the uniform
     # error, before dialing — the check lives in `Agent.realtime_session`, keyed on the model profile.

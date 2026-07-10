@@ -507,6 +507,30 @@ logfire.instrument_pydantic_ai()
 # realtime_session spans now appear in Logfire
 ```
 
+### Routing through a gateway
+
+Realtime models take a `provider=` just like standard models, so you can route a session through the
+[Pydantic AI Gateway](gateway.md) (or any OpenAI-compatible endpoint that
+exposes a realtime API) by naming the upstream provider:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+model = OpenAIRealtimeModel('gpt-realtime', provider='gateway/openai')
+```
+
+When a span is active as the session connects, the client propagates
+[W3C trace context](https://www.w3.org/TR/trace-context/) over the realtime WebSocket handshake, so a
+gateway that emits its own spans nests them under the same trace. The session and `chat` spans only
+open once you start iterating, so to guarantee the gateway's spans join the trace, wrap the session in
+your own span:
+
+```python {test="skip" lint="skip"}
+with logfire.span('voice call'):
+    async with agent.realtime_session(model=model) as session:
+        ...
+```
+
 ## Reconnecting
 
 A long-lived connection can drop. Pass a

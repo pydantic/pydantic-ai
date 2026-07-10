@@ -57,6 +57,7 @@ from ._base import (
     TextInput,
     ToolResult,
     TruncateOutput,
+    inject_trace_context,
     reconnect_with_backoff,
 )
 from ._openai_protocol import (
@@ -446,6 +447,10 @@ class OpenAIRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._provider.client.api_key}'}
+        # Propagate trace context over the handshake so a proxy (e.g. the Pydantic AI Gateway) can nest
+        # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
+        # `httpx` client, which would otherwise inject it.
+        inject_trace_context(headers)
         session_config = self._session_config(instructions, tools, model_settings)
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection

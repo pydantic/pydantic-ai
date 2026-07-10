@@ -307,6 +307,34 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     assert session['tools'][0]['type'] == 'function'
 
 
+@pytest.mark.anyio
+async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An active span propagates `traceparent` into the handshake headers, for gateway/OTel-proxy correlation.
+
+    The realtime WebSocket bypasses the provider's `httpx` client, so `connect()` injects trace context
+    itself (the analogue of the gateway provider's HTTP request hook). A unit test because a cassette's
+    request matcher ignores handshake headers, so it wouldn't catch a regression here.
+    """
+    pytest.importorskip('opentelemetry.sdk')
+    from opentelemetry.sdk.trace import TracerProvider
+
+    ws = FakeWebSocket([_created(), _updated()])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    tracer = TracerProvider().get_tracer('test')
+    with tracer.start_as_current_span('root'):
+        async with model.connect(instructions='hi') as conn:
+            _ = [e async for e in conn]
+
+    assert fake_connect.headers is not None
+    assert fake_connect.headers['Authorization'] == 'Bearer k'
+    # W3C `traceparent` names the active span, so a proxy (e.g. the Pydantic AI Gateway) can nest its
+    # own realtime spans under this trace.
+    assert 'traceparent' in fake_connect.headers
+
+
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
         turn_detection=rt_openai.ServerVAD(

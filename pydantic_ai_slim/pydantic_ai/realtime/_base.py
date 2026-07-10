@@ -14,7 +14,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import random
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Literal
@@ -551,6 +551,24 @@ async def reconnect_with_backoff(policy: ReconnectPolicy, attempt: Callable[[], 
         if await attempt():
             return True
     return False
+
+
+def inject_trace_context(headers: MutableMapping[str, str]) -> None:
+    """Add the current W3C trace context (`traceparent`) to a realtime WebSocket's handshake headers.
+
+    A realtime connection is a raw WebSocket that bypasses the provider's `httpx` client, so the
+    trace-context injection that client's event hooks would normally perform (see the gateway
+    provider's request hook in `providers/gateway.py`) doesn't happen automatically. Calling this when
+    building the handshake headers propagates trace context to the server, so a proxy like the
+    Pydantic AI Gateway can nest its own realtime spans under the client's trace.
+
+    It is a no-op when no span is active (the default propagator writes nothing without a valid span
+    context) and harmless against providers that ignore the header, so it is safe to call
+    unconditionally.
+    """
+    from opentelemetry.propagate import inject
+
+    inject(headers)
 
 
 def user_prompt_text(part: UserPromptPart) -> str:

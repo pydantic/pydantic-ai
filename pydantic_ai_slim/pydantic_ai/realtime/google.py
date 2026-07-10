@@ -77,6 +77,7 @@ from ._base import (
     Transcript,
     TurnCompleteEvent,
     WebSource,
+    inject_trace_context,
     reconnect_with_backoff,
     user_prompt_text,
 )
@@ -283,6 +284,32 @@ def _single_ws_user_agent(client: Client) -> Generator[None]:
         yield
     finally:
         headers.update(removed)
+
+
+@contextmanager
+def _ws_trace_context(client: Client) -> Generator[None]:
+    """Add the current trace context to the Gemini Live handshake headers for the connect only.
+
+    `google-genai` forwards the client's HTTP headers as the Live WebSocket's `additional_headers`, so
+    injecting `traceparent` here propagates trace context to the server (e.g. a gateway) over the
+    handshake — see `inject_trace_context` for the rationale. The keys it added are removed afterwards
+    so the shared client's later HTTP requests don't carry a stale trace context. Guarded like
+    `_single_ws_user_agent`: custom/fake clients without the private HTTP options simply skip injection.
+    """
+    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
+    if not isinstance(raw_headers, dict):
+        yield
+        return
+    headers = cast('dict[str, str]', raw_headers)
+    carrier: dict[str, str] = {}
+    inject_trace_context(carrier)
+    added = {key: value for key, value in carrier.items() if key not in headers}
+    headers.update(added)
+    try:
+        yield
+    finally:
+        for key in added:
+            headers.pop(key, None)
 
 
 @dataclass
@@ -526,7 +553,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 instructions, tools, model_settings, native_tools=native_tools, resumption_handle=handle
             )
             opening = client.aio.live.connect(model=self.model, config=config)
-            with _single_ws_user_agent(client):
+            with _single_ws_user_agent(client), _ws_trace_context(client):
                 session = await opening.__aenter__()
             cm = opening
             return session
