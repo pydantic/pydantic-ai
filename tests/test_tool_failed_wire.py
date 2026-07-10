@@ -284,14 +284,17 @@ async def test_failed_tool_return_does_not_sniff_error_key() -> None:
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_failed_tool_return_uses_native_error_channel() -> None:
-    """Direct mapping guards Anthropic's native signal and raw content where VCR matching may be lax."""
+@pytest.mark.parametrize('outcome,is_error', [('failed', True), ('denied', False), ('success', False)])
+async def test_anthropic_tool_return_native_error_channel(
+    outcome: Literal['success', 'failed', 'denied'], is_error: bool
+) -> None:
+    """Only `failed` sets Anthropic's `is_error`; `denied`/`success` stay on the success channel."""
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
     part = ToolReturnPart(
         tool_name='tool',
         content=_TOOL_CONTENT,
         tool_call_id='call_1',
-        outcome='failed',
+        outcome=outcome,
     )
 
     _, wire = await model._map_message(  # pyright: ignore[reportPrivateUsage]
@@ -306,7 +309,7 @@ async def test_anthropic_failed_tool_return_uses_native_error_channel() -> None:
                     'tool_use_id': 'call_1',
                     'type': 'tool_result',
                     'content': [{'text': _TOOL_CONTENT, 'type': 'text'}],
-                    'is_error': True,
+                    'is_error': is_error,
                 }
             ],
         }
@@ -326,6 +329,12 @@ async def test_anthropic_failed_tool_return_uses_native_error_channel() -> None:
                 'status': 'error',
             },
             id='native-status',
+        ),
+        pytest.param(
+            'us.amazon.nova-micro-v1:0',
+            'denied',
+            {'toolUseId': 'call_1', 'content': [{'text': _TOOL_CONTENT}], 'status': 'success'},
+            id='native-denied',
         ),
         pytest.param(
             'us.writer.palmyra-x4-v1:0',
