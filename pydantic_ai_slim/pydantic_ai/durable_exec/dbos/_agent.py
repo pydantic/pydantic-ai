@@ -123,6 +123,11 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 pass
             else:
                 if isinstance(toolset, MCPToolset):
+                    if toolset.id is None:
+                        raise UserError(
+                            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+                            "The ID will be used to identify the MCP server's steps within the workflow."
+                        )
                     return DBOSMCPToolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,

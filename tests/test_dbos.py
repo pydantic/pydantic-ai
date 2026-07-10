@@ -824,6 +824,20 @@ async def test_toolset_without_id():
     DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+async def test_mcp_toolset_without_id():
+    # Unlike `FunctionToolset`, an `MCPToolset` is wrapped in a `DBOSMCPToolset` whose step names and per-run
+    # tool-defs cache key both derive from the toolset's `id`; without one, two id-less MCP toolsets would
+    # collide on both. Require an `id` up front, like Temporal does for all leaf toolsets.
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+            "The ID will be used to identify the MCP server's steps within the workflow."
+        ),
+    ):
+        DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))
+
+
 async def test_dbos_agent():
     assert isinstance(complex_dbos_agent.model, DBOSModel)
     assert complex_dbos_agent.model.wrapped == complex_agent.model
