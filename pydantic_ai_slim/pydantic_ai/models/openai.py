@@ -450,8 +450,8 @@ def _drop_sampling_params_for_reasoning(
     Reasoning models don't support sampling parameters while reasoning is active. For models that
     can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
     when reasoning is off. Whether reasoning is on when no effort is set depends on the model's
-    default (`openai_reasoning_enabled_by_default`): GPT-5.1..5.5 default to off, while the o-series,
-    the original GPT-5, and GPT-5.6 default to on.
+    default (`openai_reasoning_enabled_by_default`): the GPT-5.1..5.4 mainline models default to
+    off, while the o-series, the original GPT-5, and GPT-5.5+ default to on.
     """
     if not profile.get('openai_supports_reasoning', False):
         return

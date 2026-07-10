@@ -294,6 +294,46 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
     assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
 
 
+async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: the real GPT-5.6 API accepts sampling params while reasoning is off.
+
+    GPT-5.6 reasons by default but accepts `effort='none'`, and in that mode honors sampling
+    parameters — the fact behind `openai_supports_reasoning_effort_none=True` in its profile.
+    The request-body assertion proves `temperature` was actually sent rather than dropped.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='none', temperature=0.5)
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    request_body = single_request_body(vcr)
+    assert request_body['reasoning'] == snapshot({'effort': 'none'})
+    assert request_body['temperature'] == 0.5
+
+
+async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: GPT-5.5 reasons by default, so sampling params must be dropped when no effort is set.
+
+    The live API rejects `temperature` on gpt-5.5 unless `effort='none'` is sent — i.e.
+    `openai_reasoning_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
+    The request-body assertion proves `temperature` was dropped so the request succeeds.
+    """
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert 'temperature' not in single_request_body(vcr)
+
+
 @pytest.mark.parametrize(
     ('settings', 'temperature_kept'),
     [

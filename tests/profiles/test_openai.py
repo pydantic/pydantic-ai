@@ -45,6 +45,8 @@ class ReasoningCase:
     """The Responses API accepts `reasoning.mode` ('standard' | 'pro')."""
 
 
+# Every cell verified against the live Responses API (2026-07): "enabled by default" = sampling
+# params rejected with no `reasoning.effort` set; "can be disabled" = `effort='none'` accepted.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
     ReasoningCase(model='o1', enabled_by_default=True),
@@ -55,13 +57,12 @@ REASONING_CASES = [
     # gpt-5 (not 5.x): always reasons, no off switch
     ReasoningCase(model='gpt-5', enabled_by_default=True),
     ReasoningCase(model='gpt-5-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5-turbo', enabled_by_default=True),
-    # gpt-5.1..5.5: reasoning off by default, opt-in via effort
+    # gpt-5.1..5.4 mainline: reasoning off by default, opt-in via effort
     ReasoningCase(model='gpt-5.1', can_be_disabled=True),
     ReasoningCase(model='gpt-5.1-turbo', can_be_disabled=True),
     ReasoningCase(model='gpt-5.1-mini', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.1-codex-max', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.1-chat-latest', can_be_disabled=True),
     ReasoningCase(model='gpt-5.2', can_be_disabled=True),
     ReasoningCase(model='gpt-5.2-turbo', can_be_disabled=True),
     ReasoningCase(model='gpt-5.2-mini', can_be_disabled=True),
@@ -70,15 +71,23 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.4', can_be_disabled=True),
     ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True),
     ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.4-pro', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.5', can_be_disabled=True),
-    ReasoningCase(model='gpt-5.5-pro', can_be_disabled=True),
+    # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
+    ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.2-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True),
+    # gpt-5.1+ chat variants: always reason at a fixed 'medium' effort (sampling params rejected)
+    ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.2-chat-latest', enabled_by_default=True),
+    ReasoningCase(model='gpt-5.3-chat-latest', enabled_by_default=True),
+    # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
+    ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`
     ReasoningCase(model='gpt-5.6-sol', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
     ReasoningCase(model='gpt-5.6-terra', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
     ReasoningCase(model='gpt-5.6-luna', enabled_by_default=True, can_be_disabled=True, supports_mode=True),
     # no reasoning
-    ReasoningCase(model='gpt-5.3-chat-latest'),
     ReasoningCase(model='gpt-5-chat'),
     ReasoningCase(model='gpt-4o'),
     ReasoningCase(model='gpt-4o-mini'),
@@ -106,14 +115,24 @@ class TestEncryptedReasoningContent:
 
     def test_reasoning_models_support_encrypted_content(self):
         """Models with reasoning support encrypted reasoning content."""
-        for model in ['o1', 'o3', 'gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']:
+        for model in [
+            'o1',
+            'o3',
+            'gpt-5',
+            'gpt-5.1',
+            'gpt-5.2',
+            'gpt-5.3-codex',
+            'gpt-5.3-chat-latest',
+            'gpt-5.4',
+            'gpt-5.5',
+        ]:
             profile = openai_model_profile(model)
             assert isinstance(profile, dict)
             assert profile.get('openai_supports_encrypted_reasoning_content', False) is True
 
     def test_non_reasoning_models_no_encrypted_content(self):
         """Models without reasoning don't support encrypted reasoning content."""
-        for model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5-chat', 'gpt-5.3-chat-latest']:
+        for model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5-chat']:
             profile = openai_model_profile(model)
             assert isinstance(profile, dict)
             assert profile.get('openai_supports_encrypted_reasoning_content', False) is False

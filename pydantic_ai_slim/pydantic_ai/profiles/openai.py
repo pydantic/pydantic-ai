@@ -87,20 +87,30 @@ _ALWAYS_ON_REASONING = _ReasoningSupport(enabled_by_default=True, can_be_disable
 """The model always reasons; it doesn't accept `reasoning_effort='none'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
-    # GPT-5.6 (sol/terra/luna) is the first family that reasons by default (at 'medium') *and* accepts
-    # `effort='none'` to turn reasoning off, and the only one that supports `reasoning.mode`
-    # (verified against the Responses API).
+    # GPT-5.6 (sol/terra/luna) reasons by default (at 'medium'), accepts `effort='none'` to turn
+    # reasoning off, and is the only family that supports `reasoning.mode`.
     'gpt-5.6': _ReasoningSupport(enabled_by_default=True, can_be_disabled=True, supports_mode=True),
-    # gpt-5.3-chat-latest doesn't reason, unlike the other GPT-5.1+ chat variants.
-    'gpt-5.3-chat': _NO_REASONING,
-    'gpt-5.1': _OPT_IN_REASONING,
-    'gpt-5.2': _OPT_IN_REASONING,
-    'gpt-5.3': _OPT_IN_REASONING,
+    # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`.
+    'gpt-5.5-pro': _ALWAYS_ON_REASONING,
+    'gpt-5.5': _ReasoningSupport(enabled_by_default=True, can_be_disabled=True, supports_mode=False),
+    'gpt-5.4-pro': _ALWAYS_ON_REASONING,
     'gpt-5.4': _OPT_IN_REASONING,
-    'gpt-5.5': _OPT_IN_REASONING,
-    # gpt-5-chat-latest doesn't reason.
+    # The GPT-5.1+ chat variants always reason at a fixed 'medium' effort: they reject sampling
+    # parameters and any other `reasoning.effort` value, including 'none'.
+    'gpt-5.3-chat': _ALWAYS_ON_REASONING,
+    'gpt-5.3': _OPT_IN_REASONING,
+    'gpt-5.2-pro': _ALWAYS_ON_REASONING,
+    'gpt-5.2-chat': _ALWAYS_ON_REASONING,
+    'gpt-5.2': _OPT_IN_REASONING,
+    # Covers gpt-5.1-codex and gpt-5.1-codex-max; the gpt-5.3+ codex variants match their
+    # mainline prefix instead (gpt-5.3-codex is opt-in like gpt-5.4).
+    'gpt-5.1-codex': _ALWAYS_ON_REASONING,
+    'gpt-5.1-chat': _ALWAYS_ON_REASONING,
+    'gpt-5.1': _OPT_IN_REASONING,
+    # gpt-5-chat-latest doesn't reason at all.
     'gpt-5-chat': _NO_REASONING,
-    # The original GPT-5 family reasons at 'medium' by default. See https://platform.openai.com/docs/guides/reasoning
+    # The original GPT-5 family (incl. -mini/-pro/-codex) reasons at 'medium' by default.
+    # See https://platform.openai.com/docs/guides/reasoning
     'gpt-5': _ALWAYS_ON_REASONING,
     # The o-series.
     'o': _ALWAYS_ON_REASONING,
@@ -108,8 +118,10 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
 """Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
 (e.g. `'gpt-5.3'`), and every newer `gpt-5.x` family before the plain `'gpt-5'` catch-all.
-Models that don't match any prefix don't reason. The full resolved matrix is pinned in
-`tests/profiles/test_openai.py`."""
+Models that don't match any prefix don't reason. Every cell was verified against the live
+Responses API (2026-07): a model reasons by default exactly when it rejects sampling parameters
+with no `reasoning.effort` set, and can be disabled exactly when it accepts `effort='none'`.
+The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
@@ -203,18 +215,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_reasoning_enabled_by_default: bool
     """Whether the model reasons by default when `reasoning_effort` is omitted. Default: `False`.
 
-    True for models whose default effort is active (e.g. 'medium'), such as the o-series, the original
-    GPT-5, and GPT-5.6, and False for GPT-5.1..5.5 which default to `reasoning_effort='none'`. This decides
-    whether sampling parameters must be dropped when no effort is set, and is independent of whether reasoning
-    can be turned off (`openai_supports_reasoning_effort_none`)."""
+    True for models whose default effort is active (e.g. 'medium'), such as the o-series, the original GPT-5,
+    and GPT-5.5+, and False for the GPT-5.1..5.4 mainline models which default to `reasoning_effort='none'`.
+    This decides whether sampling parameters must be dropped when no effort is set, and is independent of
+    whether reasoning can be turned off (`openai_supports_reasoning_effort_none`)."""
 
     openai_supports_reasoning_effort_none: bool
     """Whether the model accepts `reasoning_effort='none'` and allows sampling parameters (temperature, top_p, etc.)
     while reasoning is off. Default: `False`.
 
-    GPT-5.1..5.5 and GPT-5.6 support turning reasoning off via `effort='none'`, and sampling params are accepted
-    in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported. Whether
-    the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
+    The GPT-5.1+ mainline models support turning reasoning off via `effort='none'`, and sampling params are
+    accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
+    Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
@@ -285,12 +297,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         model_name.startswith('gpt-5') or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
-    # OpenAI's native `tool_search` tool with `defer_loading` is available on the
-    # GPT-5.4 and GPT-5.5 mainline families. Like the other gates in this function, this
-    # enumerates known versions rather than matching open-endedly, so a new family must be
-    # added here explicitly once confirmed (GPT-5.6 hasn't been); until then it falls back
-    # to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on gpt-5.4 and later
+    # mainline families (https://developers.openai.com/api/docs/guides/tools-tool-search; GPT-5.6
+    # verified live). Like the other gates in this function, this enumerates known versions rather
+    # than matching open-endedly, so a new family must be added here explicitly once confirmed;
+    # until then it falls back to local search.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
