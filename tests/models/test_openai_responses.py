@@ -298,11 +298,11 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
     ('settings', 'temperature_kept'),
     [
         # GPT-5.6 reasons on by default at 'medium', so an omitted effort drops sampling params.
-        (OpenAIResponsesModelSettings(temperature=0.5), False),
+        ({'temperature': 0.5}, False),
         # `effort='none'` turns reasoning off, so sampling params are kept (real API accepts them).
-        (OpenAIResponsesModelSettings(temperature=0.5, openai_reasoning_effort='none'), True),
+        ({'temperature': 0.5, 'openai_reasoning_effort': 'none'}, True),
         # An active effort drops sampling params.
-        (OpenAIResponsesModelSettings(temperature=0.5, openai_reasoning_effort='low'), False),
+        ({'temperature': 0.5, 'openai_reasoning_effort': 'low'}, False),
     ],
 )
 async def test_openai_responses_gpt_5_6_sampling_params(
