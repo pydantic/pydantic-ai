@@ -10,6 +10,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from importlib.metadata import distributions
 from typing import Any
 
@@ -21,6 +22,7 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -923,3 +925,64 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+class _AmbiguousBool:
+    """Mimics the result of a numpy array comparison: its truth value is ambiguous."""
+
+    def __bool__(self) -> bool:
+        raise ValueError('The truth value of an array with more than one element is ambiguous.')
+
+
+class _ArrayLike:
+    """Mimics a numpy array: `!=` returns a value whose `bool()` raises, instead of a plain bool."""
+
+    def __ne__(self, other: object) -> _AmbiguousBool:
+        return _AmbiguousBool()
+
+    def __repr__(self) -> str:
+        return 'ArrayLike()'
+
+
+@dataclass(repr=False)
+class _HasRequiredField:
+    content: Any
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class _HasDefaultField:
+    content: Any = None
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class _HasMixedFields:
+    required: int
+    flag: bool = False
+    items: list[int] = field(default_factory=list)
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """repr() must not raise when a field holds a value whose `!=` returns a non-bool (e.g. a numpy array).
+
+    Regression test for #6415: `repr()` of message parts crashed with `ValueError` when a field
+    such as `ToolReturnPart.content` held a numpy array. Covers both branches of the helper: a
+    required field (no default) and a field with an explicit default that holds such a value.
+    """
+    # Required field: value is always shown, and the ambiguous `!=` result must not be evaluated.
+    assert repr(_HasRequiredField(content=_ArrayLike())) == '_HasRequiredField(content=ArrayLike())'
+    # Explicit-default field holding the same value: the guarded comparison falls back to showing it.
+    assert repr(_HasDefaultField(content=_ArrayLike())) == '_HasDefaultField(content=ArrayLike())'
+
+
+def test_dataclasses_no_defaults_repr_omits_defaults():
+    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown."""
+    # `flag` equals its default and is omitted; `items` has only a `default_factory` so it is always shown.
+    assert repr(_HasMixedFields(required=1)) == '_HasMixedFields(required=1, items=[])'
+    # `flag` differs from its default and is shown.
+    assert repr(_HasMixedFields(required=1, flag=True)) == '_HasMixedFields(required=1, flag=True, items=[])'
