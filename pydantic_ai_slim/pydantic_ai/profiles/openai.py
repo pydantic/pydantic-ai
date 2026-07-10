@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -54,7 +54,8 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-class _ReasoningSupport(NamedTuple):
+@dataclass(frozen=True)
+class _ReasoningSupport:
     """How an OpenAI model family supports reasoning, as three orthogonal facts."""
 
     enabled_by_default: bool
