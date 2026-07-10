@@ -20,7 +20,7 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses). GPT-5.6 is available as `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
+The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses).
 
 ```python
 from pydantic_ai import Agent
@@ -128,9 +128,9 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### Reasoning mode
 
-GPT-5.6 models support OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default. `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. Mode and effort are independent, and reasoning mode is only available through the Responses API. Pydantic AI enables it for GPT-5.6 requests through the OpenAI, Azure OpenAI, and OpenRouter providers.
+Models that support it (currently the GPT-5.6 family) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
 
-Configure the mode with [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
+Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
 
 ```python
 from pydantic_ai import Agent
@@ -142,7 +142,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-Keep the same GPT-5.6 variant ID when enabling `pro`; there is no separate Pro model slug.
+The setting is ignored on models that don't support reasoning mode, per [`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode].
 
 ### Native tools
 
