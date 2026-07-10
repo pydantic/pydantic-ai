@@ -20244,7 +20244,7 @@ async def test_deferred_tool_handler_via_handle_call_tool_failed():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={call.tool_call_id: ToolFailed('backend unavailable') for call in requests.calls}
         )
@@ -20263,7 +20263,7 @@ async def test_deferred_tool_handler_via_handle_call_tool_failed():
     captured_error: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured_error
         assert ctx.tool_manager is not None
         try:

@@ -2596,7 +2596,7 @@ async def test_bedrock_failed_tool_return_uses_error_status(bedrock_provider: Be
         ),
     ]
 
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [

@@ -665,7 +665,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
-                        error=part.model_response_str() if part.outcome == 'failed' else None,
+                        error=part.model_response_str() if part.outcome in ('failed', 'denied') else None,
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
@@ -774,7 +774,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
-                            error=builtin_return.model_response_str() if builtin_return.outcome == 'failed' else None,
+                            error=builtin_return.model_response_str()
+                            if builtin_return.outcome in ('failed', 'denied')
+                            else None,
                             **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
                         )
                     )
@@ -835,10 +837,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
-        - `RetryPromptPart` becomes `ToolReturnPart` with `outcome='failed'` (or `UserPromptPart`
           when it has no `tool_name`) on reload, since the protocol has no separate retry concept;
           the reloaded result is therefore presented to the model as a definitive failure rather
           than a request to correct and retry.
+        - `ToolReturnPart` with `outcome='denied'` reloads as `outcome='failed'`, since AG-UI's
+          `ToolMessage.error` field can't distinguish a denial from a failure.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
           multimodal content gained a metadata carrier).

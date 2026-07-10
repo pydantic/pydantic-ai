@@ -1447,8 +1447,8 @@ def test_tool_failed_span_attributes(
     """A tool raising `ToolFailed` records the failure as the tool result on the span, like `ModelRetry`.
 
     Parallel to the retry case in `test_include_tool_args_span_attributes`: the model-visible failure
-    message is recorded as `tool_response` when content is included (with no "Fix the errors and try
-    again." suffix, since it's a failure rather than a retry), and excluded when content is off.
+    message is recorded as `gen_ai.tool.call.result` when content is included (with no "Fix the errors
+    and try again." suffix, since it's a failure rather than a retry), and excluded when content is off.
     """
     my_agent = Agent(
         model=TestModel(seed=42),
@@ -1473,9 +1473,9 @@ def test_tool_failed_span_attributes(
     # Logfire-captured view of the spans.
     assert tool_attributes['logfire.level_num'] == 17
     if include_content:
-        assert tool_attributes.get('tool_response') == 'numbers service unavailable'
+        assert tool_attributes.get('gen_ai.tool.call.result') == 'numbers service unavailable'
     else:
-        assert 'tool_response' not in tool_attributes
+        assert 'gen_ai.tool.call.result' not in tool_attributes
 
 
 class WeatherInfo(BaseModel):

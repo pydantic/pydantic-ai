@@ -355,6 +355,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         if not validated.args_valid:
             assert validated.validation_error is not None
+            # Output-tool validation (`validate_output_tool_call`) only ever raises
+            # `ToolRetryError`/`ValidationError`/`ModelRetry`, never `ToolFailed`, so
+            # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
+            # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
             return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
@@ -802,7 +806,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.deferred_calls['unapproved'].append(call)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
+                    # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await self.tool_manager.execute_tool_call(validated)
                     except (ToolRetryError, ToolFailedError) as e:
