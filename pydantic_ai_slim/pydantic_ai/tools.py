@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import inspect
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
@@ -14,8 +13,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
-from .exceptions import ModelRetry, ToolFailed
+from .exceptions import ModelRetry, ToolFailed, UserError
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
 from .native_tools import AbstractNativeTool
@@ -126,7 +124,7 @@ Usage `ToolPrepareFunc[AgentDepsT]`.
 
 ToolsPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], list['ToolDefinition']],
-    Awaitable['list[ToolDefinition] | None'] | list['ToolDefinition'] | None,
+    Awaitable[list['ToolDefinition']] | list['ToolDefinition'],
 ]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
@@ -143,8 +141,8 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def turn_on_strict_if_openai(
-    ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition] | None:
+    ctx: RunContext, tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -351,17 +349,15 @@ class ToolDenied:
 
 
 def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
-    if isinstance(x, dict):
+    if isinstance(x, ToolFailed):
+        return 'tool-failed'
+    elif isinstance(x, ModelRetry):
+        return 'model-retry'
+    elif isinstance(x, dict):
         if 'kind' in x:
             return cast(str, x['kind'])
         elif 'part_kind' in x:
             return cast(str, x['part_kind'])
-    # `ToolFailed` and `ModelRetry` serialize to the same `{message, kind}` shape, so
-    # instances must be discriminated explicitly rather than left to shape inference.
-    elif isinstance(x, ToolFailed):
-        return 'tool-failed'
-    elif isinstance(x, ModelRetry):
-        return 'model-retry'
     else:
         if hasattr(x, 'kind'):
             return cast(str, x.kind)
@@ -388,7 +384,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
-    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object from the previous run.
 
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
@@ -444,6 +440,16 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 
 ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
+
+
+def _validate_max_retries(max_retries: int | None) -> None:
+    if max_retries is not None and max_retries < 0:
+        raise UserError(f'max_retries must be >= 0, got {max_retries}')
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and timeout <= 0:
+        raise UserError(f'timeout must be > 0, got {timeout}')
 
 
 @dataclass(init=False)
@@ -552,7 +558,8 @@ class Tool(Generic[ToolAgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -564,6 +571,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.function = function
         self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -613,7 +622,8 @@ class Tool(Generic[ToolAgentDepsT]):
             json_schema: The schema for the function arguments
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -729,7 +739,14 @@ class ToolDefinition:
     """
 
     sequential: bool = False
-    """Whether this tool requires a sequential/serial execution environment."""
+    """Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+
+    A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
+    completing first and tools emitted after it starting only once it finishes. Other tools still run
+    in parallel around it. To run an entire run's tools serially, use
+    [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
+    instead.
+    """
 
     kind: ToolKind = field(default='function')
     """The kind of tool:
@@ -891,38 +908,4 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated aliases for read access to the renamed `unless_native` field
-        # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
-        if name in ('prefer_builtin', 'prefer_native'):
-            warnings.warn(
-                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.unless_native
-        raise AttributeError(name)
-
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
-
-
-_RENAMED_TYPE_ALIASES: dict[str, str] = {
-    'BuiltinToolFunc': 'NativeToolFunc',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_TYPE_ALIASES:
-        new_name = _RENAMED_TYPE_ALIASES[name]
-        warnings.warn(
-            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

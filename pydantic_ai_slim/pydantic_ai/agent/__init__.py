@@ -18,7 +18,7 @@ import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar, deprecated
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -39,7 +39,6 @@ from .. import (
 from .._agent_graph import (
     CallToolsNode,
     EndStrategy,
-    HistoryProcessor,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
@@ -56,6 +55,7 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
+from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -105,7 +105,6 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..mcp import MCPServer
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -192,7 +191,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
     and the output type they return, [`OutputDataT`][pydantic_ai.output.OutputDataT].
 
-    By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
+    By default, if neither generic parameter is customised, agents have type `Agent[object, str]`.
 
     Minimal usage example:
 
@@ -211,11 +210,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
     end_strategy: EndStrategy
-    """The strategy for handling multiple tool calls when a final result is found.
+    """The strategy for handling function tool calls the model requests alongside an output tool.
 
-    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
-    - `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
-    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+    Defaults to `'graceful'`. See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for the behavior of
+    each strategy.
     """
 
     model_settings: AgentModelSettings[AgentDepsT] | None
@@ -270,6 +268,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
+    # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
+    # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
+    # signature Pyright rejects the union argument. The two overloads are intentionally
+    # identical, so the second one overlaps the first.
     @overload
     def __init__(
         self,
@@ -278,7 +280,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -287,7 +289,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -295,24 +297,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> None: ...
 
     @overload
-    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
-    def __init__(
+    def __init__(  # pyright: ignore[reportOverlappingOverload]
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        mcp_servers: Sequence[MCPServer] = (),
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
@@ -326,7 +327,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -335,13 +336,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
+        end_strategy: EndStrategy = 'graceful',
         metadata: AgentMetadata[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Any,
-    ):
+    ) -> None:
         """Create an agent.
 
         Args:
@@ -356,7 +356,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
-                or add a type hint `: Agent[None, <return type>]`.
+                or add a type hint `: Agent[object, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             description: A human-readable description of the agent, attached to the agent run span as
@@ -418,27 +418,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
-        legacy_history_processor_capabilities = _utils.consume_deprecated_history_processors_as_capabilities(
-            _deprecated_kwargs, 'Agent'
-        )
-        # `self.history_processors` stays for 1.x users who read it back off the agent (still
-        # part of the public surface even though the kwarg is gone from `__init__`); v2 drops it.
-        self.history_processors: list[HistoryProcessor[AgentDepsT]] = [
-            cap.processor for cap in legacy_history_processor_capabilities
-        ]
-
         capabilities = wrap_capability_funcs(capabilities)
-        capabilities.extend(legacy_history_processor_capabilities)
-
-        capabilities.extend(_utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-        capabilities.extend(_utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-        capabilities.extend(_utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent'))
-        # `event_stream_handler` is NOT auto-remapped to a `ProcessEventStream` capability: the
-        # legacy `_event_stream_handler` path in `abstract.py` invokes the handler directly after
-        # the capability chain runs, so remapping would call it twice. Forwarded into the instance
-        # attribute below so the legacy path keeps working in 1.x; warning steers users to
-        # `capabilities=[ProcessEventStream(...)]`, the only path in v2.
-        event_stream_handler = _utils.consume_deprecated_event_stream_handler(_deprecated_kwargs, 'Agent')
 
         _inject_auto_capabilities(capabilities)
 
@@ -455,35 +435,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.model_settings = model_settings
 
         self._output_type = output_type
-        self._instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent')
+        self._instrument = None
         self._metadata = metadata
         self._deps_type = deps_type
-
-        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
-            if toolsets is not None:  # pragma: no cover
-                raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
-            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
-            toolsets = mcp_servers
-
-        # Deprecated split retry kwargs are still accepted in 1.x and folded into `retries`.
-        legacy_tool_retries = _deprecated_kwargs.pop('tool_retries', _utils.UNSET)
-        legacy_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
-        if _utils.is_set(legacy_tool_retries):
-            warnings.warn(
-                '`Agent(tool_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'tools': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        if _utils.is_set(legacy_output_retries):
-            warnings.warn(
-                '`Agent(output_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `retries={'output': ...}` (or `retries=<int>` to set the same budget for both tool and output retries) instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
@@ -496,20 +450,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_dynamic_functions = {}
 
         retry_overrides = _normalize_agent_retry_overrides(retries)
-        # Explicit kwargs win over `retries` (matches the legacy precedence where
-        # `tool_retries=` / `output_retries=` overrode the `retries=` cascade).
-        if _utils.is_set(legacy_tool_retries) and legacy_tool_retries is not None:
-            retry_overrides['tools'] = legacy_tool_retries
-        if _utils.is_set(legacy_output_retries) and legacy_output_retries is not None:
-            retry_overrides['output'] = legacy_output_retries
         resolved_retries = _normalize_agent_retries(retry_overrides)
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
+        if self._tool_timeout is not None and self._tool_timeout <= 0:
+            raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
 
         self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
@@ -537,7 +488,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_toolset = self._root_capability.get_toolset()
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
-        self._event_stream_handler = event_stream_handler
+        # Populated by durable-execution subclasses; base agents use the run-level kwarg.
+        self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
@@ -550,8 +502,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
-            '_override_builtin_tools', default=None
+        self._override_native_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
+            '_override_native_tools', default=None
         )
         self._override_instructions: ContextVar[_utils.Option[list[str | SystemPromptFunc[AgentDepsT]]]] = ContextVar(
             '_override_instructions', default=None
@@ -595,7 +547,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[None, str]: ...
+    ) -> Agent[object, str]: ...
 
     @overload
     @classmethod
@@ -648,7 +600,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
@@ -688,29 +639,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'Agent.from_spec'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_spec')
-        )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_spec')
-        # Forwarded into the constructed agent's legacy `_event_stream_handler` slot below; warning
-        # already fired in the consume helper.
-        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
-            _deprecated_kwargs, 'Agent.from_spec'
-        )
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'Agent.from_spec', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         validated_spec, template_context = _validate_spec(spec, deps_type)
 
         effective_output_type: OutputSpec[Any]
@@ -730,16 +658,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         if capabilities:
             all_capabilities.extend(capabilities)
-        if extra_capabilities:
-            all_capabilities.extend(extra_capabilities)
-
-        # Read the deprecated spec field only when set so we don't trigger its warning
-        # for users who didn't opt in. The kwarg takes precedence over the spec field.
-        legacy_instrument = (
-            instrument
-            if instrument is not None
-            else (validated_spec.instrument if 'instrument' in validated_spec.model_fields_set else None)
-        )
 
         effective_model = model or validated_spec.model
         if effective_model is None:
@@ -770,9 +688,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
-        agent._instrument = legacy_instrument
-        if legacy_event_stream_handler is not None:
-            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @overload
@@ -800,7 +715,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[None, str]: ...
+    ) -> Agent[object, str]: ...
 
     @overload
     @classmethod
@@ -855,7 +770,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
 
@@ -867,30 +781,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'Agent.from_file'
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_prepare_output_tools_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
-        )
-        extra_capabilities.extend(
-            _utils.consume_deprecated_history_processors_as_capabilities(_deprecated_kwargs, 'Agent.from_file')
-        )
-        instrument = _utils.consume_deprecated_instrument(_deprecated_kwargs, 'Agent.from_file')
-        legacy_event_stream_handler = _utils.consume_deprecated_event_stream_handler(
-            _deprecated_kwargs, 'Agent.from_file'
-        )
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'Agent.from_file', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-        merged_capabilities: list[AgentCapability[Any]] = list(capabilities or ())
-        if extra_capabilities:
-            merged_capabilities.extend(extra_capabilities)
-
         spec = AgentSpec.from_file(path, fmt=fmt)
         agent = cls.from_spec(
             spec,
@@ -912,13 +802,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=metadata,
             tool_timeout=tool_timeout,
             max_concurrency=max_concurrency,
-            capabilities=merged_capabilities or None,
+            capabilities=capabilities,
         )
-        # `from_file(instrument=...)` overrides any `spec.instrument` from the loaded file.
-        if instrument is not None:
-            agent._instrument = instrument
-        if legacy_event_stream_handler is not None:
-            agent._event_stream_handler = legacy_event_stream_handler
         return agent
 
     @staticmethod
@@ -1071,7 +956,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -1166,12 +1050,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.iter', current_retries=retries)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -1370,20 +1248,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        if extra_capabilities:
-            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+
+        # The capability layers resolved for this run: the base, then the extras. The
+        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves.
+        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
+            run_layers.insert(0, instrumentation_cap)
+
+        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
+        # `CombinedCapability` first and resolving that (which would gather over the same
+        # children): `override(native_tools=...)` below needs the *resolved* extras — their
+        # native tools may only materialize in `for_run`, e.g. from a capability function's
+        # returned capability — and the composed tree can't give them back. `CombinedCapability`
+        # re-flattens and re-sorts its children both at construction and on the `replace()`
+        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
+        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
+        # once per run and may have per-run side effects (e.g. the durable-exec integrations
+        # rely on this for deterministic replay). Composing from the resolved pieces below
+        # yields the same structure as resolving a pre-composed tree, since the same
+        # flatten-and-sort runs on the same resolved children either way.
+        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
+        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
+        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        if len(resolved_layers) > 1:
+            run_capability = CombinedCapability(resolved_layers)
         else:
-            effective_capability = base_capability
+            run_capability = resolved_layers[0]
 
-        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves. `CombinedCapability`
-        # auto-flattens its input so a nested `effective_capability` is splatted into
-        # the new outer container — leaves participate as siblings in the ordering pass.
-        if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
-            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
-
-        # Per-run capability: re-extract get_*() if for_run returns a different instance
-        run_capability = await effective_capability.for_run(initial_ctx)
+        # Re-extract get_*() from the resolved capability if anything is contributed per-run
         capabilities_dict = _build_run_capabilities(run_capability)
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already
         # return one, mirroring the `has_capability_type` guard used for instrumentation above.
@@ -1396,10 +1290,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
-        if run_capability is not effective_capability:
+        if run_capability is not base_capability or override_cap is not None:
             source_cap = run_capability
-        elif override_cap is not None or extra_capabilities:
-            source_cap = effective_capability
         else:
             source_cap = None
 
@@ -1415,13 +1307,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
+        # Native tool ids are validated per layer, from each layer's *resolved* form, since
+        # contributions from e.g. capability functions only materialize in `for_run`. Two
+        # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
+        # last-wins *across* layers is the intentional override mechanism. The base layer is the
+        # agent's own capabilities (validated at construction as a fail-fast for static
+        # conflicts, and re-checked here to cover dynamic contributions) or their
+        # `override(spec=...)` replacement; instrumentation contributes no native tools.
+        base_native_tools = [
+            tool
+            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
+            for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(
+            base_native_tools,
+            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
+        )
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
+            tool for cap in resolved_extras for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
         # `capabilities=[NativeTool(...)]`) on top.
-        if some_native_tools := self._override_builtin_tools.get():
-            extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
-            for cap in extra_capabilities:
-                extra_native_tools.extend(cap.get_native_tools())
+        if some_native_tools := self._override_native_tools.get():
+            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
             cap_native_tools = [*some_native_tools.value, *extra_native_tools]
 
         # Build model settings resolver using per-run capability
@@ -1497,6 +1408,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
+            resumed_request_index=None,
             model=model_used,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
@@ -1791,7 +1703,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -1821,22 +1732,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-        # Deprecated `output_retries=` is still accepted on `override()`. Translate it into the new
-        # `retries` value, with the explicit `retries=` kwarg winning if both are passed.
-        legacy_override_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
-        if _utils.is_set(legacy_override_output_retries):
-            warnings.warn(
-                '`agent.override(output_retries=...)` is deprecated and will be removed in v2.0. '
-                "Use `agent.override(retries={'output': ...})` (or `retries=<int>` to override the output "
-                'budget) instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=3,
-            )
-            if not _utils.is_set(retries):
-                retries = {'output': legacy_override_output_retries}
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         # Tool retries cannot be overridden via `override()`. An int means "override output only".
         override_output_retries: int | _utils.Unset
         if _utils.is_set(retries):
@@ -1894,7 +1789,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools_token = None
 
         if _utils.is_set(native_tools):
-            native_tools_token = self._override_builtin_tools.set(_utils.Some(native_tools))
+            native_tools_token = self._override_native_tools.set(_utils.Some(native_tools))
         else:
             native_tools_token = None
 
@@ -1944,7 +1839,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
             if native_tools_token is not None:
-                self._override_builtin_tools.reset(native_tools_token)
+                self._override_native_tools.reset(native_tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
@@ -2276,7 +2171,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -2413,7 +2309,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -2511,12 +2408,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         model_: models.Model
         if some_model := self._override_model.get():
-            # we don't want `override()` to cover up errors from the model not being defined, hence this check
-            if model is None and self.model is None:
-                raise exceptions.UserError(
-                    '`model` must either be set on the agent or included when calling it. '
-                    '(Even when `override(model=...)` is customizing the model that will actually be called)'
-                )
             model_ = some_model.value
         elif model is not None:
             model_ = models.infer_model(model)
@@ -2619,9 +2510,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if run_capability is not None:
             # Dispatch the `prepare_tools` capability hook through a `PreparedToolset` wrapped
             # **inside** any other capability `get_wrapper_toolset` results (e.g. `ToolSearch`,
-            # `CodeMode`), matching the original ordering of the agent-level `prepare_tools=`
-            # kwarg in main: filter/modify defs first, let other toolset transformations layer
-            # on top. The hook sees **function** tools only — output tools route through
+            # `CodeMode`): filter/modify defs first, let other toolset transformations layer on
+            # top. The hook sees **function** tools only — output tools route through
             # `prepare_output_tools` below.
             fn_cap = run_capability
 
@@ -2726,7 +2616,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        This will start all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered as `toolsets` so they are ready to be used,
         and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
@@ -2753,7 +2643,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._exit_stack = None
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
-        """Set the sampling model on all MCP servers registered with the agent.
+        """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
 
         If no sampling model is provided, the agent's model will be used.
         """
@@ -2762,11 +2652,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         except exceptions.UserError as e:
             raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
 
-        from ..mcp import MCPServer
+        from ..mcp import MCPToolset
 
         def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(toolset, MCPServer):
-                toolset.sampling_model = sampling_model
+            if isinstance(toolset, MCPToolset):
+                toolset.set_sampling_model(sampling_model)
 
         self._get_toolset().apply(_set_sampling_model)
 
@@ -2778,7 +2668,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
         html_source: str | Path | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -2832,47 +2721,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        # Legacy `builtin_tools=` on `to_web` historically forwarded to the UI's `native_tools=`
-        # (additional native tools shown as options in the UI). Continue to forward there to
-        # preserve behavior, but emit a deprecation warning encouraging the
-        # `capabilities=[NativeTool(...)]` migration path on the underlying agent.
-        legacy_native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, None)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         from ..ui._web import create_web_app
 
         return create_web_app(
             self,
             models=models,
-            native_tools=legacy_native_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
             html_source=html_source,
         )
-
-    @asynccontextmanager
-    @deprecated(
-        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
-    )
-    async def run_mcp_servers(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> AsyncGenerator[None]:
-        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
-
-        Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
-        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
-
-        Returns: a context manager to start and shutdown the servers.
-        """
-        try:
-            self.set_mcp_sampling_model(model)
-        except exceptions.UserError:
-            if model is not None:
-                raise
-
-        async with self:
-            yield
 
 
 def _merge_retries_with_spec(
@@ -2881,9 +2739,7 @@ def _merge_retries_with_spec(
 ) -> AgentRetries | None:
     """Merge an explicit `retries=` value with the retry fields on an `AgentSpec`.
 
-    Explicit kwarg keys win over spec keys. The spec's canonical `retries` field contributes
-    both budgets, while deprecated `tool_retries` / `output_retries` fields remain as
-    compatibility shims for any category not already set via canonical `retries`.
+    Explicit kwarg keys win over spec keys.
     """
     merged = _retry_overrides_from_spec(spec)
     merged.update(_normalize_agent_retry_overrides(explicit))
@@ -2893,35 +2749,18 @@ def _merge_retries_with_spec(
 
 
 def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
-    """Return retry fields explicitly configured on an `AgentSpec`.
-
-    Canonical `retries` takes precedence over deprecated `tool_retries` / `output_retries`
-    when both are set on the same spec — the deprecated fields only fill in categories
-    not provided by `retries`.
-    """
-    retries: AgentRetries = _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
-    if 'tool_retries' in spec.model_fields_set and spec.tool_retries is not None and 'tools' not in retries:
-        retries['tools'] = spec.tool_retries
-    if 'output_retries' in spec.model_fields_set and spec.output_retries is not None and 'output' not in retries:
-        retries['output'] = spec.output_retries
-    return retries
+    """Return retry fields explicitly configured on an `AgentSpec`."""
+    return _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'description',
     'end_strategy',
     'tool_timeout',
-    'instrument',
     'output_schema',
     'deps_schema',
 )
-"""AgentSpec fields that are not supported at run/override time.
-
-`tool_retries` is intentionally excluded: its run/override-time handling is covered by
-`_retry_overrides_from_spec` and the explicit `'tools' in retry_overrides` check in
-`_resolve_spec`, so listing it here would emit a duplicate `UserWarning` on top of the
-`PydanticAIDeprecationWarning` raised by `AgentSpec._warn_retry_field_deprecations`.
-"""
+"""AgentSpec fields that are not supported at run/override time."""
 
 _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     ToolSearchCap,
@@ -2966,6 +2805,31 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
         explicit_ids.add(cap.id)
     return explicit_ids
+
+
+def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, source: str) -> None:
+    """Reject native tools that share a `unique_id` but carry conflicting definitions.
+
+    Native tools are keyed by `unique_id` when request parameters are deduplicated (see
+    `Model.prepare_request`). That dedup is intentionally last-wins *across* layers, so a run-level
+    native tool can override an agent-level default with the same id. *Within* a single layer,
+    though, two different tools sharing an id are ambiguous: the silent last-wins would bind a
+    stable id (e.g. an `MCPServerTool` id) to an unexpected definition such as a different server
+    URL or authorization token. Fail fast here instead. Identical duplicates are allowed and
+    collapsed later.
+
+    `NativeToolFunc` callables are skipped: they have no stable `unique_id` to key on.
+    """
+    seen: dict[str, AbstractNativeTool] = {}
+    for tool in native_tools:
+        if not isinstance(tool, AbstractNativeTool):
+            continue
+        existing = seen.setdefault(tool.unique_id, tool)
+        if existing is not tool and existing != tool:
+            raise exceptions.UserError(
+                f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
+                'Native tool ids must be unique within a capability layer.'
+            )
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
@@ -3045,7 +2909,6 @@ def _capabilities_from_spec(
                 label='capability',
                 custom_types_param='custom_capability_types',
                 instantiate=_instantiate_cap,
-                legacy_aliases=_agent_spec.LEGACY_CAPABILITY_NAMES,
             )
             capabilities.append(capability)
         return capabilities

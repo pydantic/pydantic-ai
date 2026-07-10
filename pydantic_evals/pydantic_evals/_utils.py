@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -79,13 +79,34 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def run_until_complete(coro: Awaitable[T]) -> T:
+    """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
+
+    If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
+    `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
+    `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
+    *our own* task and drive its cleanup to completion before re-raising, without touching any
+    other tasks on the (caller-owned) loop.
+    """
+    loop = get_event_loop()
+    task = asyncio.ensure_future(coro, loop=loop)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                loop.run_until_complete(task)
+        raise
 
 
 async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:

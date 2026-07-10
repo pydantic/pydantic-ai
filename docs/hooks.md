@@ -17,7 +17,7 @@ hooks = Hooks()
 
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages to the model')
     #> Sending 1 messages to the model
     return request_context
@@ -58,7 +58,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 
 
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages to the model')
     #> Sending 1 messages to the model
     return request_context
@@ -233,7 +233,7 @@ hooks = Hooks()
 
 @hooks.on.deferred_tool_calls
 async def auto_approve(
-    ctx: RunContext[None], *, requests: DeferredToolRequests
+    ctx: RunContext, *, requests: DeferredToolRequests
 ) -> DeferredToolResults:
     return requests.build_results(approve_all=True)
 
@@ -266,7 +266,7 @@ event_count = 0
 
 
 @hooks.on.event
-async def count_events(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent:
+async def count_events(ctx: RunContext, event: AgentStreamEvent) -> AgentStreamEvent:
     global event_count
     event_count += 1
     return event
@@ -290,7 +290,7 @@ call_log: list[str] = []
 
 @hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_dangerous_tools(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
@@ -330,7 +330,7 @@ hooks = Hooks()
 
 @hooks.on.before_model_request(timeout=0.01)
 async def slow_hook(
-    ctx: RunContext[None], request_context: ModelRequestContext
+    ctx: RunContext, request_context: ModelRequestContext
 ) -> ModelRequestContext:
     await asyncio.sleep(10)  # Will be interrupted by timeout
     return request_context  # pragma: no cover
@@ -361,7 +361,7 @@ wrap_log: list[str] = []
 
 @hooks.on.model_request
 async def log_request(
-    ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ctx: RunContext, *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
 ) -> ModelResponse:
     wrap_log.append('before')
     response = await handler(request_context)
@@ -437,7 +437,7 @@ hooks = Hooks()
 
 @hooks.on.after_model_request
 async def check_response(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     request_context: ModelRequestContext,
     response: ModelResponse,

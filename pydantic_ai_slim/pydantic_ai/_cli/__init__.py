@@ -11,7 +11,7 @@ from typing import Any
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, usage as _usage
+from .. import __version__, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
@@ -136,9 +136,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai-chat:gpt-5'
-) -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
@@ -281,7 +279,7 @@ def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
     """Handle the chat command."""
-    agent: Agent[None, str] = cli_agent
+    agent: Agent[object, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)
         if loaded is None:
@@ -338,6 +336,7 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
@@ -367,7 +366,16 @@ async def run_chat(
         else:
             try:
                 messages = await ask_agent(
-                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                    agent,
+                    text,
+                    stream,
+                    console,
+                    code_theme,
+                    deps=deps,
+                    messages=messages,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
                 )
             except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
@@ -386,6 +394,7 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: Sequence[ModelMessage] | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
 ) -> list[ModelMessage]:
@@ -393,14 +402,26 @@ async def ask_agent(
 
     if not stream:
         with status:
-            result = await agent.run(prompt, message_history=messages, deps=deps)
+            result = await agent.run(
+                prompt,
+                message_history=messages,
+                deps=deps,
+                model=model,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
         return result.all_messages()
 
     with status, ExitStack() as stack:
         async with agent.iter(
-            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+            prompt,
+            message_history=messages,
+            deps=deps,
+            model=model,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:

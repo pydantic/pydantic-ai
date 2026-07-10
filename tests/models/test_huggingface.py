@@ -42,7 +42,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -855,8 +855,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(model)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
@@ -1011,6 +1010,62 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
+async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+    model = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(api_key='x'),
+    )
+    agent = Agent(model)
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=['here', DocumentUrl(url='url')],
+                    tool_call_id='call_1',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
+        await agent.run('continue', message_history=messages)
+
+
+async def test_image_tool_return_is_forwarded_as_user_message():
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='x'))
+    model_request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/image.png'),
+                tool_call_id='call_1',
+            )
+        ]
+    )
+
+    mapped_messages = [
+        {k: v for k, v in asdict(mapped_message).items() if v is not None}
+        async for mapped_message in model._map_user_message(model_request)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                ],
+            },
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
@@ -1103,9 +1158,10 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     agent = Agent(m)
 
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(
