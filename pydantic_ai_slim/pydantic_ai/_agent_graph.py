@@ -1283,23 +1283,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # We generally prioritize at least executing tool calls if they are present.
                     # This accounts for cases like Anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
-                    # The exception is `end_strategy='early'`: if the response also carries a valid output
-                    # (native/prompted/text structured output, or an image), that output is already the final
-                    # result, so we skip the co-emitted function tools and end the run — matching the way
-                    # `end_strategy='early'` skips function tools once an output tool call succeeds.
+                    # The exception is `end_strategy='early'`: if the response also carries a valid non-tool
+                    # output (native/prompted/text structured output, or an image) alongside plain function
+                    # tool calls, that output is already the final result, so `_handle_tool_calls` skips those
+                    # tools and ends the run — matching the way `'early'` skips function tools once an output
+                    # tool call succeeds. (Output and deferred tool calls are always executed so their results
+                    # aren't dropped.)
                     alternatives: list[str] = []
                     if tool_calls:
-                        if (
-                            ctx.deps.end_strategy == 'early'
-                            and (final_result := await self._process_response_output(ctx, text, files, output_schema))
-                            is not None
-                        ):
-                            # Record the tool calls as skipped so the message history has no dangling calls.
-                            # Skipped tools emit no events, so the loop body isn't reached here.
-                            async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
-                                yield event  # pragma: no cover
-                            return
-                        async for event in self._handle_tool_calls(ctx, tool_calls):
+                        response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
+                        async for event in self._handle_tool_calls(ctx, tool_calls, response_output):
                             yield event
                         return
                     elif output_schema.toolset:
@@ -1346,7 +1339,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
-        final_result: result.FinalResult[NodeRunEndT] | None = None,
+        response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1358,11 +1351,23 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries
+        # a valid non-tool output (native/prompted/text output, or an image) and every co-emitted tool call is
+        # a plain function tool, that output is the final result and the tools are recorded as skipped. Output
+        # and deferred (external/unapproved) tool calls are excluded so their results aren't dropped.
+        final_result: result.FinalResult[NodeRunEndT] | None = None
+        if response_output is not None and all(
+            (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
+            for call in tool_calls
+        ):
+            text, files = response_output
+            final_result = await self._process_response_output(ctx, text, files, ctx.deps.output_schema)
+
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
-            # When `final_result` is passed in (native/prompted/text or image output already won under
+            # When `final_result` is set (native/prompted/text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
             async for event in process_tool_calls(
@@ -1414,16 +1419,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         Used under `end_strategy='early'` to decide whether a response that also contains function tool
         calls already carries a final result. Images take precedence over text, matching the order the
         no-tool-calls path handles them in. Returns `None` when the response has no usable output — e.g.
-        prompted text that doesn't validate against the output schema — so the caller runs the tool calls.
+        prompted text or an image that doesn't validate against the output schema — so the caller runs the
+        tool calls.
         """
-        if output_schema.allows_image:
-            if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
-                return await self._process_image_response(ctx, image)
-        if (text_processor := output_schema.text_processor) and text:
-            try:
+        try:
+            if output_schema.allows_image:
+                if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                    return await self._process_image_response(ctx, image)
+            if (text_processor := output_schema.text_processor) and text:
                 return await self._process_text_response(ctx, text, text_processor)
-            except ToolRetryError:
-                return None
+        except ToolRetryError:
+            return None
         return None
 
     async def _handle_text_response(

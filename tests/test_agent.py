@@ -4590,6 +4590,94 @@ class TestMultipleToolCalls:
         assert result.output == OutputType(value='after tool')
         assert tool_called == ['regular_tool']
 
+    def test_early_strategy_does_not_preempt_output_tool_calls(self):
+        """Under 'early', plain text output must not preempt a co-emitted output tool call: the output tool
+        (not the text) produces the final result, so a mixed `[str, ToolOutput(...)]` schema behaves as before."""
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='plain text answer'),
+                        ToolCallPart('final_output', {'value': 'from tool'}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[str, ToolOutput(OutputType, name='final_output')],
+            end_strategy='early',
+        )
+
+        result = agent.run_sync('test early does not preempt output tool')
+
+        assert result.output == OutputType(value='from tool')
+
+    def test_early_strategy_does_not_preempt_deferred_tool_calls(self):
+        """Under 'early', plain text output must not preempt a co-emitted deferred (external) tool call:
+        the deferred call is still surfaced as `DeferredToolRequests` rather than being silently dropped."""
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='plain text answer'),
+                        ToolCallPart('external_tool', {}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[str, DeferredToolRequests],
+            toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='external_tool', kind='external')])],
+            end_strategy='early',
+        )
+
+        result = agent.run_sync('test early does not preempt deferred tool')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_name for call in result.output.calls] == ['external_tool']
+
+    def test_early_strategy_falls_back_to_tools_when_image_output_is_invalid(self):
+        """Under 'early', an image that fails output validation isn't a final result, so the co-emitted
+        function tool runs — mirroring the invalid-text fallback rather than consuming an output retry."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        FilePart(content=BinaryImage(data=b'bad', media_type='image/png')),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'good', media_type='image/png'))])
+
+        agent = Agent(
+            FunctionModel(return_model, profile=ModelProfile(supports_image_output=True)),
+            output_type=BinaryImage,
+            end_strategy='early',
+        )
+
+        @agent.output_validator
+        def reject_bad_image(image: BinaryImage) -> BinaryImage:
+            if image.data == b'bad':
+                raise ModelRetry('image rejected')
+            return image
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early invalid image')
+
+        assert isinstance(result.output, BinaryImage)
+        assert result.output.data == b'good'
+        assert tool_called == ['regular_tool']
+
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
