@@ -25,7 +25,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import cli, cli_agent, handle_slash_command, pai_cli_exit
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -46,6 +46,20 @@ def reset_sniffio_cvar() -> Iterator[None]:
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
+
+
+def test_cli_pai_prog_name(capfd: CaptureFixture[str]):
+    # The legacy `pai` command should report itself as `pai`, not `clai`.
+    assert cli(['--version'], prog_name='pai') == 0
+    assert capfd.readouterr().out.startswith('pai - Pydantic AI CLI')
+
+
+def test_pai_cli_exit_uses_pai_prog_name(mocker: MockerFixture):
+    # The `pai` entry point passes its own program name through to argparse.
+    mock_cli = mocker.patch('pydantic_ai._cli.cli', return_value=0)
+    with pytest.raises(SystemExit):
+        pai_cli_exit()
+    mock_cli.assert_called_once_with(prog_name='pai')
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
