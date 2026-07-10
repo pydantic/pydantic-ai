@@ -48,13 +48,19 @@ except ImportError:  # pragma: no cover
         return None
 
 
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         return asyncio.get_running_loop()
     except RuntimeError:
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-        return event_loop
+        pass
+    global _event_loop
+    if _event_loop is None or _event_loop.is_closed():
+        _event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_event_loop)
+    return _event_loop
 
 
 _T = TypeVar('_T')

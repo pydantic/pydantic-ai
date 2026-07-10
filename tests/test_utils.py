@@ -30,6 +30,7 @@ from pydantic_ai._utils import (
     using_thread_executor,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_graph._utils import get_event_loop, run_until_complete
 
 from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
@@ -203,7 +204,7 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         finally:
             cleaned.append('cleaned')
 
-    loop = utils_module.get_event_loop()
+    loop = get_event_loop()
 
     # An unrelated task on the (caller-owned) loop that must survive: the reporter's `all_tasks()`
     # sledgehammer would cancel this, ours must not.
@@ -230,7 +231,7 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
-            utils_module.run_until_complete(coro())
+            run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
     assert not bystander_task.cancelled()  # the unrelated task was left alone

@@ -79,13 +79,19 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-    return event_loop
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    global _event_loop
+    if _event_loop is None or _event_loop.is_closed():
+        _event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_event_loop)
+    return _event_loop
 
 
 def run_until_complete(coro: Awaitable[T]) -> T:

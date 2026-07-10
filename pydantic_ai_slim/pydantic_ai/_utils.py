@@ -806,15 +806,6 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_event_loop() -> asyncio.AbstractEventLoop:
-    try:
-        return asyncio.get_running_loop()
-    except RuntimeError:  # pragma: lax no cover
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-        return event_loop
-
-
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
