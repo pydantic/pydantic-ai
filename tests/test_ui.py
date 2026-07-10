@@ -1582,7 +1582,11 @@ def test_sanitize_messages_drops_response_left_empty_after_stripping():
 
 
 def test_sanitize_messages_drops_empty_response():
-    """A `ModelResponse` that arrives with no parts is dropped, not kept as `parts=[]`."""
+    """A `ModelResponse` that arrives with no parts is dropped, not kept as `parts=[]`.
+
+    Not a VCR test: `sanitize_messages` runs locally before any request is sent, so a
+    recorded cassette can't exercise or protect this behavior.
+    """
     adapter = _make_dummy_adapter(
         [
             ModelRequest(parts=[UserPromptPart(content='Run it')]),
