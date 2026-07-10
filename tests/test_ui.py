@@ -1581,6 +1581,23 @@ def test_sanitize_messages_drops_response_left_empty_after_stripping():
     assert isinstance(sanitized[0], ModelRequest)
 
 
+def test_sanitize_messages_drops_empty_response():
+    """A `ModelResponse` that arrives with no parts is dropped, not kept as `parts=[]`."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(parts=[]),
+        ]
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert len(sanitized) == 1
+    assert isinstance(sanitized[0], ModelRequest)
+
+
 def test_sanitize_messages_strips_dangling_native_tool_calls():
     """Builtin tool calls are also model-emitted, so a dangling `NativeToolCallPart` at
     the end of client-supplied history is treated the same as a `ToolCallPart`.
