@@ -630,6 +630,57 @@ def test_bedrock_qwen_qwq():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm():
+    """Z.AI GLM via Bedrock: upstream `zai_model_profile` (thinking) + Bedrock tool/output overrides."""
+    profile = BedrockProvider.model_profile('zai.glm-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'zai_supports_reasoning_effort': False,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_moonshotai_kimi():
+    """Moonshot AI Kimi via Bedrock (both `moonshot.` and `moonshotai.` prefixes share one profile)."""
+    profile = BedrockProvider.model_profile('moonshotai.kimi-k2.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_writer_palmyra():
+    """Writer Palmyra via Bedrock — no upstream profile; isolates `toolResult` in its own turn."""
+    profile = BedrockProvider.model_profile('writer.palmyra-x4-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_tool_result_status': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_unknown_provider_returns_none():
     """Bedrock model IDs from an unknown provider prefix → `None`."""
     assert BedrockProvider.model_profile('unknown.foo-v1:0') is None
@@ -1243,7 +1294,11 @@ def test_alibaba_qwen():
 
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
@@ -1253,7 +1308,11 @@ def test_alibaba_qwen_audio():
 
     profile = AlibabaProvider.model_profile('qwen3-audio-0809-online')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 

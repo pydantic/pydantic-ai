@@ -93,7 +93,7 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution', 'optional': False},
+                {'kind': 'code_execution', 'optional': False, 'files': None},
                 {
                     'kind': 'web_fetch',
                     'optional': False,
