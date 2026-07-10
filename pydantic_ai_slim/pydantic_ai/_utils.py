@@ -551,10 +551,7 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
             except Exception:
                 show = True
         elif f.default_factory is not MISSING:
-            try:
-                show = bool(val != f.default_factory())
-            except Exception:
-                show = True
+            show = True
         else:
             show = True
         if show:

@@ -1795,12 +1795,15 @@ def test_repr_handles_non_bool_ne_value():
     """repr() must not raise when a required field holds a value whose __ne__ returns a non-bool.
 
     This tests the `dataclasses_no_defaults_repr` helper in `_utils.py`, not a VCR
-    test because it pins internal event-loop acquisition behavior with no model I/O.
+    test because it uses only in-memory values and performs no model I/O.
     """
 
     class NonBoolLike:
         def __ne__(self, other: object) -> 'NonBoolLike':
             return NonBoolLike()
+
+        def __bool__(self) -> bool:
+            raise TypeError('cannot convert NonBoolLike to bool')
 
     part = ToolReturnPart(
         tool_name='get_array',
