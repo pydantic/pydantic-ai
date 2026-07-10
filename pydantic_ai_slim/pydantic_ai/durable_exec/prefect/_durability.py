@@ -310,7 +310,9 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Prefect-wrapped versions."""
-        if not self._prefect_toolsets_by_id:
+        if not self._prefect_toolsets_by_id:  # pragma: no cover
+            # An agent always has its built-in `<agent>` `FunctionToolset`, which is registered
+            # here, so this is never empty at run time; the guard mirrors DBOS/Temporal for parity.
             return None
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:

@@ -39,7 +39,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Instrumentation, Toolset
+from pydantic_ai.capabilities import Instrumentation, ProcessEventStream, Toolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1574,9 +1574,9 @@ async def test_disabled_tool():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):
-        for part in msg.parts:
-            if isinstance(part, UserPromptPart):
+    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
+        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
+            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -1658,6 +1658,11 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
     assert resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': None}) is False
     assert resolve_tool_task_config(tool, 'fn_tool', {}) == {}
 
+    # Metadata present but without a `'prefect'` key: falls through to the by-name fallback.
+    tool.tool_def.metadata = {'other': 'x'}
+    assert resolve_tool_task_config(tool, 'fn_tool', {'fn_tool': None}) is False
+    assert resolve_tool_task_config(tool, 'fn_tool', {}) == {}
+
     # Invalid metadata (e.g. a string from a misuse like `metadata={'prefect': '5s'}`)
     # raises `UserError` instead of silently passing the wrong shape to Prefect.
     tool.tool_def.metadata = {'prefect': '5s'}
@@ -1725,3 +1730,182 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
     agent = Agent(TestModel(), name=f'durability_reject_{kind}', capabilities=[PrefectDurability()])
     with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
+
+
+def test_prefect_durability_auto_wraps_run_sync_as_flow() -> None:
+    """`agent.run_sync` outside an active flow auto-wraps in one."""
+    agent = Agent(_durability_fn_model, name='durability_auto_sync', capabilities=[PrefectDurability()])
+
+    result = agent.run_sync('Sync auto-wrapped')
+    assert result.output == 'Echo: Sync auto-wrapped'
+
+
+async def test_prefect_durability_outside_flow() -> None:
+    """PrefectDurability is transparent outside a Prefect flow.
+
+    `agent.run` and `agent.run_sync` auto-wrap into a flow, so to exercise the truly
+    transparent path we go through `iter`, which stays as plain code outside any flow.
+    """
+    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[PrefectDurability()])
+
+    async with agent.iter('Hello outside') as run:
+        async for _ in run:
+            pass
+    assert run.result is not None
+    assert run.result.output == 'Echo: Hello outside'
+
+
+def test_prefect_durability_requires_agent_name() -> None:
+    """PrefectDurability raises UserError when the agent has no name."""
+    with pytest.raises(UserError, match='unique `name`'):
+        Agent(_durability_fn_model, capabilities=[PrefectDurability()])
+
+
+def test_prefect_durability_requires_concrete_model() -> None:
+    """PrefectDurability raises UserError when the agent has no concrete model."""
+    with pytest.raises(UserError, match='concrete `model`'):
+        Agent('openai:gpt-4o', name='needs_concrete', defer_model_check=True, capabilities=[PrefectDurability()])
+
+
+def test_prefect_durability_get_ordering() -> None:
+    """PrefectDurability declares innermost ordering."""
+    from pydantic_ai.capabilities.abstract import CapabilityOrdering
+
+    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost')
+
+
+def test_prefect_durability_get_serialization_name() -> None:
+    """PrefectDurability is not spec-serializable."""
+    assert PrefectDurability.get_serialization_name() is None
+
+
+async def test_prefect_durability_passes_through_non_wrappable_leaf() -> None:
+    """Leaf toolsets that aren't function/MCP toolsets are left as-is, not Prefect-wrapped.
+
+    `ExternalToolset` doesn't perform I/O of its own, so it isn't wrapped in a task and
+    isn't registered for run-time swapping. Running the agent exercises the run-time swap's
+    pass-through for such an unregistered leaf.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_external',
+        toolsets=[ExternalToolset([ToolDefinition(name='ext_tool')], id='ext')],
+        capabilities=[PrefectDurability()],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert 'ext' not in bound._prefect_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+    result = await agent.run('Hello external')
+    assert result.output == 'Echo: Hello external'
+
+
+async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
+        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
+            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+                yield f'Echo: {part.content}'
+                return
+    yield 'no prompt'  # pragma: no cover
+
+
+async def test_prefect_durability_streaming_in_flow() -> None:
+    """PrefectDurability routes streaming requests through Prefect tasks when a handler is set."""
+    events_received: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_durability_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_streaming',
+        capabilities=[PrefectDurability(event_stream_handler=handler)],
+    )
+
+    @flow
+    async def run_durable_streaming_agent() -> str:
+        result = await agent.run('Hello streaming')
+        return result.output
+
+    output = await run_durable_streaming_agent()
+    assert output == 'Echo: Hello streaming'
+    # The construction-time handler fired inside the streaming task.
+    assert events_received
+
+
+async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Stream'
+    yield 'ed '
+    yield 'response'
+
+
+async def test_prefect_durability_process_event_stream_fires_live_inside_task() -> None:
+    """`ProcessEventStream` (outer capability) sees live events emitted inside a Prefect task.
+
+    With in-task chain firing, the capability's handler runs against the real streamed
+    response, so multiple `PartDeltaEvent`s come through (one per chunk). If the chain fired
+    on the replayed stream outside the task instead, it would see a single synthetic delta
+    with the full text.
+    """
+    events_received: list[AgentStreamEvent] = []
+
+    async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_process_stream',
+        capabilities=[ProcessEventStream(collect), PrefectDurability()],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Streamed response'
+
+    delta_events = [
+        e.delta.content_delta
+        for e in events_received
+        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    # 'Stream' becomes the PartStartEvent's text; the subsequent chunks are deltas. Synthetic
+    # replay of the final response would collapse everything into a single delta.
+    assert delta_events == ['ed ', 'response']
+
+
+async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
+    """A per-run `event_stream_handler` passed to `agent.run()` inside a flow receives events.
+
+    The buffered replay preserves real granular deltas — the per-run handler sees the same
+    multi-chunk stream the construction-time handler would see.
+    """
+    events_received: list[AgentStreamEvent] = []
+
+    async def runtime_collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
+    agent = Agent(stream_model, name='durability_runtime_handler', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello', event_stream_handler=runtime_collect)
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Streamed response'
+
+    delta_events = [
+        e.delta.content_delta
+        for e in events_received
+        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    assert delta_events == ['ed ', 'response']
