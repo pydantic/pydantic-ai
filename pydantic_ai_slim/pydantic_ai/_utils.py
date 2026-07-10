@@ -540,9 +540,19 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
     """Exclude fields with values equal to the field default."""
-    kv_pairs = (
-        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
-    )
+
+    def _show(f: Any) -> bool:
+        if not f.repr:
+            return False
+        try:
+            return bool(getattr(self, f.name) != f.default)
+        except Exception:
+            # A value whose `!=` doesn't return a plain bool (e.g. a numpy array, whose elementwise
+            # comparison has an ambiguous truth value) would otherwise make `repr()` raise. Fall back
+            # to showing the field so `repr()` never crashes.
+            return True
+
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if _show(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 

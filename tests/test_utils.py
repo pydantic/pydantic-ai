@@ -10,6 +10,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from importlib.metadata import distributions
 from typing import Any
 
@@ -21,6 +22,7 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -28,6 +30,7 @@ from pydantic_ai._utils import (
     strip_markdown_fences,
     using_thread_executor,
 )
+from pydantic_ai.messages import ToolReturnPart
 
 from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
@@ -923,3 +926,43 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """`repr()` must not raise when a field holds a value whose `!=` doesn't return a plain bool.
+
+    Numpy arrays / pandas Series are the real-world triggers (their `!=` is elementwise and the
+    resulting truth value is ambiguous); a pure-Python stand-in reproduces the same crash without
+    the dependency. `dataclasses_no_defaults_repr` is `__repr__` on many public message dataclasses
+    (e.g. `ToolReturnPart`), so any such value used to make `repr()`/`print(result.all_messages())`
+    raise instead of returning a string.
+    """
+
+    class ArrayLike:
+        """A value whose `!=` returns a non-bool with an ambiguous (raising) truth value."""
+
+        def __ne__(self, other: object) -> Any:
+            class _Ambiguous:
+                def __bool__(self) -> bool:
+                    raise ValueError('The truth value of an array with more than one element is ambiguous.')
+
+            return _Ambiguous()
+
+        def __repr__(self) -> str:
+            return 'ArrayLike()'
+
+    # Required field (`content`) — previously compared against the `MISSING` sentinel and crashed.
+    part = ToolReturnPart(tool_name='t', content=ArrayLike())
+    part_repr = repr(part)
+    assert isinstance(part_repr, str)
+    assert 'content=ArrayLike()' in part_repr
+
+    # Field with a default — exercises the comparison fallback so a non-bool `!=` can't blow up.
+    @dataclass
+    class HasDefault:
+        value: Any = None
+        __repr__ = dataclasses_no_defaults_repr
+
+    obj_repr = repr(HasDefault(value=ArrayLike()))
+    assert isinstance(obj_repr, str)
+    assert 'value=ArrayLike()' in obj_repr
