@@ -885,6 +885,7 @@ class _FakeRealtimeModel(RealtimeModel):
             supports_interruption=True,
             supports_output_truncation=True,
             supports_session_seeding=True,
+            supported_native_tools=frozenset(),
         )
 
     @asynccontextmanager
