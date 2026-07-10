@@ -117,6 +117,8 @@ Three strategies (set on the agent, e.g. `Agent(..., end_strategy='exhaustive')`
 
 Retry-wins (under `'graceful'` / `'exhaustive'`): if a function tool raises `ModelRetry` (or its args fail validation) in the same response as a successful output, the output result is suppressed so the model addresses the retry next round. Does not apply under `'early'`, nor when streaming (`run_stream` commits the first matching output immediately, behaving like `'early'`).
 
+Non-tool output (`NativeOutput`, `PromptedOutput`, plain text, or image output): the final result comes from the text/image the model returns, not an output tool. Some models (e.g. Claude on Bedrock) occasionally return such an output *and* a function tool call in one response. Under `'early'` that output ends the run and the function tools are skipped; under `'graceful'` / `'exhaustive'` the function tools run and the run continues. So with `output_type=str` and `end_strategy='early'`, the first string the model returns is the output even if it also called a tool.
+
 To run a whole run's tools serially, use `with agent.parallel_tool_call_execution_mode('sequential'):` or set `parallel_tool_calls=False` on model settings.
 
 See [Parallel Output Tool Calls](https://ai.pydantic.dev/output/#parallel-output-tool-calls) and [tools-advanced docs](https://ai.pydantic.dev/tools-advanced/#parallel-tool-calls-concurrency).

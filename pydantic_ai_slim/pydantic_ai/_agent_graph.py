@@ -69,11 +69,17 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
-"""How to handle tool calls a model requests alongside an output tool that produces a final result.
+"""How to handle function tool calls a model requests alongside a result that ends the run.
+
+The final result usually comes from an output tool call, but with
+[`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
+plain text, or image output it comes from the text or image the model returns in the same response.
 
 - `'early'`: Output tools run in the order the model emitted them and the run ends at the first one
   that succeeds; function tools are not executed. If every output tool fails, function tools run so
-  the model can correct on the next round.
+  the model can correct on the next round. Likewise, if the response contains a valid non-tool output
+  (structured output text, plain text, or an image) alongside function tool calls, that output ends the
+  run and the function tools are skipped.
 - `'graceful'` (default): Tools run in the order the model emitted them — function tools that precede
   an output tool complete before it. Output tools run in order and the first success wins; subsequent
   output tools are skipped (their side effects don't run). If a function tool raises
@@ -84,6 +90,10 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] suppresses the output result. Use `sequential=True`
   on a tool (including via [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that
   doesn't overlap with others.
+
+Under `'graceful'` and `'exhaustive'`, a non-tool output (structured output text, plain text, or an
+image) returned alongside function tool calls does *not* end the run early: the function tools run and
+the run continues, so their results can inform the model's eventual output. Only `'early'` skips them.
 
 The default changed from `'early'` to `'graceful'` in v2. Set `end_strategy='early'` to keep the v1
 behavior where the run ends the instant an output tool succeeds.
@@ -1270,12 +1280,25 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text = compaction_text
 
                 try:
-                    # At the moment, we prioritize at least executing tool calls if they are present.
-                    # In the future, we'd consider making this configurable at the agent or run level.
-                    # This accounts for cases like anthropic returns that might contain a text response
+                    # We generally prioritize at least executing tool calls if they are present.
+                    # This accounts for cases like Anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
+                    # The exception is `end_strategy='early'`: if the response also carries a valid output
+                    # (native/prompted/text structured output, or an image), that output is already the final
+                    # result, so we skip the co-emitted function tools and end the run — matching the way
+                    # `end_strategy='early'` skips function tools once an output tool call succeeds.
                     alternatives: list[str] = []
                     if tool_calls:
+                        if (
+                            ctx.deps.end_strategy == 'early'
+                            and (final_result := await self._process_response_output(ctx, text, files, output_schema))
+                            is not None
+                        ):
+                            # Record the tool calls as skipped so the message history has no dangling calls.
+                            # Skipped tools emit no events, so the loop body isn't reached here.
+                            async for event in self._handle_tool_calls(ctx, tool_calls, final_result):
+                                yield event  # pragma: no cover
+                            return
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
                         return
@@ -1323,6 +1346,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
+        final_result: result.FinalResult[NodeRunEndT] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1338,12 +1362,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
+            # When `final_result` is passed in (native/prompted/text or image output already won under
+            # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
+            # executing them.
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
-                final_result=None,
+                final_result=final_result,
                 ctx=ctx,
                 output_parts=output_parts,
                 output_final_result=output_final_result,
@@ -1375,12 +1402,44 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
 
+    async def _process_response_output(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        files: list[_messages.BinaryContent],
+        output_schema: _output.OutputSchema[NodeRunEndT],
+    ) -> result.FinalResult[NodeRunEndT] | None:
+        """Build the response's non-tool output result (an image, or native/prompted/text output), or `None`.
+
+        Used under `end_strategy='early'` to decide whether a response that also contains function tool
+        calls already carries a final result. Images take precedence over text, matching the order the
+        no-tool-calls path handles them in. Returns `None` when the response has no usable output — e.g.
+        prompted text that doesn't validate against the output schema — so the caller runs the tool calls.
+        """
+        if output_schema.allows_image:
+            if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                return await self._process_image_response(ctx, image)
+        if (text_processor := output_schema.text_processor) and text:
+            try:
+                return await self._process_text_response(ctx, text, text_processor)
+            except ToolRetryError:
+                return None
+        return None
+
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        return self._handle_final_result(ctx, await self._process_text_response(ctx, text, text_processor), [])
+
+    async def _process_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
 
@@ -1393,13 +1452,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     async def _handle_image_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        return self._handle_final_result(ctx, await self._process_image_response(ctx, image), [])
+
+    async def _process_image_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        image: _messages.BinaryImage,
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
         result_data = await _output.run_image_process_hooks(
@@ -1410,7 +1476,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     def _handle_final_result(
         self,

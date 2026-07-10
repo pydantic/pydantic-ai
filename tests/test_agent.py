@@ -4434,6 +4434,162 @@ class TestMultipleToolCalls:
             ]
         )
 
+    @pytest.mark.parametrize('output_mode', ['native', 'prompted'])
+    def test_early_strategy_prefers_structured_text_output_over_tool_calls(self, output_mode: str):
+        """Under 'early', valid native/prompted output text in the same response as function tool calls is
+        the final result, so the function tools are skipped and the run ends.
+
+        A `FunctionModel` is used because it's the only way to reliably construct the response shape
+        (structured output text co-emitted with a function tool call) that motivated this behavior; real
+        models produce it only occasionally, e.g. Claude on Bedrock (see #6277).
+        """
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{"value": "final"}'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])  # pragma: no cover
+
+        output_type = NativeOutput(OutputType) if output_mode == 'native' else PromptedOutput(OutputType)
+        agent = Agent(FunctionModel(return_model), output_type=output_type, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early structured output')
+
+        assert result.output == OutputType(value='final')
+        assert tool_called == []
+        # The skipped tool call is recorded so the message history has no dangling tool call.
+        messages = result.all_messages()
+        assert isinstance(messages[-1], ModelRequest)
+        skipped = messages[-1].parts[0]
+        assert isinstance(skipped, ToolReturnPart)
+        assert skipped.tool_name == 'regular_tool'
+        assert skipped.content == 'Tool not executed - a final result was already processed.'
+
+    def test_early_strategy_falls_back_to_tools_when_output_text_is_invalid(self):
+        """Under 'early', text that doesn't validate as the output type isn't a final result, so the
+        co-emitted function tool still runs (prompted output is the realistic route to invalid text)."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='let me look that up'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])
+
+        agent = Agent(FunctionModel(return_model), output_type=PromptedOutput(OutputType), end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early fallback')
+
+        assert result.output == OutputType(value='after tool')
+        assert tool_called == ['regular_tool']
+
+    def test_early_strategy_prefers_image_output_over_tool_calls(self):
+        """Under 'early', an image output in the same response as function tool calls is the final result,
+        so the function tools are skipped and the run ends."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        FilePart(content=BinaryImage(data=b'image', media_type='image/png')),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(  # pragma: no cover
+                parts=[FilePart(content=BinaryImage(data=b'after', media_type='image/png'))]
+            )
+
+        agent = Agent(
+            FunctionModel(return_model, profile=ModelProfile(supports_image_output=True)),
+            output_type=BinaryImage,
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early image output')
+
+        assert isinstance(result.output, BinaryImage)
+        assert result.output.data == b'image'
+        assert tool_called == []
+
+    def test_early_strategy_runs_tools_when_image_output_absent(self):
+        """Under 'early' with image output, a response with only a function tool call (no image) has no
+        final result yet, so the tool runs and the run continues until an image is returned."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('regular_tool', {'x': 1})])
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'image', media_type='image/png'))])
+
+        agent = Agent(
+            FunctionModel(return_model, profile=ModelProfile(supports_image_output=True)),
+            output_type=BinaryImage,
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early image absent')
+
+        assert isinstance(result.output, BinaryImage)
+        assert result.output.data == b'image'
+        assert tool_called == ['regular_tool']
+
+    def test_non_early_strategy_runs_tools_alongside_structured_text_output(self):
+        """The early-output behavior is 'early'-only: under the default 'graceful' strategy the co-emitted
+        function tools still run and the run continues, so their results can inform the eventual output."""
+        tool_called: list[str] = []
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{"value": "final"}'),
+                        ToolCallPart('regular_tool', {'x': 1}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])
+
+        agent = Agent(FunctionModel(return_model), output_type=NativeOutput(OutputType), end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test graceful structured output')
+
+        assert result.output == OutputType(value='after tool')
+        assert tool_called == ['regular_tool']
+
     def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []

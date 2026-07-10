@@ -383,6 +383,11 @@ Choose `'exhaustive'` to run every tool, including additional output tools whose
 
 When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
 
+!!! note "Non-tool output alongside tool calls"
+    With [Native Output](#native-output), [Prompted Output](#prompted-output), plain text, or [image output](#image-output), the final result comes from the text or image the model returns rather than an output tool call. Some models (e.g. Claude on Amazon Bedrock) occasionally return such an output *and* a function tool call in the same response. Under `'early'`, that output ends the run and the function tools are skipped, just like a successful output tool. Under `'graceful'` and `'exhaustive'`, the function tools run and the run continues, so their results can inform the model's eventual output.
+
+    Because this output is the model's own text, `'early'` treats the first valid one it returns as final. For example, with `output_type=str` and `end_strategy='early'`, the first string the model returns is the output, even if it also requested a tool call.
+
 ##### Retrying after a tool failure
 
 Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool-calls), function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls), where the first matching output is committed immediately.
