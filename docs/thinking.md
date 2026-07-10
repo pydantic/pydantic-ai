@@ -307,7 +307,7 @@ agent = Agent(model, model_settings=settings)
 
 The `magistral` family always reasons and does not need to be specifically enabled; `thinking=False` is silently ignored.
 
-Models with adjustable reasoning (`mistral-small-latest`, `mistral-medium-latest`, and their versioned `mistral-small-4*` / `mistral-medium-3-5*` names) are controlled via the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting, which maps to Mistral's `reasoning_effort`. Mistral exposes only `'high'` (full thinking) and `'none'` (thinking suppressed), so every enabled level maps to `'high'` and only `thinking=False` maps to `'none'`. Older `mistral-small-*` / `mistral-medium-*` versions do not support reasoning, so `thinking` is silently ignored for them.
+Models with adjustable reasoning (the Mistral Small 4 and Medium 3.5 families: `mistral-small-latest`, `mistral-small-2603`, `mistral-medium-latest`, `mistral-medium-3-5`, `mistral-medium-2604`) are controlled via the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting, which maps to Mistral's `reasoning_effort`. Mistral exposes only `'high'` (full thinking) and `'none'` (thinking suppressed), so every enabled level maps to `'high'` and only `thinking=False` maps to `'none'`. Older `mistral-small-*` / `mistral-medium-*` snapshots do not support reasoning, so `thinking` is silently ignored for them.
 
 ## Cohere
 

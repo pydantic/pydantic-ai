@@ -26,10 +26,11 @@ class TestAdjustableReasoningModels:
         'model_name',
         [
             'mistral-small-latest',
-            'mistral-small-4-0-26-03',
+            'mistral-small-2603',
             'mistral-medium-latest',
             'mistral-medium-3-5',
-            'mistral-medium-3-5-26-04',
+            'mistral-medium-3.5',
+            'mistral-medium-2604',
         ],
     )
     def test_adjustable_reasoning_models(self, model_name: str):
@@ -60,8 +61,8 @@ class TestAlwaysThinkingModels:
 class TestNonThinkingModels:
     """Models that don't support adjustable reasoning return None profile.
 
-    Includes older `mistral-small-*` / `mistral-medium-*` versions that predate adjustable
-    reasoning, so they must not be caught by the family prefixes.
+    Includes older `mistral-small-*` / `mistral-medium-*` snapshots that report `reasoning: false`
+    on the Mistral `/v1/models` API, so they must not be treated as reasoning-capable.
     """
 
     @pytest.mark.parametrize(
@@ -70,15 +71,14 @@ class TestNonThinkingModels:
             'mistral-large-latest',
             'codestral-latest',
             'mistral-moderation-latest',
-            'mistral-small-2501',
+            'devstral-medium-latest',
+            'voxtral-small-latest',
             'mistral-small-2506',
             'mistral-medium-2505',
-            'mistral-medium-2312',
-            # names that a bare `startswith` on the reasoning families would wrongly match
-            'mistral-small-40',
-            'mistral-small-4foo',
+            'mistral-medium-2508',
+            # exact-match must not over-match adjacent names
+            'mistral-small-2603-preview',
             'mistral-medium-3-50',
-            'mistral-small-latest-preview',
         ],
     )
     def test_non_thinking_models(self, model_name: str):
