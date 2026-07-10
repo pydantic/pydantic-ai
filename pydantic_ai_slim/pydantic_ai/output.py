@@ -128,6 +128,14 @@ class ToolOutput(Generic[OutputDataT]):
     `sequential=True` output tool runs alone, so function tools the model emitted before it complete
     first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
     """
+    buffered: bool
+    """Whether the model can incrementally build this output tool's arguments before finalizing.
+
+    When enabled, calls to this output tool with arguments update a buffer and return validation
+    feedback to the model instead of ending the run. Set `submit_as_final=True` on the output tool
+    call to submit the provided arguments immediately, or to submit the current buffer when no output
+    fields are provided.
+    """
 
     def __init__(
         self,
@@ -138,6 +146,7 @@ class ToolOutput(Generic[OutputDataT]):
         max_retries: int | None = None,
         strict: bool | None = None,
         sequential: bool = False,
+        buffered: bool = False,
     ):
         if max_retries is not None and max_retries < 0:
             raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
@@ -147,6 +156,7 @@ class ToolOutput(Generic[OutputDataT]):
         self.max_retries = max_retries
         self.strict = strict
         self.sequential = sequential
+        self.buffered = buffered
 
 
 @dataclass(init=False)

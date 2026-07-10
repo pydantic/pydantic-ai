@@ -1147,6 +1147,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_toolset = copy(output_toolset)
             output_toolset.max_retries = effective_output_toolset_max_retries
 
+        internal_toolsets: list[AbstractToolset[AgentDepsT]] = []
+        if output_toolset is not None and output_toolset.buffered_tool_names:
+            output_toolset = output_toolset.with_buffered_submit()
+            internal_toolsets.append(
+                _output.BufferedOutputEditorToolset(tuple(output_toolset.buffered_tool_names), output_schema)
+            )
+
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
@@ -1365,6 +1372,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = self._get_toolset(
             output_toolset=output_toolset,
             additional_toolsets=toolsets,
+            internal_toolsets=internal_toolsets,
             cap_toolsets=cap_toolsets,
             run_capability=run_capability,
             max_output_retries=effective_output_toolset_max_retries,
@@ -2483,6 +2491,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        internal_toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         run_capability: AbstractCapability[AgentDepsT] | None = None,
         max_output_retries: int | None = None,
@@ -2492,6 +2501,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
+            internal_toolsets: Framework-generated toolsets that should be available regardless of user toolset
+                overrides.
             cap_toolsets: Per-run capability toolsets to use instead of the init-time capability toolsets.
             run_capability: The per-run capability instance, used to apply wrapper toolsets.
             max_output_retries: The effective output retry budget for this run (run kwarg / spec / agent default).
@@ -2499,6 +2510,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 same budget the run will actually enforce. Falls back to the agent-level default.
         """
         toolsets = list(self._build_toolset_list(cap_toolsets=cap_toolsets))
+        toolsets.extend(internal_toolsets)
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]

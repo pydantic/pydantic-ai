@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
+from pydantic import ValidationError
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._utils import cancel_and_drain
@@ -17,6 +18,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
+from ._run_context import OutputBufferState
 from .exceptions import ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
@@ -59,19 +61,49 @@ def _emit_output_tool_events(
     yield _messages.OutputToolResultEvent(part)
 
 
+def _buffer_validation_error(
+    call: _messages.ToolCallPart, error: ToolRetryError | exceptions.ModelRetry | ValidationError
+) -> _messages.RetryPromptPart:
+    if isinstance(error, ToolRetryError):
+        retry = error.tool_retry
+        return _messages.RetryPromptPart(
+            tool_name=call.tool_name,
+            tool_call_id=call.tool_call_id,
+            content=retry.content,
+        )
+    if isinstance(error, ValidationError):
+        content: list[Any] | str = error.errors(include_url=False, include_context=False)
+    else:
+        content = error.message
+    return _messages.RetryPromptPart(tool_name=call.tool_name, tool_call_id=call.tool_call_id, content=content)
+
+
+def _buffer_status(tool_name: str, buffer: OutputBufferState, *, status: Literal['valid', 'invalid']) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        'status': status,
+        'tool_name': tool_name,
+        'revision': buffer.revision,
+        'buffer': buffer.raw_args,
+    }
+    if buffer.validation_error is not None:
+        payload['errors'] = buffer.validation_error.content
+    return payload
+
+
 @dataclasses.dataclass
 class _OutputCallResult(Generic[NodeRunEndT]):
     """Result of validating and executing one output tool call.
 
-    Exactly one of `final_result` (success), `retry_part` (validation/execution retry),
-    or `raise_exc` (max retries exceeded — re-raised by the caller only if no other output
-    produced a valid result) is set. `args_valid` carries the validation outcome for event
-    emission and to distinguish validation failures from execution failures.
+    Exactly one of `final_result` (success), `return_part` (non-terminal success), `retry_part`
+    (validation/execution retry), or `raise_exc` (max retries exceeded — re-raised by the caller
+    only if no other output produced a valid result) is set. `args_valid` carries the validation
+    outcome for event emission and to distinguish validation failures from execution failures.
     """
 
     call: _messages.ToolCallPart
     args_valid: bool | None = None
     final_result: result.FinalResult[NodeRunEndT] | None = None
+    return_part: _messages.ToolReturnPart | None = None
     retry_part: _messages.RetryPromptPart | None = None
     raise_exc: BaseException | None = None
 
@@ -341,13 +373,55 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         rather than raised inline so the caller can decide whether to re-raise (no other output
         produced a valid result) or absorb it as a skip.
         """
+        output_toolset = self.schema.toolset
+        if output_toolset is not None and call.tool_name in output_toolset.buffered_tool_names:
+            return await self._run_buffered_output_tool_call(call)
+        return await self._run_unbuffered_output_tool_call(call)
+
+    async def _run_buffered_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
+        if self._is_empty_output_tool_call(call):
+            return await self._submit_buffered_output(call)
+
+        raw_args = call.args_as_dict()
+        output_args, submit_as_final = _output.split_buffered_output_args(raw_args)
+        if submit_as_final and not output_args:
+            return await self._submit_buffered_output(call)
+
+        buffer = self.ctx.state.output_buffers.setdefault(call.tool_name, OutputBufferState())
+        raw_args = output_args
+        buffer.raw_args = raw_args
+        buffer.revision += 1
+
+        part = await self._validate_buffered_output(call, raw_args, buffer=buffer)
+        if submit_as_final and buffer.validation_error is None:
+            submit_call = dataclasses.replace(call, args=raw_args)
+            return await self._run_unbuffered_output_tool_call(submit_call)
+
+        return _OutputCallResult(call=call, args_valid=buffer.validation_error is None, return_part=part)
+
+    async def _submit_buffered_output(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
+        buffer = self.ctx.state.output_buffers.get(call.tool_name)
+        if buffer is None or buffer.raw_args is None:
+            self.output_retries_increment += 1
+            return _OutputCallResult(
+                call=call,
+                args_valid=False,
+                retry_part=_messages.RetryPromptPart(
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                    content=f'No buffered output exists for output tool {call.tool_name!r}.',
+                ),
+            )
+
+        submit_call = dataclasses.replace(call, args=buffer.raw_args)
+        return await self._run_unbuffered_output_tool_call(submit_call)
+
+    async def _run_unbuffered_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
         max_output_retries = self.ctx.deps.max_output_retries
         try:
             validated = await self.tool_manager.validate_output_tool_call(call, schema=self.schema)
         except exceptions.UnexpectedModelBehavior as e:
             tool = self.tool_manager.tools.get(call.tool_name) if self.tool_manager.tools else None
-            # Defensive: an output tool is always present in the toolset, so the `None` fallback to
-            # the agent-level budget isn't expected in normal operation.
             max_retries = tool.max_retries if tool is not None else max_output_retries
             wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
             wrapped.__cause__ = e.__cause__ or e
@@ -371,6 +445,28 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         return _OutputCallResult(call=call, args_valid=True, final_result=final_result)
+
+    async def _validate_buffered_output(
+        self, call: _messages.ToolCallPart, raw_args: dict[str, Any], *, buffer: OutputBufferState
+    ) -> _messages.ToolReturnPart:
+        validation_call = dataclasses.replace(call, args=raw_args)
+        try:
+            await self.tool_manager.validate_output_tool_call(
+                validation_call, schema=self.schema, wrap_validation_errors=False
+            )
+        except (ToolRetryError, exceptions.ModelRetry, ValidationError) as e:
+            retry_part = _buffer_validation_error(call, e)
+            buffer.validation_error = retry_part
+            content = _buffer_status(call.tool_name, buffer, status='invalid')
+        else:
+            buffer.validation_error = None
+            content = _buffer_status(call.tool_name, buffer, status='valid')
+
+        return _messages.ToolReturnPart(tool_name=call.tool_name, content=content, tool_call_id=call.tool_call_id)
+
+    @staticmethod
+    def _is_empty_output_tool_call(call: _messages.ToolCallPart) -> bool:
+        return call.args in ({}, '', None)
 
     def _emit_winning_output(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record the winning output's 'processed' status part and emit its events.
@@ -413,6 +509,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 # and `'graceful'` stop running output tools at the first success.
                 part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
+        elif r.return_part is not None:
+            yield from self._record_output_part(r.call, r.return_part, args_valid=r.args_valid)
         elif r.retry_part is not None:
             yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
         else:
