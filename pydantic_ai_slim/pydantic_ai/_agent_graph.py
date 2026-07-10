@@ -726,6 +726,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            #
+            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
+            # the handler is parked on `stream_done.wait()`. Setting stream_done lets
+            # it exit so cancel_and_drain's gather can complete. Harmless no-op when
+            # the task was actually cancelled — it's already unwinding. See #6422.
+            stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
             raise
         else:
