@@ -1118,12 +1118,10 @@ class BedrockConverseModel(Model[BaseClient]):
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
-                            elif isinstance(item, str):
-                                if not failed_without_status:
-                                    tool_result_content.append({'text': item})
-                            else:
-                                if not failed_without_status:
-                                    tool_result_content.append({'json': item})
+                            elif not failed_without_status:
+                                # A failed no-status return already carries this data in its framed
+                                # `{'error': ...}` block, so non-file items aren't re-sent; files still ride along.
+                                tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}

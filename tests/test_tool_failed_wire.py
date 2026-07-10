@@ -25,6 +25,10 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
 
+with try_import() as cohere_imports_successful:
+    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.providers.cohere import CohereProvider
+
 with try_import() as groq_imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
@@ -105,6 +109,14 @@ async def _map_huggingface(part: ToolReturnPart) -> object:
     return [{key: value for key, value in asdict(message).items() if value is not None} for message in messages]
 
 
+async def _map_cohere(part: ToolReturnPart) -> object:
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='test-key'))
+    messages = model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[part])], ModelRequestParameters()
+    )
+    return [getattr(message, 'content', None) for message in messages]
+
+
 @dataclass(frozen=True)
 class ChannelLessCase:
     id: str
@@ -163,6 +175,13 @@ _CHANNEL_LESS_CASES = [
         success_wire=_CHAT_SUCCESS_WIRE,
         failed_wire=_CHAT_FAILED_WIRE,
         marks=(pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface-hub not installed'),),
+    ),
+    ChannelLessCase(
+        id='cohere',
+        mapper=_map_cohere,
+        success_wire=[_TOOL_CONTENT],
+        failed_wire=[_FAILED_WIRE_CONTENT],
+        marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed'),),
     ),
 ]
 
@@ -388,3 +407,56 @@ async def test_bedrock_framed_failure_preserves_file_content(bedrock_provider: B
         }
     ]
     assert part.content == [_TOOL_CONTENT, image]
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
+async def test_bedrock_framed_failure_defers_unsupported_media(bedrock_provider: BedrockProvider) -> None:
+    """A media kind unsupported in `toolResult` still rides a later turn; the framed error drops the file ref."""
+    pdf = BinaryContent(data=b'%PDF-1.4', media_type='application/pdf', identifier='report')
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    part = ToolReturnPart(tool_name='tool', content=[_TOOL_CONTENT, pdf], tool_call_id='call_1', outcome='failed')
+
+    _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[part])], ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert wire == [
+        {
+            'role': 'user',
+            'content': [{'toolResult': {'toolUseId': 'call_1', 'content': [{'text': _FAILED_WIRE_CONTENT}]}}],
+        },
+        {'role': 'assistant', 'content': [{'text': '.'}]},
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'This is file report:'},
+                {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': b'%PDF-1.4'}}},
+            ],
+        },
+    ]
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
+async def test_bedrock_framed_failure_drops_structured_content(bedrock_provider: BedrockProvider) -> None:
+    """Structured (non-file) failed content is folded into the framed error, not re-sent as a `json` block."""
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    content = {'code': 500, 'detail': 'Disk full'}
+    part = ToolReturnPart(tool_name='tool', content=content, tool_call_id='call_1', outcome='failed')
+
+    _, wire = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[part])], ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert wire == [
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 'call_1',
+                        'content': [{'text': '{"error":"{\\"code\\":500,\\"detail\\":\\"Disk full\\"}"}'}],
+                    }
+                }
+            ],
+        }
+    ]
