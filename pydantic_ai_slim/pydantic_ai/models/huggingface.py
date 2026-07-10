@@ -465,6 +465,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_text, tool_file_content = part.model_response_str_and_user_content()
+                if part.outcome == 'failed':
+                    tool_text = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
                 file_content.extend(tool_file_content)
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
                     {

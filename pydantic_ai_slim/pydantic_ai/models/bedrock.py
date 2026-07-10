@@ -1063,7 +1063,11 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
+                        failed_without_status = part.outcome == 'failed' and not supports_tool_result_status
                         tool_result_content: list[Any] = []
+                        if failed_without_status:
+                            failed_content = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
+                            tool_result_content.append({'text': failed_content})
                         colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
@@ -1103,7 +1107,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                 ):
                                     tool_result_content.append(file_block)
                                 else:
-                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    if not failed_without_status:
+                                        tool_result_content.append({'text': f'See file {item.identifier}.'})
                                     media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
@@ -1114,9 +1119,11 @@ class BedrockConverseModel(Model[BaseClient]):
                                         deferred_media_content.append(media_note)
                                         deferred_media_content.append(file_block)
                             elif isinstance(item, str):
-                                tool_result_content.append({'text': item})
+                                if not failed_without_status:
+                                    tool_result_content.append({'text': item})
                             else:
-                                tool_result_content.append({'json': item})
+                                if not failed_without_status:
+                                    tool_result_content.append({'json': item})
                         if not tool_result_content:
                             tool_result_content.append(
                                 {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}

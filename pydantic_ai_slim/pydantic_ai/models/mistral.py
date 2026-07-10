@@ -552,6 +552,8 @@ class MistralModel(Model[Mistral]):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_text, files = part.model_response_str_and_user_content()
+                if part.outcome == 'failed':
+                    tool_text = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
                 file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,

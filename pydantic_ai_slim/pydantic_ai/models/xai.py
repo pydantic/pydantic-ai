@@ -386,6 +386,8 @@ class XaiModel(Model[AsyncClient]):
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
                     text, files = part.model_response_str_and_user_content()
+                    if part.outcome == 'failed':
+                        text = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
                     xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                     file_content.extend(files)
                 else:

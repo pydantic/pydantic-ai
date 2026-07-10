@@ -1371,6 +1371,10 @@ class BaseToolReturnPart:
             return value
         return tool_return_ta.dump_json(value).decode()
 
+    def _failed_wire_content(self) -> str:
+        """Return JSON-text failure framing for providers without a native error channel."""
+        return tool_return_ta.dump_json({'error': self.model_response_str()}).decode()
+
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
