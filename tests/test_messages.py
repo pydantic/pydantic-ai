@@ -1791,6 +1791,25 @@ class TestInstructionParts:
         assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
 
 
+def test_repr_handles_non_bool_ne_value():
+    """repr() must not raise when a required field holds a value whose __ne__ returns a non-bool.
+
+    This tests the `dataclasses_no_defaults_repr` helper in `_utils.py`, not a VCR
+    test because it pins internal event-loop acquisition behavior with no model I/O.
+    """
+
+    class NonBoolLike:
+        def __ne__(self, other: object) -> 'NonBoolLike':
+            return NonBoolLike()
+
+    part = ToolReturnPart(
+        tool_name='get_array',
+        content=NonBoolLike(),
+    )
+    r = repr(part)
+    assert 'NonBoolLike' in r
+
+
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
     part = RetryPromptPart(
