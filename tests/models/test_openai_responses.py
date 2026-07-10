@@ -11507,6 +11507,64 @@ async def test_stream_cancel(allow_model_requests: None):
     )
 
 
+async def test_background_stream_cancel_cancels_server_job(allow_model_requests: None):
+    """Cancelling a background stream mid-flight cancels the server-side job end-to-end.
+
+    Exercises the whole chain: `AgentStream.cancel()` → the continuation composite's `close_stream()` →
+    `OpenAIResponsesModel.cancel_suspended_response(composite.get())` → `client.responses.cancel(id)`.
+    The composite's `get()` reports a terminal `state` here (never `'suspended'`), so this pins that the
+    `background` marker, `provider_response_id`, and `provider_name` all survive into it — otherwise the
+    server-side job would leak.
+    """
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_bg',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        background=True,
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=3,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_background=True))
+    cancel_ids = cast(MockOpenAIResponses, mock_client).cancel_ids
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    assert cancel_ids == ['resp_bg']
+
+
 async def test_background_marker_stamped_from_terminal_event_only(allow_model_requests: None):
     """The `background` marker is stamped even when a segment's only status event is terminal.
 
