@@ -932,6 +932,9 @@ def test_run_sync_does_not_emit_event_loop_deprecation_warning():
 
     Uses `get_running_loop()` with a `new_event_loop()` fallback instead of
     the deprecated `get_event_loop()` / `get_event_loop_policy()` (issue #1196).
+
+    Not a VCR test: this pins internal event-loop / warning behavior that
+    request cassettes would not exercise or catch a regression in.
     """
 
     async def noop_tool(ctx: object) -> str:
