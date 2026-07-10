@@ -84,6 +84,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
         self.url = url
         self.native = native
+        self.id = id
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
         # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
@@ -96,9 +97,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             and not isinstance(local, AbstractToolset)
             and not callable(local)
         ):
-            local = MCPToolset(local, include_instructions=True)
+            # Stamp the derived id so this leaf can be used with durable execution too. `self.url` is
+            # usually `None` here (the input carries its own connection), so the id comes from an
+            # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
+            local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
         self.local = local
-        self.id = id
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
@@ -106,22 +109,35 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.__post_init__()
 
-    @cached_property
-    def _resolved_id(self) -> str:
+    def _derive_id(self, url: str | None) -> str | None:
+        """Derive a stable id for this capability from `url`.
+
+        Precedence: explicit `id` → the native `MCPServerTool`'s id → a host+slug derived from `url`.
+        Returns `None` only when there's nothing to derive from — no `id`, no native `MCPServerTool`,
+        and `url is None` (e.g. a non-URL `local=` client that carries its own connection).
+        """
         if self.id:
             return self.id
         # An explicit `native=MCPServerTool(id=...)` carries its own id; key off it so the local
         # fallback's `unless_native` marker matches the native tool that's actually advertised.
         if isinstance(self.native, MCPServerTool):
             return self.native.id
-        # Otherwise `_resolved_id` is only read through native paths, which require a URL (enforced in `__init__`).
-        assert self.url is not None
+        if url is None:
+            return None
         # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(self.url)
+        parsed = urlparse(url)
         path = parsed.path.rstrip('/')
         slug = path.split('/')[-1] if path else ''
         host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or self.url
+        return f'{host}-{slug}' if slug else host or url
+
+    @cached_property
+    def _resolved_id(self) -> str:
+        # `_resolved_id` is only read through native paths, which require a URL (enforced in
+        # `__init__`), so derivation from `self.url` always succeeds.
+        resolved = self._derive_id(self.url)
+        assert resolved is not None
+        return resolved
 
     def _default_native(self) -> MCPServerTool:
         # `native is True` requires `url is not None` (enforced in `__init__`).
@@ -170,7 +186,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # `MCPToolset` infers SSE vs Streamable HTTP from the URL.
             from pydantic_ai.mcp import MCPToolset
 
-            return MCPToolset(url, headers=local_headers or None, include_instructions=True)
+            # Stamp the derived id onto the local toolset so it can be used with durable execution
+            # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
+            # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
+            return MCPToolset(url, headers=local_headers or None, include_instructions=True, id=self._derive_id(url))
         except ImportError as e:
             raise UserError(
                 'Please install the `mcp` package to run MCP servers locally, you can use the '
