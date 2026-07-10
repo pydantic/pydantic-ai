@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock
 
 import anyio
@@ -1147,6 +1148,41 @@ class TestMCPSessionScoping:
         assert toolset.is_running is True
         await toolset.__aexit__(None, None, None)
         assert toolset.is_running is False
+
+    async def test_contextless_exit_with_multiple_sessions_raises(self, fastmcp_server: FastMCP[None]):
+        """A contextless `__aexit__` is ambiguous when several sessions are open: closing an
+        arbitrary one could pull another caller's session out from under them, so it refuses."""
+        toolset = MCPToolset(fastmcp_server)
+        entered = asyncio.Semaphore(0)
+        release = asyncio.Event()
+
+        async def enter_and_hold() -> None:
+            async with toolset:
+                entered.release()
+                await release.wait()
+
+        holders = [asyncio.ensure_future(enter_and_hold()) for _ in range(2)]
+        await entered.acquire()
+        await entered.acquire()
+        try:
+            assert len(toolset._sessions) == 2  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(ValueError, match='did not enter the toolset while multiple sessions are open'):
+                await toolset.__aexit__(None, None, None)
+        finally:
+            release.set()
+            await asyncio.gather(*holders)
+        assert toolset.is_running is False
+
+    async def test_failed_connection_releases_template_client(self, fastmcp_server: FastMCP[None]):
+        """A failed connection releases the template client reservation so the next `__aenter__`
+        can back its session with `toolset.client` again."""
+        toolset = MCPToolset(fastmcp_server)
+        with mock.patch.object(Client, '__aenter__', side_effect=RuntimeError('connect failed')):
+            with pytest.raises(RuntimeError, match='connect failed'):
+                await toolset.__aenter__()
+        assert toolset.is_running is False
+        async with toolset:
+            assert toolset._session.client is toolset.client  # pyright: ignore[reportPrivateUsage]
 
     async def test_copied_toolset_does_not_join_original_session(self, fastmcp_server: FastMCP[None]):
         """A (shallow) copy shares the context variable but not session identity: entering the

@@ -821,6 +821,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _sessions: list[_MCPSession]
     _shared_session: _MCPSession | None
     _session_var: ContextVar[_MCPSession | None]
+    _template_client_reserved: bool
     _user_message_handler: MessageHandlerT | None
 
     @functools.cached_property
@@ -1008,6 +1009,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._sessions = []
         self._shared_session = None
         self._session_var = ContextVar('_MCPToolset_session', default=None)
+        self._template_client_reserved = False
 
     @property
     def id(self) -> str | None:
@@ -1143,20 +1145,40 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 shared.ref_count += 1
                 self._session_var.set(shared)
                 return self
-            session = await self._open_session()
+            client = self._reserve_client()
+        # Connect outside the lock so concurrent entrants perform their handshakes in parallel —
+        # sessions are per-context, so there's no singleton invariant to protect while connecting.
+        try:
+            session = await self._open_session(client)
+        except BaseException:
+            if client is self.client:
+                async with self._enter_lock:
+                    self._template_client_reserved = False
+            raise
+        async with self._enter_lock:
+            if client is self.client:
+                self._template_client_reserved = False
             self._sessions.append(session)
             self._session_var.set(session)
             if not implicit and self._shared_session is None:
                 self._shared_session = session
         return self
 
-    async def _open_session(self) -> _MCPSession:
-        # Reuse the template client for the first session so `toolset.client` reflects the live
-        # session in the common single-session case; additional overlapping sessions get
-        # independent clones via `Client.new()`.
-        client = self.client
-        if any(session.client is client for session in self._sessions):
-            client = self.client.new()
+    def _reserve_client(self) -> FastMCPClient[Any]:
+        """Pick the client to back a new session; must be called while holding `_enter_lock`.
+
+        The template `self.client` backs the first session so `toolset.client` reflects the live
+        session in the common single-session case; overlapping sessions get independent clones via
+        `Client.new()`. The reservation flag keeps two concurrent entrants from both picking the
+        template before either has committed a session — they'd silently share the underlying
+        FastMCP session.
+        """
+        if self._template_client_reserved or any(session.client is self.client for session in self._sessions):
+            return self.client.new()
+        self._template_client_reserved = True
+        return self.client
+
+    async def _open_session(self, client: FastMCPClient[Any]) -> _MCPSession:
         # Build the exit stack inside an `async with` so any failure after
         # `enter_async_context(client)` cleans up the open session — the `_MCPSession` is only
         # constructed (and committed by the caller) once initialization fully succeeds.
@@ -1181,11 +1203,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             session = self._session_var.get()
             if session is None or session.closed or session.owner is not self:
                 # `__aexit__` may run in a different task/context than the matching `__aenter__`
-                # (e.g. when a framework moves cleanup to another task); fall back to the most
-                # recently opened session rather than requiring context affinity.
-                session = self._sessions[-1] if self._sessions else None
-            if session is None:
-                raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
+                # (e.g. when a framework moves cleanup to another task). With a single open session
+                # the intent is unambiguous; with several, picking one could close another caller's
+                # session out from under them, so refuse instead of guessing.
+                if not self._sessions:
+                    raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
+                if len(self._sessions) > 1:
+                    raise ValueError(
+                        f'`{self.__class__.__name__}.__aexit__` was called from a context that did not enter the '
+                        'toolset while multiple sessions are open; call `__aexit__` from the entering context instead.'
+                    )
+                session = self._sessions[0]
             session.ref_count -= 1
             if session.ref_count == 0:
                 session.closed = True
