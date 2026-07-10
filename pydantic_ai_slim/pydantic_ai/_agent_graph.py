@@ -1499,24 +1499,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             )
                         return
 
-                    # Try to recover text from a previous model response.
-                    # This handles the case where the model returned text alongside tool calls
-                    # (so the text was discarded in favor of executing the tools) and subsequently
-                    # returned an empty or thinking-only response.
-                    if text_processor := output_schema.text_processor:
-                        text = self._recover_text_from_message_history(ctx.state.message_history)
-                        if text is not None:
-                            try:
-                                self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                                return
-                            except ToolRetryError:  # pragma: no cover
-                                # If the recovered text was invalid, fall through.
-                                pass
-
-                    # For empty or thinking-only responses without recoverable text, fall through to
-                    # the normal retry prompt below. That prompt is built from the output schema and
-                    # available tools, so it tells the model which kinds of output are actually valid
-                    # (text, tool call, and/or image) rather than assuming text is always an option.
+                    # For empty or thinking-only responses, fall through to the normal retry prompt
+                    # below. That prompt is built from the output schema and available tools, so it
+                    # tells the model which kinds of output are actually valid (text, tool call,
+                    # and/or image) rather than assuming text is always an option.
 
                 text = ''
                 compaction_text = ''
@@ -1656,28 +1642,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_parts.append(_messages.UserPromptPart(self.user_prompt))
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
-
-    @staticmethod
-    def _recover_text_from_message_history(message_history: list[_messages.ModelMessage]) -> str | None:
-        """Search backward through message history for recoverable text from a previous model response.
-
-        This handles cases where the model returned text alongside tool calls (so the text was
-        discarded in favor of executing the tools) and subsequently returned an empty or
-        thinking-only response. Returns the recovered text, or None if no text was found.
-        """
-        for message in reversed(message_history):
-            if isinstance(message, _messages.ModelResponse):
-                text = ''
-                for part in message.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text.
-                        text = ''  # pragma: no cover
-                if text:
-                    return text
-        return None
 
     async def _handle_text_response(
         self,

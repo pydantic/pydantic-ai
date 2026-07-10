@@ -118,7 +118,9 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_chat_supports_file_urls': False,
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
+    'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_chat_supports_document_input': True,
@@ -277,6 +279,72 @@ def test_openai_gpt_5_4():
     )
 
 
+def test_openai_gpt_5_6():
+    """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
+
+    GPT-5.6 reasons on by default at 'medium' (`openai_reasoning_enabled_by_default`) yet can be
+    turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
+    `thinking_always_enabled` (that flag is derived to False). `phase` is on (GPT-5.6 responses
+    label messages with it) and native `tool_search` is on (verified live). Reasoning behavior
+    verified against the Responses API.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_reasoning_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'openai_supports_phase': True,
+        }
+    )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna'],
+)
+def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_azure_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
 def test_openai_gpt_4o():
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -312,6 +380,7 @@ def test_openai_o3_mini():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
+            'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
         }
     )
@@ -1294,7 +1363,11 @@ def test_alibaba_qwen():
 
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
@@ -1304,7 +1377,11 @@ def test_alibaba_qwen_audio():
 
     profile = AlibabaProvider.model_profile('qwen3-audio-0809-online')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 
