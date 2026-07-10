@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -292,7 +293,9 @@ async def test_multiple_joins_same_fork():
     join_b = g.join(reduce_list_append, initial_factory=list[int], node_id='join_b')
     collect = g.join(reduce_sum, initial=0, node_id='collect')
 
-    with pytest.raises(NotImplementedError, match='Map is not currently supported with multiple source nodes.'):
+    with pytest.raises(
+        NotImplementedError, match=re.escape('Map is not currently supported with multiple source nodes.')
+    ):
         g.edge_from(join_a, join_b).map().to(collect)
 
     g.add(

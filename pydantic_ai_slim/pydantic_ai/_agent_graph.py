@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import time
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -16,7 +17,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, time_to_first_chunk_ctx
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
@@ -92,8 +93,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:
@@ -676,6 +677,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Stamp the request-issue instant so the instrumentation capability can record
+            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+            # the first-chunk instant; the delta is the client-side time to first token.
+            request_start = time.perf_counter()
             with set_current_run_context(run_context):
                 async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
@@ -685,7 +690,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
-                    await stream_done.wait()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
             response = sr.get()
             _handler_response = response
             return response
@@ -1195,8 +1208,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows `None`, an empty or thinking-only response is a valid result:
+                    # both signal that the model has no text output to give. Some models emit only thinking
+                    # after completing the task via a tool call, and forcing a retry just makes them produce
+                    # unnecessary follow-up text.
+                    if output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _output.run_none_process_hooks(
@@ -1215,31 +1231,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             )
                         return
 
-                    # Try to recover text from a previous model response.
-                    # This handles the case where the model returned text alongside tool calls
-                    # (so the text was discarded in favor of executing the tools) and subsequently
-                    # returned an empty or thinking-only response.
-                    if text_processor := output_schema.text_processor:
-                        text = self._recover_text_from_message_history(ctx.state.message_history)
-                        if text is not None:
-                            try:
-                                self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                                return
-                            except ToolRetryError:  # pragma: no cover
-                                # If the recovered text was invalid, fall through.
-                                pass
-
-                    if is_empty:
-                        # Go back to the model request node with an empty request, which means we'll
-                        # essentially resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
-                        return
-
-                    # For thinking-only responses without recoverable text, fall through to the
-                    # normal retry prompt below.
+                    # For empty or thinking-only responses, fall through to the normal retry prompt
+                    # below. That prompt is built from the output schema and available tools, so it
+                    # tells the model which kinds of output are actually valid (text, tool call,
+                    # and/or image) rather than assuming text is always an option.
 
                 text = ''
                 compaction_text = ''
@@ -1379,28 +1374,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 output_parts.append(_messages.UserPromptPart(self.user_prompt))
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
-
-    @staticmethod
-    def _recover_text_from_message_history(message_history: list[_messages.ModelMessage]) -> str | None:
-        """Search backward through message history for recoverable text from a previous model response.
-
-        This handles cases where the model returned text alongside tool calls (so the text was
-        discarded in favor of executing the tools) and subsequently returned an empty or
-        thinking-only response. Returns the recovered text, or None if no text was found.
-        """
-        for message in reversed(message_history):
-            if isinstance(message, _messages.ModelResponse):
-                text = ''
-                for part in message.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text.
-                        text = ''  # pragma: no cover
-                if text:
-                    return text
-        return None
 
     async def _handle_text_response(
         self,
@@ -1780,6 +1753,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
+                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
+                # nor try to preserve them across the merge. These fields are only bookkeeping for
+                # callers; they're never part of what gets sent to the model. Refusing to merge on a
+                # mismatch would leave two consecutive requests where the model expects one, breaking
+                # providers (and provider-side conversation state) that require a single request per
+                # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(

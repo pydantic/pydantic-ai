@@ -13,13 +13,15 @@ bump = true
 [project]
 name = "pydantic-ai"
 dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
+description = "AI Agent Framework, the Pydantic way"
 authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-    { name = "David Montague", email = "david@pydantic.dev" },
-    { name = "Alex Hall", email = "alex@pydantic.dev" },
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David Sanchez", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
 ]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -131,7 +133,8 @@ constraint-dependencies = [
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
     "pyjwt>=2.13.0",
-    "torch>=2.10.0",
+    "torch>=2.12.1",
+    "transformers>=5.3.0",
 ]
 
 [dependency-groups]
@@ -158,7 +161,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.62",
+    "genai-prices>=0.0.69",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
@@ -214,6 +217,7 @@ extend-select = [
     "Q",
     "RUF100",
     "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF043", # https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern/
     "C90",
     "UP",
     "I",
@@ -353,9 +357,6 @@ include = [
 omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials

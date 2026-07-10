@@ -10,6 +10,8 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai.messages import UploadedFile
+
 __all__ = (
     'AbstractNativeTool',
     'WebSearchTool',
@@ -133,6 +135,7 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic
     * OpenAI Responses
+    * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     blocked_domains: list[str] | None = None
@@ -179,13 +182,16 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     * Anthropic
     * OpenAI Responses
+    * xAI
     """
 
     city: str
     """The city where the user is located."""
 
     country: str
-    """The country where the user is located. For OpenAI, this must be a 2-letter country code (e.g., 'US', 'GB')."""
+    """The country where the user is located.
+
+    For OpenAI and xAI, this must be a 2-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')."""
 
     region: str
     """The region or state where the user is located."""
@@ -210,7 +216,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     allowed_x_handles: list[str] | None = None
-    """If provided, only posts from these X handles will be included (max 10).
+    """If provided, only posts from these X handles will be included (max 20).
 
     Supported by:
 
@@ -218,7 +224,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     excluded_x_handles: list[str] | None = None
-    """If provided, posts from these X handles will be excluded (max 10).
+    """If provided, posts from these X handles will be excluded (max 20).
 
     Supported by:
 
@@ -283,10 +289,10 @@ class XSearchTool(AbstractNativeTool):
     def __post_init__(self) -> None:
         if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
             raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
-        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
-            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
-        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
-            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 20:
+            raise ValueError('allowed_x_handles cannot contain more than 20 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 20:
+            raise ValueError('excluded_x_handles cannot contain more than 20 handles')
 
 
 @dataclass(kw_only=True)
@@ -300,6 +306,17 @@ class CodeExecutionTool(AbstractNativeTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
+    """
+
+    files: list[UploadedFile] | None = None
+    """Uploaded files to make available in the code execution environment.
+
+    Only files matching the model provider are used; files from other providers are ignored.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
     """
 
     kind: str = 'code_execution'

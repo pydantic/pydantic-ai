@@ -11,7 +11,7 @@ from typing import Any, Final
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind
+from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
@@ -214,3 +214,54 @@ def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     return parts[1], parts[2]
+
+
+def dump_tool_return_content(content: Any) -> str:
+    """Serialize a tool-return `content` value into an AG-UI `ToolMessage.content` / `ToolCallResultEvent.content` string.
+
+    Inverse of [`rehydrate_tool_return_content`][pydantic_ai.ui.ag_ui._utils.rehydrate_tool_return_content],
+    kept symmetric with it so a `ToolReturnPart` round-trips faithfully. `.content` is the source of truth
+    (`.files` is derived from it), so dumping the full content — multimodal files included — and validating
+    it back reconstructs the part. Used for both history serialization (`dump_messages`) and the live event
+    stream, so a file a tool returns survives the round-trip through a streaming frontend and can be sent
+    back to the model on the next step.
+
+    - A plain string is emitted verbatim, not JSON-wrapped, so the loader hands the original string back.
+    - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
+      through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
+      that the loader restores to their subclasses.
+    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only.
+    """
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ''
+    return tool_return_content_ta.dump_json(content).decode()
+
+
+def rehydrate_tool_return_content(content: Any) -> Any:
+    """Rehydrate an AG-UI tool-return `content` value into `ToolReturnContent`, restoring multimodal subclasses.
+
+    Inverse of [`dump_tool_return_content`][pydantic_ai.ui.ag_ui._utils.dump_tool_return_content].
+    Content is a string on the wire; for structured and file-bearing returns it's our own JSON dump, parsed
+    back through `tool_return_content_ta` so multimodal items nested in a mapping or list (`BinaryContent`,
+    `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
+    `BinaryImage`.
+
+    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
+    only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
+    `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
+    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An
+    already-structured (non-string) `content` is validated directly.
+    """
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return content
+        if not isinstance(parsed, (dict, list)):
+            return content
+        return tool_return_content_ta.validate_python(parsed)
+    if isinstance(content, (dict, list)):
+        return tool_return_content_ta.validate_python(content)
+    return content

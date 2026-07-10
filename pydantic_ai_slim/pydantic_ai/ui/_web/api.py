@@ -1,7 +1,7 @@
 """API routes for the web chat UI."""
 
 from collections.abc import Mapping, Sequence
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
@@ -22,6 +22,13 @@ OutputDataT = TypeVar('OutputDataT')
 
 # Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
 ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
+
+# The bundled chat UI ships v7 of the Vercel AI SDK, so the API path targets `sdk_version=7` to match
+# it. v7's data-stream protocol equals v6's (same wire, including the tool-approval chunks that enable
+# tool-approval streaming), so 7 emits identically to 6 today; targeting 7 keeps the value aligned with
+# the UI's real SDK major and reserves it for future v7-only chunks. `to_web()` controls both ends
+# (server + bundled UI). See `VercelAIAdapter.sdk_version`.
+BUNDLED_UI_SDK_VERSION: Literal[7] = 7
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -84,6 +91,7 @@ def create_api_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -98,6 +106,9 @@ def create_api_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+        sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
+            `7` to match the bundled v7 UI, which enables tool-approval streaming (7 emits the same
+            wire as 6, since v7's data-stream protocol equals v6's).
 
     Returns:
         A Starlette application with the API endpoints.
@@ -153,7 +164,9 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(request, agent=agent)
+        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+            request, agent=agent, sdk_version=sdk_version
+        )
         extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
@@ -165,6 +178,7 @@ def create_api_app(
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
+            sdk_version=sdk_version,
             model=model_ref,
             capabilities=request_capabilities,
             deps=deps,
