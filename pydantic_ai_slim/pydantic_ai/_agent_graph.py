@@ -1823,43 +1823,49 @@ def _insert_synthesized_returns(
 
 def _is_tool_result_part(
     part: _messages.ModelRequestPart | _messages.ModelResponsePart,
-) -> TypeGuard[_messages.BaseToolReturnPart | _messages.RetryPromptPart]:
-    """Whether a part is a tool result that a provider renders as a `tool_result`/`function_call_output`.
+) -> TypeGuard[_messages.ToolReturnPart | _messages.RetryPromptPart]:
+    """Whether a part is a regular (locally-executed) tool result answering a `ToolCallPart`.
 
     A `RetryPromptPart` with no `tool_name` is validation feedback rendered as a plain user message,
-    not a tool result, so it doesn't need (or have) a matching tool call.
+    not a tool result, so it doesn't need (or have) a matching tool call. `NativeToolReturnPart` (a
+    sibling `BaseToolReturnPart` subclass) is intentionally excluded: native/builtin results are
+    co-located with their call in one `ModelResponse` and shaped by each model's own serializer, so
+    the pipeline leaves them alone.
     """
-    return isinstance(part, _messages.BaseToolReturnPart) or (
+    return isinstance(part, _messages.ToolReturnPart) or (
         isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None
     )
 
 
 def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """REMOVE tool results whose call is missing.
+    """REMOVE regular tool results whose call is missing.
 
-    A `ToolReturnPart`/`RetryPromptPart` (in a `ModelRequest`) or `NativeToolReturnPart` (in a
-    `ModelResponse`) whose `tool_call_id` never appeared as a tool call in any preceding message is
-    "orphaned". Providers reject a tool result without a matching tool call (Anthropic rejects a
-    `tool_result` with no `tool_use`; OpenAI Responses raises `No tool call found for function call
-    output`). Orphans arise from context eviction dropping the response that made the call, from a
-    result placed before its call in a hand-built history, or from adapter round-trips.
+    A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
+    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` is "orphaned".
+    Providers reject a tool result without a matching tool call (Anthropic rejects a `tool_result`
+    with no `tool_use`; OpenAI Responses raises `No tool call found for function call output`).
+    Orphans arise from context eviction dropping the response that made the call, from a result
+    placed before its call in a hand-built history, or from adapter round-trips.
+
+    This operates only on regular, locally-executed tool call/result pairing across message
+    boundaries. Native/builtin parts (`NativeToolCallPart`/`NativeToolReturnPart`) are left untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer,
+    and a native result can even arrive in a *later* response (e.g. Anthropic tool search), so the
+    core pipeline must not treat them as droppable.
 
     Removal, not reordering: a result that precedes its call could in principle be moved after it,
     but that crosses message boundaries and reorders content, so the fundamentally-invalid result is
     dropped instead (its now-unanswered call is later synthesized a result by
     `_repair_dangling_tool_calls`). If dropping empties an interior `ModelRequest` the request is
     dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
-    on a request (an emptied `ModelResponse` is always dropped). Returns the input unchanged when
-    there are no orphans.
+    on a request. Returns the input unchanged when there are no orphans.
     """
     seen_call_ids: set[str] = set()
     repaired: list[_messages.ModelMessage] = []
     changed = False
     for index, message in enumerate(messages):
-        # Register this message's calls first so a co-located native result (call then result in the
-        # same response) is recognized as answered.
         for part in message.parts:
-            if isinstance(part, _messages.BaseToolCallPart):
+            if isinstance(part, _messages.ToolCallPart):
                 seen_call_ids.add(part.tool_call_id)
         kept_parts = [
             part
@@ -1872,46 +1878,7 @@ def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[
         changed = True
         if kept_parts or (isinstance(message, _messages.ModelRequest) and index == len(messages) - 1):
             repaired.append(replace(message, parts=kept_parts))
-        # else: interior emptied `ModelRequest` or any emptied `ModelResponse` — drop the message
-    return repaired if changed else messages
-
-
-def _drop_dangling_native_tool_calls(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """REMOVE builtin/native tool calls that have no result.
-
-    A `NativeToolCallPart` (e.g. Anthropic `code_execution` / `server_tool_use`) is answered by a
-    `NativeToolReturnPart` co-located in the same `ModelResponse` — the provider produces both
-    together while serving the request. A native call with no co-located return only occurs when the
-    response was interrupted mid-call or the model hallucinated a call for a tool that wasn't enabled
-    (#6401); either way it can never be answered, since native results come from the provider rather
-    than local execution, and the provider rejects it (Anthropic: `code_execution` tool use `...` was
-    found without a corresponding `code_execution_tool_result` block).
-
-    Unlike a regular tool call, a native result can't be synthesized with meaningful
-    provider-specific content, so the unanswerable call is dropped rather than answered. This is not
-    frontier-gated: a native call is never completed by run resumption, so a dangling one on the last
-    response is just as unsendable as any other. If dropping empties the response, the response is
-    dropped. Returns the input unchanged when there are none.
-    """
-    repaired: list[_messages.ModelMessage] = []
-    changed = False
-    for message in messages:
-        if not isinstance(message, _messages.ModelResponse):
-            repaired.append(message)
-            continue
-        returned_ids = {part.tool_call_id for part in message.parts if isinstance(part, _messages.NativeToolReturnPart)}
-        kept_parts = [
-            part
-            for part in message.parts
-            if not (isinstance(part, _messages.NativeToolCallPart) and part.tool_call_id not in returned_ids)
-        ]
-        if len(kept_parts) == len(message.parts):
-            repaired.append(message)
-            continue
-        changed = True
-        if kept_parts:
-            repaired.append(replace(message, parts=kept_parts))
-        # else: emptied `ModelResponse` — drop the message
+        # else: interior emptied `ModelRequest` — drop the message
     return repaired if changed else messages
 
 
@@ -2078,10 +2045,14 @@ def _clean_message_history(
 ) -> list[_messages.ModelMessage]:
     """Make the message history provider-valid and normalize its shape, out of the box.
 
-    An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes. Following the
-    principle "massage the history however we can to make the model API accept it, and drop only
-    what's fundamentally unsendable", each pass ADDs (synthesizes) or REMOVEs content, never silently
-    dropping anything a provider could accept. Ordering matters:
+    An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes over regular,
+    locally-executed tool call/result pairing across message boundaries. Following the principle
+    "massage the history however we can to make the model API accept it, and drop only what's
+    fundamentally unsendable", each pass ADDs (synthesizes) or REMOVEs content, never silently
+    dropping anything a provider could accept. Native/builtin parts are left entirely untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer
+    (which handles their own dangling/empty-id cases), and a native result can even arrive in a
+    later response, so the core pipeline must not touch them. Ordering matters:
 
     1. `_drop_orphaned_tool_results` (REMOVE) — first, so an orphaned result can't survive into the
        merge (which would hoist it to the front of a request) and so dropping it can expose a call
@@ -2089,13 +2060,10 @@ def _clean_message_history(
     2. `_repair_dangling_tool_calls` (ADD synthesized results / REMOVE unparsable-args calls) — the
        matching-graph repair; runs before the merge changes message boundaries. Frontier-gated by
        `repair_last_response` so the last response's still-answerable calls are left alone.
-    3. `_drop_dangling_native_tool_calls` (REMOVE) — builtin/native calls with no co-located result;
-       can empty a response, so before the merge that would combine the neighbours.
-    4. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
+    3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
        never separates a result from its call.
     """
     messages = _drop_orphaned_tool_results(messages)
     messages = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
-    messages = _drop_dangling_native_tool_calls(messages)
     messages = _merge_consecutive_messages(messages)
     return messages

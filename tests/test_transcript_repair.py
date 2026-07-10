@@ -3,10 +3,10 @@
 An interrupted, hand-built, or context-evicted history can have broken tool-call/tool-result
 pairing that strict providers reject. Before each model request, `_clean_message_history` runs an
 ordered pipeline that ADDs synthesized results for dangling tool calls and REMOVEs fundamentally
-unsendable parts (unparsable-args calls, orphaned results, dangling builtin/native calls), then
-merges consecutive messages — so interrupted and hand-built histories can be reused directly.
-Synthesized returns carry the `pydantic_ai_synthesized_tool_return` metadata marker so repairs are
-inspectable in the history.
+unsendable parts (unparsable-args calls, orphaned results), then merges consecutive messages — so
+interrupted and hand-built histories can be reused directly. Native/builtin parts are left
+untouched. Synthesized returns carry the `pydantic_ai_synthesized_tool_return` metadata marker so
+repairs are inspectable in the history.
 
 These tests capture the exact message list the model receives via `FunctionModel` instead of VCR:
 the repair happens in the pre-request history cleaning, and cassette matchers aren't reliably
@@ -22,7 +22,10 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai._agent_graph import SYNTHESIZED_TOOL_RETURN_METADATA_KEY
+from pydantic_ai._agent_graph import (
+    SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
     ModelMessage,
@@ -471,8 +474,30 @@ async def test_orphaned_result_emptying_last_request_keeps_placeholder():
     """When dropping an orphaned result empties the last message, an empty request is kept.
 
     The history must end on a `ModelRequest`, so the emptied trailing request is kept (empty) rather
-    than dropped. Resuming without a prompt then just runs the prior response's pending work.
+    than dropped. Asserted directly on `_clean_message_history` — feeding this into a run would add a
+    new prompt that fills the placeholder, hiding whether it was retained.
     """
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('Hello.')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('ghost_tool', 'x', tool_call_id='ghost', timestamp=TS)], timestamp=TS),
+    ]
+
+    cleaned = _clean_message_history(message_history)
+
+    # The orphaned result is dropped, but its now-empty trailing request is retained as a placeholder
+    # so the history still ends on a `ModelRequest`.
+    assert cleaned == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hi', timestamp=TS)], timestamp=TS),
+            ModelResponse(parts=[TextPart(content='Hello.')], timestamp=TS),
+            ModelRequest(parts=[], timestamp=TS),
+        ]
+    )
+
+
+async def test_orphaned_result_emptying_last_request_merges_with_new_prompt():
+    """The kept empty placeholder merges cleanly with a new prompt on the next run."""
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -483,7 +508,7 @@ async def test_orphaned_result_emptying_last_request_keeps_placeholder():
 
     await agent.run('Continue.', message_history=message_history)
 
-    # The orphaned trailing result is dropped; a new prompt request follows the kept placeholder's slot.
+    # The orphaned trailing result is dropped; the new prompt fills the placeholder's slot.
     assert received[0] == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hi', timestamp=TS)], timestamp=TS),
@@ -493,97 +518,35 @@ async def test_orphaned_result_emptying_last_request_keeps_placeholder():
     )
 
 
-async def test_dangling_native_tool_call_dropped():
-    """A builtin/native tool call with no co-located result is dropped (Anthropic #6401).
+async def test_native_tool_calls_left_untouched():
+    """The pipeline never touches native/builtin parts — even a dangling native call is preserved.
 
-    Native results come from the provider inline, so a dangling native call can never be answered
-    and can't be given a meaningful synthetic result — it's removed.
+    Native calls and their results are co-located in one `ModelResponse` (or the result can arrive
+    in a later response, e.g. Anthropic tool search) and are shaped by each model's own serializer,
+    which handles dangling/empty-id cases on the wire; xAI's serializer, for one, skips an empty-id
+    native call while the persisted history keeps it. So the history pipeline leaves native parts
+    exactly as given. Exercised directly against `_clean_message_history` since the behavior under
+    test is that a dangling native call is *not* repaired.
     """
-    agent, received = capture_agent()
-
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
         ModelResponse(
             parts=[
                 TextPart('Let me run that.'),
+                # A dangling native call (no co-located result) and an empty-id native call: preserved.
                 NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic'),
+                NativeToolCallPart('code_execution', {}, tool_call_id='', provider_name='anthropic'),
             ],
             timestamp=TS,
         ),
-        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
-    ]
-
-    await agent.run('Thanks.', message_history=message_history)
-
-    # The dangling native call is gone; the surrounding text and user prompts survive.
-    assert received[0] == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Compute 2+2.', timestamp=TS)], timestamp=TS),
-            ModelResponse(parts=[TextPart(content='Let me run that.')], timestamp=TS),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Never mind.', timestamp=TS),
-                    UserPromptPart(content='Thanks.', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-            ),
-        ]
-    )
-
-
-async def test_dangling_native_tool_call_empties_response_dropped():
-    """A response whose only part is a dangling native call is dropped entirely, and the surrounding
-    requests merge."""
-    agent, received = capture_agent()
-
-    message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic')
-            ],
-            timestamp=TS,
-        ),
-        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
-    ]
-
-    await agent.run('Thanks.', message_history=message_history)
-
-    assert received[0] == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Compute 2+2.', timestamp=TS),
-                    UserPromptPart(content='Never mind.', timestamp=TS),
-                    UserPromptPart(content='Thanks.', timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
-async def test_native_tool_call_with_result_kept():
-    """A native tool call with its co-located result is valid and passes through untouched."""
-    agent, received = capture_agent()
-
-    message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic'),
-                NativeToolReturnPart('code_execution', '4', tool_call_id='srv_1', provider_name='anthropic'),
-                TextPart('The answer is 4.'),
-            ],
-            timestamp=TS,
-        ),
+        ModelRequest(parts=[UserPromptPart('What happened?', timestamp=TS)], timestamp=TS),
     ]
     original = ModelMessagesTypeAdapter.dump_json(message_history)
 
-    await agent.run('Thanks.', message_history=message_history)
+    cleaned = _clean_message_history(message_history, repair_last_response=True)
 
-    assert received[0][: len(message_history)] == message_history
-    assert ModelMessagesTypeAdapter.dump_json(received[0][: len(message_history)]) == original
+    assert cleaned == message_history
+    assert ModelMessagesTypeAdapter.dump_json(cleaned) == original
 
 
 async def test_orphaned_result_and_dangling_call_in_one_history():
@@ -637,10 +600,11 @@ async def test_orphaned_result_and_dangling_call_in_one_history():
 
 
 async def test_full_pipeline_idempotent_and_deterministic():
-    """The whole pipeline (orphan-drop + synthesize + native-drop + merge) is idempotent.
+    """The whole pipeline (orphan-drop + synthesize + merge) is idempotent.
 
-    A history exercising every repair, once repaired, is byte-identical when repaired again — so
-    reusing a repaired history across turns never churns the provider prompt-cache prefix.
+    A history exercising every repair — plus a co-located native call left untouched — is
+    byte-identical when repaired again, so reusing a repaired history across turns never churns the
+    provider prompt-cache prefix.
     """
 
     def build_history() -> list[ModelMessage]:
@@ -658,6 +622,7 @@ async def test_full_pipeline_idempotent_and_deterministic():
                     NativeToolCallPart(
                         'code_execution', {'code': 'x'}, tool_call_id='srv_1', provider_name='anthropic'
                     ),
+                    NativeToolReturnPart('code_execution', 'y', tool_call_id='srv_1', provider_name='anthropic'),
                 ],
                 timestamp=TS,
             ),

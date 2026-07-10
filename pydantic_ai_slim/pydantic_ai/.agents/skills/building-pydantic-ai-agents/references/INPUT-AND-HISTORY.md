@@ -42,7 +42,7 @@ Important distinctions:
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
-- interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`); a mid-stream-truncated (unparsable-args) tool call, an orphaned tool result (result with no matching call), and a dangling builtin/native tool call are dropped. Duplicate tool results and provider-specific ordering rules are out of scope.
+- interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`); a mid-stream-truncated (unparsable-args) tool call and an orphaned tool result (result with no matching call) are dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 
 ## Manage Context Size
 
