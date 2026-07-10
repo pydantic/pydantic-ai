@@ -65,9 +65,7 @@ nav:
       - Embeddings: embeddings.md
       - Testing: testing.md
 
-  - Pydantic AI Harness:
-      - Overview: harness/overview.md
-      - Code Mode: harness/code-mode.md
+  - Pydantic AI Harness: https://pydantic.dev/docs/ai/harness/
 
   - Pydantic Evals:
       - Overview: evals.md
