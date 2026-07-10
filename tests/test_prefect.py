@@ -293,12 +293,11 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
         for child in span.children:
             if child.content.startswith('{"response":'):
                 data: dict[str, Any] = json.loads(child.content)
-                if data.get('event_kind') in ('model_response_start', 'model_response_end'):
-                    response: dict[str, Any] = data['response']
-                    response['timestamp'] = None
-                    if isinstance(provider_details := response.get('provider_details'), dict):
-                        provider_details['timestamp'] = None
-                    child.content = json.dumps(data, separators=(',', ':'))
+                response: dict[str, Any] = data['response']
+                response['timestamp'] = None
+                if isinstance(provider_details := response.get('provider_details'), dict):
+                    provider_details['timestamp'] = None
+                child.content = json.dumps(data, separators=(',', ':'))
             _normalize_response_timestamps(child)
 
     assert root_span is not None

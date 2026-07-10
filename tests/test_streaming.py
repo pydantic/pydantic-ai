@@ -3492,6 +3492,10 @@ async def test_agent_stream_iter_events_reuses_initialized_iterator() -> None:
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
+                    raw_stream = stream._raw_stream_response  # pyright: ignore[reportPrivateUsage]
+                    response_iterator = aiter(raw_stream)
+                    assert response_iterator is aiter(raw_stream)
+
                     first_iterator = stream.iter_events()
                     second_iterator = stream.iter_events()
 

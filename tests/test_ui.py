@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -445,6 +446,18 @@ async def test_handle_event_ignores_unregistered_event_types():
     unregistered_event: Any = object()
 
     assert [event async for event in event_stream.handle_event(unregistered_event)] == []
+
+
+async def test_handle_event_dispatches_model_response_start():
+    class LifecycleUIEventStream(DummyUIEventStream[None, str]):
+        async def handle_model_response_start(self, event: ModelResponseStartEvent) -> AsyncIterator[str]:
+            yield event.event_kind
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = LifecycleUIEventStream(run_input=request)
+    event = ModelResponseStartEvent(response=ModelResponse(parts=[]))
+
+    assert [item async for item in event_stream.handle_event(event)] == ['model_response_start']
 
 
 async def test_run_stream_external_tools():
