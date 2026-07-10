@@ -99,10 +99,11 @@ def test_agent_flag(
 
 def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
     env.remove('OPENAI_API_KEY')
+    env.remove('OPENAI_ADMIN_KEY')
     test_agent = Agent()
     create_test_module(custom_agent=test_agent)
 
-    msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
+    msg = r'Missing credentials\. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable\.'
     with pytest.raises(OpenAIError, match=msg):
         cli(['--agent', 'test_module:custom_agent', 'hello'])
 
