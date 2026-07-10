@@ -15,6 +15,7 @@ from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
+from .._utils import is_missing_optional_dependency
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -113,9 +114,13 @@ try:
         VideoMetadataDict,
     )
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not is_missing_optional_dependency(_import_error, 'google.genai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `google-genai` to use the Google model, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
+        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 

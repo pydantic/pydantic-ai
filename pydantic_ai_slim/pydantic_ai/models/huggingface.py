@@ -70,9 +70,13 @@ try:
     from huggingface_hub.errors import HfHubHTTPError
 
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not _utils.is_missing_optional_dependency(_import_error, 'huggingface_hub'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
-        'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
+        'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 

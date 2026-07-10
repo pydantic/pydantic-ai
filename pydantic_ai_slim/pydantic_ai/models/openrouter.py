@@ -8,6 +8,7 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
 from .. import usage
+from .._utils import is_missing_optional_dependency
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -46,9 +47,13 @@ try:
         _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
     )
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not is_missing_optional_dependency(_import_error, 'openai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `openai` to use the OpenRouter model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {

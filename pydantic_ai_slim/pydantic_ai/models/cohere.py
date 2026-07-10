@@ -10,7 +10,11 @@ from typing_extensions import assert_never
 from pydantic_ai.exceptions import ModelAPIError
 
 from .. import ModelHTTPError, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
+from .._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    guard_tool_call_id as _guard_tool_call_id,
+    is_missing_optional_dependency,
+)
 from ..messages import (
     CachePoint,
     CompactionPart,
@@ -60,9 +64,13 @@ try:
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not is_missing_optional_dependency(_import_error, 'cohere'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `cohere` to use the Cohere model, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
+        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 LatestCohereModelNames = Literal[

@@ -5,17 +5,24 @@ from typing import Literal
 
 import httpx
 
+from pydantic_ai._utils import is_missing_optional_dependency
+
 try:
-    from google.auth.credentials import Credentials
     from google.genai.client import Client
     from google.genai.types import HttpRetryOptions
-
-    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not is_missing_optional_dependency(_import_error, 'google.genai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `google-genai` package to use the Google Cloud provider, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
+        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
+
+from google.auth.credentials import Credentials
+
+from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
 
 
 class GoogleCloudProvider(BaseGoogleProvider):

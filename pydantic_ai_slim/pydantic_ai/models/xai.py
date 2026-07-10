@@ -62,7 +62,6 @@ from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
 
 try:
-    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
@@ -70,10 +69,16 @@ try:
     from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not _utils.is_missing_optional_dependency(_import_error, 'xai_sdk'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `xai-sdk` to use the xAI model, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
+
+import grpc
 
 
 @contextmanager

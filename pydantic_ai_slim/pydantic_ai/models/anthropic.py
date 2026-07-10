@@ -16,7 +16,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
-from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
+from .._utils import guard_tool_call_id as _guard_tool_call_id, is_missing_optional_dependency, is_str_dict
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
@@ -221,9 +221,13 @@ try:
     from anthropic.types.model_param import ModelParam
 
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not is_missing_optional_dependency(_import_error, 'anthropic'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `anthropic` to use the Anthropic model, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
+        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 # `AsyncAnthropicBedrockMantle` uses the Messages API and supports automatic prompt caching (unlike the

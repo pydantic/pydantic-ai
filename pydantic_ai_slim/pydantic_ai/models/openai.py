@@ -180,9 +180,13 @@ try:
 
     OMIT = omit
 except ModuleNotFoundError as _import_error:
-    raise ImportError(
+    if not _utils.is_missing_optional_dependency(_import_error, 'openai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `openai` to use the OpenAI model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 
