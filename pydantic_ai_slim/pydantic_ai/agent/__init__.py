@@ -462,6 +462,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
+        if self._tool_timeout is not None and self._tool_timeout <= 0:
+            raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
 

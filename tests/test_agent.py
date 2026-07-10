@@ -3695,7 +3695,7 @@ def test_empty_response():
     )
 
 
-def test_empty_response_without_recovery():
+def test_empty_response_exceeds_max_retries():
     def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[])
 
@@ -4266,6 +4266,13 @@ def test_override_model_no_model():
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
     assert result.output == snapshot((0, 'a'))
+
+
+def test_run_without_model():
+    agent = Agent()
+
+    with pytest.raises(UserError, match=r'`model` must either be set on the agent or included when calling it\.'):
+        agent.run_sync('Hello')
 
 
 async def test_agent_name():
@@ -7983,13 +7990,17 @@ def test_multi_agent_instructions_with_structured_output():
 
 
 def test_empty_final_response():
+    """An empty final response asks the model for text rather than reusing text sent alongside a tool call."""
+
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})])
         elif len(messages) == 3:
             return ModelResponse(parts=[TextPart('bar'), ToolCallPart('my_tool', {'x': 2})])
-        else:
+        elif len(messages) == 5:
             return ModelResponse(parts=[])
+        else:
+            return ModelResponse(parts=[TextPart('baz')])
 
     agent = Agent(FunctionModel(llm))
 
@@ -7998,13 +8009,13 @@ def test_empty_final_response():
         return x * 2
 
     result = agent.run_sync('Hello')
-    assert result.output == 'bar'
+    assert result.output == 'baz'
 
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8015,17 +8026,20 @@ def test_empty_final_response():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:llm:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='my_tool',
+                        content=2,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8036,17 +8050,20 @@ def test_empty_final_response():
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='function:llm:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_tool', content=4, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='my_tool',
+                        content=4,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8054,7 +8071,27 @@ def test_empty_final_response():
                 parts=[],
                 usage=RequestUsage(input_tokens=53, output_tokens=10),
                 model_name='function:llm:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or call a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='baz')],
+                usage=RequestUsage(input_tokens=69, output_tokens=11),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -9600,8 +9637,12 @@ async def test_thinking_only_response_retry_with_tool_output():
     )
 
 
-async def test_thinking_only_response_backward_looking_recovery():
-    """Test that thinking-only response after a tool call recovers text from prior model response."""
+async def test_thinking_only_response_after_tool_call_retries():
+    """Text returned alongside a tool call is not reused as output when a later response is thinking-only.
+
+    Such text typically announces the tool call rather than concluding the run, so the model is
+    asked for a fresh text response instead.
+    """
     call_count = 0
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -9612,15 +9653,18 @@ async def test_thinking_only_response_backward_looking_recovery():
             # First call: return text alongside a tool call
             return ModelResponse(
                 parts=[
-                    TextPart(content="Here's my analysis."),
+                    TextPart(content="I'll save your progress."),
                     ToolCallPart(tool_name='save_progress', args='{"data": "test"}'),
                 ],
             )
-        else:
+        elif call_count == 2:
             # Second call (after tool return): return thinking-only
             return ModelResponse(
                 parts=[ThinkingPart(content='Nothing more to say.')],
             )
+        else:
+            # Third call (after the retry prompt): return the actual output
+            return ModelResponse(parts=[TextPart(content='Your progress is saved.')])
 
     agent = Agent(FunctionModel(model_function))
 
@@ -9630,26 +9674,25 @@ async def test_thinking_only_response_backward_looking_recovery():
 
     result = await agent.run('Hello')
 
-    assert result.output == "Here's my analysis."
+    assert result.output == 'Your progress is saved.'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Hello',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content="Here's my analysis."),
-                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}', tool_call_id=IsStr()),
+                    TextPart(content="I'll save your progress."),
+                    ToolCallPart(
+                        tool_name='save_progress',
+                        args='{"data": "test"}',
+                        tool_call_id=IsStr(),
+                    ),
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                usage=RequestUsage(input_tokens=51, output_tokens=10),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -9664,13 +9707,33 @@ async def test_thinking_only_response_backward_looking_recovery():
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Nothing more to say.')],
-                usage=RequestUsage(input_tokens=52, output_tokens=14),
+                usage=RequestUsage(input_tokens=52, output_tokens=15),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or call a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Your progress is saved.')],
+                usage=RequestUsage(input_tokens=68, output_tokens=20),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -12553,3 +12616,9 @@ async def test_image_output_validators_run_stream():
 
 
 # endregion
+
+
+@pytest.mark.parametrize('tool_timeout', [0, -1])
+def test_agent_rejects_non_positive_tool_timeout(tool_timeout: float):
+    with pytest.raises(UserError, match='tool_timeout must be > 0'):
+        Agent('test', tool_timeout=tool_timeout)
