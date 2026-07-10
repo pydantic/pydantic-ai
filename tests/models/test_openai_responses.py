@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     BinaryImage,
+    CachePoint,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -59,7 +61,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -72,7 +74,7 @@ with try_import() as imports_successful:
     )
     from openai.types.responses.response_refusal_delta_event import ResponseRefusalDeltaEvent
     from openai.types.responses.response_refusal_done_event import ResponseRefusalDoneEvent
-    from openai.types.responses.response_usage import ResponseUsage
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
@@ -81,7 +83,9 @@ with try_import() as imports_successful:
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -159,6 +163,134 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'azure', 'openrouter'])
+async def test_openai_responses_cache_point_and_options(
+    allow_model_requests: None, provider_name: Literal['openai', 'azure', 'openrouter']
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    elif provider_name == 'azure':
+        model = OpenAIResponsesModel(
+            'gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+        )
+    else:
+        model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+    result = await Agent(model, model_settings=settings).run(
+        [ImageUrl('https://example.com/reference.png'), CachePoint(ttl='1h'), 'Describe the reference.']
+    )
+
+    assert result.output == 'done'
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_image',
+                        'detail': 'auto',
+                        'image_url': 'https://example.com/reference.png',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    },
+                    {'type': 'input_text', 'text': 'Describe the reference.'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_responses_prompt_cache_options_not_sent_to_unsupported_model(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = AsyncOpenAI(api_key='test-key')
+    create = AsyncMock(return_value=c)
+    mock_client.responses.create = create
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+    result = await Agent(model, model_settings=settings).run('Hello')
+
+    assert result.output == 'done'
+    assert create.await_count == 1
+    assert 'prompt_cache_options' not in create.call_args.kwargs
+
+
+async def test_openai_responses_cache_point_first_content_raises(allow_model_requests: None):
+    c = response_message([])
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError, match='`CachePoint` cannot be the first item in an OpenAI user prompt'):
+        await Agent(model).run([CachePoint(), 'This should fail.'])
+
+    assert get_mock_responses_kwargs(mock_client) == []
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'expected_reasoning'),
+    [
+        (OpenAIResponsesModelSettings(openai_reasoning_mode='pro'), {'mode': 'pro'}),
+        (OpenAIResponsesModelSettings(openai_reasoning_effort='max'), {'effort': 'max'}),
+        (
+            OpenAIResponsesModelSettings(
+                openai_reasoning_effort='max',
+                openai_reasoning_mode='pro',
+                openai_reasoning_summary='concise',
+            ),
+            {'effort': 'max', 'mode': 'pro', 'summary': 'concise'},
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_mode(
+    allow_model_requests: None,
+    model_settings: OpenAIResponsesModelSettings,
+    expected_reasoning: dict[str, str],
+) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model=model, model_settings=model_settings).run('Solve this carefully.')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
 
 
 async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
@@ -3203,6 +3335,103 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
 
     assert result.usage == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
+    )
+
+
+async def test_openai_responses_cache_write_usage(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ],
+        usage=ResponseUsage(
+            input_tokens=2006,
+            input_tokens_details=InputTokensDetails(cached_tokens=1920, cache_write_tokens=64),
+            output_tokens=300,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=10),
+            total_tokens=2306,
+        ),
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model=model).run('What is 2+2?')
+
+    assert result.usage == RunUsage(
+        requests=1,
+        input_tokens=2006,
+        cache_write_tokens=64,
+        cache_read_tokens=1920,
+        output_tokens=300,
+        details={'reasoning_tokens': 10},
+    )
+
+
+async def test_openai_responses_stream_cache_write_usage(allow_model_requests: None):
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.6',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    response_usage = ResponseUsage(
+        input_tokens=2006,
+        input_tokens_details=InputTokensDetails(cached_tokens=1920, cache_write_tokens=64),
+        output_tokens=300,
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=10),
+        total_tokens=2306,
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='done',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=2,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'usage': response_usage}),
+            type='response.completed',
+            sequence_number=3,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('Solve this.') as result:
+        assert await result.get_output() == 'done'
+
+    assert result.usage == RunUsage(
+        requests=1,
+        input_tokens=2006,
+        cache_write_tokens=64,
+        cache_read_tokens=1920,
+        output_tokens=300,
+        details={'reasoning_tokens': 10},
     )
 
 

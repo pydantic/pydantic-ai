@@ -180,6 +180,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
+                openai_responses_supports_prompt_cache_breakpoints=(
+                    provider == 'openai' and model_name.startswith('gpt-5.6')
+                ),
                 supports_thinking=True,
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,

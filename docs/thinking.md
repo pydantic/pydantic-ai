@@ -66,8 +66,10 @@ If your provider recommends to send back these custom fields not changed, for ca
 ### OpenAI Responses
 
 The [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] can generate native thinking parts.
-To enable this functionality, you need to set the
+To enable this functionality, set the
 [`OpenAIResponsesModelSettings.openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_effort] and [`OpenAIResponsesModelSettings.openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary] [model settings](agent.md#model-run-settings).
+
+GPT-5.6 models also support [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]. The default, `'standard'`, performs one model attempt. `'pro'` performs more model work to improve reliability on difficult tasks, increasing latency and token usage. Mode is independent of reasoning effort and is only available through the Responses API; keep the same GPT-5.6 model ID rather than switching to a separate Pro model.
 
 By default, the unique IDs of reasoning, text, and function call parts from the message history are sent to the model, which can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
 if the message history you're sending does not match exactly what was received from the Responses API in a previous response, for example if you're using a [history processor](message-history.md#processing-message-history).
@@ -77,9 +79,10 @@ To disable this, you can disable the [`OpenAIResponsesModelSettings.openai_send_
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.6')
 settings = OpenAIResponsesModelSettings(
-    openai_reasoning_effort='low',
+    openai_reasoning_effort='max',
+    openai_reasoning_mode='pro',
     openai_reasoning_summary='detailed',
 )
 agent = Agent(model, model_settings=settings)

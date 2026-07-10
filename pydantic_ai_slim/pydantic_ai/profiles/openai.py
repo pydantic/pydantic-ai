@@ -176,6 +176,20 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
+    openai_chat_supports_prompt_cache_breakpoints: bool
+    """Whether the Chat Completions API supports OpenAI-style explicit prompt cache breakpoints. Default: `False`.
+
+    This is a provider API capability rather than an intrinsic model characteristic, so it is enabled by
+    providers for supported models instead of by `openai_model_profile()`.
+    """
+
+    openai_responses_supports_prompt_cache_breakpoints: bool
+    """Whether the Responses API supports OpenAI-style explicit prompt cache breakpoints. Default: `False`.
+
+    This is separate from `openai_chat_supports_prompt_cache_breakpoints` because compatible providers may
+    expose the feature through only one API flavor.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -189,7 +203,7 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
@@ -197,7 +211,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models.
     # See https://developers.openai.com/api/docs/guides/prompt-guidance.
-    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5'))
+    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
 
     # always reasoning
     is_o_series = model_name.startswith('o')
@@ -220,10 +234,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on the
-    # GPT-5.4 and GPT-5.5 mainline families. Like the other gates in this function, this
-    # enumerates known versions rather than matching open-endedly, so a future family
-    # (e.g. GPT-5.6) must be added here explicitly; until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    # GPT-5.4, GPT-5.5, and GPT-5.6 mainline families. Like the other gates in this function, this
+    # enumerates known versions rather than matching open-endedly, so future families must be added
+    # here explicitly; until then they fall back to local search.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,

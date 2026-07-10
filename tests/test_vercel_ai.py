@@ -447,7 +447,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OpenTelemetry FastAPI instrumentation capture request and response body"}',
             },
             {
                 'type': 'tool-input-available',
@@ -508,7 +508,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -566,7 +566,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -624,7 +624,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY"}',
             },
             {
                 'type': 'tool-input-available',
@@ -801,7 +801,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_PYTHON_LOG_CORRELATION environment variable"}',
             },
             {
                 'type': 'tool-input-available',

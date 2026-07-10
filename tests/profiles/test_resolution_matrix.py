@@ -122,6 +122,8 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_chat_supports_document_input': True,
+    'openai_chat_supports_prompt_cache_breakpoints': False,
+    'openai_responses_supports_prompt_cache_breakpoints': False,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
     'anthropic_supports_adaptive_thinking': False,
@@ -273,6 +275,32 @@ def test_openai_gpt_5_4():
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+        }
+    )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_openai_gpt_5_6(model_name: str):
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+            'openai_chat_supports_prompt_cache_breakpoints': True,
+            'openai_responses_supports_prompt_cache_breakpoints': True,
         }
     )
 
@@ -726,10 +754,10 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
     )
 
 
-def test_openrouter_openai_gpt_5_4():
+def test_openrouter_openai_gpt_5_6():
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-    profile = OpenRouterProvider.model_profile('openai/gpt-5.4')
+    profile = OpenRouterProvider.model_profile('openai/gpt-5.6')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
@@ -750,6 +778,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'openai_responses_supports_prompt_cache_breakpoints': True,
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -965,7 +994,7 @@ def test_azure_openai_gpt_5():
     """Azure OpenAI — bare model name."""
     from pydantic_ai.providers.azure import AzureProvider
 
-    profile = AzureProvider.model_profile('gpt-5.4')
+    profile = AzureProvider.model_profile('gpt-5.6')
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
@@ -982,6 +1011,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_prompt_cache_breakpoints': True,
         }
     )
 
