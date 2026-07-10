@@ -1,11 +1,12 @@
-"""Tests for out-of-the-box repair of message histories with dangling tool calls.
+"""Tests for out-of-the-box repair that makes a message history provider-valid.
 
-A run that is cancelled or crashes mid-tool leaves a `ModelResponse` containing `ToolCallPart`s
-with no matching `ToolReturnPart`/`RetryPromptPart` in a following `ModelRequest`, which strict
-providers reject. Before each model request, the framework synthesizes deterministic tool returns
-for such dangling calls and drops calls whose args were cut off mid-stream, so interrupted and
-hand-built histories can be reused directly. Synthesized returns carry the
-`pydantic_ai_synthesized_tool_return` metadata marker so repairs are inspectable in the history.
+An interrupted, hand-built, or context-evicted history can have broken tool-call/tool-result
+pairing that strict providers reject. Before each model request, `_clean_message_history` runs an
+ordered pipeline that ADDs synthesized results for dangling tool calls and REMOVEs fundamentally
+unsendable parts (unparsable-args calls, orphaned results, dangling builtin/native calls), then
+merges consecutive messages — so interrupted and hand-built histories can be reused directly.
+Synthesized returns carry the `pydantic_ai_synthesized_tool_return` metadata marker so repairs are
+inspectable in the history.
 
 These tests capture the exact message list the model receives via `FunctionModel` instead of VCR:
 the repair happens in the pre-request history cleaning, and cassette matchers aren't reliably
@@ -28,6 +29,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -378,8 +381,13 @@ async def test_deferred_run_history_not_silently_repaired():
     )
 
 
-async def test_result_before_call_does_not_mask_dangling_call():
-    """A tool result that precedes its call is an orphan and doesn't answer the call."""
+async def test_result_before_call_dropped_as_orphan_and_call_synthesized():
+    """A tool result that precedes its call is orphaned: it's dropped, and the now-unanswered call
+    gets a synthesized return.
+
+    The result can't be reordered across message boundaries into the call's turn, so the
+    fundamentally-invalid early result is removed instead. The interior request it emptied is dropped.
+    """
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -394,22 +402,279 @@ async def test_result_before_call_does_not_mask_dangling_call():
 
     await agent.run('Thanks.', message_history=message_history)
 
-    # The call after the orphaned result is genuinely dangling and gets a synthesized return.
-    request = received[0][2]
-    assert isinstance(request, ModelRequest)
-    assert request.parts == snapshot(
+    # The orphaned 'Sunny' result and its emptied request are gone; the call is synthesized a return.
+    assert received[0] == snapshot(
         [
-            ToolReturnPart(
-                tool_name='get_weather',
-                content='The tool call was interrupted before a result was produced.',
-                tool_call_id='call_1',
-                metadata={'pydantic_ai_synthesized_tool_return': True},
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Mexico City'}, tool_call_id='call_1')],
                 timestamp=TS,
-                outcome='failed',
             ),
-            UserPromptPart(content='And tomorrow?', timestamp=TS),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id='call_1',
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=TS,
+                        outcome='failed',
+                    ),
+                    UserPromptPart(content='And tomorrow?', timestamp=TS),
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='No idea.')], timestamp=TS),
+            ModelRequest(
+                parts=[UserPromptPart(content='Thanks.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
         ]
     )
+
+
+async def test_orphaned_tool_result_dropped():
+    """A tool result whose call is nowhere in the history is dropped (no provider accepts it)."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('What is the weather?', timestamp=TS),
+                ToolReturnPart('get_weather', 'Sunny', tool_call_id='ghost', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[TextPart('It is sunny.')], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    # The orphaned result is gone; the surrounding user prompt is preserved.
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(parts=[TextPart(content='It is sunny.')], timestamp=TS),
+            ModelRequest(
+                parts=[UserPromptPart(content='Thanks.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_orphaned_result_emptying_last_request_keeps_placeholder():
+    """When dropping an orphaned result empties the last message, an empty request is kept.
+
+    The history must end on a `ModelRequest`, so the emptied trailing request is kept (empty) rather
+    than dropped. Resuming without a prompt then just runs the prior response's pending work.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('Hello.')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('ghost_tool', 'x', tool_call_id='ghost', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run('Continue.', message_history=message_history)
+
+    # The orphaned trailing result is dropped; a new prompt request follows the kept placeholder's slot.
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hi', timestamp=TS)], timestamp=TS),
+            ModelResponse(parts=[TextPart(content='Hello.')], timestamp=TS),
+            ModelRequest(parts=[UserPromptPart(content='Continue.', timestamp=IsDatetime())], timestamp=IsDatetime()),
+        ]
+    )
+
+
+async def test_dangling_native_tool_call_dropped():
+    """A builtin/native tool call with no co-located result is dropped (Anthropic #6401).
+
+    Native results come from the provider inline, so a dangling native call can never be answered
+    and can't be given a meaningful synthetic result — it's removed.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                TextPart('Let me run that.'),
+                NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    # The dangling native call is gone; the surrounding text and user prompts survive.
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Compute 2+2.', timestamp=TS)], timestamp=TS),
+            ModelResponse(parts=[TextPart(content='Let me run that.')], timestamp=TS),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Never mind.', timestamp=TS),
+                    UserPromptPart(content='Thanks.', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_dangling_native_tool_call_empties_response_dropped():
+    """A response whose only part is a dangling native call is dropped entirely, and the surrounding
+    requests merge."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic')
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    assert received[0] == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Compute 2+2.', timestamp=TS),
+                    UserPromptPart(content='Never mind.', timestamp=TS),
+                    UserPromptPart(content='Thanks.', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_native_tool_call_with_result_kept():
+    """A native tool call with its co-located result is valid and passes through untouched."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Compute 2+2.', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart('code_execution', {'code': '2+2'}, tool_call_id='srv_1', provider_name='anthropic'),
+                NativeToolReturnPart('code_execution', '4', tool_call_id='srv_1', provider_name='anthropic'),
+                TextPart('The answer is 4.'),
+            ],
+            timestamp=TS,
+        ),
+    ]
+    original = ModelMessagesTypeAdapter.dump_json(message_history)
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    assert received[0][: len(message_history)] == message_history
+    assert ModelMessagesTypeAdapter.dump_json(received[0][: len(message_history)]) == original
+
+
+async def test_orphaned_result_and_dangling_call_in_one_history():
+    """A history with both an orphaned result and a dangling call: each is repaired independently."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Do two things.', timestamp=TS),
+                ToolReturnPart('ghost_tool', 'x', tool_call_id='ghost', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[ToolCallPart('real_tool', {'a': 1}, tool_call_id='real_1')], timestamp=TS),
+        ModelRequest(parts=[UserPromptPart('Actually stop.', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('Stopped.')], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Do two things.', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='real_tool', args={'a': 1}, tool_call_id='real_1')], timestamp=TS
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='real_tool',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id='real_1',
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=TS,
+                        outcome='failed',
+                    ),
+                    UserPromptPart(content='Actually stop.', timestamp=TS),
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='Stopped.')], timestamp=TS),
+            ModelRequest(
+                parts=[UserPromptPart(content='Thanks.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_full_pipeline_idempotent_and_deterministic():
+    """The whole pipeline (orphan-drop + synthesize + native-drop + merge) is idempotent.
+
+    A history exercising every repair, once repaired, is byte-identical when repaired again — so
+    reusing a repaired history across turns never churns the provider prompt-cache prefix.
+    """
+
+    def build_history() -> list[ModelMessage]:
+        return [
+            ModelRequest(
+                parts=[
+                    UserPromptPart('Start.', timestamp=TS),
+                    ToolReturnPart('ghost', 'x', tool_call_id='ghost', timestamp=TS),
+                ],
+                timestamp=TS,
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart('real_tool', {'a': 1}, tool_call_id='real_1'),
+                    NativeToolCallPart(
+                        'code_execution', {'code': 'x'}, tool_call_id='srv_1', provider_name='anthropic'
+                    ),
+                ],
+                timestamp=TS,
+            ),
+            ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+            ModelResponse(parts=[TextPart('OK.')], timestamp=TS),
+        ]
+
+    agent_a, _ = capture_agent()
+    result_a = await agent_a.run('Explain?', message_history=build_history())
+
+    once = result_a.all_messages()
+    agent_b, received_b = capture_agent()
+    await agent_b.run('Explain?', message_history=once)
+
+    # Repairing the already-repaired history is a no-op: the wire-sent prefix is byte-identical.
+    prefix = len(once)
+    assert ModelMessagesTypeAdapter.dump_json(received_b[0][:prefix]) == ModelMessagesTypeAdapter.dump_json(once)
 
 
 async def test_duplicate_result_ignored():
