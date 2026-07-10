@@ -11,7 +11,7 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -31,6 +31,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
+    AgentStreamEvent,
     BaseToolCallPart,
     BinaryImage,
     FilePart,
@@ -41,7 +42,9 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
@@ -688,6 +691,7 @@ class StreamedResponse(ABC):
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
+    _emit_model_response_events: bool = field(default=True, kw_only=True, repr=False)
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
@@ -793,6 +797,22 @@ class StreamedResponse(ABC):
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
             )
         return self._event_iterator
+
+    def _iter_with_model_response_events(
+        self, stream: AsyncIterable[ModelResponseStreamEvent]
+    ) -> AsyncIterator[AgentStreamEvent]:
+        """Wrap a streamed response with its lifecycle events."""
+        emit_model_response_events = self._emit_model_response_events
+
+        async def iterator() -> AsyncIterator[AgentStreamEvent]:
+            if emit_model_response_events:
+                yield ModelResponseStartEvent(response=self.get())
+            async for event in stream:
+                yield event
+            if emit_model_response_events:
+                yield ModelResponseEndEvent(response=self.get())
+
+        return iterator()
 
     async def cancel(self) -> None:
         """Cancel the stream, stopping token generation.

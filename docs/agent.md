@@ -134,9 +134,11 @@ async def main():
     """
 ```
 
-Each model response in the event stream is bracketed by a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent].
+Each fully consumed model response from [`run(event_stream_handler=...)`][pydantic_ai.agent.AbstractAgent.run] or [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is bracketed by a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent].
 The end event carries the complete [`ModelResponse`][pydantic_ai.messages.ModelResponse], including the per-request [`RequestUsage`][pydantic_ai.usage.RequestUsage].
 The start event carries the response state known when streaming begins, which may already include provider metadata or partial usage such as input-token counts.
+
+The `event_stream_handler` passed to [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] stops at the [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] for the final response, so it does not receive that response's end event. After consuming the streamed output, read its per-request usage from [`run.response.usage`][pydantic_ai.result.StreamedRunResult.response].
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

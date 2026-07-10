@@ -111,9 +111,12 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 run_context,
             ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+                response_events = streamed_response._iter_with_model_response_events(  # pyright: ignore[reportPrivateUsage]
+                    streamed_response
+                )
+                await self.event_stream_handler(run_context, response_events)
 
-                async for _ in streamed_response:
+                async for _ in response_events:
                     pass
             return streamed_response.get()
 
@@ -210,7 +213,11 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(
+            model_request_parameters,
+            response,
+            model_response_events_handled=True,
+        )
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:

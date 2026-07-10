@@ -388,14 +388,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def iter_events(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s for event handlers and UI adapters."""
         if self._agent_event_stream_iterator is None:
-
-            async def iterator_with_model_response_events() -> AsyncIterator[_messages.AgentStreamEvent]:
-                yield _messages.ModelResponseStartEvent(response=self.response)
-                async for event in self:
-                    yield event
-                yield _messages.ModelResponseEndEvent(response=self.response)
-
-            self._agent_event_stream_iterator = iterator_with_model_response_events()
+            self._agent_event_stream_iterator = self._raw_stream_response._iter_with_model_response_events(  # pyright: ignore[reportPrivateUsage]
+                self
+            )
 
         return self._agent_event_stream_iterator
 

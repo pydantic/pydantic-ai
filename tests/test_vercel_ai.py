@@ -1824,7 +1824,7 @@ async def test_run_stream_tool_call():
             ),
         ],
     )
-    adapter = VercelAIAdapter(agent, request)
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
@@ -1837,6 +1837,7 @@ async def test_run_stream_tool_call():
             {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 7}, 'transient': True},
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
@@ -1864,6 +1865,7 @@ async def test_run_stream_tool_call():
                 'id': IsStr(),
             },
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 27}, 'transient': True},
             {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
@@ -8766,7 +8768,8 @@ async def test_event_stream_function_tool_return_error():
     )
 
 
-async def test_event_stream_usage_chunk_emitted_for_non_empty_usage():
+@pytest.mark.parametrize('sdk_version', [6, 7])
+async def test_event_stream_usage_chunk_emitted_for_non_empty_usage(sdk_version: Literal[6, 7]):
     async def event_generator():
         yield ModelResponseStartEvent(
             response=ModelResponse(
@@ -8800,7 +8803,7 @@ async def test_event_stream_usage_chunk_emitted_for_non_empty_usage():
             ),
         ],
     )
-    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=sdk_version)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))

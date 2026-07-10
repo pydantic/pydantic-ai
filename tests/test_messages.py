@@ -45,7 +45,6 @@ from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
-    AgentStreamEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelResponseEndEvent,
@@ -804,7 +803,7 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
 
 
 def test_agent_stream_lifecycle_event_discriminators_round_trip():
-    event_ta = TypeAdapter(AgentStreamEvent)
+    event_ta: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
 
     start_event = event_ta.validate_python({'event_kind': 'model_response_start', 'response': {'parts': []}})
     assert isinstance(start_event, ModelResponseStartEvent)

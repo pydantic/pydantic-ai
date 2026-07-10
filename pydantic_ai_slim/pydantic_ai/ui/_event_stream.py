@@ -163,7 +163,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                if isinstance(event, ModelResponseStartEvent | PartStartEvent):
+                if isinstance(event, (ModelResponseStartEvent, PartStartEvent)):
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, ToolCallEvent):

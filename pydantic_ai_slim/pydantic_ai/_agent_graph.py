@@ -751,6 +751,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 dummy_sr = _SkipStreamedResponse(
                     model_request_parameters=model_request_parameters,
                     _response=_messages.ModelResponse(parts=[]),
+                    _emit_model_response_events=False,
                 )
                 yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
                 return
