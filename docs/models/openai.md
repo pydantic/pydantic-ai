@@ -20,12 +20,12 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses).
+The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses). GPT-5.6 is available as `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.6-sol')
 ...
 ```
 
@@ -37,7 +37,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.6-sol')
 agent = Agent(model)
 ...
 ```
@@ -125,6 +125,24 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+
+### Reasoning mode
+
+GPT-5.6 models support OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default. `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. Mode and effort are independent, and reasoning mode is only available through the Responses API. Pydantic AI enables it for GPT-5.6 requests through the OpenAI, Azure OpenAI, and OpenRouter providers.
+
+Configure the mode with [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.6-sol')
+settings = OpenAIResponsesModelSettings(openai_reasoning_mode='pro')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+Keep the same GPT-5.6 variant ID when enabling `pro`; there is no separate Pro model slug.
 
 ### Native tools
 

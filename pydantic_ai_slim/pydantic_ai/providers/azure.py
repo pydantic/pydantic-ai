@@ -76,6 +76,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # OpenAI models are unprefixed.
             base = openai_model_profile(model_name)
 
+        if model_name.startswith('gpt-5.6'):
+            base = merge_profile(base, OpenAIModelProfile(openai_responses_supports_reasoning_mode=True))
+
         # Azure Chat Completions API doesn't support document input.
         return merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
 

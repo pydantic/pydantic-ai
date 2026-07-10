@@ -59,7 +59,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -81,7 +81,9 @@ with try_import() as imports_successful:
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -159,6 +161,117 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'expected_reasoning'),
+    [
+        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard'}),
+        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro'}),
+        (
+            {
+                'openai_reasoning_effort': 'high',
+                'openai_reasoning_mode': 'pro',
+                'openai_reasoning_summary': 'concise',
+            },
+            {'effort': 'high', 'mode': 'pro', 'summary': 'concise'},
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_mode(
+    allow_model_requests: None,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_reasoning: dict[str, str],
+) -> None:
+    """Not a VCR test: this pins the exact typed `reasoning` request object."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model=model, model_settings=model_settings).run('Solve this carefully.')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
+
+
+async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -> None:
+    """Not a VCR test: exact request kwargs prove the OpenRouter Responses profile enables mode."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+
+
+async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> None:
+    """Not a VCR test: exact request kwargs prove the Azure GPT-5.6 profile enables mode."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+    )
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
+    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+):
+    """Not a VCR test: unsupported paths must omit `reasoning.mode` before sending."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel('openai/gpt-5.4', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
 
 
 async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:

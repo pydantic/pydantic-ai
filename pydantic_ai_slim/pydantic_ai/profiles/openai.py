@@ -141,6 +141,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
     When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported."""
 
+    openai_responses_supports_reasoning_mode: bool
+    """Whether the Responses API supports `reasoning.mode` for this model and provider. Default: `False`."""
+
     openai_responses_requires_function_call_status_none: bool
     """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.
 

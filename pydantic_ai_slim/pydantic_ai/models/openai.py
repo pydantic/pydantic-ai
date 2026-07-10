@@ -590,6 +590,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
     """
 
+    openai_reasoning_mode: Literal['standard', 'pro']
+    """The reasoning mode to use for GPT-5.6 models.
+
+    `standard` is the default. `pro` performs more model work to improve reliability on difficult
+    tasks, at the cost of higher latency and token usage. Reasoning mode is independent of
+    [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
+    This setting is ignored when the active model or provider profile does not support reasoning mode.
+
+    See [OpenAI's reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)
+    for more details.
+    """
+
     openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
@@ -2346,6 +2358,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_mode = model_settings.get('openai_reasoning_mode', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
@@ -2355,6 +2368,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         reasoning: Reasoning = {}
         if reasoning_effort:
             reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
+        if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
+            reasoning['mode'] = reasoning_mode
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT

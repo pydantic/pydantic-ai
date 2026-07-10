@@ -119,6 +119,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_responses_supports_reasoning_mode': False,
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_chat_supports_document_input': True,
@@ -275,6 +276,39 @@ def test_openai_gpt_5_4():
             'openai_supports_phase': True,
         }
     )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna'],
+)
+def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+def test_azure_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
 
 
 def test_openai_gpt_4o():
