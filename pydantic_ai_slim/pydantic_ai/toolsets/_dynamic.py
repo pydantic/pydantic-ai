@@ -8,7 +8,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
-from .abstract import AbstractToolset, ToolsetTool
+from .abstract import AbstractToolset, ToolsetTool, implicit_enter
 
 ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
@@ -106,7 +106,8 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         self._toolset = None
         if toolset is None:
             return
-        await toolset.__aenter__()
+        with implicit_enter():
+            await toolset.__aenter__()
         self._toolset = toolset
 
     async def __aexit__(self, *args: Any) -> bool | None:
