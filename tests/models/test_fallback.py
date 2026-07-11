@@ -1895,6 +1895,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
             ),
         ]
     )
@@ -1937,6 +1938,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
             ),
         ]
     )
@@ -1998,6 +2000,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
             ),
             ModelRequest(
                 parts=[
