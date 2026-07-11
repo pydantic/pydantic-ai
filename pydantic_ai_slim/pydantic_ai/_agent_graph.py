@@ -69,11 +69,19 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
-"""How to handle tool calls a model requests alongside an output tool that produces a final result.
+"""How to handle function tool calls a model requests alongside a result that ends the run.
+
+The final result usually comes from an output tool call, but with
+[`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
+or image output it comes from the text or image the model returns in the same response.
 
 - `'early'`: Output tools run in the order the model emitted them and the run ends at the first one
   that succeeds; function tools are not executed. If every output tool fails, function tools run so
-  the model can correct on the next round.
+  the model can correct on the next round. Likewise, if the response contains a valid structured
+  output (`NativeOutput`/`PromptedOutput` text, or an image) alongside function tool calls, that output
+  ends the run and the function tools are skipped. Plain, unstructured text output (`str` or
+  `TextOutput`) does *not* skip tools this way — the model isn't told its text is final, so its
+  preamble shouldn't silently cancel a tool call; the function tools run and the run continues.
 - `'graceful'` (default): Tools run in the order the model emitted them — function tools that precede
   an output tool complete before it. Output tools run in order and the first success wins; subsequent
   output tools are skipped (their side effects don't run). If a function tool raises
@@ -84,6 +92,10 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] suppresses the output result. Use `sequential=True`
   on a tool (including via [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that
   doesn't overlap with others.
+
+Under `'graceful'` and `'exhaustive'`, a structured output (`NativeOutput`/`PromptedOutput` text, or an
+image) returned alongside function tool calls does *not* end the run early: the function tools run and
+the run continues, so their results can inform the model's eventual output. Only `'early'` skips them.
 
 The default changed from `'early'` to `'graceful'` in v2. Set `end_strategy='early'` to keep the v1
 behavior where the run ends the instant an output tool succeeds.
@@ -726,6 +738,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            #
+            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
+            # the handler is parked on `stream_done.wait()`. Setting stream_done lets
+            # it exit so cancel_and_drain's gather can complete. Harmless no-op when
+            # the task was actually cancelled — it's already unwinding. See #6422.
+            stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
             raise
         else:
@@ -1270,13 +1289,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text = compaction_text
 
                 try:
-                    # At the moment, we prioritize at least executing tool calls if they are present.
-                    # In the future, we'd consider making this configurable at the agent or run level.
-                    # This accounts for cases like anthropic returns that might contain a text response
+                    # We generally prioritize at least executing tool calls if they are present.
+                    # This accounts for cases like Anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
+                    # The exception is `end_strategy='early'`: if the response also carries a valid non-tool
+                    # output (schema-validated text, or an image) alongside plain function tool calls, that
+                    # output is already the final result, so `_handle_tool_calls` skips those tools and ends the
+                    # run — matching the way `'early'` skips function tools once an output tool call succeeds.
+                    # (Output tool calls and deferred tool calls are left to normal processing, so a co-emitted
+                    # one still wins/surfaces rather than being preempted by the text.)
                     alternatives: list[str] = []
                     if tool_calls:
-                        async for event in self._handle_tool_calls(ctx, tool_calls):
+                        response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
+                        async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
                             yield event
                         return
                     elif output_schema.toolset:
@@ -1323,6 +1348,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
+        *,
+        response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
         run_context = replace(
@@ -1334,16 +1361,41 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
+        # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain
+        # function tool, that output is the final result and the tools are recorded as skipped.
+        #
+        # We check the tool kinds here (rather than letting `process_tool_calls` sort it out) for two reasons:
+        # output and deferred (external/unapproved) tool calls must go through normal processing, and
+        # `_process_response_output` runs the output validators, so we only want to invoke it once we know the
+        # response output can actually win. `for_run_step` above populated the tool defs used here.
+        #
+        # The precedence is deliberate: calling an output tool is an explicit "finish the run" signal, and a
+        # deferred call may need an external result or human approval — whereas the model's text may just be
+        # supporting prose (it doesn't know we might treat that text as final), so text must not silently
+        # cancel either. A co-emitted output tool call therefore still produces the final result, and a
+        # co-emitted deferred call is still surfaced, rather than being preempted by the text.
+        final_result: result.FinalResult[NodeRunEndT] | None = None
+        if response_output is not None and all(
+            (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
+            for call in tool_calls
+        ):
+            text, files = response_output
+            final_result = await self._process_response_output(ctx, text=text, files=files)
+
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
+            # When `final_result` is set (schema-validated text or image output already won under
+            # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
+            # executing them.
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
-                final_result=None,
+                final_result=final_result,
                 ctx=ctx,
                 output_parts=output_parts,
                 output_final_result=output_final_result,
@@ -1375,12 +1427,60 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=output_parts))
 
+    async def _process_response_output(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        *,
+        text: str,
+        files: list[_messages.BinaryContent],
+    ) -> result.FinalResult[NodeRunEndT] | None:
+        """Build the response's non-tool output result (an image, or schema-validated text), or `None`.
+
+        Used under `end_strategy='early'` to decide whether a response that also contains function tool calls
+        already carries a final result. Images take precedence over text, matching the order the no-tool-calls
+        path handles them in.
+
+        Only text that's validated against a schema can preempt tool calls — i.e. the object output processor
+        used by [`NativeOutput`][pydantic_ai.output.NativeOutput],
+        [`PromptedOutput`][pydantic_ai.output.PromptedOutput], and a bare structured type (auto mode). There
+        the model was told to produce the final output as its text, so text that validates is a deliberate
+        final result. Plain, unstructured text output (`str`, [`TextOutput`][pydantic_ai.output.TextOutput], or
+        a `str` fallback in a larger schema) accepts *any* text, so the model's preamble — which it emits with
+        no signal that we'd treat it as final — must not silently win and skip the tools.
+
+        Returns `None` when the response carries no usable output — e.g. schema-validated text or an image that
+        fails validation — so the caller runs the tool calls instead. Unlike a failed output *tool* call, this
+        doesn't consume an output retry or surface a retry prompt: running the tools is the correction.
+        """
+        output_schema = ctx.deps.output_schema
+        try:
+            if output_schema.allows_image:
+                if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                    return await self._process_image_response(ctx, image)
+            if (
+                (text_processor := output_schema.text_processor)
+                and isinstance(text_processor, _output.BaseObjectOutputProcessor)
+                and text
+            ):
+                return await self._process_text_response(ctx, text, text_processor)
+        except ToolRetryError:
+            return None
+        return None
+
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        return self._handle_final_result(ctx, await self._process_text_response(ctx, text, text_processor), [])
+
+    async def _process_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
 
@@ -1393,13 +1493,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     async def _handle_image_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        return self._handle_final_result(ctx, await self._process_image_response(ctx, image), [])
+
+    async def _process_image_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        image: _messages.BinaryImage,
+    ) -> result.FinalResult[NodeRunEndT]:
         run_context = _build_output_run_context(ctx)
         schema = ctx.deps.output_schema
         result_data = await _output.run_image_process_hooks(
@@ -1410,7 +1517,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_validators=ctx.deps.output_validators,
         )
 
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+        return result.FinalResult(result_data)
 
     def _handle_final_result(
         self,
@@ -1456,6 +1563,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         agent=ctx.deps.agent,
         model=ctx.deps.model,
         usage=ctx.state.usage,
+        usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
         validation_context=None,
@@ -1578,27 +1686,24 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
         If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
         `messages` will represent the messages exchanged during the first call only.
 
+        Contexts can be nested: each `capture_run_messages` context captures the runs for which it is the
+        innermost active context. A run started inside a nested context is captured by that nested context,
+        not by any enclosing one, so wrapping a nested agent run (e.g. inside a tool) in its own
+        `capture_run_messages` lets you inspect that inner run's messages independently.
+
     If a run is interrupted by an exception or cancellation while streaming a response or executing
     tool calls, the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] or
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] is still captured here with
     `state='interrupted'`, so consumers can detect and inspect partial state.
     """
-    token = None
     messages: list[_messages.ModelMessage] = []
-
-    # Try to reuse existing message context if available
-    try:
-        messages = _messages_ctx_var.get().messages
-    except LookupError:
-        # No existing context, create a new one
-        token = _messages_ctx_var.set(_RunMessages(messages))
-
+    # Always push a fresh context so nested `capture_run_messages` contexts each capture their own runs,
+    # rather than sharing (and overwriting) the enclosing context's messages.
+    token = _messages_ctx_var.set(_RunMessages(messages))
     try:
         yield messages
     finally:
-        # Clean up context if we created it
-        if token is not None:
-            _messages_ctx_var.reset(token)
+        _messages_ctx_var.reset(token)
 
 
 def get_captured_run_messages() -> _RunMessages:
