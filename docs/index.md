@@ -12,6 +12,8 @@ Yet despite virtually every Python agent framework and LLM library using Pydanti
 
 We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
 
+Pydantic AI ships the agent loop and a composable [capabilities](capabilities.md) system; the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) is our official library of ready-made capabilities — code execution, file access, guardrails, sub-agent orchestration, and more — that you pick and choose to build coding agents, research assistants, and anything in between.
+
 ## Why use Pydantic AI
 
 1. **Built by the Pydantic Team**:
