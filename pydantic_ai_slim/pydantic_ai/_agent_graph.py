@@ -1962,7 +1962,7 @@ def _repair_dangling_tool_calls(
                             tool_call_id=call.tool_call_id,
                             metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
                             timestamp=message.timestamp,
-                            outcome='failed',
+                            outcome='interrupted',
                         )
                     )
             repaired.append(message)

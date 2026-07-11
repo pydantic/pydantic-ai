@@ -1258,12 +1258,16 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
     - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
+      cancelled stream or a crash mid-execution); synthesized during message-history repair. Unlike
+      `'failed'`, `'interrupted'` is not mapped to any provider native-error channel — the result's
+      content string carries the interruption wording.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:

@@ -746,6 +746,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     else:
+                        # `'success'` and `'interrupted'` both render as neutral tool output; only
+                        # `'failed'` is an error, so `'interrupted'` is never surfaced as one.
                         ui_parts.append(
                             ToolOutputAvailablePart(
                                 type=tool_name,
@@ -843,6 +845,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                 )
             else:
+                # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
+                # is an error, so a synthesized `'interrupted'` return (from message-history repair)
+                # shows its interruption message as the output rather than an error.
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,
