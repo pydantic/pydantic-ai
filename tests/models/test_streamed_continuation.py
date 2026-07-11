@@ -702,6 +702,127 @@ async def test_streaming_wrap_error_propagates() -> None:
             pass
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_background_poll_survives_past_max_continuations(stream: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A replace-style (same-id) background poll chain isn't killed by the small `MAX_CONTINUATIONS` cap.
+
+    Each poll of a still-pending background job re-fetches the *same* job (shared `provider_response_id`),
+    so it must not count against the accumulate ceiling that guards a runaway `pause_turn` model — a
+    healthy background job that legitimately runs long has to be allowed to finish.
+    """
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 3)
+
+    poll_count = 8  # far past the strict cap of 3
+    if stream:
+        segments = [
+            _StreamSegment(texts=[], state='suspended', provider_response_id='job1', input_tokens=1, output_tokens=0)
+            for _ in range(poll_count)
+        ]
+        segments.append(
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=1, output_tokens=1
+            )
+        )
+        model = _ScriptedModel(segments=segments)
+    else:
+        responses = [
+            ModelResponse(
+                parts=[],
+                model_name='scripted',
+                provider_response_id='job1',
+                usage=RequestUsage(input_tokens=1, output_tokens=0),
+                state='suspended',
+                timestamp=_TIMESTAMP,
+            )
+            for _ in range(poll_count)
+        ]
+        responses.append(
+            ModelResponse(
+                parts=[TextPart('done')],
+                model_name='scripted',
+                provider_response_id='job1',
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+        model = _ScriptedModel(responses=responses)
+
+    agent = Agent(model)
+
+    if stream:
+        async with agent.run_stream('go') as result:
+            output = await result.get_output()
+    else:
+        output = (await agent.run('go')).output
+
+    assert 'done' in output
+    # The chain completed without raising `UnexpectedModelBehavior` and without cancelling the healthy job.
+    assert model.cancelled == []
+
+
+async def test_streamed_background_detach_records_suspended_and_resumes() -> None:
+    """A streamed background run detached mid-flight records `state='suspended'` and resumes later.
+
+    Kicking off a long background job over streaming, walking away (stop iterating, no `cancel()`), and
+    resuming from the persisted history must work — consistent with the non-streaming path. Detaching
+    leaves the server-side job alive (no cancel), records the trailing response as resumable
+    `'suspended'`, and feeding that history back into a fresh run issues the continuation.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2
+            ),
+            # Same id → a background poll would replace, not accumulate; never reached (we detach first).
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    recorded: list[ModelMessage] = []
+    async with agent.iter('go') as run:
+        node = run.next_node
+        while not isinstance(node, End):  # pragma: no branch
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    iterator = stream.__aiter__()
+                    await iterator.__anext__()  # first (suspended) background segment now in flight
+                    # Detach: stop iterating WITHOUT cancelling.
+                assert stream.response.state == 'suspended'
+                recorded = run.ctx.state.message_history[:]
+                break
+            node = await run.next(node)
+
+    # Detaching left the server-side job alive (no cancel) and requested no further poll.
+    assert model.cancelled == []
+    assert model.request_stream_calls == 1
+    # The recorded trailing response is a resumable suspended response.
+    assert isinstance(recorded[-1], ModelResponse)
+    assert recorded[-1].state == 'suspended'
+    assert recorded[-1].provider_response_id == 'job1'
+
+    # Resume: feed the persisted suspended history to a fresh run; it must issue the continuation.
+    resume_model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    resume_agent = Agent(resume_model)
+    async with resume_agent.run_stream(message_history=recorded) as result:
+        output = await result.get_output()
+    new_messages = result.new_messages()
+
+    assert 'done' in output
+    assert resume_model.request_stream_calls == 1  # it resumed the turn rather than erroring or starting fresh
+    # Only the final merged (complete) response is new; the suspended response was resumed, not re-recorded.
+    assert len(new_messages) == snapshot(1)
+    assert isinstance(new_messages[-1], ModelResponse)
+    assert new_messages[-1].state == 'complete'
+
+
 async def test_cancel_through_wrapper_model_delegates() -> None:
     """Cancelling a continuation on a `WrapperModel` forwards `cancel_suspended_response` to the wrapped model."""
     inner = _ScriptedModel(

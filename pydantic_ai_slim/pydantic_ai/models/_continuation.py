@@ -46,13 +46,41 @@ from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import Model, StreamedResponse
 
-__all__ = ['MAX_CONTINUATIONS', 'MergeMode', 'merge_mode', 'merge_responses', '_ContinuationStreamedResponse']
+__all__ = [
+    'MAX_CONTINUATIONS',
+    'MAX_REPLACE_CONTINUATIONS',
+    'MergeMode',
+    'merge_mode',
+    'merge_responses',
+    '_ContinuationStreamedResponse',
+]
 
 MAX_CONTINUATIONS = 50
-"""Maximum number of continuation segments for a single model turn.
+"""Maximum number of *accumulate*-style continuation segments for a single model turn.
 
-Guards against a provider that never leaves the `'suspended'` state from looping
-forever; exceeding it raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
+Applies to re-suspensions that accumulate — each producing a new `provider_response_id` and
+appending genuinely new parts (Anthropic `pause_turn`). This is the guard against a model that
+never leaves the `'suspended'` state, endlessly emitting new segments; exceeding it raises
+[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
+
+*Replace*-style re-suspensions — re-polling a single long-running job under the same
+`provider_response_id` (OpenAI background mode) — are bounded by the far more generous
+[`MAX_REPLACE_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_REPLACE_CONTINUATIONS] instead,
+so a healthy background job that legitimately runs for minutes isn't killed after ~50 polls.
+"""
+
+MAX_REPLACE_CONTINUATIONS = 10_000
+"""Backstop for *replace*-style continuation polling of a single background job.
+
+A replace-style re-suspension re-fetches one long-running job under the same `provider_response_id`
+(OpenAI background mode), so — unlike an accumulate-style re-suspension (see
+[`MAX_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_CONTINUATIONS]) — it carries no risk of an
+unbounded model spawning endless new segments: it's the *same* job, and legitimate background jobs run
+for minutes (hundreds of polls at a ~1s interval). The real bounds here are the run's usage limits and
+explicit cancellation, which already work; this large ceiling is only a last-resort safety net against a
+provider stuck returning `'suspended'` for the same id forever (which usage limits wouldn't catch, since
+a pending poll adds no tokens). Exceeding it raises
+[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 """
 
 MergeMode = Literal['replace', 'accumulate']
@@ -137,6 +165,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     sleep_func: Callable[[float], Awaitable[None]]
     check_usage: Callable[[RequestUsage], None]
     initial_suspended_response: ModelResponse | None = None
+    # Ceiling for *replace*-style (single-job background poll) re-suspensions, kept separate from
+    # `max_continuations` (which bounds accumulate-style re-suspensions). See `MAX_REPLACE_CONTINUATIONS`.
+    max_replace_continuations: int = MAX_REPLACE_CONTINUATIONS
     # Entered around each segment's `model.request_stream(...)`. The agent graph passes a factory
     # that re-attaches the ambient context (e.g. the OTel `chat` span opened by `wrap_model_request`
     # in a separate task) so span updates driven by `get_current_span()` land on the right span even
@@ -146,6 +177,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _merged_response: ModelResponse | None = field(default=None, init=False)
     _current_sub: StreamedResponse | None = field(default=None, init=False)
     _stopped: bool = field(default=False, init=False)
+    # Set by `aclose()`: the consumer stopped iterating and the stream was torn down *without* a
+    # `cancel()`/`close_stream()` (which would flip `_stopped`/`_cancelled` and cancel the server-side
+    # job). Lets `get()` distinguish a deliberate detach — where a still-pending suspended job survives
+    # server-side and the run should be recorded as resumable `'suspended'` — from a live, still-streaming
+    # snapshot (`'incomplete'`). See `get()`.
+    _detached: bool = field(default=False, init=False)
     # The inner segment-stitching generator, kept separately so `aclose()` can tear it down
     # directly: the outer cancel-guard's `async for … in iterator` does NOT forward `aclose()`
     # to it, and this generator owns each segment's `async with request_stream(...)`.
@@ -207,8 +244,44 @@ class _ContinuationStreamedResponse(StreamedResponse):
             if not self._cancelled:
                 self._finished = True
 
+    def _count_continuation(
+        self, last_mode: MergeMode | None, accumulate_count: int, replace_count: int
+    ) -> tuple[int, int]:
+        """Count a suspended re-issue against its ceiling (replace vs accumulate), raising if exceeded.
+
+        The first re-issue has no prior merge to classify (`last_mode is None`) so it counts as
+        accumulate — the strict ceiling — which is harmless since both ceilings allow at least one.
+        See `MAX_REPLACE_CONTINUATIONS`. Returns the updated `(accumulate_count, replace_count)`.
+        """
+        if last_mode == 'replace':
+            replace_count += 1
+            if replace_count > self.max_replace_continuations:
+                raise UnexpectedModelBehavior(
+                    f'Model response remained suspended after polling the maximum of '
+                    f'{self.max_replace_continuations} times'
+                )
+        else:
+            accumulate_count += 1
+            if accumulate_count > self.max_continuations:
+                raise UnexpectedModelBehavior(
+                    f'Model response was suspended more than the maximum of {self.max_continuations} times'
+                )
+        return accumulate_count, replace_count
+
     async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
-        iteration = 0
+        # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
+        # drives reindexing): an *accumulate* re-suspension (Anthropic `pause_turn`) appends genuinely
+        # new parts each poll and risks an unbounded model, so it keeps the small `max_continuations`
+        # cap; a *replace* re-suspension (OpenAI background poll) re-fetches one long-running job under
+        # the same `provider_response_id`, so a healthy job that legitimately runs for minutes must not
+        # be killed by the small cap — it gets the far more generous `max_replace_continuations` backstop.
+        # Mirrors the non-streaming continuation loop in `_agent_graph`. See `MAX_REPLACE_CONTINUATIONS`.
+        accumulate_count = 0
+        replace_count = 0
+        # Mode of the merge that produced the current suspended `response`, used to pick its ceiling. A
+        # continuation chain is homogeneous in practice (a poll chain is all-replace, a `pause_turn` chain
+        # all-accumulate), so the previous merge's mode reliably classifies the next re-issue.
+        last_mode: MergeMode | None = None
         response = self.initial_suspended_response
         # Index at which the most recent segment's parts began in the stitched stream. A replaced
         # segment reuses this (same parts under the same id); an accumulated segment appends after
@@ -222,11 +295,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 if response is None:
                     messages = self.base_messages
                 elif response.state == 'suspended':
-                    iteration += 1
-                    if iteration > self.max_continuations:
-                        raise UnexpectedModelBehavior(
-                            f'Model response was suspended more than the maximum of {self.max_continuations} times'
-                        )
+                    accumulate_count, replace_count = self._count_continuation(
+                        last_mode, accumulate_count, replace_count
+                    )
                     if delay := response.suspended_retry_delay:
                         await self.sleep_func(delay)
                         # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
@@ -264,7 +335,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
                 # (e.g. a `FallbackModel` continuation pin) is captured.
                 sub_response = sub.get()
-                merged = sub_response if response is None else merge_responses(response, sub_response)
+                if response is None:
+                    merged = sub_response
+                else:
+                    # Classify this transition (replace vs accumulate) so the next re-issue is counted
+                    # against the right ceiling.
+                    last_mode = merge_mode(response, sub_response)
+                    merged = merge_responses(response, sub_response)
 
                 self._merged_response = merged
                 self._current_sub = None
@@ -334,19 +411,31 @@ class _ContinuationStreamedResponse(StreamedResponse):
         return snapshot.usage if snapshot is not None else self._usage
 
     def get(self) -> ModelResponse:
-        """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far."""
-        # The composite resolves the whole suspended → … → complete chain, so it never surfaces
-        # `'suspended'`: it's `'complete'` once the loop exits, `'interrupted'` if cancelled, and
-        # `'incomplete'` while a segment is still in flight.
+        """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far.
+
+        The composite normally resolves the whole `suspended → … → complete` chain, so mid-run it's
+        `'complete'` once the loop exits, `'interrupted'` if cancelled, and `'incomplete'` while a
+        segment is still in flight. The one case it *does* surface `'suspended'` is a **detach**: the
+        consumer stopped iterating and the stream was torn down via `aclose()` — not `cancel()` — while
+        the current/last segment is itself a still-pending suspended job. The server-side job survives
+        (detach doesn't cancel it), so recording `'suspended'` makes the run resumable later, matching
+        the non-streaming path where a persisted suspended response can be resumed. A real `cancel()`
+        (`_cancelled`) also cancels the server-side job, so it stays `'interrupted'` and non-resumable.
+        """
+        snapshot = self._snapshot()
+
         state: ModelResponseState
         if self._finished:
             state = 'complete'
         elif self._cancelled:
+            # A real `cancel()` tore down the server-side job too, so this is not resumable.
             state = 'interrupted'
+        elif self._detached and snapshot is not None and snapshot.state == 'suspended':
+            # Detached with a still-pending suspended job in hand (and not cancelled): resumable.
+            state = 'suspended'
         else:
             state = 'incomplete'
 
-        snapshot = self._snapshot()
         if snapshot is None:
             return ModelResponse(parts=[], model_name=self.model_name, state=state)
         return replace(snapshot, state=state)
@@ -379,6 +468,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
         alone would leave each segment's `request_stream(...)` context manager (and its
         connection) open until garbage collection.
         """
+        # Record that the consumer stopped and the stream was torn down without cancelling. `get()`
+        # reads this to report a still-pending suspended job as resumable `'suspended'` rather than a
+        # live `'incomplete'` snapshot; `_finished`/`_cancelled` take precedence, so this is a no-op
+        # after a fully-drained (`'complete'`) or cancelled (`'interrupted'`) stream.
+        self._detached = True
         if self._segment_iterator is not None:
             try:
                 await self._segment_iterator.aclose()

@@ -46,7 +46,10 @@ from .exceptions import ToolRetryError
 # marker, not a within-package one, so the private-usage check doesn't apply here.
 from .models._continuation import (
     MAX_CONTINUATIONS,
+    MAX_REPLACE_CONTINUATIONS,
+    MergeMode,
     _ContinuationStreamedResponse,
+    merge_mode,
     merge_responses,
 )
 from .output import OutputDataT, OutputSpec
@@ -784,6 +787,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     base_messages=req_ctx.messages,
                     run_context=run_context,
                     max_continuations=MAX_CONTINUATIONS,
+                    max_replace_continuations=MAX_REPLACE_CONTINUATIONS,
                     sleep_func=_agent_graph_sleep,
                     check_usage=lambda continuation_usage: self._check_continuation_usage(ctx, continuation_usage),
                     initial_suspended_response=self._resume_suspended,
@@ -995,20 +999,41 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `wrap_model_request` spans the whole chain and `after_model_request` sees just
             # the final response. Continuations are not separate request steps, so usage is
             # committed exactly once by `_finish_handling` → `_append_response`.
-            iteration = 0
+            # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
+            # streamed composite in `_continuation`: an *accumulate* re-suspension (Anthropic `pause_turn`,
+            # new `provider_response_id` + new parts each time) keeps the small `MAX_CONTINUATIONS` cap
+            # against an unbounded model, while a *replace* re-suspension re-polling one background job
+            # (OpenAI background mode, same `provider_response_id`) gets the far more generous
+            # `MAX_REPLACE_CONTINUATIONS` backstop so a legitimately long job isn't killed after ~50 polls.
+            accumulate_count = 0
+            replace_count = 0
+            # Mode of the merge that produced the current suspended `response`. A chain is homogeneous in
+            # practice, so the previous merge's mode reliably classifies the next re-issue; the first
+            # re-issue (`last_mode is None`) counts as accumulate, harmless since both ceilings allow ≥1.
+            last_mode: MergeMode | None = None
             response = self._resume_suspended
             with set_current_run_context(run_context):
                 while True:
                     if response is None:
                         messages = req_ctx.messages
                     elif response.state == 'suspended':
-                        iteration += 1
-                        if iteration > MAX_CONTINUATIONS:
-                            # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
-                            await cancel_suspended_job(response)
-                            raise exceptions.UnexpectedModelBehavior(
+                        if last_mode == 'replace':
+                            replace_count += 1
+                            over_limit = replace_count > MAX_REPLACE_CONTINUATIONS
+                            limit_message = (
+                                f'Model response remained suspended after polling the maximum of '
+                                f'{MAX_REPLACE_CONTINUATIONS} times'
+                            )
+                        else:
+                            accumulate_count += 1
+                            over_limit = accumulate_count > MAX_CONTINUATIONS
+                            limit_message = (
                                 f'Model response was suspended more than the maximum of {MAX_CONTINUATIONS} times'
                             )
+                        if over_limit:
+                            # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
+                            await cancel_suspended_job(response)
+                            raise exceptions.UnexpectedModelBehavior(limit_message)
                         if delay := response.suspended_retry_delay:
                             try:
                                 await _agent_graph_sleep(delay)
@@ -1038,6 +1063,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if response is None:
                         response = new_response
                     else:
+                        # Classify this transition (replace vs accumulate) so the next re-issue is
+                        # counted against the right ceiling.
+                        last_mode = merge_mode(response, new_response)
                         response = merge_responses(response, new_response)
                         # Enforce token limits early against a provisional total so a runaway
                         # continuation can't blow the budget; the total is committed once later.

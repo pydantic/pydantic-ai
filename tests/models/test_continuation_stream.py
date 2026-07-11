@@ -168,6 +168,7 @@ def _composite(
     model: _FakeModel,
     *,
     max_continuations: int = 50,
+    max_replace_continuations: int = 10_000,
     sleep_func: Callable[[float], Awaitable[None]] = _no_sleep,
     check_usage: Callable[[RequestUsage], None] = lambda usage: None,
 ) -> _ContinuationStreamedResponse:
@@ -178,9 +179,40 @@ def _composite(
         base_messages=[],
         run_context=None,
         max_continuations=max_continuations,
+        max_replace_continuations=max_replace_continuations,
         sleep_func=sleep_func,
         check_usage=check_usage,
     )
+
+
+def _poll_segments(*, count: int, provider_response_id: str) -> list[_Segment]:
+    """`count` empty *replace*-style (same-id) suspended polls followed by a completing segment.
+
+    Models a background job (OpenAI background mode) that stays pending across many polls under one
+    `provider_response_id` and carries no new content while pending, then finally completes.
+    """
+    segments = [
+        _Segment(
+            events=[],
+            response=_response(
+                parts=[], provider_response_id=provider_response_id, state='suspended', input_tokens=1, output_tokens=0
+            ),
+        )
+        for _ in range(count)
+    ]
+    segments.append(
+        _Segment(
+            events=_starts((0, 'done')),
+            response=_response(
+                parts=['done'],
+                provider_response_id=provider_response_id,
+                state='complete',
+                input_tokens=1,
+                output_tokens=1,
+            ),
+        )
+    )
+    return segments
 
 
 def _part_start_indices(events: list[ModelResponseStreamEvent]) -> list[int]:
@@ -696,6 +728,89 @@ async def test_exceeding_max_continuations_raises() -> None:
     with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum'):
         async for _ in stream:
             pass
+
+
+async def test_replace_poll_chain_runs_past_max_continuations() -> None:
+    """A *replace*-style (same-id) background poll chain is bounded by `max_replace_continuations`, not
+    the small `max_continuations` cap, so a healthy long-running background job isn't killed after ~50 polls."""
+    # Eight same-id polls, far past the strict cap of 2, then completion.
+    model = _FakeModel(_poll_segments(count=8, provider_response_id='job1'))
+    stream = _composite(model, max_continuations=2, max_replace_continuations=10_000)
+
+    events = [event async for event in stream]
+
+    # Only the completing segment carries a part; every poll was empty.
+    assert _part_start_indices(events) == [0]
+    merged = stream.get()
+    assert merged.state == 'complete'
+    assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['done']
+    # The chain completed without raising and without cancelling the (healthy) job.
+    assert model.cancelled == []
+    assert model.segments == []
+
+
+async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
+    """The replace backstop still exists: a job stuck returning the same suspended id forever eventually raises.
+
+    Usage limits wouldn't catch this (a pending poll adds no tokens), so `max_replace_continuations` is
+    the last-resort guard against a provider wedged on one `provider_response_id`.
+    """
+    # Never completes: every poll stays suspended under the same id.
+    model = _FakeModel(
+        [
+            _Segment(
+                events=[],
+                response=_response(
+                    parts=[], provider_response_id='job1', state='suspended', input_tokens=1, output_tokens=0
+                ),
+            )
+            for _ in range(10)
+        ]
+    )
+    stream = _composite(model, max_continuations=2, max_replace_continuations=3)
+
+    with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum'):
+        async for _ in stream:
+            pass
+
+    # A stuck poll still gets its server-side job cancelled before the raise, so it doesn't leak.
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'job1'
+
+
+async def test_detach_records_suspended_when_job_pending() -> None:
+    """Detaching (consumer stops iterating, `aclose()` without `cancel()`) with a still-pending suspended
+    segment makes `get()` report `'suspended'` — resumable — without cancelling the server-side job."""
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'partial')),
+                response=_response(
+                    parts=['partial'], provider_response_id='job1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'done')),
+                response=_response(
+                    parts=['done'], provider_response_id='job1', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+
+    await iterator.__anext__()  # first (suspended) segment now in flight
+    # Mid-stream, before any detach, this is a live snapshot → `'incomplete'`.
+    assert stream.get().state == 'incomplete'
+
+    await stream.aclose()  # detach: tear down the connection WITHOUT cancelling the job
+
+    recorded = stream.get()
+    assert recorded.state == 'suspended'  # resumable
+    assert recorded.provider_response_id == 'job1'
+    assert model.cancelled == []  # detach must NOT cancel the server-side job
+    assert len(model.segments) == 1  # detaching did not poll again
 
 
 async def test_later_segment_error_cancels_suspended_job() -> None:
