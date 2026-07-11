@@ -4612,8 +4612,8 @@ class TestMultipleToolCalls:
                 )
             return ModelResponse(parts=[TextPart(content='the answer')])
 
-        ot = str if output_type == 'str' else [OutputType, str]
-        agent = Agent(FunctionModel(return_model), output_type=ot, end_strategy='early')
+        configured_output = str if output_type == 'str' else [OutputType, str]
+        agent = Agent(FunctionModel(return_model), output_type=configured_output, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
