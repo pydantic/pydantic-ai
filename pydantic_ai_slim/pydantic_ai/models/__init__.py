@@ -109,6 +109,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     'OpenAIResponsesCompatibleProvider',
     Literal[
         'azure',
+        'codex',
         'deepseek',
         'fireworks',
         'nebius',
@@ -1056,7 +1057,7 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'codex'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

@@ -241,6 +241,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_responses_requires_store_false: bool
+    """Whether the Responses API requires `store=False`. Default: `False`."""
+
+    openai_responses_requires_stream: bool
+    """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`."""
+
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 

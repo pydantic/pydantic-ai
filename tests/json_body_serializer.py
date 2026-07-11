@@ -60,6 +60,7 @@ else:
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {
     'authorization',
+    'chatgpt-account-id',
     'cookie',
     'date',
     'openai-organization',
@@ -77,6 +78,26 @@ ALLOWED_HEADER_PREFIXES = {
     # required for Bedrock embeddings to preserve token count headers
     'x-amzn-bedrock-',
 }
+_OPENAI_OAUTH_JSON_CREDENTIAL_KEYS = frozenset(
+    {
+        'access_token',
+        'account_id',
+        'authorization_code',
+        'chatgpt_account_id',
+        'client_secret',
+        'code',
+        'code_verifier',
+        'device_auth_id',
+        'device_code',
+        'id_token',
+        'refresh_token',
+        'token',
+        'user_code',
+    }
+)
+_CODEX_SSE_SENSITIVE_KEYS = frozenset({'prompt_cache_key', 'safety_identifier'})
+_LEGACY_TOP_LEVEL_CREDENTIAL_KEYS = frozenset({'access_token', 'id_token'})
+
 ALLOWED_HEADERS = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-repo-commit',
@@ -123,12 +144,24 @@ def _content_type_startswith(content_type: Sequence[str | bytes], prefix: str) -
     )
 
 
-def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> None:  # pragma: lax no cover
+def scrub_form_credentials(
+    data: dict[str, Any], content_type: list[str], *, openai_oauth: bool = False
+) -> None:  # pragma: lax no cover
     """Redact credentials from application/x-www-form-urlencoded request bodies."""
     if not _content_type_startswith(content_type, 'application/x-www-form-urlencoded'):
         return
     query_params = urllib.parse.parse_qs(data['body'])
-    for key in ['assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName']:
+    keys = {
+        'assertion',
+        'client_id',
+        'client_secret',
+        'refresh_token',
+        'RoleArn',
+        'RoleSessionName',
+    }
+    if openai_oauth:
+        keys.update({'code', 'code_verifier', 'device_code', 'token', 'user_code'})
+    for key in keys:
         if key in query_params:
             query_params[key] = ['scrubbed']
             data['body'] = urllib.parse.urlencode(query_params, doseq=True)
@@ -156,8 +189,86 @@ def scrub_xml_credentials(
         headers['content-length'] = [str(len(body.encode('utf-8')))]
 
 
+def scrub_json_credentials(value: Any, sensitive_keys: frozenset[str]) -> Any:
+    """Recursively redact selected credential fields from JSON-compatible data."""
+    if isinstance(value, dict):
+        return {
+            key: 'scrubbed'
+            if isinstance(key, str) and key.lower() in sensitive_keys
+            else scrub_json_credentials(item, sensitive_keys)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [scrub_json_credentials(item, sensitive_keys) for item in value]
+    return value
+
+
+def scrub_sse_credentials(data: dict[str, Any], headers: dict[str, list[str]], sensitive_keys: frozenset[str]) -> None:
+    """Redact selected sensitive values from JSON payloads in SSE response bodies."""
+    body = data.get('body')
+    wrapped = isinstance(body, dict)
+    if wrapped:
+        body = body.get('string')
+    if isinstance(body, bytes):  # pragma: no cover - VCR currently provides decoded SSE text
+        body = body.decode('utf-8')
+    if (
+        not sensitive_keys
+        or not isinstance(body, str)
+        or not any(line.startswith('data:') for line in body.splitlines())
+    ):
+        return
+
+    lines: list[str] = []
+    changed = False
+    for line in body.splitlines(keepends=True):
+        if line.startswith('data:'):
+            payload = line.removeprefix('data:').strip()
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                pass
+            else:
+                scrubbed = scrub_json_credentials(parsed, sensitive_keys)
+                if scrubbed != parsed:
+                    ending = line[len(line.rstrip('\r\n')) :]
+                    line = f'data: {json.dumps(scrubbed, separators=(",", ":"))}{ending}'
+                    changed = True
+        lines.append(line)
+
+    if not changed:
+        return
+    scrubbed_body = ''.join(lines)
+    data['body'] = {'string': scrubbed_body} if wrapped else scrubbed_body
+    if 'content-length' in headers:
+        headers['content-length'] = [str(len(scrubbed_body.encode('utf-8')))]
+
+
+def scrub_uri_credentials(data: dict[str, Any]) -> None:
+    """Redact OAuth callback and authorization query parameters from cassette URIs."""
+    uri = data.get('uri')
+    if not isinstance(uri, str):
+        return
+    parsed = urllib.parse.urlsplit(uri)
+    if parsed.hostname not in {'127.0.0.1', 'auth.openai.com', 'localhost'}:
+        return
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    sensitive_keys = {'code', 'code_verifier', 'state', 'user_code'}
+    if not sensitive_keys.intersection(query):
+        return
+    for key in sensitive_keys.intersection(query):
+        query[key] = ['scrubbed']
+    data['uri'] = urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query, doseq=True), parsed.fragment)
+    )
+
+
 def _store_json_body(
-    kind: str, data: dict[str, Any], body: str, headers: dict[str, list[str]]
+    kind: str,
+    data: dict[str, Any],
+    body: str,
+    headers: dict[str, list[str]],
+    *,
+    openai_oauth: bool,
 ) -> None:  # pragma: lax no cover
     """Replace an `application/json` body with a normalized, scrubbed `parsed_body`.
 
@@ -171,12 +282,16 @@ def _store_json_body(
         if 'content-length' in headers:
             headers['content-length'] = [str(len(body.encode('utf-8')))]
         return
-    # Normalize smart quotes and special characters
-    data['parsed_body'] = normalize_body(parsed)
-    if 'access_token' in data['parsed_body']:
-        data['parsed_body']['access_token'] = 'scrubbed'
-    if 'id_token' in data['parsed_body']:
-        data['parsed_body']['id_token'] = 'scrubbed'
+    normalized = normalize_body(parsed)
+    if openai_oauth:
+        normalized = scrub_json_credentials(normalized, _OPENAI_OAUTH_JSON_CREDENTIAL_KEYS)
+    elif isinstance(normalized, dict):
+        # Preserve the serializer's historical top-level access/id token redaction
+        # without treating ordinary nested API fields such as `token` or `code` as credentials.
+        normalized = {
+            key: 'scrubbed' if key in _LEGACY_TOP_LEVEL_CREDENTIAL_KEYS else value for key, value in normalized.items()
+        }
+    data['parsed_body'] = normalized
     del data['body']
     # Update content-length to match the body that will be produced during deserialize.
     # This is necessary because decompression changes the body size, and botocore
@@ -188,6 +303,15 @@ def _store_json_body(
 
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
+        request_uri = interaction.get('request', {}).get('uri', '')
+        parsed_request_uri = urllib.parse.urlsplit(request_uri) if isinstance(request_uri, str) else None
+        openai_oauth = parsed_request_uri is not None and parsed_request_uri.hostname == 'auth.openai.com'
+        codex_responses = (
+            parsed_request_uri is not None
+            and parsed_request_uri.scheme == 'https'
+            and parsed_request_uri.hostname == 'chatgpt.com'
+            and parsed_request_uri.path.rstrip('/') == '/backend-api/codex/responses'
+        )
         for kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
             # make headers lowercase
@@ -228,9 +352,12 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                             except (gzip.BadGzipFile, zlib.error):
                                 pass
                         body = body.decode('utf-8')
-                    _store_json_body(kind, data, body, headers)  # pyright: ignore[reportUnknownArgumentType]
-            scrub_form_credentials(data, content_type)
+                    assert isinstance(body, str), data
+                    _store_json_body(kind, data, body, headers, openai_oauth=openai_oauth)
+            scrub_form_credentials(data, content_type, openai_oauth=openai_oauth)
             scrub_xml_credentials(data, headers, content_type)
+            scrub_sse_credentials(data, headers, _CODEX_SSE_SENSITIVE_KEYS if codex_responses else frozenset())
+            scrub_uri_credentials(data)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)

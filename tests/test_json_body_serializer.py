@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -232,3 +233,104 @@ def test_scrub_xml_credentials_skips_non_credentials_xml():
     scrub_xml_credentials(data, headers, ['text/xml'])
 
     assert data['body']['string'] == '<Response>ok</Response>'
+
+
+def test_codex_oauth_credentials_are_recursively_scrubbed() -> None:
+    secrets = {
+        'access_token': 'access-secret',
+        'refresh_token': 'refresh-secret',
+        'token': 'revocation-secret',
+        'id_token': 'id-secret',
+        'account_id': 'account-secret',
+        'authorization_code': 'authorization-secret',
+        'code_verifier': 'verifier-secret',
+        'device_auth_id': 'device-secret',
+        'user_code': 'user-secret',
+    }
+    cassette: dict[str, Any] = {
+        'interactions': [
+            {
+                'request': {
+                    'uri': 'https://auth.openai.com/callback?code=callback-secret&state=state-secret',
+                    'headers': {
+                        'Content-Type': ['application/json'],
+                        'ChatGPT-Account-ID': ['header-account-secret'],
+                    },
+                    'body': json.dumps({'credentials': secrets}),
+                },
+                'response': {
+                    'headers': {'Content-Type': ['application/json']},
+                    'body': {'string': json.dumps({'nested': [{'refresh_token': 'response-secret'}]})},
+                },
+            }
+        ]
+    }
+
+    output = serialize(cassette)
+
+    for secret in [*secrets.values(), 'callback-secret', 'state-secret', 'header-account-secret', 'response-secret']:
+        assert secret not in output
+    assert output.count('scrubbed') >= len(secrets) + 3
+
+
+def test_codex_sse_identifiers_are_recursively_scrubbed() -> None:
+    cassette: dict[str, Any] = {
+        'interactions': [
+            {
+                'request': {
+                    'uri': 'https://chatgpt.com/backend-api/codex/responses',
+                    'headers': {},
+                },
+                'response': {
+                    'headers': {'Content-Type': ['text/event-stream'], 'Content-Length': ['999']},
+                    'body': {
+                        'string': (
+                            'event: response.created\n'
+                            'data: {"response":{"safety_identifier":"account-secret",'
+                            '"prompt_cache_key":"cache-secret","output":[]}}\n\n'
+                            'event: response.output_text.delta\n'
+                            'data: {"delta":"safe output"}\n\n'
+                            'data: [DONE]\n\n'
+                        )
+                    },
+                },
+            }
+        ]
+    }
+
+    output = serialize(cassette)
+    deserialized = deserialize(output)
+    body = deserialized['interactions'][0]['response']['body']['string']
+
+    assert 'account-secret' not in output
+    assert 'cache-secret' not in output
+    assert body.count('"scrubbed"') == 2
+    assert 'data: {"delta":"safe output"}' in body
+    assert 'data: [DONE]' in body
+    assert deserialized['interactions'][0]['response']['headers']['content-length'] == [str(len(body.encode('utf-8')))]
+
+
+def test_ordinary_json_and_sse_fields_are_preserved() -> None:
+    ordinary_fields = {'token': 'The', 'code': 'bad_request', 'account_id': 'public-account'}
+    cassette: dict[str, Any] = {
+        'interactions': [
+            {
+                'request': {
+                    'uri': 'https://api.openai.com/v1/responses',
+                    'headers': {'Content-Type': ['application/json']},
+                    'body': json.dumps({'nested': ordinary_fields}),
+                },
+                'response': {
+                    'headers': {'Content-Type': ['text/event-stream']},
+                    'body': {'string': f'data: {json.dumps({"logprob": ordinary_fields})}\n\n'},
+                },
+            }
+        ]
+    }
+
+    deserialized = deserialize(serialize(cassette))
+    interaction = deserialized['interactions'][0]
+
+    assert json.loads(interaction['request']['body'])['nested'] == ordinary_fields
+    sse_payload = interaction['response']['body']['string'].removeprefix('data: ').strip()
+    assert json.loads(sse_payload)['logprob'] == ordinary_fields

@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.codex import CodexProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
@@ -41,6 +42,7 @@ with try_import() as imports_successful:
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
+        ('codex', CodexProvider, None),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),

@@ -110,6 +110,14 @@ TEST_CASES = [
         OpenAIResponsesModel,
     ),
     pytest.param(
+        {},
+        'codex:gpt-5.5',
+        'gpt-5.5',
+        'codex',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
         'openai-chat:gpt-3.5-turbo',
         'gpt-3.5-turbo',
