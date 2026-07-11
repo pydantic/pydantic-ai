@@ -857,6 +857,32 @@ async def test_capability_contributed_toolset_id_from_capability():
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
+async def test_capability_contributed_toolsets_with_colliding_derived_id():
+    """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
+    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools). The
+    DBOS wrapper guards against duplicate leaf ids at construction, telling the user to set explicit ids.
+
+    Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
+    check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'a.com-api'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+        ),
+    ):
+        DBOSAgent(
+            Agent(
+                model,
+                name='colliding_capability_agent',
+                capabilities=[MCP(url='https://a.com/api'), MCP(url='https://a.com/v2/api')],
+            )
+        )
+
+
 async def test_dbos_agent():
     assert isinstance(complex_dbos_agent.model, DBOSModel)
     assert complex_dbos_agent.model.wrapped == complex_agent.model
