@@ -66,7 +66,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 with try_import() as imports_successful:
     from openai import APIConnectionError, AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
-    from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses import ResponseFunctionWebSearch, ResponseOutputTextAnnotationAddedEvent
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import Annotation, ResponseOutputText
@@ -12841,6 +12841,85 @@ async def test_openai_code_execution_download_stream_failure_skips_file(allow_mo
     assert agent_run.result is not None
     files = [p for p in agent_run.result.all_messages()[-1].parts if isinstance(p, FilePart)]
     assert len(files) == 0
+
+
+async def test_openai_code_execution_download_skipped_on_refusal_stream(allow_model_requests: None):
+    """Streaming: files are not downloaded for a refused response, even if a citation was collected first."""
+    annotation = {
+        'type': 'container_file_citation',
+        'file_id': 'oai_file_1',
+        'container_id': 'ctr_1',
+        'filename': 'output.csv',
+        'start_index': 0,
+        'end_index': 5,
+    }
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=cast(Annotation, cast(object, annotation)),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=2,
+        ),
+        ResponseRefusalDeltaEvent(
+            content_index=0,
+            delta="I can't help with that.",
+            item_id='msg_001',
+            output_index=0,
+            type='response.refusal.delta',
+            sequence_number=3,
+        ),
+        ResponseRefusalDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            refusal="I can't help with that.",
+            type='response.refusal.done',
+            sequence_number=4,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock()
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+        async with agent.run_stream(
+            'harmful prompt',
+            model_settings=OpenAIResponsesModelSettings(openai_download_code_execution_files=True),
+        ):
+            pass
+
+    mock_client.containers.files.content.retrieve.assert_not_called()
 
 
 async def test_openai_code_execution_download_no_annotations_stream(allow_model_requests: None):

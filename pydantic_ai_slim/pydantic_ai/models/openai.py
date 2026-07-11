@@ -3963,9 +3963,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
-            elif self._model_settings.get('openai_download_code_execution_files'):
+            if not self._has_refusal and self._model_settings.get('openai_download_code_execution_files'):
                 # Download the files the code interpreter wrote to disk after the stream completes, so the resulting
-                # `parts` ordering matches the non-streaming path and nothing is emitted for a refused response.
+                # `parts` ordering matches the non-streaming path. Skip it entirely on a refused response.
                 citations = [citation for citations in _file_citations_by_item.values() for citation in citations]
                 for file_part in await _download_container_files(
                     self._client, citations, provider_name=self._provider_name
