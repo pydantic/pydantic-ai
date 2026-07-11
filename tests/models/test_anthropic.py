@@ -11889,9 +11889,12 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
 async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
     """Test that exceeding the default max continuations (50) raises UnexpectedModelBehavior."""
     responses: list[BetaMessage | Exception] = []
-    for _ in range(51):
+    for i in range(51):
         c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
         c.stop_reason = 'pause_turn'
+        # Distinct ids so each pause accumulates (real `pause_turn` behavior), hitting the accumulate cap
+        # rather than the far larger same-id replace-poll backstop.
+        c.id = str(i)
         responses.append(c)
 
     mock_client = MockAnthropic.create_mock(responses)

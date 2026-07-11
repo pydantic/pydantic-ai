@@ -13190,19 +13190,25 @@ async def test_background_passes_parameter(allow_model_requests: None):
     assert kwargs[0]['background'] is True
 
 
-async def test_background_max_continuations(allow_model_requests: None):
-    """Background mode: stays in_progress beyond limit -> UnexpectedModelBehavior."""
+async def test_background_max_continuations(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """Background mode: a job that never leaves `in_progress` eventually trips the replace-poll backstop.
+
+    Re-polling one background job is a `merge_mode` *replace* re-suspension, so it's bounded by the far
+    larger `MAX_REPLACE_CONTINUATIONS` backstop (not the small `MAX_CONTINUATIONS` accumulate cap), which
+    is why a legitimately long job isn't killed after ~50 polls. Patch the backstop small to exercise it.
+    """
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_REPLACE_CONTINUATIONS', 3)
     retrieve_response = _text_response('still working...', status='in_progress', background=True)
 
     mock_client = MockOpenAIResponses(
         response=_text_response('still working...', status='in_progress', background=True),
-        retrieve_responses=[retrieve_response] * 50,
+        retrieve_responses=[retrieve_response] * 10,
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 50 times'):
+    with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
         await agent.run(
             'test',
             model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
