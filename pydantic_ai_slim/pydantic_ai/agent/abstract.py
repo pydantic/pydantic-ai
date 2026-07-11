@@ -172,13 +172,18 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             return
 
         self._closed = True
-        # Cancel before closing the receive end: the run may be blocked pushing an event into the zero-buffer
-        # stream, and cancellation unblocks it and drives its own cleanup. If iteration was never started,
-        # `_task` is `None` and there's nothing to tear down.
+        # Cancel the run first so it tears down via its own cancellation, unblocking a run that's
+        # parked pushing an event into the zero-buffer stream. But if the run *absorbs* that
+        # cancellation (e.g. a durable step under Temporal's cooperative cancellation) it can resume
+        # and block again on `send`, so close the receive end before draining: the blocked `send` then
+        # fails with `BrokenResourceError` and the drain can complete instead of deadlocking. A run
+        # that unwound normally is unaffected. If iteration was never started, `_task` is `None`.
         if self._task is not None:
-            await _utils.cancel_and_drain(self._task)
+            self._task.cancel()
         if self._receive_stream is not None:
             await self._receive_stream.aclose()
+        if self._task is not None:
+            await _utils.cancel_and_drain(self._task)
 
     async def _ensure_started(self) -> None:
         if self._task is not None:

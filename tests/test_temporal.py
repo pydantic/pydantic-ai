@@ -70,7 +70,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
@@ -3356,6 +3356,22 @@ def test_temporal_run_context_serializes_usage():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.usage == ctx.usage
+
+
+def test_temporal_run_context_serializes_usage_limits():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        usage_limits=UsageLimits(request_limit=7, total_tokens_limit=1000),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage_limits'] == ctx.usage_limits
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage_limits == ctx.usage_limits
 
 
 def test_temporal_run_context_serialization_is_exhaustive():

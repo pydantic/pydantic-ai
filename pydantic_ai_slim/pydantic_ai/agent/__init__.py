@@ -1218,6 +1218,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model_used,
             usage=usage,
+            usage_limits=usage_limits,
             prompt=user_prompt,
             messages=state.message_history,
             tracer=tracer,
@@ -1505,7 +1506,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _ready_waiter = asyncio.create_task(_run_ready.wait())
             try:
                 await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-            except BaseException:
+            except BaseException as exc:
+                # Unblock `_do_run` before draining, mirroring the streaming handoff: if
+                # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
+                # cooperative cancellation) and returned, `_do_run` is parked on
+                # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
+                # instead of asserting on a not-yet-produced result, then set `_run_done` so
+                # it can exit and `cancel_and_drain`'s gather can complete (it discards the
+                # survivor's exception). Harmless no-op when `_wrap_task` really died
+                # cancelled — it's already unwinding. See #6422.
+                _run_error = exc
+                _run_done.set()
                 await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
                 raise
             else:

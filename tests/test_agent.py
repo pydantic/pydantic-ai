@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -64,10 +64,11 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import FunctionToolResultEvent, ModelResponseStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
     MCPServerTool,
@@ -6845,27 +6846,37 @@ def test_heterogeneous_responses_non_streaming() -> None:
 
 
 def test_nested_capture_run_messages() -> None:
-    agent = Agent('test')
+    """Each `capture_run_messages` context captures the runs for which it is the innermost active context.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/1568.
+    """
+    agent1 = Agent('test')
+    agent2 = Agent(TestModel(custom_output_text='inner result'))
 
     with capture_run_messages() as messages1:
         assert messages1 == []
-        with capture_run_messages() as messages2:
-            assert messages2 == []
-            assert messages1 is messages2
-            result = agent.run_sync('Hello')
-            assert result.output == 'success (no tool calls)'
+        res1 = agent1.run_sync('Hi Bro')
+        assert res1.output == 'success (no tool calls)'
 
+        with capture_run_messages() as messages2:
+            # A nested context starts empty and captures only its own run.
+            assert messages2 == []
+            assert messages1 is not messages2
+            res2 = agent2.run_sync('Hello')
+            assert res2.output == 'inner result'
+
+    # The outer context still holds only the run(s) it captured before nesting.
     assert messages1 == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hi Bro', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
@@ -6874,7 +6885,84 @@ def test_nested_capture_run_messages() -> None:
             ),
         ]
     )
-    assert messages1 == messages2
+    # The inner context holds only the nested run.
+    assert messages2 == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='inner result')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert messages1 != messages2
+
+
+def test_nested_capture_run_messages_in_tool() -> None:
+    """A nested agent run wrapped in its own `capture_run_messages` (e.g. inside a tool) is captured
+    independently of the outer run, even when the inner run raises.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/1568.
+    """
+
+    def raise_unexpected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise UnexpectedModelBehavior('boom')
+
+    agent_outer = Agent('test')
+    agent_inner = Agent(FunctionModel(raise_unexpected))
+
+    captured_inner: list[ModelMessage] | None = None
+
+    @agent_outer.tool_plain
+    async def call_inner(x: str) -> str:
+        nonlocal captured_inner
+        with capture_run_messages() as inner_messages:
+            captured_inner = inner_messages
+            result = await agent_inner.run(x)
+            return result.output  # pragma: no cover
+
+    with capture_run_messages() as outer_messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            agent_outer.run_sync('foobar')
+
+    # The inner context captured the inner run's request even though it raised...
+    assert captured_inner is not None
+    assert any(isinstance(m, ModelRequest) for m in captured_inner)
+    # ...and it is a distinct list from the outer capture.
+    assert captured_inner is not outer_messages
+    # The outer context captured the outer run up to the tool call that triggered the failing inner run.
+    assert any(
+        isinstance(m, ModelResponse) and any(isinstance(p, ToolCallPart) for p in m.parts) for m in outer_messages
+    )
+
+
+def test_sequential_capture_run_messages() -> None:
+    """Sequential (non-nested) `capture_run_messages` contexts each capture their own run."""
+    agent = Agent('test')
+
+    with capture_run_messages() as messages1:
+        agent.run_sync('First')
+
+    with capture_run_messages() as messages2:
+        agent.run_sync('Second')
+
+    assert messages1 is not messages2
+    first_prompt = messages1[0]
+    second_prompt = messages2[0]
+    assert isinstance(first_prompt, ModelRequest)
+    assert isinstance(second_prompt, ModelRequest)
+    assert first_prompt.parts[0] == snapshot(UserPromptPart(content='First', timestamp=IsNow(tz=timezone.utc)))
+    assert second_prompt.parts[0] == snapshot(UserPromptPart(content='Second', timestamp=IsNow(tz=timezone.utc)))
 
 
 def test_double_capture_run_messages() -> None:
@@ -9210,6 +9298,132 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
         await task
 
     assert cleanup_finished.is_set()
+
+
+async def test_run_handoff_survives_absorbed_cancellation():
+    """Outer cancellation must not deadlock the run when the wrapped run absorbs it (#6422).
+
+    Under Temporal's cooperative activity cancellation (`WAIT_CANCELLATION_COMPLETED`), a
+    durable step inside `before_run` can swallow the injected `CancelledError` and return
+    normally. `_do_run` then proceeds to `await _run_done`, which the cancelled caller never
+    sets on the drain path — so unless the handoff cleanup unblocks it before draining
+    `_wrap_task`, the run task deadlocks forever. Here a `before_run` that absorbs one
+    cancellation simulates that survivor condition without a Temporal dependency.
+    """
+
+    in_flight = asyncio.Event()
+
+    class SwallowCancelBeforeRun(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
+            in_flight.set()
+            try:
+                await asyncio.Event().wait()  # the in-flight "durable step"
+            except asyncio.CancelledError:
+                pass  # step completed successfully; cancellation consumed
+
+    agent = Agent(TestModel(), capabilities=[SwallowCancelBeforeRun()])
+
+    task = asyncio.create_task(agent.run('test'))
+    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+
+
+async def test_streaming_handoff_survives_absorbed_cancellation():
+    """Streaming counterpart of #6422: model request survives cancellation without deadlock.
+
+    When the model request is in flight and absorbs the injected `CancelledError` before
+    completing — the documented behavior of Temporal's cooperative activity cancellation, as
+    routed through `model.request_stream` — `_streaming_handler` is left parked on
+    `stream_done.wait()`. Unless the handoff cleanup sets `stream_done` before draining
+    `wrap_task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
+    `request_stream` await boundary.
+    """
+
+    in_flight = asyncio.Event()
+
+    class SwallowOneCancelModel(WrapperModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            in_flight.set()
+            try:
+                await asyncio.Event().wait()  # the in-flight model request ("activity")
+            except asyncio.CancelledError:
+                pass  # activity completed successfully; cancellation consumed
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                yield streamed_response
+
+    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:  # pragma: no cover - handler never runs on the cancelled path
+            pass
+
+    agent = Agent(SwallowOneCancelModel(TestModel()))
+
+    task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
+    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+
+
+async def test_run_stream_events_aclose_survives_absorbed_cancellation():
+    """`run_stream_events` teardown must not deadlock when the run survives cancellation (#6422).
+
+    `_RunStreamEventsIterator.aclose()` cancels the background run and drains it, relying on the
+    cancellation to unblock a run parked pushing an event into the zero-buffer stream. If an inline
+    tool absorbs the injected `CancelledError` and completes (Temporal's cooperative cancellation),
+    the run resumes and the internal handler blocks forever on the next `send` — unless the receive
+    end is closed before the drain. Unlike the streaming/run-level handoffs, the survivor here is
+    directly on the run task rather than a child wrapper task.
+    """
+
+    tool_in_flight = asyncio.Event()
+
+    agent = Agent(TestModel(call_tools=['swallow_tool']))
+
+    @agent.tool_plain
+    async def swallow_tool() -> str:
+        tool_in_flight.set()
+        try:
+            await asyncio.Event().wait()  # the in-flight "durable step"
+        except asyncio.CancelledError:
+            pass  # step completed successfully; cancellation consumed
+        return 'done'
+
+    async def consume() -> None:
+        async with agent.run_stream_events('hello') as events:
+            async for _ in events:
+                pass  # naturally blocks once the tool parks (no further events until it returns)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: teardown completed and the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run_stream_events teardown still pending after cancellation (#6422)')
 
 
 async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():

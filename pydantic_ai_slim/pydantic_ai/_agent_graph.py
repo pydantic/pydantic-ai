@@ -841,6 +841,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            #
+            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
+            # the handler is parked on `stream_done.wait()`. Setting stream_done lets
+            # it exit so cancel_and_drain's gather can complete. Harmless no-op when
+            # the task was actually cancelled — it's already unwinding. See #6422.
+            stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
             raise
         else:
@@ -1743,6 +1750,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         agent=ctx.deps.agent,
         model=ctx.deps.model,
         usage=ctx.state.usage,
+        usage_limits=ctx.deps.usage_limits,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
         validation_context=None,
@@ -1865,27 +1873,24 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
         If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
         `messages` will represent the messages exchanged during the first call only.
 
+        Contexts can be nested: each `capture_run_messages` context captures the runs for which it is the
+        innermost active context. A run started inside a nested context is captured by that nested context,
+        not by any enclosing one, so wrapping a nested agent run (e.g. inside a tool) in its own
+        `capture_run_messages` lets you inspect that inner run's messages independently.
+
     If a run is interrupted by an exception or cancellation while streaming a response or executing
     tool calls, the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] or
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] is still captured here with
     `state='interrupted'`, so consumers can detect and inspect partial state.
     """
-    token = None
     messages: list[_messages.ModelMessage] = []
-
-    # Try to reuse existing message context if available
-    try:
-        messages = _messages_ctx_var.get().messages
-    except LookupError:
-        # No existing context, create a new one
-        token = _messages_ctx_var.set(_RunMessages(messages))
-
+    # Always push a fresh context so nested `capture_run_messages` contexts each capture their own runs,
+    # rather than sharing (and overwriting) the enclosing context's messages.
+    token = _messages_ctx_var.set(_RunMessages(messages))
     try:
         yield messages
     finally:
-        # Clean up context if we created it
-        if token is not None:
-            _messages_ctx_var.reset(token)
+        _messages_ctx_var.reset(token)
 
 
 def get_captured_run_messages() -> _RunMessages:
