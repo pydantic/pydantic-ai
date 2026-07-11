@@ -1429,6 +1429,10 @@ async def test_deferred_capability_contributed_toolset_id_from_capability():
     toolset, so the derived id survives the deferred-loading wrapper and the toolset is registered as
     durable activities. Deferred capabilities require an explicit `id`.
 
+    This isn't a VCR test: it inspects deferred toolset ids and registered Temporal activity names
+    during local agent construction, before any model or MCP request, so there's no network round-trip
+    to record.
+
     Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
     """
 

@@ -696,6 +696,9 @@ async def test_capability_contributed_toolset_id_from_capability():
     local MCP server is swapped for its Prefect task wrapper under a stable id. An `MCP` with no
     explicit `id` derives one from its URL.
 
+    This isn't a VCR test: it inspects the constructed toolset tree during local agent construction,
+    before any model or MCP request, so there's no network round-trip to record.
+
     Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
     """
 

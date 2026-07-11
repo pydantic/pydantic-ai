@@ -830,6 +830,9 @@ async def test_capability_contributed_toolset_id_from_capability():
     local MCP server can be used under DBOS instead of tripping the id-less-MCP guard. An `MCP` with
     no explicit `id` derives one from its URL, which is what lets the contributed leaf pass the guard.
 
+    This isn't a VCR test: it inspects the constructed toolset tree and DBOS registration during local
+    agent construction, before any model or MCP request, so there's no network round-trip to record.
+
     Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
     """
 
@@ -864,6 +867,9 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
 
     Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
     check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
+
+    This isn't a VCR test: the collision is rejected during local `DBOSAgent` construction, before any
+    model or MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
         UserError,
