@@ -106,7 +106,10 @@ def test_session_config_shape() -> None:
         'instructions': 'Be nice',
         'turn_detection': {'type': 'server_vad', 'create_response': True, 'interrupt_response': True},
         'audio': {
-            'input': {'format': {'type': 'audio/pcm', 'rate': 24000}},
+            'input': {
+                'format': {'type': 'audio/pcm', 'rate': 24000},
+                'transcription': {'model': 'grok-transcribe'},  # on by default
+            },
             'output': {'format': {'type': 'audio/pcm', 'rate': 24000}},
         },
         'voice': 'ara',
@@ -116,14 +119,17 @@ def test_session_config_shape() -> None:
     }
 
 
-def test_session_config_transcription_opt_in() -> None:
-    """Input transcription is opt-in via `input_transcription_model` → `audio.input.transcription.model`."""
-    config = _model(input_transcription_model='grok-transcribe')._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+def test_session_config_transcription_by_default() -> None:
+    """Input transcription defaults to `grok-transcribe` → `audio.input.transcription.model`, so the
+    user's audio turns are transcribed into history (xAI transcription is otherwise off on the wire,
+    which would drop every user turn under the default `transcript_only` retention)."""
+    config = _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe'}
 
 
-def test_session_config_no_transcription_by_default() -> None:
-    config = _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+def test_session_config_transcription_disabled() -> None:
+    """`input_transcription_model=None` opts out of transcription."""
+    config = _model(input_transcription_model=None)._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert 'transcription' not in config['audio']['input']
 
 

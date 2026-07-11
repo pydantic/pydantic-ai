@@ -271,14 +271,14 @@ model = XaiRealtimeModel(
     'grok-voice-latest',
     voice='eve',                                       # eve (default), ara, rex, sal, leo, or a custom ID
     turn_detection=ServerVAD(threshold=0.85),          # or None for push-to-talk
-    input_transcription_model='grok-transcribe',       # opt in to input transcription (off by default)
+    input_transcription_model='grok-transcribe',       # the default; pass None to disable
 )
 ```
 
 `tool_choice`, `parallel_tool_calls`, and `max_tokens` are read from `model_settings` passed to
-`realtime_session`. Input transcription is off by default; when enabled, the user's transcript is
-surfaced at the end of each user turn (Grok Voice reports it as cumulative snapshots that can
-retroactively correct earlier text, so live partials are not streamed).
+`realtime_session`. Input transcription defaults to `grok-transcribe` so the user's turns are captured
+into history; its transcript is surfaced at the end of each user turn (Grok Voice reports it as
+cumulative snapshots that can retroactively correct earlier text, so live partials are not streamed).
 
 ## Turn-taking and barge-in
 

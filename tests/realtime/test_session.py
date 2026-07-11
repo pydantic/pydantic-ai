@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -621,6 +622,36 @@ async def test_send_helpers_forward_to_connection() -> None:
     ]
 
 
+async def test_send_dispatches_through_bookkeeping_helpers() -> None:
+    # `send(TextInput(...))` must route through `send_text`, so the user turn lands in history rather
+    # than bypassing it (the raw pass-through used to skip all session bookkeeping).
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.send(TextInput(text='hello'))
+    assert conn.sent == [TextInput(text='hello')]
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())])]
+    )
+
+
+async def test_send_enforces_model_profile_guard() -> None:
+    # `send(ImageInput(...))` must enforce the same `supports_image_input` guard as `send_image`.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
+    with pytest.raises(UserError, match='does not support image input'):
+        await session.send(ImageInput(data=b'\xff', mime_type='image/jpeg'))
+    assert conn.sent == []
+
+
+async def test_send_rejects_tool_result() -> None:
+    # Tool results are sent by the session itself; a caller can't inject one via `send()`.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    with pytest.raises(UserError, match='Tool results are sent automatically'):
+        await session.send(ToolResult(tool_call_id='c', output='x'))
+    assert conn.sent == []
+
+
 async def test_send_text_adds_user_prompt_to_history() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
@@ -795,6 +826,54 @@ async def test_audio_retention_input_keeps_user_audio() -> None:
             )
         ]
     )
+
+
+async def test_clear_audio_discards_retained_input() -> None:
+    # `clear_audio()` must drop the locally retained buffer too, or discarded audio would still attach
+    # to the next finalized user turn (with `audio_retention='input'`/`'both'`).
+    conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
+    session = RealtimeSession(conn, _noop_runner, audio_retention='input')
+    await session.send_audio(b'\xaa\xbb')
+    await session.clear_audio()  # discards the buffered chunk
+    await session.send_audio(b'\xcc')  # only this survives into the finalized user turn
+    _ = [e async for e in session]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SpeechPart(
+                        speaker='user',
+                        transcript='hello',
+                        audio=BinaryContent(data=b'\xcc', media_type='audio/pcm'),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_text_output_modality_produces_text_part() -> None:
+    # A text-output response (`Transcript(output_text=True)`, from `output_modalities=('text',)`) must
+    # be emitted and persisted as a `TextPart`, not a `SpeechPart` — it carries no speech.
+    conn = FakeRealtimeConnection(
+        [
+            Transcript(text='hi', is_final=False, output_text=True),
+            Transcript(text='hi there', is_final=True, output_text=True),
+            TurnCompleteEvent(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    events = [e async for e in session]
+    starts = [e for e in events if isinstance(e, PartStartEvent)]
+    assert len(starts) == 1 and isinstance(starts[0].part, TextPart)
+    assert any(isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta) for e in events)
+    ends = [e for e in events if isinstance(e, PartEndEvent)]
+    assert len(ends) == 1 and isinstance(ends[0].part, TextPart)
+    messages = session.new_messages()
+    assert len(messages) == 1
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='hi there')]
 
 
 async def test_empty_assistant_turn_produces_no_response() -> None:

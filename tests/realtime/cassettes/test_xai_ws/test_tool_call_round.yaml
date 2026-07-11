@@ -32,6 +32,8 @@ interactions:
           format:
             type: audio/pcm
             rate: 24000
+          transcription:
+            model: grok-transcribe
         output:
           format:
             type: audio/pcm

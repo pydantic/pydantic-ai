@@ -70,8 +70,14 @@ def test_map_transcript_delta_and_done() -> None:
 
 
 def test_map_text_output_delta_and_done() -> None:
-    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == Transcript(text='hel', is_final=False)
-    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == Transcript(text='hello', is_final=True)
+    # `output_text=True` distinguishes plain text output from an audio transcript, so the session
+    # persists it as a `TextPart` rather than a `SpeechPart`.
+    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == Transcript(
+        text='hel', is_final=False, output_text=True
+    )
+    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == Transcript(
+        text='hello', is_final=True, output_text=True
+    )
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:

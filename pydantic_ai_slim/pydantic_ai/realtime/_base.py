@@ -153,12 +153,16 @@ class AudioDelta:
 
 @dataclass
 class Transcript:
-    """A transcription of the model's audio output (partial or final)."""
+    """The model's textual output (partial or final): an audio transcript, or plain text output."""
 
     text: str
     """Transcript text. A partial event carries the incremental delta; a final event the full turn."""
     is_final: bool = False
     """Whether this is the final transcript for the turn."""
+    output_text: bool = False
+    """Whether this is the model's plain text output (`output_modalities=('text',)`) rather than a
+    transcription of spoken audio. Text output becomes a [`TextPart`][pydantic_ai.messages.TextPart];
+    an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
 
 
 @dataclass

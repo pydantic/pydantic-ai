@@ -129,8 +129,9 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     final = messages[3]
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
-    assert isinstance(final_part, SpeechPart)
-    assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
+    # The session runs in text-output modality, so the reply is a `TextPart`, not a `SpeechPart`.
+    assert isinstance(final_part, TextPart)
+    assert 'fog' in final_part.content.lower()
 
 
 async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -178,9 +179,10 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
     reply = messages[-1]
     assert isinstance(reply, ModelResponse)
     reply_part = reply.parts[0]
-    assert isinstance(reply_part, SpeechPart)
-    transcript = (reply_part.transcript or '').lower()
-    assert 'alice' in transcript and 'teal' in transcript
+    # Text-output modality → a `TextPart` reply.
+    assert isinstance(reply_part, TextPart)
+    content = reply_part.content.lower()
+    assert 'alice' in content and 'teal' in content
 
 
 def test_profile_allow_seeding() -> None:

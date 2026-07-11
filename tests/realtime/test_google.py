@@ -379,7 +379,7 @@ def test_map_audio_and_text_parts() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         AudioDelta(data=b'\x01'),
-        Transcript(text='partial', is_final=False),
+        Transcript(text='partial', is_final=False, output_text=True),
     ]
 
 
@@ -398,7 +398,9 @@ def test_map_skips_thought_parts() -> None:
             )
         )
     )
-    assert conn._map_message(message) == [Transcript(text='Hello there.', is_final=False)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        Transcript(text='Hello there.', is_final=False, output_text=True)
+    ]
 
 
 def test_map_transcriptions_interrupt_and_turn_complete() -> None:
@@ -547,7 +549,7 @@ def test_map_code_execution_to_native_tool_parts() -> None:
         )
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        Transcript(text='The answer is 2.', is_final=False),
+        Transcript(text='The answer is 2.', is_final=False, output_text=True),
         NativeToolParts(
             parts=[
                 NativeToolCallPart(

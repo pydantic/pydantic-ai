@@ -713,8 +713,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
-                    # text alongside the spoken answer, and it must not leak into the transcript.
-                    events.append(Transcript(text=part.text, is_final=False))
+                    # text alongside the spoken answer, and it must not leak into the transcript. A
+                    # model-turn text part is the model's plain text output (`response_modality='text'`),
+                    # distinct from the spoken-audio transcription in `output_transcription` below, so it
+                    # becomes a `TextPart` rather than a `SpeechPart`.
+                    events.append(Transcript(text=part.text, is_final=False, output_text=True))
         if content.input_transcription is not None and content.input_transcription.text:
             events.append(
                 InputTranscript(

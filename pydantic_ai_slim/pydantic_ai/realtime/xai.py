@@ -111,9 +111,9 @@ class XaiRealtimeModel(RealtimeModel):
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
         voice: Voice for audio output — one of `eve` (default), `ara`, `rex`, `sal`, `leo`, or a custom
             voice ID. `None` uses the server default (`eve`).
-        input_transcription_model: Model used to transcribe the user's audio input, e.g. `grok-transcribe`.
-            `None` (the default) disables input transcription. When enabled, transcripts are surfaced at
-            the end of each user turn (see [`map_event`][pydantic_ai.realtime.xai.map_event]).
+        input_transcription_model: Model used to transcribe the user's audio input, `grok-transcribe`
+            by default so the user's turns are captured into history (pass `None` to disable). Transcripts
+            are surfaced at the end of each user turn (see [`map_event`][pydantic_ai.realtime.xai.map_event]).
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
         turn_detection: How the server decides when the user's turn ends. A
@@ -128,7 +128,7 @@ class XaiRealtimeModel(RealtimeModel):
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
     voice: str | None = None
-    input_transcription_model: str | None = None
+    input_transcription_model: str | None = 'grok-transcribe'
     handshake_timeout: float = 30.0
     turn_detection: ServerVAD | None = field(default_factory=ServerVAD)
     reconnect: ReconnectPolicy | None = None

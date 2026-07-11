@@ -27,6 +27,8 @@ from ..messages import (
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
+    TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -234,7 +236,7 @@ class RealtimeSession:
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
         self._pending_response_usage = RequestUsage()
-        self._active_assistant: SpeechPart | None = None
+        self._active_assistant: SpeechPart | TextPart | None = None
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
@@ -258,8 +260,37 @@ class RealtimeSession:
         return list(self._history)
 
     async def send(self, content: RealtimeInput) -> None:
-        """Feed content into the underlying connection."""
-        await self._connection.send(content)
+        """Feed a [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] into the session.
+
+        Dispatches to the typed helpers (`send_audio`, `send_text`, `send_image`, `commit_audio`,
+        `clear_audio`, `create_response`, `truncate_output`, `interrupt`), so every input goes through
+        the same history bookkeeping and model-profile guards rather than bypassing them. Prefer calling
+        those helpers directly; this is for code that already holds a `RealtimeInput` value. Tool results
+        are sent by the session itself and cannot be sent here.
+        """
+        if isinstance(content, AudioInput):
+            await self.send_audio(content.data)
+        elif isinstance(content, TextInput):
+            await self.send_text(content.text)
+        elif isinstance(content, ImageInput):
+            await self.send_image(content.data, mime_type=content.mime_type)
+        elif isinstance(content, CommitAudio):
+            await self.commit_audio()
+        elif isinstance(content, ClearAudio):
+            await self.clear_audio()
+        elif isinstance(content, CreateResponse):
+            await self.create_response()
+        elif isinstance(content, TruncateOutput):
+            await self.truncate_output(content.audio_end_ms)
+        elif isinstance(content, CancelResponse):
+            await self.interrupt()
+        else:
+            # `ToolResult` is the only remaining `RealtimeInput`; the session sends tool results itself
+            # (see `_execute_tool`), so a caller has no business sending one.
+            raise UserError(
+                'Tool results are sent automatically by the realtime session and cannot be sent via '
+                '`session.send()`.'
+            )
 
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of audio to the model."""
@@ -288,6 +319,9 @@ class RealtimeSession:
         """Discard buffered, uncommitted input audio."""
         self._require_capability(self._profile['supports_manual_turn_control'], 'clear_audio', 'manual turn-taking')
         await self._connection.send(ClearAudio())
+        # Drop the locally retained copy too (with `audio_retention='input'`/`'both'`), or the discarded
+        # audio would still be attached to the next finalized user turn.
+        self._input_audio.clear()
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
@@ -329,29 +363,37 @@ class RealtimeSession:
 
     # --- history assembly -------------------------------------------------------------------------
 
-    def _ensure_active_assistant(self) -> list[RealtimeSessionEvent]:
-        """Start an assistant audio+transcript part if one isn't already in flight."""
+    def _ensure_active_assistant(self, *, output_text: bool = False) -> list[RealtimeSessionEvent]:
+        """Start an assistant output part if one isn't already in flight.
+
+        `output_text` selects a plain [`TextPart`][pydantic_ai.messages.TextPart] (the model's
+        `output_modalities=('text',)` responses) over the default
+        [`SpeechPart`][pydantic_ai.messages.SpeechPart] (spoken audio and its transcript).
+        """
         if self._active_assistant is not None:
             return []
         self._ensure_chat_span()
-        part = SpeechPart(speaker='assistant', transcript='')
+        part: SpeechPart | TextPart = (
+            TextPart(content='') if output_text else SpeechPart(speaker='assistant', transcript='')
+        )
         self._active_assistant = part
         self._active_assistant_index = len(self._response_parts)
         self._assistant_transcript = ''
         return [PartStartEvent(index=self._active_assistant_index, part=part)]
 
-    def _handle_assistant_transcript(self, text: str) -> list[RealtimeSessionEvent]:
-        events = self._ensure_active_assistant()
-        assert self._active_assistant is not None
+    def _handle_assistant_transcript(self, text: str, *, output_text: bool = False) -> list[RealtimeSessionEvent]:
+        events = self._ensure_active_assistant(output_text=output_text)
+        active = self._active_assistant
+        assert active is not None
         self._assistant_transcript, appended = _accumulate_transcript(self._assistant_transcript, text)
-        self._active_assistant = replace(self._active_assistant, transcript=self._assistant_transcript)
+        if isinstance(active, TextPart):
+            self._active_assistant = replace(active, content=self._assistant_transcript)
+            delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
+        else:
+            self._active_assistant = replace(active, transcript=self._assistant_transcript)
+            delta = SpeechPartDelta(transcript_delta=appended)
         if appended:
-            events.append(
-                PartDeltaEvent(
-                    index=self._active_assistant_index,
-                    delta=SpeechPartDelta(transcript_delta=appended),
-                )
-            )
+            events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
 
     def _handle_assistant_audio(self, data: bytes) -> list[RealtimeSessionEvent]:
@@ -366,10 +408,11 @@ class RealtimeSession:
         if self._active_assistant is None:
             return []
         part = self._active_assistant
-        if part.transcript == '':
-            part = replace(part, transcript=None)
-        if self._retain_output and self._output_audio:
-            part = replace(part, audio=BinaryContent(data=bytes(self._output_audio), media_type=_PCM_MEDIA_TYPE))
+        if isinstance(part, SpeechPart):
+            if part.transcript == '':
+                part = replace(part, transcript=None)
+            if self._retain_output and self._output_audio:
+                part = replace(part, audio=BinaryContent(data=bytes(self._output_audio), media_type=_PCM_MEDIA_TYPE))
         index = self._active_assistant_index
         self._active_assistant = None
         self._assistant_transcript = ''
@@ -502,8 +545,9 @@ class RealtimeSession:
             return self._handle_assistant_audio(event.data)
         if isinstance(event, Transcript):
             # `is_final` doesn't end the part — the turn ends on `TurnCompleteEvent`; a final transcript just
-            # carries the full text, which `_accumulate_transcript` reconciles against the deltas.
-            return self._handle_assistant_transcript(event.text)
+            # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
+            # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
+            return self._handle_assistant_transcript(event.text, output_text=event.output_text)
         if isinstance(event, InputTranscript):
             return self._handle_input_transcript(event.text, event.is_final)
         if isinstance(event, TurnCompleteEvent):
@@ -556,6 +600,12 @@ class RealtimeSession:
                 async for event in self._stream():
                     yield event
             finally:
+                # If the consumer broke/cancelled mid-turn, an assistant response was started but never
+                # finalized, leaving its `chat` span open. End it here so it doesn't outlive the session
+                # span as an unfinished child (no `ModelResponse` to attach — it was cut off).
+                if self._chat_span is not None:
+                    self._chat_span.end()
+                    self._chat_span = None
                 self._finalize_span(settings, span, attributes)
 
     def _finalize_span(self, settings: InstrumentationSettings, span: Span, base_attributes: dict[str, Any]) -> None:

@@ -573,3 +573,19 @@ async def test_chat_span_without_model_name() -> None:
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat')
     assert chat.attributes is not None
     assert 'gen_ai.request.model' not in chat.attributes
+
+
+async def test_early_break_finishes_chat_span() -> None:
+    """Breaking mid-turn still finishes the in-flight `chat` span, so it doesn't outlive the session span.
+
+    A response opens a `chat` span on its first content but only finishes it on `TurnCompleteEvent` /
+    a tool-call boundary. If the consumer breaks or cancels mid-turn, the span used to leak unfinished.
+    """
+    settings, exporter = _settings()
+    conn = _Connection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01')])  # no TurnCompleteEvent
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    agen = session.__aiter__()
+    await agen.__anext__()  # first audio delta opens the assistant `chat` span (still in-flight)
+    await agen.aclose()  # break before the turn completes
+    # Every started span must be finished — including the `chat` child, which used to be left open.
+    assert {s.name for s in exporter.get_finished_spans()} == {'realtime gpt-realtime', 'chat gpt-realtime'}

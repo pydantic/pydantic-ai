@@ -204,10 +204,10 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
         return Transcript(text=_str_field(data, 'transcript'), is_final=True)
 
     if event_type == 'response.output_text.delta':
-        return Transcript(text=_str_field(data, 'delta'), is_final=False)
+        return Transcript(text=_str_field(data, 'delta'), is_final=False, output_text=True)
 
     if event_type == 'response.output_text.done':
-        return Transcript(text=_str_field(data, 'text'), is_final=True)
+        return Transcript(text=_str_field(data, 'text'), is_final=True, output_text=True)
 
     if event_type == 'conversation.item.input_audio_transcription.delta':
         return InputTranscript(text=_str_field(data, 'delta'), is_final=False)
