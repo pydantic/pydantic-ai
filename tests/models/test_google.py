@@ -4262,6 +4262,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
 
 
 async def test_gemini_streamed_response_initializes_provider_details_from_service_tier():
+    """Pin internal provider details that a VCR cassette would not expose reliably."""
     chunk = _generate_response_with_texts('stream-service-tier', ['hello'])
     chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
 
@@ -4284,6 +4285,7 @@ async def test_gemini_streamed_response_initializes_provider_details_from_servic
 
 
 async def test_gemini_streamed_response_initializes_provider_details_from_traffic_type():
+    """Pin internal provider details that a VCR cassette would not expose reliably."""
     chunk = _generate_response_with_texts('stream-traffic-type', ['hello'])
     usage_metadata = chunk.usage_metadata
     assert usage_metadata is not None
@@ -4308,6 +4310,7 @@ async def test_gemini_streamed_response_initializes_provider_details_from_traffi
 
 
 async def test_gemini_streamed_response_initializes_provider_details_from_prompt_feedback():
+    """Pin internal provider details that a VCR cassette would not expose reliably."""
     chunk = GenerateContentResponse(
         response_id='stream-blocked',
         prompt_feedback=GenerateContentResponsePromptFeedback(
@@ -4340,6 +4343,7 @@ async def test_gemini_streamed_response_initializes_provider_details_from_prompt
 
 
 async def test_gemini_streamed_response_adds_prompt_feedback_to_existing_provider_details():
+    """Pin internal provider details that a VCR cassette would not expose reliably."""
     chunk = GenerateContentResponse(
         response_id='stream-blocked-with-traffic-type',
         usage_metadata=GenerateContentResponseUsageMetadata(
