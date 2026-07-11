@@ -11735,7 +11735,8 @@ async def test_background_stream_cancel_cancels_server_job(allow_model_requests:
     `OpenAIResponsesModel.cancel_suspended_response(composite.get())` → `client.responses.cancel(id)`.
     The composite's `get()` reports a terminal `state` here (never `'suspended'`), so this pins that the
     `background` marker, `provider_response_id`, and `provider_name` all survive into it — otherwise the
-    server-side job would leak.
+    server-side job would leak. Not a VCR test: it pins mid-stream cancellation timing and the live
+    `responses.cancel` call, neither of which cassette playback reliably captures.
     """
     from openai.types import responses as resp
 
