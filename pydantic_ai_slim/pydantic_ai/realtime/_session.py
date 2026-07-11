@@ -562,14 +562,8 @@ class RealtimeSession:
         """Attach cumulative usage and the conversation transcript (as gen_ai messages) to the session span."""
         # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
-        # spans, which carry each response's usage under `gen_ai.usage.*`.
-        usage_attributes = self.usage.opentelemetry_attributes()
-        if settings.use_aggregated_usage_attribute_names:
-            usage_attributes = {
-                key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value
-                for key, value in usage_attributes.items()
-            }
-        span.set_attributes(usage_attributes)
+        # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
+        span.set_attributes(settings.aggregated_usage_attributes(self.usage))
         if settings.include_content:
             # Reuse the same message → gen_ai serialization the instrumented model uses. User/tool
             # requests land as input messages; assistant responses as output messages.

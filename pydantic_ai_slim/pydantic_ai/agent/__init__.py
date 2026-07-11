@@ -1305,31 +1305,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
 
-        # Build model settings resolver using per-run capability
+        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
+        # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # Resolve settings in layers, each merged on top of the previous.
-            # Before calling each callable, set run_context.model_settings so it
-            # can see the merged result of all previous layers.
-            merged = model_used.settings
-
-            run_context.model_settings = merged
-            resolved_agent = (
-                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            return _layer_model_settings(
+                run_context,
+                (agent_model_settings, cap_model_settings, run_model_settings),
+                base=model_used.settings,
             )
-            merged = merge_model_settings(merged, resolved_agent)
-
-            # Capability settings (from custom capabilities that override get_model_settings), cached at init
-            run_context.model_settings = merged
-            cap_settings = cap_model_settings
-            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
-            merged = merge_model_settings(merged, resolved_cap)
-
-            run_context.model_settings = merged
-            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            merged = merge_model_settings(merged, resolved_run)
-
-            run_context.model_settings = merged
-            return merged
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -2825,21 +2809,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context.trace_include_content = (
             session_instrumentation_settings is not None and session_instrumentation_settings.include_content
         )
+        if session_instrumentation_settings is not None:
+            run_context.instrumentation_version = session_instrumentation_settings.version
         run_context.metadata = self._get_metadata(run_context, metadata)
 
-        # Agent-level model settings, resolved once (a realtime session has no per-request rebuild). An
-        # active `Agent.override(model_settings=...)` replaces both the agent default and this call's
-        # `model_settings`; otherwise the call's settings layer on top. Capability-contributed settings
-        # are folded in between the two after `for_run` materializes them (below), mirroring the
-        # agent -> capability -> run order of `iter`'s `get_model_settings`.
+        # Agent-level model settings selection: an active `Agent.override(model_settings=...)` replaces
+        # both the agent default and this call's `model_settings`; otherwise the call's settings layer on
+        # top. The layers are merged (and any callables resolved) after `for_run` below, so a callable
+        # observes the resolved capabilities — matching the graph run.
         model_settings_override = self._override_model_settings.get()
         agent_model_settings = (
             model_settings_override.value if model_settings_override is not None else self.model_settings
         )
         run_model_settings = model_settings if model_settings_override is None else None
-        resolved_agent_settings = (
-            agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
-        )
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
         # the shared helper. Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no
@@ -2857,14 +2839,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_capability = resolved_caps.run_capability
         run_context.capabilities = resolved_caps.capabilities
 
-        # Fold capability-contributed model settings between the agent default and this call's settings.
-        run_context.model_settings = resolved_agent_settings
-        cap_model_settings = resolved_caps.model_settings
-        resolved_cap_settings = cap_model_settings(run_context) if callable(cap_model_settings) else cap_model_settings
-        merged_settings = merge_model_settings(resolved_agent_settings, resolved_cap_settings)
-        run_context.model_settings = merged_settings
-        effective_model_settings = merge_model_settings(merged_settings, run_model_settings)
-        run_context.model_settings = effective_model_settings
+        # Layer agent -> capability -> run model settings once (no per-request rebuild), via the same
+        # helper `iter` uses. A realtime model carries no base settings.
+        effective_model_settings = _layer_model_settings(
+            run_context, (agent_model_settings, resolved_caps.model_settings, run_model_settings)
+        )
 
         # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
         # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime. The
@@ -2935,6 +2914,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if isinstance(result, ToolDenied):
                     return result.message
                 if isinstance(result, _messages.ToolReturn):
+                    # A realtime tool result travels back over the provider's string-only tool-output
+                    # channel, so — unlike the graph's `_call_tool`, which surfaces `ToolReturn.content`
+                    # as extra model-facing content and keeps `metadata` — only the `return_value` is
+                    # sent; `content` / `metadata` are dropped. A limitation of the provider channel.
                     return str(result.return_value)
                 return str(result)
 
@@ -3201,6 +3184,29 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
     native_tools: list[AgentNativeTool[AgentDepsT]]
     model_settings: AgentModelSettings[AgentDepsT] | None
     toolsets: list[AgentToolset[AgentDepsT]] | None
+
+
+def _layer_model_settings(
+    run_context: RunContext[AgentDepsT],
+    layers: Sequence[AgentModelSettings[AgentDepsT] | None],
+    *,
+    base: ModelSettings | None = None,
+) -> ModelSettings | None:
+    """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
+
+    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
+    Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
+    observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
+    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
+    graph run; a realtime model has none, so it defaults to `None`.
+    """
+    merged = base
+    run_context.model_settings = merged
+    for layer in layers:
+        resolved = layer(run_context) if callable(layer) else layer
+        merged = merge_model_settings(merged, resolved)
+        run_context.model_settings = merged
+    return merged
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
