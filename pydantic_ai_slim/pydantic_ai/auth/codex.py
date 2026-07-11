@@ -62,9 +62,9 @@ class CodexCredentials(BaseModel):
     id_token: SecretStr
     expires_at: datetime
     account_id: SecretStr
-    account_is_fedramp: bool = False
     revision: str
     """Opaque credential version used for conditional refresh and persistence."""
+    account_is_fedramp: bool = False
 
     @field_validator('expires_at')
     @classmethod
@@ -305,8 +305,8 @@ class CodexAuth(CodexCredentialSource):
             try:
                 yield
             except BaseException as error:
-                if not await exclusive.__aexit__(type(error), error, error.__traceback__):
-                    raise
+                await exclusive.__aexit__(type(error), error, error.__traceback__)
+                raise
             else:
                 await exclusive.__aexit__(None, None, None)
 

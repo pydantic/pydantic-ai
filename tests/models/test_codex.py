@@ -72,6 +72,7 @@ def codex_model(vcr: Cassette) -> OpenAIResponsesModel:
 async def test_codex_profile_streams_ordinary_requests_and_preserves_provider_identity(
     allow_model_requests: None,
 ) -> None:
+    """Use a mock because VCR matching does not reliably pin the forced `store=False` request body."""
     base_response = resp.Response(
         id='resp_001',
         model='gpt-5.5',

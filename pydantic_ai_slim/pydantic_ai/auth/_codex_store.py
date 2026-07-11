@@ -31,8 +31,8 @@ class _StoredCodexCredentials(BaseModel):
     id_token: str
     expires_at: datetime
     account_id: str
-    account_is_fedramp: bool = False
     revision: str
+    account_is_fedramp: bool = False
 
     @classmethod
     def from_credentials(cls, credentials: CodexCredentials) -> _StoredCodexCredentials:
@@ -42,8 +42,8 @@ class _StoredCodexCredentials(BaseModel):
             id_token=credentials.id_token.get_secret_value(),
             expires_at=credentials.expires_at,
             account_id=credentials.account_id.get_secret_value(),
-            account_is_fedramp=credentials.account_is_fedramp,
             revision=credentials.revision,
+            account_is_fedramp=credentials.account_is_fedramp,
         )
 
     def to_credentials(self) -> CodexCredentials:
@@ -53,8 +53,8 @@ class _StoredCodexCredentials(BaseModel):
             id_token=SecretStr(self.id_token),
             expires_at=self.expires_at,
             account_id=SecretStr(self.account_id),
-            account_is_fedramp=self.account_is_fedramp,
             revision=self.revision,
+            account_is_fedramp=self.account_is_fedramp,
         )
 
 
@@ -93,7 +93,7 @@ class FileCodexCredentialStore:
             raise CodexCredentialsError('Unable to lock the Codex credential store.') from error
 
         try:
-            if os.name != 'nt':
+            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
                 try:
                     await run_sync(os.chmod, self._lock_path, 0o600)
                 except OSError as error:
@@ -165,7 +165,7 @@ class FileCodexCredentialStore:
     def _load_document(self) -> _AuthFile:
         if not self.path.exists():
             return _AuthFile()
-        if os.name != 'nt':
+        if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
             os.chmod(self.path, 0o600)
         try:
             raw = json.loads(self.path.read_text(encoding='utf-8'))
@@ -200,14 +200,14 @@ class FileCodexCredentialStore:
         )
         temporary_path = Path(temporary_name)
         try:
-            if os.name != 'nt':
+            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
                 os.fchmod(file_descriptor, 0o600)
             with os.fdopen(file_descriptor, 'w', encoding='utf-8') as temporary_file:
                 temporary_file.write(content)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
             os.replace(temporary_path, self.path)
-            if os.name != 'nt':
+            if os.name != 'nt':  # pragma: no branch - platform-specific permission hardening
                 os.chmod(self.path, 0o600)
                 directory_descriptor = os.open(self.path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
                 try:

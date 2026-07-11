@@ -156,6 +156,31 @@ def test_auth_store_and_path_are_mutually_exclusive(tmp_path: Path) -> None:
         CodexAuth(store=MemoryStore(), path=tmp_path / 'auth.json')
 
 
+async def test_memory_store_compare_and_swap_mismatches() -> None:
+    current = _credentials(revision='current')
+    store = MemoryStore(current)
+
+    assert not await store.save(_credentials(revision='replacement'), expected_revision='stale')
+    assert not await store.delete(expected_revision='stale')
+    assert store.credentials is current
+
+
+async def test_store_context_cannot_suppress_transaction_error() -> None:
+    class SuppressingStore(MemoryStore):
+        @asynccontextmanager
+        async def exclusive(self) -> AsyncGenerator[None]:
+            try:
+                yield
+            except RuntimeError:
+                pass
+
+        async def load(self) -> CodexCredentials | None:
+            raise RuntimeError('store failure')
+
+    with pytest.raises(RuntimeError, match='store failure'):
+        await CodexAuth(store=SuppressingStore()).logout()
+
+
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     auth = CodexAuth(path=path)
@@ -298,7 +323,7 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.refresh()
-                completed = True
+                completed = True  # pragma: no cover - cancellation must prevent the call from returning
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(rotate)
@@ -330,7 +355,7 @@ async def test_cancellation_after_refresh_response_still_completes_save() -> Non
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.refresh()
-                completed = True
+                completed = True  # pragma: no cover - cancellation must prevent the call from returning
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(rotate)
@@ -354,7 +379,7 @@ async def test_refresh_and_save_has_bounded_timeout(monkeypatch: pytest.MonkeyPa
 
     async def handle(request: httpx.Request) -> httpx.Response:
         await anyio.sleep_forever()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
@@ -1044,7 +1069,7 @@ async def test_logout_cancellation_waits_for_delete_and_custom_lock_release() ->
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
                 await auth.logout()
-                completed = True
+                completed = True  # pragma: no cover - cancellation must prevent the call from returning
 
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(logout)

@@ -310,6 +310,38 @@ def test_codex_sse_identifiers_are_recursively_scrubbed() -> None:
     assert deserialized['interactions'][0]['response']['headers']['content-length'] == [str(len(body.encode('utf-8')))]
 
 
+def test_codex_sse_scrubbing_handles_noops_and_missing_content_length() -> None:
+    cassette: dict[str, Any] = {
+        'interactions': [
+            {
+                'request': {'uri': 'https://chatgpt.com/backend-api/codex/responses', 'headers': {}},
+                'response': {
+                    'headers': {'Content-Type': ['text/event-stream']},
+                    'body': {'string': 'data: {"safety_identifier":"account-secret"}\n\n'},
+                },
+            },
+            {
+                'request': {'uri': 'https://chatgpt.com/backend-api/codex/responses', 'headers': {}},
+                'response': {
+                    'headers': {'Content-Type': ['text/event-stream']},
+                    'body': {'string': 'data: {"output":[]}\n\n'},
+                },
+            },
+            {
+                'request': {'uri': 'https://auth.openai.com/oauth/token?client_id=public-client', 'headers': {}},
+            },
+        ]
+    }
+
+    deserialized = deserialize(serialize(cassette))
+
+    scrubbed_response = deserialized['interactions'][0]['response']
+    assert scrubbed_response['body']['string'] == 'data: {"safety_identifier":"scrubbed"}\n\n'
+    assert 'content-length' not in scrubbed_response['headers']
+    assert deserialized['interactions'][1]['response']['body']['string'] == 'data: {"output":[]}\n\n'
+    assert deserialized['interactions'][2]['request']['uri'].endswith('client_id=public-client')
+
+
 def test_ordinary_json_and_sse_fields_are_preserved() -> None:
     ordinary_fields = {'token': 'The', 'code': 'bad_request', 'account_id': 'public-account'}
     cassette: dict[str, Any] = {

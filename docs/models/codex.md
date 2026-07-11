@@ -20,7 +20,7 @@ Device authorization may need to be enabled in your ChatGPT account or workspace
 
 After signing in, you can construct an agent without an API key:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 
 agent = Agent('codex:gpt-5.5')
@@ -53,7 +53,7 @@ Status output never includes tokens or the full ChatGPT account identifier.
 
 Applications can use [`CodexAuth`][pydantic_ai.auth.codex.CodexAuth] without importing CLI code. For example, an application can supply its own browser interaction and then pass the same credential source to the provider:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 import webbrowser
 
 from pydantic_ai.auth.codex import CodexAuth

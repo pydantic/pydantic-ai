@@ -33,7 +33,7 @@ def _credentials(revision: str) -> CodexCredentials:
 async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
     path.parent.mkdir(mode=0o777)
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch - platform-specific permission setup
         os.chmod(path.parent, 0o750)
     path.write_text(
         json.dumps({'version': 1, 'providers': {'another-provider': {'value': 'preserve-me'}}}),
@@ -49,7 +49,7 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
     document = json.loads(path.read_text(encoding='utf-8'))
     assert document['providers']['another-provider'] == {'value': 'preserve-me'}
     assert document['providers']['codex']['refresh_token'] == 'refresh-revision-1'
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertions
         assert path.parent.stat().st_mode & 0o777 == 0o750
         assert path.stat().st_mode & 0o777 == 0o600
         assert path.with_name('auth.json.lock').stat().st_mode & 0o777 == 0o600
@@ -58,7 +58,7 @@ async def test_file_store_round_trip_permissions_and_unrelated_records(tmp_path:
 async def test_default_file_store_hardens_existing_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = tmp_path / '.pydantic-ai'
     parent.mkdir()
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch - platform-specific permission setup
         os.chmod(parent, 0o750)
     monkeypatch.setattr('pydantic_ai.auth._codex_store.Path.home', lambda: tmp_path)
 
@@ -66,7 +66,7 @@ async def test_default_file_store_hardens_existing_parent(tmp_path: Path, monkey
     async with store.exclusive():
         assert await store.save(_credentials('revision'), expected_revision=None)
 
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertion
         assert parent.stat().st_mode & 0o777 == 0o700
 
 
@@ -77,7 +77,7 @@ async def test_file_store_creates_missing_parent_with_private_permissions(tmp_pa
     async with store.exclusive():
         assert await store.save(_credentials('revision'), expected_revision=None)
 
-    if os.name != 'nt':
+    if os.name != 'nt':  # pragma: no branch - platform-specific permission assertion
         assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
@@ -136,14 +136,20 @@ with FileLock(sys.argv[1], timeout=5):
     print('locked', flush=True)
     sys.stdin.readline()
 """
+    environment = os.environ.copy()
+    environment.pop('COVERAGE_FILE', None)
+    environment.pop('COVERAGE_PROCESS_CONFIG', None)
+    environment.pop('COVERAGE_PROCESS_START', None)
     process = subprocess.Popen(
         [sys.executable, '-c', script, str(lock_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
+        env=environment,
     )
+    assert process.stdin is not None
+    assert process.stdout is not None
     try:
-        assert process.stdout is not None
         assert await run_sync(process.stdout.readline) == 'locked\n'
 
         acquired = anyio.Event()
@@ -156,19 +162,18 @@ with FileLock(sys.argv[1], timeout=5):
             task_group.start_soon(acquire)
             await anyio.sleep(0.1)
             assert not acquired.is_set()
-            assert process.stdin is not None
             process.stdin.write('\n')
             process.stdin.flush()
             with anyio.fail_after(5):
                 await acquired.wait()
     finally:
-        if process.poll() is None:
+        process.stdin.close()
+        try:
+            await run_sync(process.wait, 5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive subprocess cleanup
             process.terminate()
-        await run_sync(process.wait)
-        if process.stdin is not None:
-            process.stdin.close()
-        if process.stdout is not None:
-            process.stdout.close()
+            await run_sync(process.wait)
+        process.stdout.close()
 
 
 async def test_file_store_lock_timeout_is_typed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,9 +193,9 @@ async def test_file_store_wraps_lock_permission_error(tmp_path: Path, monkeypatc
     real_chmod = os.chmod
 
     def fail_lock_chmod(target: os.PathLike[str] | str, mode: int) -> None:
-        if Path(target) == lock_path:
-            raise OSError('simulated permission failure')
-        real_chmod(target, mode)
+        assert Path(target) == lock_path
+        assert mode == 0o600
+        raise OSError('simulated permission failure')
 
     monkeypatch.setattr('pydantic_ai.auth._codex_store.os.chmod', fail_lock_chmod)
     with pytest.raises(CodexCredentialsError, match='Unable to lock'):
@@ -259,7 +264,7 @@ async def test_cancelled_file_lock_waiter_does_not_leave_lock_held(tmp_path: Pat
             scopes.append(scope)
             try:
                 async with FileCodexCredentialStore(path).exclusive():
-                    pytest.fail('cancelled waiter unexpectedly acquired the lock')
+                    pytest.fail('cancelled waiter unexpectedly acquired the lock')  # pragma: no cover
             finally:
                 waiter_finished.set()
 

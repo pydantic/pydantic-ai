@@ -70,7 +70,7 @@ clai auth refresh codex
 clai auth logout codex
 ```
 
-See the [Codex provider guide](models/codex.md) for storage security, application-owned credential sources, subscription billing, and model-availability differences.
+See the Codex provider guide for [storage security](models/codex.md#credential-storage-and-security), [application-owned credential sources](models/codex.md#application-owned-credentials-and-persistence), [subscription billing](models/codex.md#codex-and-openai-platform-differences), and [model availability](models/codex.md#sign-in).
 
 ### CLI Options
 

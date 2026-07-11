@@ -41,6 +41,14 @@ class OneShotAsyncStream(httpx.AsyncByteStream):
         yield self.content
 
 
+async def test_one_shot_stream_rejects_second_consumption() -> None:
+    stream = OneShotAsyncStream(b'content')
+
+    assert b''.join([chunk async for chunk in stream]) == b'content'
+    with pytest.raises(AssertionError, match='more than once'):
+        _ = [chunk async for chunk in stream]
+
+
 class CredentialSource:
     def __init__(self, credentials: CodexCredentials | None = None) -> None:
         self.credentials = credentials or _credentials()
@@ -352,7 +360,7 @@ async def test_provider_rejects_caller_client_that_follows_redirects() -> None:
 async def test_provider_preserves_falsey_credential_source() -> None:
     class FalseySource(CredentialSource):
         def __bool__(self) -> bool:
-            return False
+            return False  # pragma: no cover - the provider must use an explicit `None` check
 
     source = FalseySource()
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
