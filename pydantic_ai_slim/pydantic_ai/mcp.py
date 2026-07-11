@@ -1110,7 +1110,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     def _invalidate_tools_cache(self) -> None:
         # A `list_changed` notification arrives on one session, but the wrapped message handler
-        # can't tell which one it belongs to — invalidate across all open sessions.
+        # can't tell which one it belongs to — invalidate across all open sessions. Every session
+        # has the handler: `Client.new()` preserves custom message handlers on cloned clients.
         for session in self._sessions:
             session.cached_tools = None
 

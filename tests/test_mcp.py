@@ -1199,13 +1199,16 @@ class TestMCPSessionScoping:
         the user, so the factory shields it from lifecycle calls."""
         client = httpx.AsyncClient()
         factory = _make_httpx_client_factory(client)
-        proxied = factory()
-        async with proxied:
-            pass
-        await proxied.aclose()
-        assert client.is_closed is False
+        # Each session teardown `async with`-closes the factory result; the user's client must
+        # survive repeated teardowns (one per session).
+        for _ in range(2):
+            proxied = factory()
+            async with proxied:
+                pass
+            await proxied.aclose()
+            assert client.is_closed is False
         # Everything else delegates to the real client.
-        assert proxied.headers is client.headers
+        assert factory().headers is client.headers
         await client.aclose()
 
 
