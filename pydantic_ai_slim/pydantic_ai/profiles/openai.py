@@ -52,6 +52,8 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
+OpenAIChatPromptCacheBreakpointType = Literal['text', 'image_url', 'input_audio', 'file']
+OpenAIResponsesPromptCacheBreakpointType = Literal['input_text', 'input_image', 'input_file']
 
 
 @dataclass(frozen=True)
@@ -269,6 +271,20 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
+    openai_chat_prompt_cache_breakpoint_types: frozenset[OpenAIChatPromptCacheBreakpointType]
+    """Chat content block types that accept OpenAI-style explicit prompt cache breakpoints. Default: empty.
+
+    This is a provider API capability rather than an intrinsic model characteristic, so it is enabled by
+    providers for supported models instead of by `openai_model_profile()`.
+    """
+
+    openai_responses_prompt_cache_breakpoint_types: frozenset[OpenAIResponsesPromptCacheBreakpointType]
+    """Responses content block types that accept OpenAI-style explicit prompt cache breakpoints. Default: empty.
+
+    This is separate from `openai_chat_prompt_cache_breakpoint_types` because compatible providers may expose
+    the feature through only one API flavor or support a narrower set of content block types.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -279,8 +295,24 @@ def validate_openai_profile(profile: ModelProfile) -> None:
         )
 
 
+def openai_prompt_cache_profile(model_name: str) -> OpenAIModelProfile | None:
+    """Get the full OpenAI prompt-cache protocol profile fragment for a model.
+
+    Returns the Chat and Responses breakpoint types for GPT-5.6 models, or `None` for other model
+    families. Providers implementing this wire contract can opt in by merging the result with the
+    intrinsic [`openai_model_profile`][pydantic_ai.profiles.openai.openai_model_profile]. Compatible
+    APIs with a narrower contract should declare their own breakpoint types instead.
+    """
+    if not model_name.startswith('gpt-5.6'):
+        return None
+    return OpenAIModelProfile(
+        openai_chat_prompt_cache_breakpoint_types=frozenset({'text', 'image_url', 'input_audio', 'file'}),
+        openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text', 'input_image', 'input_file'}),
+    )
+
+
 def openai_model_profile(model_name: str) -> ModelProfile:
-    """Get the model profile for an OpenAI model."""
+    """Get the intrinsic model profile for an OpenAI model."""
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6

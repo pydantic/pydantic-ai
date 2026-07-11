@@ -122,6 +122,33 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
+### Prompt caching
+
+GPT-5.6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+settings = OpenAIResponsesModelSettings(
+    openai_prompt_cache_key='product-docs-v1',
+    openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+)
+agent = Agent('openai:gpt-5.6-sol', model_settings=settings)
+
+result = agent.run_sync([
+    'Long-lived reference material...',
+    CachePoint(),
+    'Answer using the reference material.',
+])
+```
+
+With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. A stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] influences request routing and can improve cache hit rates when requests share long prefixes; use different keys to partition unrelated workloads.
+
+Pydantic AI also passes these fields through for Azure GPT-5.6 deployments, whether you use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] or supply an `AsyncAzureOpenAI` client to `OpenAIProvider`. This is opt-in: `prompt_cache_options` is sent only when you set `openai_prompt_cache_options`, and `prompt_cache_breakpoint` is sent only when you add a `CachePoint`. Microsoft does not currently document explicit prompt caching for Azure OpenAI, so field acceptance and actual cache writes or reads depend on the deployment and API version.
+
+When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
+
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).

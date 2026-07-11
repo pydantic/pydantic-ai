@@ -161,12 +161,18 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         # future non-Anthropic downstream can enable any of them independently without re-coupling them.
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
+        openai_cache_profile = (
+            OpenRouterModelProfile(openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text'}))
+            if provider == 'openai' and model_name.startswith('gpt-5.6')
+            else None
+        )
 
-        # Three-layer merge:
+        # Four-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
         # 2. Upstream profile — model-specific traits from the lab's profile function.
-        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        # 3. OpenAI explicit-cache support — present only for documented GPT-5.6 Responses routes.
+        # 4. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
@@ -174,6 +180,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            openai_cache_profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
                 openai_chat_thinking_field='reasoning',

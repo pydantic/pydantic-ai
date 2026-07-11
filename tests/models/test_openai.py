@@ -48,7 +48,7 @@ from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_ty
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
+from pydantic_ai.messages import InstructionPart, ModelMessagesTypeAdapter, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -95,12 +95,14 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
@@ -245,7 +247,12 @@ async def test_request_simple_success(allow_model_requests: None):
 async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
-        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        usage=CompletionUsage(
+            completion_tokens=1,
+            prompt_tokens=2,
+            total_tokens=3,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=1, cache_write_tokens=1),
+        ),
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -257,6 +264,8 @@ async def test_request_simple_usage(allow_model_requests: None):
         RunUsage(
             requests=1,
             input_tokens=2,
+            cache_write_tokens=1,
+            cache_read_tokens=1,
             output_tokens=1,
         )
     )
@@ -586,6 +595,30 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_stream_maps_cache_write_usage(allow_model_requests: None):
+    """Not a VCR test: a synthetic usage chunk isolates the internal usage-field mapping."""
+    response_chunk = text_chunk('world', finish_reason='stop')
+    response_chunk.usage = CompletionUsage(
+        completion_tokens=10,
+        prompt_tokens=100,
+        total_tokens=110,
+        prompt_tokens_details=PromptTokensDetails(cached_tokens=20, cache_write_tokens=30),
+    )
+    mock_client = MockOpenAI.create_mock_stream([response_chunk])
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with Agent(model).run_stream('Hello') as result:
+        assert await result.get_output() == 'world'
+
+    assert result.usage == RunUsage(
+        requests=1,
+        input_tokens=100,
+        cache_write_tokens=30,
+        cache_read_tokens=20,
+        output_tokens=10,
+    )
 
 
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
@@ -4431,36 +4464,273 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-async def test_cache_point_filtering(allow_model_requests: None):
-    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
+# These adapter-level tests use mocked SDK clients because they pin exact request kwargs and
+# pre-request validation; recordings cannot reliably assert omitted kwargs or a request that is never sent.
+@pytest.mark.parametrize('provider_name', ['openai', 'azure'])
+async def test_openai_chat_cache_point_and_options(
+    allow_model_requests: None, provider_name: Literal['openai', 'azure']
+):
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    if provider_name == 'openai':
+        provider = OpenAIProvider(openai_client=mock_client)
+    else:
+        provider = AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+    model = OpenAIChatModel('gpt-5.6-sol', provider=provider)
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    # Test the instance method directly to trigger line 864
-    msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
-
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
-
-
-async def test_cache_point_filtering_responses_model():
-    """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
-
-    # Test the instance method directly to ensure CachePoint filtering
-    msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+    result = await Agent(model, model_settings=settings).run(
+        ['Stable context.', CachePoint(ttl='1h'), 'Use the context.']
     )
 
-    # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert result.output == 'response'
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Stable context.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    },
+                    {'type': 'text', 'text': 'Use the context.'},
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize('mode', ['implicit', 'explicit'])
+async def test_openai_chat_prompt_cache_options_without_marker(
+    allow_model_requests: None, mode: Literal['implicit', 'explicit']
+):
+    """Request-wide cache options are independent of explicit breakpoint markers."""
+    response = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': mode})
+
+    await Agent(model, model_settings=settings).run('No explicit marker.')
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': mode}
+    assert request['messages'] == [{'role': 'user', 'content': 'No explicit marker.'}]
+
+
+async def test_openai_chat_cache_point_history_prefix_stability(allow_model_requests: None):
+    """A serialized history preserves the cacheable prefix and its breakpoint across turns."""
+    responses = [
+        completion_message(ChatCompletionMessage(content='first', role='assistant')),
+        completion_message(ChatCompletionMessage(content='second', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    first_result = await agent.run(['Stable context.', CachePoint(), 'First question.'])
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    await agent.run('Follow-up question.', message_history=history)
+
+    first_request, second_request = get_mock_chat_completion_kwargs(mock_client)
+    first_messages = cast(list[dict[str, Any]], first_request['messages'])
+    second_messages = cast(list[dict[str, Any]], second_request['messages'])
+    assert second_messages[0] == first_messages[0]
+    assert second_messages[0] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': 'Stable context.',
+                    'prompt_cache_breakpoint': {'mode': 'explicit'},
+                },
+                {'type': 'text', 'text': 'First question.'},
+            ],
+        }
+    )
+    assert second_messages[-1] == {'role': 'user', 'content': 'Follow-up question.'}
+
+
+@pytest.mark.parametrize(
+    ('content_item', 'expected_type'),
+    [
+        (ImageUrl('https://example.com/reference.png'), 'image_url'),
+        (BinaryContent(b'audio', media_type='audio/wav'), 'input_audio'),
+        (BinaryContent(b'%PDF-1.4', media_type='application/pdf'), 'file'),
+    ],
+)
+async def test_openai_chat_cache_point_supported_content_types(
+    allow_model_requests: None,
+    content_item: ImageUrl | BinaryContent,
+    expected_type: Literal['image_url', 'input_audio', 'file'],
+):
+    """Pin breakpoint translation for every non-text Chat user-content type supported by Pydantic AI."""
+    mock_client = MockOpenAI.create_mock(
+        completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    )
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model).run([content_item, CachePoint()])
+
+    assert result.output == 'response'
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = cast(list[dict[str, Any]], request['messages'])
+    content = cast(list[dict[str, Any]], messages[0]['content'])
+    assert content[0]['type'] == expected_type
+    assert content[0].get('prompt_cache_breakpoint') == {'mode': 'explicit'}
+
+
+async def test_openai_prompt_cache_options_not_sent_to_openrouter_chat(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    c = chat.ChatCompletion.model_validate({**c.model_dump(), 'provider': 'OpenAI'})
+    mock_client = AsyncOpenAI(api_key='test-key')
+    create = AsyncMock(return_value=c)
+    mock_client.chat.completions.create = create
+    model = OpenRouterModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+    result = await Agent(model, model_settings=settings).run('Hello')
+
+    assert result.output == 'response'
+    assert create.await_count == 1
+    assert 'prompt_cache_options' not in create.call_args.kwargs
+
+
+async def test_openai_prompt_cache_options_sent_to_azure_client_in_openai_provider(
+    allow_model_requests: None,
+):
+    """The documented custom-client path must retain Azure cache-field pass-through."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    async with AsyncAzureOpenAI(
+        azure_endpoint='https://example-resource.openai.azure.com',
+        api_version='2026-07-01-preview',
+        api_key='test-key',
+    ) as client:
+        create = AsyncMock(return_value=c)
+        client.chat.completions.create = create
+        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=client))
+        settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+        result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+
+    assert result.output == 'response'
+    assert create.await_count == 1
+    request = create.call_args.kwargs
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['messages'] == [
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': 'Stable context.',
+                    'prompt_cache_breakpoint': {'mode': 'explicit'},
+                },
+                {'type': 'text', 'text': 'Use it.'},
+            ],
+        }
+    ]
+
+
+async def test_azure_chat_prompt_cache_fields_are_opt_in(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    await Agent(model).run('No cache configuration.')
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['messages'] == [{'role': 'user', 'content': 'No cache configuration.'}]
+
+
+async def test_openai_prompt_cache_options_not_sent_to_unsupported_chat_model(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = AsyncOpenAI(api_key='test-key')
+    create = AsyncMock(return_value=c)
+    mock_client.chat.completions.create = create
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+
+    assert result.output == 'response'
+    assert create.await_count == 1
+    request = create.call_args.kwargs
+    assert 'prompt_cache_options' not in request
+    assert request['messages'] == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Stable context.'}, {'type': 'text', 'text': 'Use it.'}]}
+    ]
+
+
+async def test_openai_chat_cache_point_first_content_raises(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError, match='`CachePoint` cannot be the first item in an OpenAI user prompt'):
+        await Agent(model).run([CachePoint(), 'This should fail.'])
+
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_cache_point_filtering(allow_model_requests: None):
+    """Models without OpenAI explicit-breakpoint support continue to filter out `CachePoint`."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+
+    assert result.output == 'response'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'text before'},
+                    {'type': 'text', 'text': 'text after'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_filtering_responses_model(allow_model_requests: None):
+    """Models without Responses breakpoint support continue to filter out `CachePoint`."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=[ResponseOutputText(text='response', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=mock_client))
+
+    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+
+    assert result.output == 'response'
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'text before'},
+                    {'type': 'input_text', 'text': 'text after'},
+                ],
+            }
+        ]
+    )
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):

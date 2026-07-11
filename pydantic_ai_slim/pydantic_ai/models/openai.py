@@ -22,7 +22,7 @@ from typing import Any, Literal, cast, get_args, overload
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, assert_never
+from typing_extensions import Never, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -204,6 +204,7 @@ __all__ = (
     'OpenAIResponsesModel',
     'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
+    'OpenAIPromptCacheOptions',
     'OpenAIModelName',
 )
 
@@ -508,6 +509,58 @@ class _ResponsesRequestParams:
     context_management: list[ContextManagement] | Omit
 
 
+class OpenAIPromptCacheOptions(TypedDict, total=False):
+    """Options for OpenAI prompt caching on GPT-5.6 models."""
+
+    mode: Literal['implicit', 'explicit']
+    """Whether OpenAI may create an implicit cache breakpoint. Defaults to `implicit`."""
+
+    ttl: Literal['30m']
+    """The minimum lifetime for cache breakpoints. Defaults to `30m`, the only currently supported value."""
+
+
+class _OpenAIPromptCacheBreakpoint(TypedDict):
+    mode: Literal['explicit']
+
+
+class _OpenAIPromptCacheRequestOptions(TypedDict, total=False):
+    prompt_cache_options: OpenAIPromptCacheOptions
+
+
+def _get_openai_prompt_cache_request_options(
+    supported_breakpoint_types: frozenset[str], model_settings: OpenAIChatModelSettings
+) -> _OpenAIPromptCacheRequestOptions:
+    request_options: _OpenAIPromptCacheRequestOptions = {}
+    if (
+        supported_breakpoint_types
+        and (prompt_cache_options := model_settings.get('openai_prompt_cache_options')) is not None
+    ):
+        request_options['prompt_cache_options'] = prompt_cache_options
+    return request_options
+
+
+def _add_openai_prompt_cache_breakpoint(
+    content: Sequence[ChatCompletionContentPartParam | responses.ResponseInputContentParam],
+    supported_breakpoint_types: frozenset[str],
+) -> None:
+    if not content:
+        raise UserError(
+            '`CachePoint` cannot be the first item in an OpenAI user prompt; '
+            'it must follow content to attach the cache breakpoint to.'
+        )
+
+    content_type = content[-1]['type']
+    if content_type not in supported_breakpoint_types:
+        supported_types = ', '.join(sorted(supported_breakpoint_types))
+        raise UserError(
+            f'`CachePoint` cannot follow an OpenAI {content_type!r} content block for this provider; '
+            f'supported content block types are: {supported_types}.'
+        )
+
+    cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
+    content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -571,6 +624,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
 
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    """
+
+    openai_prompt_cache_options: OpenAIPromptCacheOptions
+    """Controls implicit and explicit prompt cache breakpoints for GPT-5.6 models.
+
+    Explicit breakpoints are added to user content with [`CachePoint`][pydantic_ai.messages.CachePoint].
+    OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
+    Azure GPT-5.6 deployments receive these fields only when explicitly configured, but Azure does not
+    currently document whether they produce cache writes or reads.
+
+    See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+    for more information.
     """
 
     openai_continuous_usage_stats: bool
@@ -985,6 +1050,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=prompt_cache_retention,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
+                    **_get_openai_prompt_cache_request_options(
+                        profile.get('openai_chat_prompt_cache_breakpoint_types', frozenset()), model_settings
+                    ),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
@@ -1669,7 +1737,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 type='file',
             )
         elif isinstance(item, CachePoint):
-            # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+            # Cache points are handled by `_map_user_prompt_content_item()` when supported.
             return None
         else:
             assert_never(item)
@@ -1683,9 +1751,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
         `cache_control` breakpoint on the preceding part).
         """
-        mapped_item = await self._map_content_item(item)
-        if mapped_item is not None:
-            content.append(mapped_item)
+        supported_breakpoint_types = self.profile.get('openai_chat_prompt_cache_breakpoint_types', frozenset())
+        if isinstance(item, CachePoint) and supported_breakpoint_types:
+            _add_openai_prompt_cache_breakpoint(content, supported_breakpoint_types)
+        else:
+            mapped_item = await self._map_content_item(item)
+            if mapped_item is not None:
+                content.append(mapped_item)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
@@ -2355,6 +2427,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
+                    **_get_openai_prompt_cache_request_options(
+                        profile.get('openai_responses_prompt_cache_breakpoint_types', frozenset()), model_settings
+                    ),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
@@ -3073,7 +3148,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 elif isinstance(item, UploadedFile):
                     content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
-                    pass
+                    supported_breakpoint_types = self.profile.get(
+                        'openai_responses_prompt_cache_breakpoint_types', frozenset()
+                    )
+                    if supported_breakpoint_types:
+                        _add_openai_prompt_cache_breakpoint(content, supported_breakpoint_types)
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:
@@ -4209,6 +4288,7 @@ def _map_usage(
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
+        input_tokens_details = usage_data.get('input_tokens_details')
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
             details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
@@ -4216,11 +4296,12 @@ def _map_usage(
             details['reasoning_tokens'] = 0
     else:
         api_flavor = 'chat'
+        input_tokens_details = usage_data.get('prompt_tokens_details')
 
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
 
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         response_data,
         provider=provider,
         provider_url=provider_url,
@@ -4228,6 +4309,11 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
+    if _is_str_dict(input_tokens_details):
+        cache_write_tokens = input_tokens_details.get('cache_write_tokens')
+        if isinstance(cache_write_tokens, int):
+            request_usage.cache_write_tokens = cache_write_tokens
+    return request_usage
 
 
 def _map_provider_details(

@@ -7,7 +7,8 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import openai_model_profile, openai_prompt_cache_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -36,7 +37,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        return merge_profile(openai_model_profile(model_name), openai_prompt_cache_profile(model_name))
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
