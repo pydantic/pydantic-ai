@@ -13,7 +13,6 @@ from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
-import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -1764,17 +1763,6 @@ SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
 _SYNTHESIZED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
 
 
-def _tool_call_args_incomplete(part: _messages.ToolCallPart) -> bool:
-    """Whether the tool call's args string is unparsable JSON, i.e. was cut off mid-stream."""
-    if not isinstance(part.args, str) or not part.args:
-        return False
-    try:
-        pydantic_core.from_json(part.args)
-    except ValueError:
-        return True
-    return False
-
-
 def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
     """Find tool calls that will never receive a result, keyed by the index of their response.
 
@@ -1889,15 +1877,17 @@ def _repair_dangling_tool_calls(
 
     A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
     `ToolCallPart`s with no matching `ToolReturnPart`/`RetryPromptPart` in a later `ModelRequest`.
-    Providers reject histories with dangling tool calls, so before a request is sent:
+    Providers reject histories with dangling tool calls, so before a request is sent, every dangling
+    tool call gets a synthesized `ToolReturnPart` — marked with `SYNTHESIZED_TOOL_RETURN_METADATA_KEY`
+    in its `metadata` — inserted after the existing tool returns of the immediately following
+    `ModelRequest`, or as a new `ModelRequest` when no request follows.
 
-    * A dangling tool call whose args string is unparsable JSON (cut off mid-stream) never
-      executed and must not reach a provider, so it is removed from its response; a response left
-      with no parts is dropped entirely.
-    * Any other dangling tool call gets a synthesized `ToolReturnPart` — marked with
-      `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` in its `metadata` — inserted after the existing tool
-      returns of the immediately following `ModelRequest`, or as a new `ModelRequest` when no
-      request follows.
+    This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
+    kept verbatim and closed out like any other dangling call, never removed. Malformed args are
+    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict`), as
+    the tool-call retry flow relies on — and removing the call would disturb the response's shape,
+    e.g. leaving a thinking-only response whose signature was computed over a turn that included
+    the call.
 
     The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
     are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
@@ -1941,20 +1931,7 @@ def _repair_dangling_tool_calls(
                 synthesized = []
 
             if dangling := dangling_by_response.get(index):
-                incomplete_ids = {part.tool_call_id for part in dangling if _tool_call_args_incomplete(part)}
-                if incomplete_ids:
-                    parts = [
-                        part
-                        for part in message.parts
-                        if not (isinstance(part, _messages.ToolCallPart) and part.tool_call_id in incomplete_ids)
-                    ]
-                    if not parts:
-                        continue
-                    message = replace(message, parts=parts)
-
                 for call in dangling:
-                    if call.tool_call_id in incomplete_ids:
-                        continue
                     synthesized.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
@@ -2057,9 +2034,9 @@ def _clean_message_history(
     1. `_drop_orphaned_tool_results` (REMOVE) — first, so an orphaned result can't survive into the
        merge (which would hoist it to the front of a request) and so dropping it can expose a call
        that then needs a synthesized result in pass 2.
-    2. `_repair_dangling_tool_calls` (ADD synthesized results / REMOVE unparsable-args calls) — the
-       matching-graph repair; runs before the merge changes message boundaries. Frontier-gated by
-       `repair_last_response` so the last response's still-answerable calls are left alone.
+    2. `_repair_dangling_tool_calls` (ADD synthesized results) — the matching-graph repair; runs
+       before the merge changes message boundaries. Frontier-gated by `repair_last_response` so
+       the last response's still-answerable calls are left alone.
     3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
        never separates a result from its call.
     """

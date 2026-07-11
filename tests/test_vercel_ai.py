@@ -8750,7 +8750,10 @@ async def test_event_stream_function_tool_return_error():
 
 
 async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
-    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error."""
+    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
@@ -8791,7 +8794,10 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
 
 
 async def test_event_stream_function_tool_return_interrupted_is_neutral():
-    """A synthesized `ToolReturnPart(outcome='interrupted')` streams as neutral output, not an error."""
+    """A synthesized `ToolReturnPart(outcome='interrupted')` streams as neutral output, not an error.
+
+    Not VCR-backed: this pins a local event-stream transformation and makes no model request.
+    """
 
     async def event_generator():
         yield FunctionToolResultEvent(

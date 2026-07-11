@@ -3,7 +3,7 @@
 An interrupted, hand-built, or context-evicted history can have broken tool-call/tool-result
 pairing that strict providers reject. Before each model request, `_clean_message_history` runs an
 ordered pipeline that ADDs synthesized results for dangling tool calls and REMOVEs fundamentally
-unsendable parts (unparsable-args calls, orphaned results), then merges consecutive messages — so
+unsendable parts (orphaned results), then merges consecutive messages — so
 interrupted and hand-built histories can be reused directly. Native/builtin parts are left
 untouched. Synthesized returns carry the `pydantic_ai_synthesized_tool_return` metadata marker so
 repairs are inspectable in the history.
@@ -44,7 +44,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsSameStr, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -184,10 +184,12 @@ async def test_partially_answered_parallel_tool_calls():
     )
 
 
-async def test_incomplete_tool_call_args_dropped():
-    """A dangling tool call whose args were cut off mid-stream is dropped, not synthesized.
+async def test_incomplete_tool_call_args_synthesized():
+    """A dangling tool call whose args were cut off mid-stream is kept and synthesized a return.
 
-    A sibling dangling call whose args did stream completely still gets a synthesized return.
+    The call is replayed verbatim — serializers degrade malformed args gracefully, and removing it
+    would disturb the response's shape (e.g. leave a thinking-only response) — and is closed out
+    like its sibling dangling call whose args did stream completely.
     """
     agent, received = capture_agent()
 
@@ -214,6 +216,7 @@ async def test_incomplete_tool_call_args_dropped():
                 parts=[
                     TextPart(content='Let me look that up.'),
                     ToolCallPart(tool_name='get_time', args='{"tz": "UTC"}', tool_call_id='call_1'),
+                    ToolCallPart(tool_name='get_weather', args='{"city": "Mex', tool_call_id='call_2'),
                 ],
                 timestamp=TS,
             ),
@@ -223,6 +226,14 @@ async def test_incomplete_tool_call_args_dropped():
                         tool_name='get_time',
                         content='The tool call was interrupted before a result was produced.',
                         tool_call_id='call_1',
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=TS,
+                        outcome='interrupted',
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id='call_2',
                         metadata={'pydantic_ai_synthesized_tool_return': True},
                         timestamp=TS,
                         outcome='interrupted',
@@ -242,8 +253,8 @@ async def test_incomplete_tool_call_args_dropped():
     )
 
 
-async def test_response_with_only_incomplete_tool_call_dropped():
-    """A response left with no parts after dropping an incomplete tool call is dropped entirely."""
+async def test_response_with_only_incomplete_tool_call_synthesized():
+    """A response whose only part is an incomplete-args tool call is kept and synthesized a return."""
     agent, received = capture_agent()
 
     message_history: list[ModelMessage] = [
@@ -255,12 +266,23 @@ async def test_response_with_only_incomplete_tool_call_dropped():
 
     await agent.run('Thanks.', message_history=message_history)
 
-    # With the response dropped, the surrounding requests are merged into one.
     assert received[0] == snapshot(
         [
+            ModelRequest(parts=[UserPromptPart(content='What is the weather?', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Mex', tool_call_id='call_1')],
+                timestamp=TS,
+            ),
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='What is the weather?', timestamp=TS),
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id='call_1',
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=TS,
+                        outcome='interrupted',
+                    ),
                     UserPromptPart(content='Are you there?', timestamp=TS),
                 ],
                 timestamp=TS,
@@ -881,7 +903,8 @@ async def test_repair_is_idempotent_and_deterministic():
 async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
     """A stream cancelled mid-tool-call-args can be reused directly with a new user prompt.
 
-    The partial tool call's args are unparsable, so it is dropped from the interrupted response.
+    The partial tool call's args are unparsable; the call is kept verbatim in the interrupted
+    response and closed out with a synthesized return.
     """
 
     received: list[list[ModelMessage]] = []
@@ -918,7 +941,7 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
 
     result2 = await agent.run('Never mind, just say hi.', message_history=messages)
     assert result2.output == 'No problem!'
-    # The incomplete tool call was dropped; the streamed text survives.
+    # The incomplete tool call survives verbatim, closed out by a synthesized return.
     assert received[1] == snapshot(
         [
             ModelRequest(
@@ -928,7 +951,14 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Let me ch')],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city": "Mex',
+                        tool_call_id=(tool_call_id := IsSameStr()),
+                    ),
+                    TextPart(content='Let me ch'),
+                ],
                 usage=RequestUsage(input_tokens=50, output_tokens=6),
                 model_name='function:model_function:stream_function',
                 timestamp=IsDatetime(),
@@ -937,10 +967,18 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
                 state='interrupted',
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Never mind, just say hi.', timestamp=IsDatetime())],
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id=tool_call_id,
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=IsDatetime(),
+                        outcome='interrupted',
+                    ),
+                    UserPromptPart(content='Never mind, just say hi.', timestamp=IsDatetime()),
+                ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
             ),
         ]
     )
