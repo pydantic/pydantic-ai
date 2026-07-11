@@ -13,6 +13,8 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import RunContext
@@ -114,7 +116,10 @@ class TestOutputGuard:
                 return GuardResult.retry('Try again without personal data.')
             return GuardResult.allow()
 
-        agent = Agent(TestModel(custom_output_text='answer'), capabilities=[OutputGuard(guard=guard)])
+        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('answer')])
+
+        agent = Agent(FunctionModel(answer), capabilities=[OutputGuard(guard=guard)])
         result = await agent.run('hello')
 
         assert result.output == 'answer'
