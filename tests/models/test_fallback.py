@@ -2679,11 +2679,11 @@ def test_fallback_stamp_with_existing_metadata() -> None:
     result = agent.run_sync('test')
     assert result.output == 'pauseddone'
     assert call_count == 2
-    # The merged response uses fields from the final (non continuation) response.
-    # provider_details should not contain fallback routing state.
+    # The suspended segment's `provider_details` accumulate across the continuation, but the fallback
+    # routing pin is kept out of `provider_details` (it's framework state, tracked in `metadata`).
     continuation_msg = result.all_messages()[1]
     assert isinstance(continuation_msg, ModelResponse)
-    assert continuation_msg.provider_details is None
+    assert continuation_msg.provider_details == {'existing_key': 'existing_value'}
 
 
 async def test_fallback_stream_stamp_with_existing_metadata() -> None:
