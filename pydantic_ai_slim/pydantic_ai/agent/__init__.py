@@ -1216,6 +1216,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model_used,
             usage=usage,
+            usage_limits=usage_limits,
             prompt=user_prompt,
             messages=state.message_history,
             tracer=tracer,
