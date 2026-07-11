@@ -313,9 +313,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         """Stop the continuation loop and cancel any server-side suspended/background job."""
         self._stopped = True
-        if self._current_sub is not None:
-            await self._current_sub.close_stream()
-        await self.model.cancel_suspended_response(self.get())
+        try:
+            if self._current_sub is not None:
+                await self._current_sub.close_stream()
+        finally:
+            # Cancel the server-side job even if tearing down the sub-stream connection raised,
+            # so a failed connection teardown can't leave the background job running.
+            await self.model.cancel_suspended_response(self.get())
 
     async def aclose(self) -> None:
         """Tear down the in-flight sub-stream (its HTTP connection) without cancelling any job.

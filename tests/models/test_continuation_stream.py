@@ -383,6 +383,45 @@ async def test_cancel_stops_loop_and_cancels_suspended_response() -> None:
     assert stream.get().state == 'interrupted'
 
 
+async def test_close_stream_cancels_job_even_if_substream_teardown_fails() -> None:
+    """A failing sub-stream connection teardown must not skip the server-side cancel (no job leak)."""
+
+    class _RaisingCloseStream(_FakeStream):
+        async def close_stream(self) -> None:
+            raise RuntimeError('connection teardown failed')
+
+    class _RaisingModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            yield _RaisingCloseStream(model_request_parameters, segment.events, segment.response)
+
+    model = _RaisingModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+
+    # The teardown failure still surfaces, but the server-side job was cancelled all the same.
+    with pytest.raises(RuntimeError, match='connection teardown failed'):
+        await stream.cancel()
+    assert len(model.cancelled) == 1
+
+
 async def test_metadata_properties_track_current_segment_then_merged() -> None:
     """`model_name`/`provider_name`/`provider_url`/`timestamp` read the in-flight segment mid-stream,
     then fall back to the merged response once the continuation loop completes."""

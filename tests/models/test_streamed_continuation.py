@@ -493,6 +493,41 @@ async def test_new_prompt_after_trailing_suspended_history_errors() -> None:
         await agent.run('new prompt', message_history=history)
 
 
+async def test_nonstream_continuation_cancel_failure_preserves_original_error() -> None:
+    """A failing cancel during a non-streamed continuation must not mask the error that aborted the run.
+
+    If `request()` raises mid-continuation and cancelling the suspended job then also raises (e.g. a
+    transport error from the provider's cancel call), the caller must still see the original error, and
+    the cancel must have been attempted (best-effort teardown of the server-side job).
+    """
+
+    class _CancelFailsModel(WrapperModel):
+        def __init__(self, wrapped: Model) -> None:
+            super().__init__(wrapped)
+            self.cancel_attempts = 0
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            self.cancel_attempts += 1
+            raise RuntimeError('cleanup failure')
+
+    calls = 0
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise RuntimeError('original failure')
+
+    model = _CancelFailsModel(FunctionModel(fn))
+    agent = Agent(model)
+
+    with pytest.raises(RuntimeError, match='original failure'):
+        await agent.run('go')
+
+    assert model.cancel_attempts == 1
+
+
 async def test_error_on_first_streamed_segment_propagates() -> None:
     """An error raised while iterating the first streamed segment surfaces cleanly out of the node."""
 

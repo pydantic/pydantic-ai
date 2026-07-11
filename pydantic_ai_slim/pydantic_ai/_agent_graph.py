@@ -1005,7 +1005,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
                         # suspended/background job before letting any of them propagate so it doesn't leak.
                         if response is not None:
-                            await req_ctx.model.cancel_suspended_response(response)
+                            try:
+                                await req_ctx.model.cancel_suspended_response(response)
+                            except Exception:
+                                # Best-effort: a failing cancel (e.g. a transport error from the
+                                # provider's cancel call) must not replace the exception that aborted
+                                # the run. The `raise` below re-raises that original exception.
+                                pass
                         raise
 
                     new_response = _narrow_tool_call_parts(new_response, req_ctx.model_request_parameters)
