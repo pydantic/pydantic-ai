@@ -232,6 +232,9 @@ class FallbackModel(Model):
         rejected_responses: list[ModelResponse] = []
 
         if pinned := self._get_continuation_model(messages):
+            # `_get_continuation_model` only returns a model when the last message is a suspended response.
+            suspended_response = messages[-1]
+            assert isinstance(suspended_response, ModelResponse)
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages)
@@ -239,6 +242,12 @@ class FallbackModel(Model):
             except Exception as exc:
                 if not await self._should_fallback(exc):
                     raise
+                # Best-effort cancel the suspended server-side job we're abandoning before rewinding
+                # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
+                # cancel path never sees it; without this an OpenAI background job would keep running
+                # and billing while the chain issues a duplicate request.
+                with suppress(Exception):
+                    await pinned.cancel_suspended_response(suspended_response)
                 messages = _rewind_messages(messages)
                 exceptions.append(exc)
                 # Fall through to normal chain below
@@ -289,6 +298,9 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         if pinned := self._get_continuation_model(messages):
+            # `_get_continuation_model` only returns a model when the last message is a suspended response.
+            suspended_response = messages[-1]
+            assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
@@ -299,6 +311,11 @@ class FallbackModel(Model):
                 except Exception as exc:
                     if not await self._should_fallback(exc):
                         raise
+                    # Best-effort cancel the suspended server-side job we're abandoning before
+                    # rewinding to the chain (see the non-streaming path above); `FallbackModel`
+                    # swallows the error, so the graph's own cancel path never sees it.
+                    with suppress(Exception):
+                        await pinned.cancel_suspended_response(suspended_response)
                     messages = _rewind_messages(messages)
                     exceptions.append(exc)
                     # Fall through to normal chain below
@@ -337,18 +354,29 @@ class FallbackModel(Model):
         _raise_fallback_exception_group(exceptions, [])
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        """Cancel a suspended continuation on the pinned underlying model.
+        """Cancel a suspended continuation on the underlying model holding the server-side job.
 
-        Only the pinned model holds the server-side job, so resolve it from the response's
-        continuation pin and delegate. If no pin resolves, there is nothing to cancel.
-
-        Resolve the pin directly from metadata rather than via `_get_continuation_model`: the
-        cancel path is driven by `_ContinuationStreamedResponse.get()`, whose `state` is already
+        When the response carries a continuation pin, resolve that model and delegate to it. Resolve
+        the pin directly from metadata rather than via `_get_continuation_model`: the cancel path is
+        driven by `_ContinuationStreamedResponse.get()`, whose `state` is already
         `'interrupted'`/`'incomplete'`/`'complete'` (never `'suspended'`) by the time cancellation
         unwinds, so gating on `state == 'suspended'` here would never find the pin.
+
+        When no pin resolves, the response can still hold a live server-side job: the pin is only
+        stamped when a segment *ends* suspended, so a streamed background job cancelled during its
+        first segment (e.g. OpenAI background mode, marked by `provider_details['background']` +
+        `provider_response_id`) has no pin yet. Best-effort delegate to every inner model so the job
+        is torn down rather than leaked. This is safe because each model's own cancel guard is strict
+        (OpenAI only acts on its own `background` marker with a matching `provider_name`; others
+        no-op), and a raising model doesn't stop the rest.
         """
         if pinned := self._pinned_continuation_model(response):
             await pinned.cancel_suspended_response(response)
+            return
+
+        for model in self.models:
+            with suppress(Exception):
+                await model.cancel_suspended_response(response)
 
     @cached_property
     def profile(self) -> ModelProfile:

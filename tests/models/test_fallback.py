@@ -2285,15 +2285,78 @@ async def test_fallback_streaming_continuation_pinning() -> None:
     assert resp2.parts[0].content == 'fallback response 2'  # type: ignore[union-attr]
 
 
-async def test_fallback_cancel_suspended_response_without_pin_is_noop() -> None:
-    """Cancelling a suspended response with no continuation pin resolves no underlying model and cancels nothing."""
-    primary = FunctionModel(success_response, model_name='primary')
-    secondary = FunctionModel(success_response, model_name='fallback')
-    model = FallbackModel(primary, secondary)
+async def test_fallback_cancel_suspended_response_without_pin_delegates_to_all_models() -> None:
+    """A suspended/background job cancelled during its first segment carries no continuation pin yet:
+    the pin is only stamped when a segment *ends* suspended. Cancel must still reach the inner model
+    holding the server-side job (e.g. an OpenAI background job, marked by `provider_details['background']`
+    + `provider_response_id`), so with no pin resolved it best-effort-delegates to every inner model.
 
-    # A plain suspended response carries no pin, so `_get_continuation_model` returns `None` and this
-    # is a no-op that must not raise.
-    await model.cancel_suspended_response(ModelResponse(parts=[TextPart('paused')], state='suspended'))
+    Each model's own cancel guard is strict, so a non-owning model safely no-ops — and a model whose
+    cancel raises doesn't stop the others from being torn down.
+    """
+
+    class _RaisingContinuationModel(_ContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            raise RuntimeError('cancel failed')
+
+    raiser = _RaisingContinuationModel(_inner=FunctionModel(success_response, model_name='raiser'))
+    recorder = _ContinuationModel(_inner=FunctionModel(success_response, model_name='recorder'))
+    model = FallbackModel(raiser, recorder)
+
+    # A background response with no continuation pin: the server-side job leaked before any suspension.
+    response = ModelResponse(
+        parts=[TextPart('partial')],
+        state='interrupted',
+        provider_details={'background': True},
+        provider_response_id='resp_123',
+    )
+    await model.cancel_suspended_response(response)
+
+    # The raising model's failure is swallowed; the next model still receives the cancel.
+    assert recorder.cancelled == [response]
+
+
+@pytest.mark.xfail(
+    reason='Bug C: after a fallback rewind, a same-model fresh turn is merged as `accumulate`, '
+    'duplicating the abandoned suspended parts. The fix needs a replace signal in '
+    '`merge_responses`/`merge_mode` and cannot live in `fallback.py` (see PR discussion).',
+    strict=True,
+)
+async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
+    """A pinned continuation fails (fallback-eligible), FallbackModel rewinds and retries the chain,
+    and the SAME model returns a fresh, complete turn (new `provider_response_id`, same `model_name`).
+
+    The graph's continuation loop then merges the stale suspended response with the fresh complete one.
+    `merge_mode` sees same-model + different-id (indistinguishable from an Anthropic `pause_turn`
+    continuation) and picks `'accumulate'`, so the stale `'partial'` part is duplicated ahead of the
+    fresh full response. The correct behavior is to replace: the fresh turn should stand alone. This
+    can't be signalled cleanly from `fallback.py`, so it's pinned here as a known bug pending a
+    `merge_mode` design decision.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='id1')
+        elif primary_calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        return ModelResponse(parts=[TextPart('full answer')], provider_response_id='id2')
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('fallback should not be called')  # pragma: no cover
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback_fn, model_name='fallback'),
+    )
+    result = await Agent(model=model).run('test')
+
+    response_msg = result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    # Correct behavior: the fresh turn replaces the abandoned suspended one, with no duplicated parts.
+    assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
 
 
 async def test_fallback_cancel_suspended_response_resolves_pin_regardless_of_state() -> None:
@@ -2479,6 +2542,88 @@ async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None
     assert fallback_calls == 1  # fallback succeeded
     resp2 = streamed_response.get()
     assert resp2.parts[0].content == 'fallback response 1'  # type: ignore[union-attr]
+
+
+async def test_fallback_pinned_continuation_failure_cancels_abandoned_job() -> None:
+    """When a pinned continuation raises a fallback-eligible error, `FallbackModel` best-effort-cancels
+    the suspended server-side job it's abandoning before rewinding and retrying the chain.
+
+    `FallbackModel` swallows the error, so the graph's own `BaseException` cancel path never sees it;
+    without this an OpenAI background job would keep running and billing while the chain issues a
+    duplicate request.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    primary_model = _ContinuationModel(_inner=FunctionModel(primary, model_name='primary'))
+    fallback_model = _ContinuationModel(_inner=FunctionModel(success_response, model_name='fallback'))
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    suspended = await model.request(messages, None, ModelRequestParameters())
+    assert suspended.state == 'suspended'
+
+    messages.append(suspended)
+    response = await model.request(messages, None, ModelRequestParameters())
+    assert response.parts[0].content == 'success'  # type: ignore[union-attr]  # chain recovered via the fallback
+
+    # The abandoned suspended job was cancelled on the pinned primary before the chain retried; the
+    # fallback that recovered the turn was never asked to cancel anything.
+    assert primary_model.cancelled == [suspended]
+    assert fallback_model.cancelled == []
+
+
+async def test_fallback_streaming_pinned_continuation_failure_cancels_abandoned_job() -> None:
+    """Streaming counterpart: a pinned streaming continuation that fails to open its stream
+    (fallback-eligible) best-effort-cancels the abandoned suspended job before rewinding to the chain.
+    """
+    primary_call_count = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_call_count
+        primary_call_count += 1
+        if primary_call_count == 1:
+            yield 'partial'
+        else:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
+            yield ''  # pragma: no cover
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'fallback response'
+
+    primary_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'),
+        _stream_state=['suspended'],
+    )
+    fallback_model = _ContinuationModel(_inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'))
+    model = FallbackModel(primary_model, fallback_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    # First call: primary streams with state='suspended' → pinned.
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.state == 'suspended'
+    resp1 = streamed_response.get()
+    messages.append(resp1)
+
+    # Second call: pinned primary fails to open its stream → cancel abandoned job → rewind → chain.
+    async with model.request_stream(messages, None, params) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    assert streamed_response.get().parts[0].content == 'fallback response'  # type: ignore[union-attr]
+
+    # The abandoned suspended stream job was cancelled on the pinned primary before the chain retried.
+    assert primary_model.cancelled == [resp1]
+    assert fallback_model.cancelled == []
 
 
 async def test_fallback_streaming_pinned_continuation_non_fallback_error_propagates() -> None:
