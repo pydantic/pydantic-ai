@@ -91,6 +91,12 @@ class PrefectModel(WrapperModel):
 
         self._wrapped_request_stream = request_stream_task
 
+        @task
+        async def cancel_suspended_response_task(response: ModelResponse) -> None:
+            await super(PrefectModel, self).cancel_suspended_response(response)
+
+        self._wrapped_cancel_suspended_response = cancel_suspended_response_task
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -101,6 +107,16 @@ class PrefectModel(WrapperModel):
         return await self._wrapped_request.with_options(
             name=f'Model Request: {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response, wrapped as a Prefect task.
+
+        The teardown performs a raw HTTP call to the provider, so it runs as a task (durable,
+        retried) rather than inline in the flow.
+        """
+        await self._wrapped_cancel_suspended_response.with_options(
+            name=f'Model Cancel Suspended Response: {self.wrapped.model_name}', **self.task_config
+        )(response)
 
     @asynccontextmanager
     async def request_stream(

@@ -1861,6 +1861,7 @@ async def test_temporal_agent():
             'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__model_cancel_suspended_response',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
             'agent__complex_agent__mcp_server__mcp__get_instructions',
@@ -4249,6 +4250,43 @@ async def test_temporal_model_request_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
+
+
+async def test_temporal_model_cancel_suspended_response_outside_workflow():
+    """`TemporalModel.cancel_suspended_response()` falls back to the wrapped model outside a workflow.
+
+    Inside a workflow it runs the provider teardown in the `model_cancel_suspended_response` activity
+    (registered in `temporal_activities`) so the raw HTTP call never runs in the workflow sandbox;
+    outside a workflow it delegates straight to the wrapped model.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    temporal_model = TemporalModel(
+        RecordingModel(),
+        activity_name_prefix='test__direct_cancel',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # The cancel activity is registered alongside the request activities.
+    assert [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_model.temporal_activities
+    ] == snapshot(
+        [
+            'test__direct_cancel__model_request',
+            'test__direct_cancel__model_request_stream',
+            'test__direct_cancel__model_cancel_suspended_response',
+        ]
+    )
+
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    await temporal_model.cancel_suspended_response(response)
+    assert cancelled == [response]
 
 
 async def test_temporal_model_request_stream_outside_workflow():

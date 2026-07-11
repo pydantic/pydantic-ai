@@ -79,6 +79,18 @@ class DBOSModel(WrapperModel):
 
         self._dbos_wrapped_request_stream_step = wrapped_request_stream_step
 
+        # Wrap the server-side suspended/background response teardown in a DBOS step. It performs a
+        # raw HTTP call to the provider to cancel the job, so it must run as a step (durable,
+        # retried, recorded) rather than inline in the workflow.
+        @DBOS.step(
+            name=f'{self._step_name_prefix}__model.cancel_suspended_response',
+            **self.step_config,
+        )
+        async def wrapped_cancel_suspended_response_step(response: ModelResponse) -> None:
+            await super(DBOSModel, self).cancel_suspended_response(response)
+
+        self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -86,6 +98,9 @@ class DBOSModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         return await self._dbos_wrapped_request_step(messages, model_settings, model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await self._dbos_wrapped_cancel_suspended_response_step(response)
 
     @asynccontextmanager
     async def request_stream(
