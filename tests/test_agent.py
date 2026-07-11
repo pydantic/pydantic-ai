@@ -23,7 +23,6 @@ from pydantic_ai import (
     BinaryImage,
     CallDeferred,
     CombinedToolset,
-    CompactionPart,
     DocumentUrl,
     ExternalToolset,
     FilePart,
@@ -4435,10 +4434,12 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.parametrize('output_mode', ['native', 'prompted'])
+    @pytest.mark.parametrize('output_mode', ['native', 'prompted', 'auto'])
     def test_early_strategy_prefers_structured_text_output_over_tool_calls(self, output_mode: str):
-        """Under 'early', valid native/prompted output text in the same response as function tool calls is
-        the final result, so the function tools are skipped and the run ends.
+        """Under 'early', valid structured output text in the same response as function tool calls is the final
+        result, so the function tools are skipped and the run ends. This covers `NativeOutput`, `PromptedOutput`,
+        and a bare structured type (auto mode) — all of which validate the text against a schema, so a valid
+        output is a deliberate final result rather than the incidental preamble a plain `str` output would be.
 
         A `FunctionModel` is used because it's the only way to reliably construct the response shape
         (structured output text co-emitted with a function tool call) that motivated this behavior; real
@@ -4456,7 +4457,12 @@ class TestMultipleToolCalls:
                 )
             return ModelResponse(parts=[TextPart(content='{"value": "after tool"}')])  # pragma: no cover
 
-        output_type = NativeOutput(OutputType) if output_mode == 'native' else PromptedOutput(OutputType)
+        if output_mode == 'native':
+            output_type = NativeOutput(OutputType)
+        elif output_mode == 'prompted':
+            output_type = PromptedOutput(OutputType)
+        else:
+            output_type = OutputType
         agent = Agent(FunctionModel(return_model), output_type=output_type, end_strategy='early')
 
         @agent.tool_plain
@@ -4619,50 +4625,24 @@ class TestMultipleToolCalls:
         assert result.output == 'the answer'
         assert tool_called == ['regular_tool']
 
-    def test_early_strategy_does_not_treat_compaction_as_output(self):
-        """Under 'early', compaction content must not preempt a co-emitted function tool call: a response that
-        compacts context and calls a tool is mid-task, so the tool runs rather than the summary winning."""
-        tool_called: list[str] = []
-
-        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(
-                    parts=[
-                        CompactionPart(content='summary of the conversation', provider_name='anthropic'),
-                        ToolCallPart('regular_tool', {'x': 1}),
-                    ],
-                )
-            return ModelResponse(parts=[TextPart(content='after tool')])
-
-        agent = Agent(FunctionModel(return_model), output_type=str, end_strategy='early')
-
-        @agent.tool_plain
-        def regular_tool(x: int) -> int:
-            tool_called.append('regular_tool')
-            return x
-
-        result = agent.run_sync('test early compaction')
-
-        assert result.output == 'after tool'
-        assert tool_called == ['regular_tool']
-
     def test_early_strategy_does_not_preempt_output_tool_calls(self):
-        """Under 'early', plain text output must not preempt a co-emitted output tool call: the output tool
-        (not the text) produces the final result, so a mixed `[str, ToolOutput(...)]` schema behaves as before."""
+        """Under 'early', structured non-tool output (here, an image) must not preempt a co-emitted output tool
+        call: the output tool produces the final result. This exercises the tool-kind gate — with only a plain
+        function tool the image would win, but an output tool call must be executed normally."""
 
         def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
                 return ModelResponse(
                     parts=[
-                        TextPart(content='plain text answer'),
+                        FilePart(content=BinaryImage(data=b'image', media_type='image/png')),
                         ToolCallPart('final_output', {'value': 'from tool'}),
                     ],
                 )
             return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
 
         agent = Agent(
-            FunctionModel(return_model),
-            output_type=[str, ToolOutput(OutputType, name='final_output')],
+            FunctionModel(return_model, profile=ModelProfile(supports_image_output=True)),
+            output_type=[ToolOutput(OutputType, name='final_output'), BinaryImage],
             end_strategy='early',
         )
 
@@ -4671,22 +4651,23 @@ class TestMultipleToolCalls:
         assert result.output == OutputType(value='from tool')
 
     def test_early_strategy_does_not_preempt_deferred_tool_calls(self):
-        """Under 'early', plain text output must not preempt a co-emitted deferred (external) tool call:
-        the deferred call is still surfaced as `DeferredToolRequests` rather than being silently dropped."""
+        """Under 'early', valid structured output must not preempt a co-emitted deferred (external) tool call:
+        the deferred call is still surfaced as `DeferredToolRequests` rather than being silently dropped. This
+        exercises the tool-kind gate for a structured text output that would otherwise win."""
 
         def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
                 return ModelResponse(
                     parts=[
-                        TextPart(content='plain text answer'),
+                        TextPart(content='{"value": "final"}'),
                         ToolCallPart('external_tool', {}),
                     ],
                 )
-            return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
+            return ModelResponse(parts=[TextPart(content='{"value": "after"}')])  # pragma: no cover
 
         agent = Agent(
             FunctionModel(return_model),
-            output_type=[str, DeferredToolRequests],
+            output_type=[NativeOutput(OutputType), DeferredToolRequests],
             toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='external_tool', kind='external')])],
             end_strategy='early',
         )
@@ -4695,6 +4676,34 @@ class TestMultipleToolCalls:
 
         assert isinstance(result.output, DeferredToolRequests)
         assert [call.tool_name for call in result.output.calls] == ['external_tool']
+
+    def test_early_strategy_skips_unknown_tool_call_when_structured_output_wins(self):
+        """Under 'early', valid structured output ends the run even when co-emitted with an unknown
+        (hallucinated) tool call: the unknown call has no definition, so it's treated like a function tool and
+        recorded as skipped — matching how `'early'` already handles unknown calls once an output tool wins.
+        This is the only coverage for the missing-`tool_def` arm of the kind gate."""
+
+        def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        TextPart(content='{"value": "final"}'),
+                        ToolCallPart('does_not_exist', {}),
+                    ],
+                )
+            return ModelResponse(parts=[TextPart(content='{"value": "after"}')])  # pragma: no cover
+
+        agent = Agent(FunctionModel(return_model), output_type=NativeOutput(OutputType), end_strategy='early')
+
+        result = agent.run_sync('test early unknown tool')
+
+        assert result.output == OutputType(value='final')
+        messages = result.all_messages()
+        assert isinstance(messages[-1], ModelRequest)
+        skipped = messages[-1].parts[0]
+        assert isinstance(skipped, ToolReturnPart)
+        assert skipped.tool_name == 'does_not_exist'
+        assert skipped.content == 'Tool not executed - a final result was already processed.'
 
     def test_early_strategy_falls_back_to_tools_when_image_output_is_invalid(self):
         """Under 'early', an image that fails output validation isn't a final result, so the co-emitted

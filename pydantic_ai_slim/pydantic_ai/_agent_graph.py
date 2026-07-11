@@ -1276,17 +1276,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     else:
                         assert_never(part)
 
+                # Use compaction content as text fallback when the response has no other
+                # actionable text (e.g. Anthropic pause_after_compaction=True)
+                if not text and compaction_text:
+                    text = compaction_text
+
                 try:
                     # We generally prioritize at least executing tool calls if they are present.
                     # This accounts for cases like Anthropic returns that might contain a text response
                     # and a tool call response, where the text response just indicates the tool call will happen.
                     # The exception is `end_strategy='early'`: if the response also carries a valid non-tool
-                    # output (native/prompted/text structured output, or an image) alongside plain function
-                    # tool calls, that output is already the final result, so `_handle_tool_calls` skips those
-                    # tools and ends the run — matching the way `'early'` skips function tools once an output
-                    # tool call succeeds. (Output and deferred tool calls are always executed so their results
-                    # aren't dropped.) Compaction content is deliberately excluded here: a response that
-                    # compacts and calls a tool is mid-task, so it should not preempt the tool call.
+                    # output (schema-validated text, or an image) alongside plain function tool calls, that
+                    # output is already the final result, so `_handle_tool_calls` skips those tools and ends the
+                    # run — matching the way `'early'` skips function tools once an output tool call succeeds.
+                    # (Output tool calls and deferred tool calls are left to normal processing, so a co-emitted
+                    # one still wins/surfaces rather than being preempted by the text.)
                     alternatives: list[str] = []
                     if tool_calls:
                         response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
@@ -1308,10 +1312,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         alternatives.append('return an image')
 
                     if text_processor := output_schema.text_processor:
-                        # Use compaction content as text fallback when the response has no other
-                        # actionable text (e.g. Anthropic pause_after_compaction=True).
-                        if not text and compaction_text:
-                            text = compaction_text
                         if text:
                             self._next_node = await self._handle_text_response(ctx, text, text_processor)
                             return
@@ -1355,32 +1355,32 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
-        # valid non-tool output (structured native/prompted text, or an image) and every co-emitted tool call
-        # is a plain function tool, that output is the final result and the tools are recorded as skipped.
+        # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain
+        # function tool, that output is the final result and the tools are recorded as skipped.
         #
         # We check the tool kinds here (rather than letting `process_tool_calls` sort it out) for two reasons:
-        # output tools and deferred (external/unapproved) tool calls must run so their results aren't dropped,
-        # and `_process_response_output` runs the output validators, so we only want to invoke it once we know
-        # the response output can actually win. `for_run_step` above populated the tool defs used here.
+        # output and deferred (external/unapproved) tool calls must go through normal processing, and
+        # `_process_response_output` runs the output validators, so we only want to invoke it once we know the
+        # response output can actually win. `for_run_step` above populated the tool defs used here.
         #
-        # Deferring to a co-emitted output tool is deliberate: calling an output tool is an explicit "finish
-        # the run" signal, whereas the model's text may just be supporting prose — it doesn't know we might
-        # treat that text as a valid final output — so the output tool should still produce the final result.
+        # The precedence is deliberate: calling an output tool is an explicit "finish the run" signal, and a
+        # deferred call may need an external result or human approval — whereas the model's text may just be
+        # supporting prose (it doesn't know we might treat that text as final), so text must not silently
+        # cancel either. A co-emitted output tool call therefore still produces the final result, and a
+        # co-emitted deferred call is still surfaced, rather than being preempted by the text.
         final_result: result.FinalResult[NodeRunEndT] | None = None
         if response_output is not None and all(
             (tool_def := ctx.deps.tool_manager.get_tool_def(call.tool_name)) is None or tool_def.kind == 'function'
             for call in tool_calls
         ):
             text, files = response_output
-            final_result = await self._process_response_output(
-                ctx, text=text, files=files, output_schema=ctx.deps.output_schema
-            )
+            final_result = await self._process_response_output(ctx, text=text, files=files)
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         try:
-            # When `final_result` is set (native/prompted/text or image output already won under
+            # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
             async for event in process_tool_calls(
@@ -1426,29 +1426,33 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         text: str,
         files: list[_messages.BinaryContent],
-        output_schema: _output.OutputSchema[NodeRunEndT],
     ) -> result.FinalResult[NodeRunEndT] | None:
-        """Build the response's non-tool output result (an image, or structured native/prompted text), or `None`.
+        """Build the response's non-tool output result (an image, or schema-validated text), or `None`.
 
         Used under `end_strategy='early'` to decide whether a response that also contains function tool calls
         already carries a final result. Images take precedence over text, matching the order the no-tool-calls
-        path handles them in. Returns `None` when the response has no usable output — e.g. native/prompted text
-        or an image that doesn't validate against the output schema — so the caller runs the tool calls.
+        path handles them in.
 
-        Only *structured* text output ([`NativeOutput`][pydantic_ai.output.NativeOutput] /
-        [`PromptedOutput`][pydantic_ai.output.PromptedOutput]) can preempt tool calls: there the model was told
-        to produce the final output as its text, so text that validates against the schema is a deliberate
+        Only text that's validated against a schema can preempt tool calls — i.e. the object output processor
+        used by [`NativeOutput`][pydantic_ai.output.NativeOutput],
+        [`PromptedOutput`][pydantic_ai.output.PromptedOutput], and a bare structured type (auto mode). There
+        the model was told to produce the final output as its text, so text that validates is a deliberate
         final result. Plain, unstructured text output (`str`, [`TextOutput`][pydantic_ai.output.TextOutput], or
         a `str` fallback in a larger schema) accepts *any* text, so the model's preamble — which it emits with
         no signal that we'd treat it as final — must not silently win and skip the tools.
+
+        Returns `None` when the response carries no usable output — e.g. schema-validated text or an image that
+        fails validation — so the caller runs the tool calls instead. Unlike a failed output *tool* call, this
+        doesn't consume an output retry or surface a retry prompt: running the tools is the correction.
         """
+        output_schema = ctx.deps.output_schema
         try:
             if output_schema.allows_image:
                 if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                     return await self._process_image_response(ctx, image)
             if (
-                isinstance(output_schema, _output.StructuredTextOutputSchema)
-                and (text_processor := output_schema.text_processor)
+                (text_processor := output_schema.text_processor)
+                and isinstance(text_processor, _output.BaseObjectOutputProcessor)
                 and text
             ):
                 return await self._process_text_response(ctx, text, text_processor)
