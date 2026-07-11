@@ -4591,27 +4591,33 @@ class TestMultipleToolCalls:
         assert result.output == OutputType(value='after tool')
         assert tool_called == ['regular_tool']
 
-    def test_early_strategy_prefers_plain_text_output_over_tool_calls(self):
-        """Under 'early' with `output_type=str`, the first plain-text output the model returns is the final
-        result even alongside a function tool call, so the tool is skipped."""
+    @pytest.mark.parametrize('output_type', ['str', 'text_fallback'])
+    def test_early_strategy_does_not_preempt_tools_for_plain_text_output(self, output_type: str):
+        """Under 'early', plain/unstructured text output (`output_type=str`, or a `str` fallback in a larger
+        schema) must NOT preempt a co-emitted function tool: unlike native/prompted output, the model isn't
+        told its text is the final answer, so its preamble shouldn't silently skip the tool. The tool runs."""
         tool_called: list[str] = []
 
         def return_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[TextPart(content='the answer'), ToolCallPart('regular_tool', {'x': 1})])
-            return ModelResponse(parts=[TextPart(content='after tool')])  # pragma: no cover
+                # Preamble text (a valid `str`) emitted alongside a function tool call.
+                return ModelResponse(
+                    parts=[TextPart(content='Let me look that up.'), ToolCallPart('regular_tool', {'x': 1})]
+                )
+            return ModelResponse(parts=[TextPart(content='the answer')])
 
-        agent = Agent(FunctionModel(return_model), output_type=str, end_strategy='early')
+        ot = str if output_type == 'str' else [OutputType, str]
+        agent = Agent(FunctionModel(return_model), output_type=ot, end_strategy='early')
 
         @agent.tool_plain
-        def regular_tool(x: int) -> int:  # pragma: no cover
+        def regular_tool(x: int) -> int:
             tool_called.append('regular_tool')
             return x
 
         result = agent.run_sync('test early plain text')
 
         assert result.output == 'the answer'
-        assert tool_called == []
+        assert tool_called == ['regular_tool']
 
     def test_early_strategy_does_not_treat_compaction_as_output(self):
         """Under 'early', compaction content must not preempt a co-emitted function tool call: a response that

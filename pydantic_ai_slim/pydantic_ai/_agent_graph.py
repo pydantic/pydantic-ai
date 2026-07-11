@@ -73,13 +73,15 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
 
 The final result usually comes from an output tool call, but with
 [`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
-plain text, or image output it comes from the text or image the model returns in the same response.
+or image output it comes from the text or image the model returns in the same response.
 
 - `'early'`: Output tools run in the order the model emitted them and the run ends at the first one
   that succeeds; function tools are not executed. If every output tool fails, function tools run so
-  the model can correct on the next round. Likewise, if the response contains a valid non-tool output
-  (structured output text, plain text, or an image) alongside function tool calls, that output ends the
-  run and the function tools are skipped.
+  the model can correct on the next round. Likewise, if the response contains a valid structured
+  output (`NativeOutput`/`PromptedOutput` text, or an image) alongside function tool calls, that output
+  ends the run and the function tools are skipped. Plain, unstructured text output (`str` or
+  `TextOutput`) does *not* skip tools this way — the model isn't told its text is final, so its
+  preamble shouldn't silently cancel a tool call; the function tools run and the run continues.
 - `'graceful'` (default): Tools run in the order the model emitted them — function tools that precede
   an output tool complete before it. Output tools run in order and the first success wins; subsequent
   output tools are skipped (their side effects don't run). If a function tool raises
@@ -91,7 +93,7 @@ plain text, or image output it comes from the text or image the model returns in
   on a tool (including via [`ToolOutput`][pydantic_ai.output.ToolOutput]) to make it a barrier that
   doesn't overlap with others.
 
-Under `'graceful'` and `'exhaustive'`, a non-tool output (structured output text, plain text, or an
+Under `'graceful'` and `'exhaustive'`, a structured output (`NativeOutput`/`PromptedOutput` text, or an
 image) returned alongside function tool calls does *not* end the run early: the function tools run and
 the run continues, so their results can inform the model's eventual output. Only `'early'` skips them.
 
@@ -1353,8 +1355,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
-        # valid non-tool output (native/prompted/text output, or an image) and every co-emitted tool call is a
-        # plain function tool, that output is the final result and the tools are recorded as skipped.
+        # valid non-tool output (structured native/prompted text, or an image) and every co-emitted tool call
+        # is a plain function tool, that output is the final result and the tools are recorded as skipped.
         #
         # We check the tool kinds here (rather than letting `process_tool_calls` sort it out) for two reasons:
         # output tools and deferred (external/unapproved) tool calls must run so their results aren't dropped,
@@ -1426,19 +1428,29 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         files: list[_messages.BinaryContent],
         output_schema: _output.OutputSchema[NodeRunEndT],
     ) -> result.FinalResult[NodeRunEndT] | None:
-        """Build the response's non-tool output result (an image, or native/prompted/text output), or `None`.
+        """Build the response's non-tool output result (an image, or structured native/prompted text), or `None`.
 
-        Used under `end_strategy='early'` to decide whether a response that also contains function tool
-        calls already carries a final result. Images take precedence over text, matching the order the
-        no-tool-calls path handles them in. Returns `None` when the response has no usable output — e.g.
-        prompted text or an image that doesn't validate against the output schema — so the caller runs the
-        tool calls.
+        Used under `end_strategy='early'` to decide whether a response that also contains function tool calls
+        already carries a final result. Images take precedence over text, matching the order the no-tool-calls
+        path handles them in. Returns `None` when the response has no usable output — e.g. native/prompted text
+        or an image that doesn't validate against the output schema — so the caller runs the tool calls.
+
+        Only *structured* text output ([`NativeOutput`][pydantic_ai.output.NativeOutput] /
+        [`PromptedOutput`][pydantic_ai.output.PromptedOutput]) can preempt tool calls: there the model was told
+        to produce the final output as its text, so text that validates against the schema is a deliberate
+        final result. Plain, unstructured text output (`str`, [`TextOutput`][pydantic_ai.output.TextOutput], or
+        a `str` fallback in a larger schema) accepts *any* text, so the model's preamble — which it emits with
+        no signal that we'd treat it as final — must not silently win and skip the tools.
         """
         try:
             if output_schema.allows_image:
                 if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                     return await self._process_image_response(ctx, image)
-            if (text_processor := output_schema.text_processor) and text:
+            if (
+                isinstance(output_schema, _output.StructuredTextOutputSchema)
+                and (text_processor := output_schema.text_processor)
+                and text
+            ):
                 return await self._process_text_response(ctx, text, text_processor)
         except ToolRetryError:
             return None
