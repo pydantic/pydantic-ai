@@ -579,7 +579,7 @@ ones that are specific to the request-response graph (faking them would be misle
 | `deps`, `model_settings` | ✅ same |
 | `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
 | `toolsets` | ✅ extra toolsets for the session |
-| `capabilities` | ⚠️ **tool-lifecycle hooks only** — `prepare_tools` and `before`/`after`/`wrap`/`on_error` `tool_execute`. The session executes tools but has no model-request/graph/output stages, so those hooks (and deferred loading / capability toolsets) don't run |
+| `capabilities` | ⚠️ **setup + tool hooks only** — see [Capabilities](#capabilities) below |
 | `usage`, `usage_limits` | ✅ accumulate / enforce (token + tool-call limits; see [Usage and cost](#usage-and-cost)) |
 | `metadata`, `conversation_id` | ✅ set on the `RunContext` (and telemetry span) for tools/correlation |
 | `message_history` | ✅ seeds the session (text/transcript projection; audio not replayed) and is included in `all_messages()` |
@@ -610,6 +610,42 @@ async with agent.realtime_session(
 like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `deps`,
 `toolsets`, `instructions`, `metadata`, and `native_tools` is honored (spec-based capability override
 is the one exception, since capabilities only run their tool hooks here).
+
+### Capabilities
+
+A [capability][pydantic_ai.capabilities.AbstractCapability] passed to the agent or to
+`realtime_session(capabilities=...)` participates in a session through the parts of its lifecycle that
+map onto a live, bidirectional connection. A session sets the connection up once and then executes
+tools as the model calls them — it has no request → graph → response run — so the hooks tied to those
+stages have nothing to fire on and are **silently skipped**.
+
+What a capability contributes to a session:
+
+- **Setup** — its toolsets, native (built-in) tools, instructions, and model settings are applied when
+  the session connects, and its `for_run` runs, resolved through the same
+  `Agent._resolve_run_capabilities` as a graph run. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+  is wired in exactly as for `run`/`iter` (see [Observability](#observability-with-logfire)).
+- **Tool hooks** — every tool call routes through the same tool manager as `run`/`iter`, so
+  `prepare_tools`, the `tool_validate` hooks (`before`/`after`/`wrap`/`on_error`), and the
+  `tool_execute` hooks (`before`/`after`/`wrap`/`on_error`) all run. This is where guards, argument
+  rewriting, retries, and per-tool instrumentation live.
+
+What does **not** run in a session (no corresponding stage):
+
+- run-level hooks (`before`/`after`/`wrap`/`on_error` `run`),
+- graph-node hooks (`*_node_run`),
+- model-request hooks (`*_model_request`) — the realtime model is a persistent connection, not a
+  request-response [`Model`][pydantic_ai.models.Model],
+- event-stream hooks (`wrap_run_event_stream` and per-event `on_event`) — a session emits its own
+  [event stream](#events), not an agent-run one,
+- output hooks (`*_output_validate`, `*_output_process`, `prepare_output_tools`) — a session has no
+  `output_type` ([delegate](#delegating-to-a-text-agent) structured output to a text agent),
+- deferred capability loading.
+
+So a capability that scopes, guards, or instruments **tools**, or contributes tools/toolsets/native
+tools/instructions, works unchanged in a session; one that hooks the **model request, run, graph, or
+output** is inert here. Session- and turn-level capability hooks (to observe or wrap a whole exchange)
+are a planned addition; today, use the tool hooks and the [session event stream](#events).
 
 ## Delegating to a text agent
 

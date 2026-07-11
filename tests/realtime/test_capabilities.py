@@ -1,0 +1,181 @@
+"""Capability *setup* wiring in `Agent.realtime_session`, shared with the graph run.
+
+`realtime_session` and `run`/`iter` resolve capabilities through the same
+`Agent._resolve_run_capabilities`, so a capability's setup contributions — instructions, native tools
+(including under `override(native_tools=...)`), model settings, and toolsets — must reach a session
+exactly as they reach a run. These pin that, guarding against the two silently diverging again (the
+session used to drop capability instructions/model-settings and, under a native-tools override, drop a
+capability-function's native tools). Network-free: a fake model records what `connect()` receives.
+"""
+
+from __future__ import annotations as _annotations
+
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+
+import pytest
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.realtime import (
+    RealtimeConnection,
+    RealtimeEvent,
+    RealtimeInput,
+    RealtimeModel,
+    RealtimeModelProfile,
+    TurnCompleteEvent,
+)
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
+
+pytestmark = pytest.mark.anyio
+
+
+class _Connection(RealtimeConnection):
+    """Yields a single `TurnCompleteEvent` so the session drains immediately."""
+
+    async def send(self, content: RealtimeInput) -> None:
+        pass
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+        yield TurnCompleteEvent()
+
+
+class _RecordingModel(RealtimeModel):
+    """A realtime model that records the arguments `realtime_session` passes to `connect`."""
+
+    def __init__(self, *, supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset()) -> None:
+        self._supported = supported_native_tools
+        self.instructions: str | None = None
+        self.tools: list[ToolDefinition] | None = None
+        self.native_tools: list[AbstractNativeTool] | None = None
+        self.model_settings: ModelSettings | None = None
+
+    @property
+    def model_name(self) -> str:
+        return 'gpt-realtime'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=self._supported,
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        instructions: str,
+        tools: list[ToolDefinition] | None = None,
+        native_tools: list[AbstractNativeTool] | None = None,
+        model_settings: ModelSettings | None = None,
+        messages: Sequence[ModelMessage] | None = None,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        self.instructions = instructions
+        self.tools = tools
+        self.native_tools = native_tools
+        self.model_settings = model_settings
+        yield _Connection()
+
+
+async def _drain(agent: Agent[None, str], model: _RecordingModel, **kwargs: object) -> None:
+    async with agent.realtime_session(model=model, **kwargs) as session:  # type: ignore[arg-type]
+        async for _ in session:  # pragma: no branch - the single event ends the stream
+            pass
+
+
+async def test_capability_instructions_reach_session() -> None:
+    """A capability's `get_instructions` is combined with the agent's, like a graph run."""
+
+    class PirateCap(AbstractCapability[None]):
+        def get_instructions(self) -> str:
+            return 'Speak like a pirate.'
+
+    agent = Agent(instructions='Be helpful.')
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[PirateCap()])
+    assert model.instructions is not None
+    assert 'Be helpful.' in model.instructions
+    assert 'Speak like a pirate.' in model.instructions
+
+
+async def test_capability_model_settings_reach_session() -> None:
+    """A capability's `get_model_settings` is folded into the session's effective settings."""
+
+    class SettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> ModelSettings:
+            return ModelSettings(temperature=0.3)
+
+    agent = Agent()
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[SettingsCap()])
+    assert model.model_settings is not None
+    assert model.model_settings.get('temperature') == 0.3
+
+
+async def test_capability_toolset_reaches_session() -> None:
+    """A capability's `get_toolset` contributes its tools to the session's tool set."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def greet(name: str) -> str:
+        return f'Hello, {name}!'
+
+    class ToolsetCap(AbstractCapability[None]):
+        def get_toolset(self) -> FunctionToolset[None]:
+            return toolset
+
+    agent = Agent()
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ToolsetCap()])
+    assert model.tools is not None
+    assert any(t.name == 'greet' for t in model.tools)
+
+
+async def test_capability_native_tool_survives_native_tools_override() -> None:
+    """A per-call capability's native tool is preserved on top of `override(native_tools=...)`.
+
+    Regression: the session used to read the *unresolved* extra capabilities when an override was
+    active, so a native tool that only materializes in a capability function's `for_run` (here, a
+    lambda returning `NativeTool(WebSearchTool())`) was silently dropped. It must be preserved, exactly
+    as in a graph run.
+    """
+
+    def web_search_cap(ctx: RunContext[None]) -> NativeTool[None]:
+        # A capability *function*: its native tool only materializes when `for_run` resolves it.
+        return NativeTool(WebSearchTool())
+
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    with agent.override(native_tools=[]):  # replace the baseline; per-call cap tools stay on top
+        await _drain(agent, model, capabilities=[web_search_cap])
+    assert model.native_tools is not None
+    assert any(isinstance(t, WebSearchTool) for t in model.native_tools)
+
+
+async def test_capability_native_tool_without_override_reaches_session() -> None:
+    """Without an override, a capability-contributed native tool still reaches the session."""
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    await _drain(agent, model, capabilities=[NativeTool(WebSearchTool())])
+    assert model.native_tools is not None
+    assert any(isinstance(t, WebSearchTool) for t in model.native_tools)
+
+
+async def test_unsupported_capability_native_tool_raises_before_connect() -> None:
+    """A capability native tool the model doesn't support fails up front, before connecting."""
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset())  # supports nothing
+    with pytest.raises(UserError, match='does not support'):
+        await _drain(agent, model, capabilities=[NativeTool(WebSearchTool())])
+    assert model.native_tools is None  # never connected
