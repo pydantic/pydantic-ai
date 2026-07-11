@@ -87,6 +87,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._dbos_toolsets_by_id: dict[str, AbstractToolset[Any]] = {}
         # Populated by for_agent when the capability is attached to an agent.
+        self._model: Model | None = None
         self._request_step: Any = None
         self._request_stream_step: Any = None
         self._auto_run_workflow: Callable[..., Awaitable[Any]] | None = None
@@ -119,6 +120,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         bound.name = agent.name
         bound._agent = agent
         model = agent.model
+        bound._model = model
 
         # If no handler was passed to the capability, fall back to the agent's
         # instance-level one so it fires inside the step alongside the capability chain.
@@ -310,6 +312,18 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         """Route model requests through DBOS steps when inside a workflow."""
         if DBOS.workflow_id is None or DBOS.step_id is not None:
             return await handler(request_context)
+
+        # The DBOS request steps are registered once in `for_agent`, closing over the
+        # construction-time model, so a model set at run time via `run(model=...)` or
+        # `override(model=...)` can't cross the durable boundary and would be silently ignored.
+        # Reject it instead of answering from the wrong model, matching the deprecated `DBOSAgent`.
+        # Compared by `model_id` so an outer instrumentation wrapper is transparent.
+        if self._model is not None and request_context.model.model_id != self._model.model_id:
+            raise UserError(
+                'The model cannot be changed at agent run time when using `DBOSDurability`; '
+                'it must be set when creating the agent. '
+                f'Got {request_context.model.model_id!r}, expected {self._model.model_id!r}.'
+            )
 
         # Use the streaming step when either the agent loop expects an event
         # stream (per-run/instance handler, or a chain capability that overrides

@@ -94,6 +94,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         # Populated by for_agent when the capability is attached to an agent.
+        self._model: Model | None = None
         self._request_task: Any = None
         self._request_stream_task: Any = None
 
@@ -124,6 +125,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         bound.name = agent.name
         bound._agent = agent
         model = agent.model
+        bound._model = model
 
         # If no handler was passed to the capability, fall back to the agent's
         # instance-level one so it fires inside the task alongside the capability chain.
@@ -281,6 +283,18 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         """Route model requests through Prefect tasks when inside a flow."""
         if FlowRunContext.get() is None:
             return await handler(request_context)
+
+        # The Prefect request tasks are registered once in `for_agent`, closing over the
+        # construction-time model, so a model set at run time via `run(model=...)` or
+        # `override(model=...)` can't cross the durable boundary and would be silently ignored.
+        # Reject it instead of answering from the wrong model, matching the deprecated
+        # `PrefectAgent`. Compared by `model_id` so an outer instrumentation wrapper is transparent.
+        if self._model is not None and request_context.model.model_id != self._model.model_id:
+            raise UserError(
+                'The model cannot be changed at agent run time when using `PrefectDurability`; '
+                'it must be set when creating the agent. '
+                f'Got {request_context.model.model_id!r}, expected {self._model.model_id!r}.'
+            )
 
         model_name = ctx.model.model_name
 

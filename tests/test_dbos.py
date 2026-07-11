@@ -2069,6 +2069,40 @@ def test_dbos_durability_requires_concrete_model() -> None:
         Agent('openai:gpt-4o', name='needs_concrete', defer_model_check=True, capabilities=[DBOSDurability()])
 
 
+async def test_dbos_durability_rejects_runtime_model(dbos: DBOS) -> None:
+    """A per-run `model=` can't cross the durable boundary, so it's rejected instead of silently ignored.
+
+    The request steps are registered in `for_agent` over the construction-time model; a model set at
+    run time would otherwise produce an answer from the wrong (construction-time) model.
+    """
+    agent = Agent(_durability_fn_model, name='durability_runtime_model', capabilities=[DBOSDurability()])
+    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
+        await agent.run('hello', model=TestModel())
+
+
+async def test_dbos_durability_rejects_override_model(dbos: DBOS) -> None:
+    """A model set via `override(model=...)` is rejected the same way as a per-run `model=`."""
+    agent = Agent(_durability_fn_model, name='durability_override_model', capabilities=[DBOSDurability()])
+    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
+        with agent.override(model=TestModel()):
+            await agent.run('hello')
+
+
+async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> None:
+    """An outer `Instrumentation` capability wraps the model, but the default model is still accepted.
+
+    The runtime-model guard compares by `model_id`, which delegates through the instrumentation
+    wrapper, so a normal instrumented run isn't mistaken for a runtime override.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_instrumented_default',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), DBOSDurability()],
+    )
+    result = await agent.run('hello')
+    assert result.output == 'Echo: hello'
+
+
 def test_dbos_durability_get_ordering() -> None:
     """DBOSDurability declares innermost ordering."""
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
