@@ -715,8 +715,8 @@ async def test_capability_contributed_toolset_id_from_capability():
     leaves: list[AbstractToolset[object]] = []
     for toolset in prefect_agent.toolsets:
         toolset.apply(leaves.append)
-    # The contributed MCP leaf carries the URL-derived id (which its `PrefectMCPToolset` wrapper keys
-    # its tasks off); the `billing` function toolset carries the capability id.
+    # The contributed MCP leaf carries the URL-derived id, so its `PrefectMCPToolset` wrapper is built
+    # under a stable id; the `billing` function toolset carries the capability id.
     assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
