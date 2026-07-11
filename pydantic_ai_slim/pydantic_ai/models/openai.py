@@ -3435,12 +3435,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             # Track citations for files the code interpreter wrote to disk, by item_id, so they can be
-            # downloaded as `FilePart`s when `openai_download_code_execution_files` is set. `_downloaded_file_ids`
-            # deduplicates files that are cited more than once.
+            # downloaded as `FilePart`s after the stream completes when `openai_download_code_execution_files` is set.
             _file_citations_by_item: dict[
                 str, list[responses.response_output_text.AnnotationContainerFileCitation]
             ] = {}
-            _downloaded_file_ids: set[str] = set()
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
@@ -3817,17 +3815,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             provider_details=provider_details,
                         ):
                             yield event
-                    # Download the files the code interpreter wrote to disk that this text referenced.
-                    for citation in _file_citations_by_item.get(chunk.item_id, []):
-                        if citation.file_id in _downloaded_file_ids:
-                            continue
-                        _downloaded_file_ids.add(citation.file_id)
-                        if file_part := await _download_container_file(
-                            self._client, citation, provider_name=self._provider_name
-                        ):
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{citation.file_id}-file', part=file_part
-                            )
 
                 elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
                     # Accumulate refusal text from deltas as a fallback in case the done event is missing.
@@ -3952,6 +3939,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            elif self._model_settings.get('openai_download_code_execution_files'):
+                # Download the files the code interpreter wrote to disk after the stream completes, so the resulting
+                # `parts` ordering matches the non-streaming path and nothing is emitted for a refused response.
+                citations = [citation for citations in _file_citations_by_item.values() for citation in citations]
+                for file_part in await _download_container_files(
+                    self._client, citations, provider_name=self._provider_name
+                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{file_part.id}-file', part=file_part)
 
     def _store_conversation_id(self, response: responses.Response) -> None:
         if response.conversation:

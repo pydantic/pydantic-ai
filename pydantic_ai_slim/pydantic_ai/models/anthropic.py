@@ -103,7 +103,6 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
-        AsyncAnthropic,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
@@ -245,6 +244,14 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+# The Files API used to download code execution files is only available on the direct `AsyncAnthropic` client,
+# not on the Bedrock/Vertex/Foundry transports.
+_FILES_API_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
@@ -3033,8 +3040,15 @@ async def _download_anthropic_file(
     Code execution containers are short-lived, so a download can fail (expired container, rate limit, transient
     error). In that case we skip the file with a warning rather than discarding the otherwise-successful response.
     """
-    # The Files API is only available on the direct Anthropic client, not the Bedrock/Vertex variants.
-    client = cast(AsyncAnthropic, client)
+    # The Files API is only available on the direct Anthropic client, not the Bedrock/Vertex/Foundry transports,
+    # which don't expose `client.beta.files`.
+    if isinstance(client, _FILES_API_UNSUPPORTED_CLIENTS):
+        warnings.warn(
+            f'Cannot download code execution file {file_id}: the Anthropic Files API is only available on the '
+            f'direct Anthropic client, not on Bedrock, Vertex, or Foundry.',
+            UserWarning,
+        )
+        return None
     try:
         file_content = await client.beta.files.download(file_id=file_id)
         file_bytes = await file_content.read()

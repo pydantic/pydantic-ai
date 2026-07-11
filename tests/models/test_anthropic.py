@@ -145,6 +145,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
+        _download_anthropic_file,  # pyright: ignore[reportPrivateUsage]
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -11964,6 +11965,18 @@ async def test_anthropic_code_execution_download_failure_skips_file(allow_model_
 
     files = [p for p in result.all_messages()[-1].parts if isinstance(p, FilePart)]
     assert len(files) == 0
+
+
+async def test_anthropic_code_execution_download_unsupported_client_skips_file():
+    """The Anthropic Files API isn't available on Bedrock/Vertex clients, so downloads are skipped with a warning.
+
+    This can't be reached through the public API without a live Bedrock/Vertex endpoint that runs code execution,
+    so we exercise the download helper directly.
+    """
+    bedrock_client = cast('Any', MagicMock(spec=AsyncAnthropicBedrock))
+    with pytest.warns(UserWarning, match='only available on the direct Anthropic client'):
+        result = await _download_anthropic_file(bedrock_client, file_id='file_1', provider_name='anthropic')
+    assert result is None
 
 
 async def test_anthropic_code_execution_download_stream_failure_skips_file(allow_model_requests: None):
