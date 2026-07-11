@@ -12707,7 +12707,7 @@ def test_openai_responses_phase_profile_flag():
     assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
 
 
-def _text_response(text: str, *, status: ResponseStatus = 'completed') -> resp.Response:
+def _text_response(text: str, *, status: ResponseStatus = 'completed', background: bool = False) -> resp.Response:
     """Create a Response with a single text output message."""
     r = response_message(
         [
@@ -12721,6 +12721,7 @@ def _text_response(text: str, *, status: ResponseStatus = 'completed') -> resp.R
         ]
     )
     r.status = status
+    r.background = background
     return r
 
 
@@ -13099,8 +13100,8 @@ async def test_background_mode_streaming_without_starting_after_vcr(
 async def test_background_queued_then_completed(allow_model_requests: None):
     """Background mode: create returns status='queued', retrieve returns status='completed'."""
     mock_client = MockOpenAIResponses(
-        response=_text_response('', status='queued'),
-        retrieve_responses=[_text_response('The answer is 42.')],
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('The answer is 42.', background=True)],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -13125,7 +13126,7 @@ async def test_background_queued_then_completed(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -13138,8 +13139,8 @@ async def test_background_queued_then_completed(allow_model_requests: None):
 async def test_background_in_progress_then_completed(allow_model_requests: None):
     """Background mode: create returns status='in_progress', retrieve returns status='completed'."""
     mock_client = MockOpenAIResponses(
-        response=_text_response('thinking...', status='in_progress'),
-        retrieve_responses=[_text_response('Done!')],
+        response=_text_response('thinking...', status='in_progress', background=True),
+        retrieve_responses=[_text_response('Done!', background=True)],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -13164,7 +13165,7 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -13191,10 +13192,10 @@ async def test_background_passes_parameter(allow_model_requests: None):
 
 async def test_background_max_continuations(allow_model_requests: None):
     """Background mode: stays in_progress beyond limit -> UnexpectedModelBehavior."""
-    retrieve_response = _text_response('still working...', status='in_progress')
+    retrieve_response = _text_response('still working...', status='in_progress', background=True)
 
     mock_client = MockOpenAIResponses(
-        response=_text_response('still working...', status='in_progress'),
+        response=_text_response('still working...', status='in_progress', background=True),
         retrieve_responses=[retrieve_response] * 50,
     )
     mock_client = cast(AsyncOpenAI, mock_client)
@@ -13211,12 +13212,12 @@ async def test_background_max_continuations(allow_model_requests: None):
 
 async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     """Verify that the retrieve call uses the response ID from the create response."""
-    queued_response = _text_response('', status='queued')
+    queued_response = _text_response('', status='queued', background=True)
     queued_response.id = 'resp_bg_123'
 
     mock_client = MockOpenAIResponses(
         response=queued_response,
-        retrieve_responses=[_text_response('final')],
+        retrieve_responses=[_text_response('final', background=True)],
     )
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -13244,7 +13245,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -13269,6 +13270,7 @@ async def test_background_request_stream_uses_non_stream_retrieve_without_sequen
     queued_response = response_message([])
     queued_response.id = 'resp_bg_123'
     queued_response.status = 'queued'
+    queued_response.background = True
 
     mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[queued_response]))
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -13303,6 +13305,7 @@ async def test_background_streaming_passes_starting_after(allow_model_requests: 
     queued_response = response_message([])
     queued_response.id = 'resp_bg_456'
     queued_response.status = 'queued'
+    queued_response.background = True
 
     mock_client = cast(
         AsyncOpenAI,
@@ -13378,7 +13381,10 @@ async def test_background_streaming_continuation_without_created_event(allow_mod
         model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
-        assert request_stream.state == 'incomplete'
+        # A resumed stream (no `response.created` event) starts 'suspended': we only got here because
+        # the background job was still in progress, and a clean EOF without a terminal event means it
+        # still is. The terminal `completed` event below then flips it to 'complete'.
+        assert request_stream.state == 'suspended'
         assert [event async for event in request_stream] != []
 
     model_response = request_stream.get()
@@ -13438,6 +13444,7 @@ async def test_stream_sets_suspended_state_for_pending_statuses(
     response = response_message([])
     response.id = f'resp_{status}'
     response.status = status
+    response.background = True
 
     mock_client = MockOpenAIResponses.create_mock_stream(
         [ResponseCreatedEvent(response=response, sequence_number=0, type='response.created')]
@@ -13499,6 +13506,7 @@ async def test_stream_handles_queued_event(allow_model_requests: None):
     """ResponseQueuedEvent during streaming sets state to 'suspended' and accumulates usage."""
     queued_response = response_message([])
     queued_response.status = 'queued'
+    queued_response.background = True
 
     mock_client = MockOpenAIResponses.create_mock_stream(
         [
@@ -13517,3 +13525,126 @@ async def test_stream_handles_queued_event(allow_model_requests: None):
 
     assert events == []
     assert request_stream.state == 'suspended'
+
+
+async def test_foreground_stream_pending_status_is_incomplete(allow_model_requests: None):
+    """A foreground (non-background) stream that ends without a terminal event is 'incomplete', not 'suspended'.
+
+    A foreground Responses stream emits `in_progress`/`queued` status events while it runs but isn't
+    resumable server-side. A clean EOF without `response.completed` (e.g. a dropped connection) therefore
+    leaves it 'incomplete'; marking it 'suspended' would send the continuation loop off to
+    `retrieve(stream=True, starting_after=...)` a foreground response, which the Responses API rejects.
+    Unit-style: a mid-stream EOF on a foreground job isn't reproducible through a recorded cassette.
+    """
+    response = response_message([])
+    response.id = 'resp_fg'
+    response.status = 'in_progress'
+    # `background` stays falsy: this is an ordinary foreground stream, not a resumable background job.
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
+            resp.ResponseInProgressEvent(response=response, sequence_number=1, type='response.in_progress'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'incomplete'
+        assert [event async for event in request_stream] == []
+
+    assert request_stream.state == 'incomplete'
+    model_response = request_stream.get()
+    assert model_response.state == 'incomplete'
+    assert (model_response.provider_details or {}).get('background') is None
+
+
+async def test_resumed_stream_without_terminal_event_stays_suspended(allow_model_requests: None):
+    """A resumed background stream that EOFs again without a terminal event stays 'suspended', not 'complete'.
+
+    `retrieve(stream=True, starting_after=...)` resumes a still-running background job. If that resumed
+    segment cleanly ends without a terminal `response.completed`, the job is still in progress and must
+    stay 'suspended' so the continuation loop keeps polling; letting it fall back to 'incomplete' would let
+    the composite stamp the merged response 'complete' and truncate a running job. Unit-style: a resumed
+    stream's EOF-without-terminal shape isn't reproducible through a recorded cassette.
+    """
+    initial_response = ModelResponse(
+        parts=[TextPart('partial')],
+        model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
+        provider_response_id='resp_bg_resume',
+        state='suspended',
+        provider_details={'last_sequence_number': 5},
+    )
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [
+                    resp.ResponseTextDeltaEvent(
+                        content_index=0,
+                        delta=' more',
+                        item_id='msg_1',
+                        logprobs=[],
+                        output_index=0,
+                        sequence_number=6,
+                        type='response.output_text.delta',
+                    ),
+                ]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), initial_response],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        assert [event async for event in request_stream] != []
+
+    assert request_stream.state == 'suspended'
+    model_response = request_stream.get()
+    assert model_response.state == 'suspended'
+
+
+async def test_resume_without_background_setting_still_gets_retry_delay(allow_model_requests: None):
+    """A resumed suspended history stamps a retry delay even when the run's settings omit `openai_background`.
+
+    A persisted suspended response replayed by a fresh run may not carry the original `openai_background=True`,
+    but the server-side job is still background. The retry delay must be gated on the *response* being a
+    background job (its `provider_details['background']` marker, stamped from `response.background`), not on
+    the request setting — otherwise the continuation loop never sleeps, busy-polls `retrieve` until it hits
+    the continuation limit, and hard-fails a healthy job. Unit-style: asserts the exact delay a cassette can't pin.
+    """
+    in_progress_response = response_message([])
+    in_progress_response.id = 'resp_bg_persisted'
+    in_progress_response.status = 'in_progress'
+    in_progress_response.background = True
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[in_progress_response]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_bg_persisted',
+        state='suspended',
+    )
+
+    result = await model.request(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+        # No `openai_background=True` here: mirrors a persisted suspended history resumed by a fresh run.
+        model_settings=OpenAIResponsesModelSettings(openai_background_poll_interval=7.0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert result.state == 'suspended'
+    assert result.suspended_retry_delay == 7.0
