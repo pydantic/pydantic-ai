@@ -9,7 +9,6 @@ import pytest
 import sniffio
 from pydantic import SecretStr
 
-from pydantic_ai._cli import cli
 from pydantic_ai.auth.codex import (
     CodexAuthStatus,
     CodexCredentials,
@@ -17,6 +16,13 @@ from pydantic_ai.auth.codex import (
     CodexLogoutResult,
     CodexOAuthError,
 )
+
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai._cli import cli
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli auth tests')
 
 
 @pytest.fixture(autouse=True)
