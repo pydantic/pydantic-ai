@@ -44,16 +44,12 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
-    ToolCallPartDelta,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1015,26 +1011,16 @@ class CompletedStreamedResponse(StreamedResponse):
         if self._events is False:
             return
         for part in self.response.parts:
-            # Register the part with the parts manager (always returns PartStartEvent for new parts)
+            # Register the complete part with the parts manager, which yields a single
+            # `PartStartEvent` carrying its full content — exactly like a real stream that
+            # delivers the part in one chunk. We deliberately do NOT follow it with a
+            # `PartDeltaEvent` for the same content: a consumer that reduces the stream applies
+            # `PartStartEvent.part` as the initial state and then each `PartDeltaEvent`, so a full
+            # start plus a full delta would double the text/thinking/args. `PartEndEvent` is added
+            # automatically by `StreamedResponse.__aiter__`.
             start_event = self._parts_manager.handle_part(vendor_part_id=None, part=part)
             assert isinstance(start_event, PartStartEvent)
             yield start_event
-
-            # Emit a delta with the full content
-            index = start_event.index
-            if isinstance(part, TextPart) and part.content:
-                yield PartDeltaEvent(index=index, delta=TextPartDelta(content_delta=part.content))
-            elif isinstance(part, ThinkingPart) and part.content:
-                yield PartDeltaEvent(index=index, delta=ThinkingPartDelta(content_delta=part.content))
-            elif isinstance(part, ToolCallPart):
-                # `cast`: typed subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a `TypedDict`,
-                # which `ToolCallPartDelta.args_delta` doesn't accept. TypedDicts are dicts at runtime.
-                args_delta = cast('str | dict[str, Any] | None', part.args)
-                yield PartDeltaEvent(
-                    index=index,
-                    delta=ToolCallPartDelta(args_delta=args_delta),
-                )
-            # PartEndEvent is added automatically by StreamedResponse.__aiter__
 
     async def close_stream(self) -> None:
         # No live stream to close — the response was produced without (or outside of) one.

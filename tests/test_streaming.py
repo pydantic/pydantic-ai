@@ -32,6 +32,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -43,9 +44,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
@@ -5261,7 +5260,12 @@ async def test_replay_streamed_response_cancel_noop(
 async def test_replay_streamed_response_events(
     replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
 ) -> None:
-    """Verify that `CompletedStreamedResponse(events=True)` replays all part types as stream events."""
+    """Verify that `CompletedStreamedResponse(events=True)` replays all part types as stream events.
+
+    Each part is delivered as a single `PartStartEvent` carrying its full content, like a real
+    stream that emits the part in one chunk — deliberately with no follow-up `PartDeltaEvent`, so
+    reducing the stream reconstructs the response exactly instead of doubling the content.
+    """
     stream = CompletedStreamedResponse(replay_response, model_request_parameters=replay_mrp, events=True)
     events = [event async for event in stream]
 
@@ -5269,14 +5273,12 @@ async def test_replay_streamed_response_events(
         [
             PartStartEvent(index=0, part=TextPart(content='Hello world')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Hello world')),
             PartEndEvent(
                 index=0,
                 part=TextPart(content='Hello world'),
                 next_part_kind='thinking',
             ),
             PartStartEvent(index=1, part=ThinkingPart(content='Let me think about this'), previous_part_kind='text'),
-            PartDeltaEvent(index=1, delta=ThinkingPartDelta(content_delta='Let me think about this')),
             PartEndEvent(
                 index=1,
                 part=ThinkingPart(content='Let me think about this'),
@@ -5287,7 +5289,6 @@ async def test_replay_streamed_response_events(
                 part=ToolCallPart(tool_name='get_weather', args='{"city": "London"}', tool_call_id='call_1'),
                 previous_part_kind='thinking',
             ),
-            PartDeltaEvent(index=2, delta=ToolCallPartDelta(args_delta='{"city": "London"}')),
             PartEndEvent(
                 index=2,
                 part=ToolCallPart(
@@ -5298,6 +5299,17 @@ async def test_replay_streamed_response_events(
             ),
         ]
     )
+
+    # Round-trip: a standard reducer applies `PartStartEvent.part` as the initial state and then
+    # each `PartDeltaEvent`. The synthesized events must reconstruct `response.parts` exactly; a
+    # full-content start followed by a full-content delta would double the text/thinking/args.
+    reduced: dict[int, ModelResponsePart] = {}
+    for event in events:
+        if isinstance(event, PartStartEvent):
+            reduced[event.index] = event.part
+        elif isinstance(event, PartDeltaEvent):
+            reduced[event.index] = event.delta.apply(reduced[event.index])
+    assert [reduced[index] for index in sorted(reduced)] == replay_response.parts
 
 
 async def test_replay_streamed_response_buffered_aiter_idempotent(
