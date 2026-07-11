@@ -311,6 +311,7 @@ def test_codex_sse_identifiers_are_recursively_scrubbed() -> None:
 
 
 def test_codex_sse_scrubbing_handles_noops_and_missing_content_length() -> None:
+    """Exercise serializer-only edge cases that VCR replay does not run."""
     cassette: dict[str, Any] = {
         'interactions': [
             {
