@@ -632,7 +632,8 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     Explicit breakpoints are added to user content with [`CachePoint`][pydantic_ai.messages.CachePoint].
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     Azure GPT-5.6 deployments receive these fields only when explicitly configured, but Azure does not
-    currently document whether they produce cache writes or reads.
+    currently document whether they produce cache writes or reads. This setting is ignored when the resolved
+    model profile does not declare any supported prompt-cache breakpoint types.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.

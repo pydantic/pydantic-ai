@@ -1075,10 +1075,11 @@ def test_azure_openai_gpt_5():
     )
 
 
-def test_azure_mistral_prefix():
+@pytest.mark.parametrize('model_name', ['mistral-large-latest', 'mistralai-gpt-5.6-sol'])
+def test_azure_mistral_prefix(model_name: str):
     from pydantic_ai.providers.azure import AzureProvider
 
-    profile = AzureProvider.model_profile('mistral-large-latest')
+    profile = AzureProvider.model_profile(model_name)
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,

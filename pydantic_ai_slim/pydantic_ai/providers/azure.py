@@ -77,14 +77,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     profile_func(model_name),
                 )
                 break
+        cache_profile = None
         if base is None:
             # OpenAI models are unprefixed.
             base = openai_model_profile(model_name)
+            cache_profile = openai_prompt_cache_profile(model_name)
 
         # Azure Chat Completions API doesn't support document input.
         return merge_profile(
             base,
-            openai_prompt_cache_profile(model_name),
+            cache_profile,
             OpenAIModelProfile(openai_chat_supports_document_input=False),
         )
 
