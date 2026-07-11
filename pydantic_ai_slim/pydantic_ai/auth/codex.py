@@ -332,6 +332,6 @@ class CodexAuth(CodexCredentialSource):
             current = await self._store.load()
             expected_revision = current.revision if current is not None else None
             saved = await self._store.save(credentials, expected_revision=expected_revision)
-            if not saved:  # pragma: no cover - an exclusive store must make this unreachable
+            if not saved:
                 raise CodexCredentialsError('Codex credentials changed while login was being saved.')
         await checkpoint()

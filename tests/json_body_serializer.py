@@ -44,7 +44,7 @@ def normalize_body(obj: Any) -> Any:
         return normalize_smart_chars(obj)
     elif isinstance(obj, dict):
         return {k: normalize_body(v) for k, v in obj.items()}
-    elif isinstance(obj, list):  # pragma: no cover
+    elif isinstance(obj, list):
         return [normalize_body(item) for item in obj]
     return obj  # pragma: no cover
 

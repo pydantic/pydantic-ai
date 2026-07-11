@@ -25,6 +25,7 @@ from pydantic_ai.auth.codex import (
     CodexAccountMismatchError,
     CodexAuth,
     CodexCredentials,
+    CodexCredentialsError,
     CodexDeviceCode,
     CodexLoginRequiredError,
     CodexOAuthError,
@@ -179,6 +180,16 @@ async def test_store_context_cannot_suppress_transaction_error() -> None:
 
     with pytest.raises(RuntimeError, match='store failure'):
         await CodexAuth(store=SuppressingStore()).logout()
+
+
+async def test_login_rejects_failed_conditional_save() -> None:
+    class RejectingSaveStore(MemoryStore):
+        async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+            return False
+
+    auth = CodexAuth(store=RejectingSaveStore())
+    with pytest.raises(CodexCredentialsError, match='changed while login'):
+        await auth._replace_after_login(_credentials())  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
