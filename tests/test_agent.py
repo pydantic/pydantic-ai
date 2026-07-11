@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -62,10 +62,11 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import FunctionToolResultEvent, ModelResponseStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
     MCPServerTool,
@@ -9291,6 +9292,132 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
         await task
 
     assert cleanup_finished.is_set()
+
+
+async def test_run_handoff_survives_absorbed_cancellation():
+    """Outer cancellation must not deadlock the run when the wrapped run absorbs it (#6422).
+
+    Under Temporal's cooperative activity cancellation (`WAIT_CANCELLATION_COMPLETED`), a
+    durable step inside `before_run` can swallow the injected `CancelledError` and return
+    normally. `_do_run` then proceeds to `await _run_done`, which the cancelled caller never
+    sets on the drain path — so unless the handoff cleanup unblocks it before draining
+    `_wrap_task`, the run task deadlocks forever. Here a `before_run` that absorbs one
+    cancellation simulates that survivor condition without a Temporal dependency.
+    """
+
+    in_flight = asyncio.Event()
+
+    class SwallowCancelBeforeRun(AbstractCapability):
+        async def before_run(self, ctx: RunContext) -> None:
+            in_flight.set()
+            try:
+                await asyncio.Event().wait()  # the in-flight "durable step"
+            except asyncio.CancelledError:
+                pass  # step completed successfully; cancellation consumed
+
+    agent = Agent(TestModel(), capabilities=[SwallowCancelBeforeRun()])
+
+    task = asyncio.create_task(agent.run('test'))
+    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+
+
+async def test_streaming_handoff_survives_absorbed_cancellation():
+    """Streaming counterpart of #6422: model request survives cancellation without deadlock.
+
+    When the model request is in flight and absorbs the injected `CancelledError` before
+    completing — the documented behavior of Temporal's cooperative activity cancellation, as
+    routed through `model.request_stream` — `_streaming_handler` is left parked on
+    `stream_done.wait()`. Unless the handoff cleanup sets `stream_done` before draining
+    `wrap_task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
+    `request_stream` await boundary.
+    """
+
+    in_flight = asyncio.Event()
+
+    class SwallowOneCancelModel(WrapperModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            in_flight.set()
+            try:
+                await asyncio.Event().wait()  # the in-flight model request ("activity")
+            except asyncio.CancelledError:
+                pass  # activity completed successfully; cancellation consumed
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                yield streamed_response
+
+    async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:  # pragma: no cover - handler never runs on the cancelled path
+            pass
+
+    agent = Agent(SwallowOneCancelModel(TestModel()))
+
+    task = asyncio.create_task(agent.run('hello', event_stream_handler=event_stream_handler))
+    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+
+
+async def test_run_stream_events_aclose_survives_absorbed_cancellation():
+    """`run_stream_events` teardown must not deadlock when the run survives cancellation (#6422).
+
+    `_RunStreamEventsIterator.aclose()` cancels the background run and drains it, relying on the
+    cancellation to unblock a run parked pushing an event into the zero-buffer stream. If an inline
+    tool absorbs the injected `CancelledError` and completes (Temporal's cooperative cancellation),
+    the run resumes and the internal handler blocks forever on the next `send` — unless the receive
+    end is closed before the drain. Unlike the streaming/run-level handoffs, the survivor here is
+    directly on the run task rather than a child wrapper task.
+    """
+
+    tool_in_flight = asyncio.Event()
+
+    agent = Agent(TestModel(call_tools=['swallow_tool']))
+
+    @agent.tool_plain
+    async def swallow_tool() -> str:
+        tool_in_flight.set()
+        try:
+            await asyncio.Event().wait()  # the in-flight "durable step"
+        except asyncio.CancelledError:
+            pass  # step completed successfully; cancellation consumed
+        return 'done'
+
+    async def consume() -> None:
+        async with agent.run_stream_events('hello') as events:
+            async for _ in events:
+                pass  # naturally blocks once the tool parks (no further events until it returns)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    except asyncio.CancelledError:
+        pass  # expected: teardown completed and the run ended cancelled
+    except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
+        pytest.fail('deadlock: run_stream_events teardown still pending after cancellation (#6422)')
 
 
 async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
