@@ -240,27 +240,43 @@ async def test_replace_reuses_indices_and_replaces_response() -> None:
     assert merged.state == 'complete'
 
 
-def test_merge_preserves_background_marker_across_segments() -> None:
-    """The OpenAI `background` cancel marker is carried forward when a later segment omits it.
+def test_merge_accumulates_turn_scoped_provider_details() -> None:
+    """`provider_details` accumulate across segments (latest-wins) so turn-scoped keys aren't lost.
 
-    A resumed `retrieve(stream=True)` (replace) or an interrupted segment may not re-stamp
-    `provider_details['background']`; without preserving it, `cancel_suspended_response` couldn't reach
-    the server-side job. Driven at the merge level since the gap is a provider-detail race, not stitching.
+    Turn-scoped identifiers a later segment may omit — OpenAI `background`/`conversation_id`, Anthropic
+    `container_id` — must survive the merge, or e.g. `cancel_suspended_response` couldn't reach the
+    server-side job. Driven at the merge level since the gap is a provider-detail race, not stitching.
     """
-    existing = ModelResponse(parts=[TextPart('a')], provider_response_id='r1', provider_details={'background': True})
+    existing = ModelResponse(
+        parts=[TextPart('a')],
+        provider_response_id='r1',
+        provider_details={'background': True, 'conversation_id': 'conv_1', 'container_id': 'cont_1'},
+    )
 
-    # Replace (same id): the resumed segment carries its own `finish_reason` but no `background`.
+    # Replace (same id): the resumed segment carries its own `finish_reason` but none of the turn keys.
     replaced = merge_responses(
         existing,
         ModelResponse(
             parts=[TextPart('a2')], provider_response_id='r1', provider_details={'finish_reason': 'completed'}
         ),
     )
-    assert replaced.provider_details == {'finish_reason': 'completed', 'background': True}
+    assert replaced.provider_details == {
+        'background': True,
+        'conversation_id': 'conv_1',
+        'container_id': 'cont_1',
+        'finish_reason': 'completed',
+    }
 
-    # Accumulate (different id): the new segment has no `provider_details` at all.
+    # Accumulate (different id): the new segment has no `provider_details` at all — all keys carry over.
     accumulated = merge_responses(existing, ModelResponse(parts=[TextPart('b')], provider_response_id='r2'))
-    assert (accumulated.provider_details or {}).get('background') is True
+    assert accumulated.provider_details == {'background': True, 'conversation_id': 'conv_1', 'container_id': 'cont_1'}
+
+    # `new` wins on conflicts (a refreshed value replaces the earlier one).
+    updated = merge_responses(
+        existing,
+        ModelResponse(parts=[TextPart('c')], provider_response_id='r1', provider_details={'conversation_id': 'conv_2'}),
+    )
+    assert updated.provider_details == {'background': True, 'conversation_id': 'conv_2', 'container_id': 'cont_1'}
 
 
 async def test_model_change_replaces_indices() -> None:

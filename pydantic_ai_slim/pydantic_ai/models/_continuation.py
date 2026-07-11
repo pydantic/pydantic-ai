@@ -84,6 +84,9 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     If same `provider_response_id`, replace entirely with the new response.
     If the model changed between responses, replace entirely (incompatible responses should not be merged).
     Otherwise, accumulate parts, sum usage, and use other fields from the new response.
+
+    Either way, `provider_details` accumulate across the turn's segments (latest-wins) so turn-scoped
+    metadata a later segment omits isn't lost — see below.
     """
     if merge_mode(existing, new) == 'replace':
         merged = new
@@ -98,13 +101,13 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
             provider_response_id=new.provider_response_id or existing.provider_response_id,
         )
 
-    # A background job's identity spans every segment, but a resumed or replaced segment may not
-    # re-stamp the `background` marker. Carry it forward so `cancel_suspended_response` can still reach
-    # the server-side job. Other `provider_details` (e.g. `finish_reason`) are per-segment, so `new`'s win.
-    if (background := (existing.provider_details or {}).get('background')) and not (merged.provider_details or {}).get(
-        'background'
-    ):
-        merged = replace(merged, provider_details={**(merged.provider_details or {}), 'background': background})
+    # A turn's provider metadata accumulates across its segments. Turn-scoped identifiers — OpenAI
+    # `background`/`conversation_id`, Anthropic `container_id` — are only stamped on segments whose
+    # payload carries them, so a resumed or interrupted segment can omit one an earlier segment set.
+    # Merge latest-wins (`new` overrides) so they survive into the merged response; e.g.
+    # `cancel_suspended_response` relies on OpenAI's `background` marker to reach the server-side job.
+    if existing.provider_details:
+        merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
 
     return merged
 
