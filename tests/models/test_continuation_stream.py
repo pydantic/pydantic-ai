@@ -13,10 +13,11 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 import pytest
@@ -55,6 +56,8 @@ def _response(
     input_tokens: int,
     output_tokens: int,
     model_name: str = 'fake',
+    metadata: dict[str, Any] | None = None,
+    suspended_retry_delay: float | None = None,
 ) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content=p) for p in parts],
@@ -64,6 +67,8 @@ def _response(
         usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
         state=state,  # type: ignore[arg-type]
         timestamp=_TIMESTAMP,
+        metadata=metadata,
+        suspended_retry_delay=suspended_retry_delay,
     )
 
 
@@ -159,7 +164,13 @@ async def _no_sleep(delay: float) -> None:  # pragma: no cover - scripted respon
     return None
 
 
-def _composite(model: _FakeModel, *, max_continuations: int = 50) -> _ContinuationStreamedResponse:
+def _composite(
+    model: _FakeModel,
+    *,
+    max_continuations: int = 50,
+    sleep_func: Callable[[float], Awaitable[None]] = _no_sleep,
+    check_usage: Callable[[RequestUsage], None] = lambda usage: None,
+) -> _ContinuationStreamedResponse:
     return _ContinuationStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         model=model,
@@ -167,8 +178,8 @@ def _composite(model: _FakeModel, *, max_continuations: int = 50) -> _Continuati
         base_messages=[],
         run_context=None,
         max_continuations=max_continuations,
-        sleep_func=_no_sleep,
-        check_usage=lambda usage: None,
+        sleep_func=sleep_func,
+        check_usage=check_usage,
     )
 
 
@@ -277,6 +288,78 @@ def test_merge_accumulates_turn_scoped_provider_details() -> None:
         ModelResponse(parts=[TextPart('c')], provider_response_id='r1', provider_details={'conversation_id': 'conv_2'}),
     )
     assert updated.provider_details == {'background': True, 'conversation_id': 'conv_2', 'container_id': 'cont_1'}
+
+
+def test_merge_preserves_metadata_pin() -> None:
+    """`metadata` accumulates across segments (latest-wins) so the `FallbackModel` pin isn't lost.
+
+    The pin (`metadata['__pydantic_ai__']['fallback_model_id']`) is only stamped on a segment that
+    *ends* suspended, so a later segment (e.g. an in-flight cancel snapshot) omits it. If the merge
+    took `metadata` wholesale from `new`, the pin would be nuked and `FallbackModel.cancel_suspended_response`
+    couldn't resolve the model that owns the server-side job. Driven at the merge level since the gap
+    is a metadata race, not stitching.
+    """
+    pin = {'__pydantic_ai__': {'fallback_model_id': 'inner'}}
+    existing = ModelResponse(parts=[TextPart('a')], provider_response_id='r1', metadata=pin)
+
+    # Replace (same id): the resumed segment carries no `metadata` — the pin carries over.
+    replaced = merge_responses(existing, ModelResponse(parts=[TextPart('a2')], provider_response_id='r1'))
+    assert replaced.metadata == pin
+
+    # Accumulate (different id): the new segment has no `metadata` at all — the pin carries over.
+    accumulated = merge_responses(existing, ModelResponse(parts=[TextPart('b')], provider_response_id='r2'))
+    assert accumulated.metadata == pin
+
+    # `new` wins on conflicts (a refreshed pin replaces the earlier one).
+    updated = merge_responses(
+        existing,
+        ModelResponse(
+            parts=[TextPart('c')],
+            provider_response_id='r1',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'other'}},
+        ),
+    )
+    assert updated.metadata == {'__pydantic_ai__': {'fallback_model_id': 'other'}}
+
+
+async def test_snapshot_preserves_metadata_pin_across_inflight_segment() -> None:
+    """A mid-flight `get()` snapshot keeps the prior suspended segment's `FallbackModel` pin.
+
+    The in-flight segment hasn't stamped its own pin yet (that happens post-yield when it ends
+    suspended), so its `metadata` is `None`; folding it into the accumulator must not drop the pin
+    the earlier suspended segment carried, or the OpenAI background job would leak on cancel.
+    """
+    pin = {'__pydantic_ai__': {'fallback_model_id': 'inner'}}
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    metadata=pin,
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b'), (1, 'c')),
+                response=_response(
+                    parts=['b', 'c'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+
+    await iterator.__anext__()  # first (suspended) segment's only event
+    await iterator.__anext__()  # second segment now in flight (its `get()` has no pin)
+
+    snapshot = stream.get()
+    assert snapshot.state == 'incomplete'  # a segment is still in flight → this is a live snapshot
+    assert snapshot.metadata == pin
 
 
 async def test_model_change_replaces_indices() -> None:
@@ -613,3 +696,192 @@ async def test_exceeding_max_continuations_raises() -> None:
     with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum'):
         async for _ in stream:
             pass
+
+
+async def test_later_segment_error_cancels_suspended_job() -> None:
+    """A later segment failing cancels the server-side job in hand, mirroring the non-streaming loop.
+
+    The first segment ends suspended (a live server-side job); if a subsequent segment then raises,
+    the composite must best-effort cancel that job before the error propagates, or history records an
+    unresumable, uncancellable `'interrupted'` turn and the job leaks.
+    """
+
+    class _ExplodingStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            raise RuntimeError('segment 2 boom')
+            yield  # pragma: no cover - unreachable, marks this a generator
+
+    class _SecondSegmentExplodesModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            stream_cls = _ExplodingStream if not self.segments else _FakeStream
+            yield stream_cls(model_request_parameters, segment.events, segment.response)
+
+    model = _SecondSegmentExplodesModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+
+    with pytest.raises(RuntimeError, match='segment 2 boom'):
+        async for _ in stream:
+            pass
+
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'r1'
+
+
+async def test_check_usage_error_cancels_suspended_job() -> None:
+    """A `check_usage` failure between segments cancels the still-suspended server-side job."""
+
+    def _reject_second(usage: RequestUsage) -> None:
+        if usage.output_tokens > 1:  # first segment alone is 1; the merge with segment 2 trips this
+            raise UnexpectedModelBehavior('usage limit exceeded')
+
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=5
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model, check_usage=_reject_second)
+
+    with pytest.raises(UnexpectedModelBehavior, match='usage limit exceeded'):
+        async for _ in stream:
+            pass
+
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'r1'
+
+
+async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:
+    """A `cancel()` during the between-segment retry sleep must not open the next sub-stream.
+
+    The loop re-checks `_cancelled`/`_stopped` after the sleep, so a cancel that lands while parked in
+    `sleep_func` breaks cleanly instead of resuming a just-cancelled job (which for Anthropic `pause_turn`
+    would actively continue generation and burn tokens). Unlike `test_cancel_stops_loop_...`, this uses a
+    real (non-zero) delay so the cancel lands *during* the sleep, exercising the post-sleep re-check.
+    """
+    holder: list[_ContinuationStreamedResponse] = []
+
+    async def _cancel_during_sleep(delay: float) -> None:
+        await holder[0].cancel()
+
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    suspended_retry_delay=0.5,
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model, sleep_func=_cancel_during_sleep)
+    holder.append(stream)
+
+    async for _ in stream:
+        pass
+
+    assert len(model.segments) == 1  # the second segment was never requested
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'r1'
+    assert stream.get().state == 'interrupted'
+
+
+async def test_cancel_suppresses_non_httpx_segment_error() -> None:
+    """`cancel()` tearing down a non-httpx sub-stream suppresses the sub's own transport error type.
+
+    The composite's cancel-guard defaults to httpx errors only; a sub on a different transport
+    (Bedrock botocore, xAI grpc) reports its cancel errors via its own `get_stream_cancel_errors()`.
+    The composite must consult the in-flight sub's error types, or the error escapes to the user
+    instead of a clean `'interrupted'` stop.
+    """
+
+    class _BotoError(Exception):
+        pass
+
+    class _NonHttpxCancelStream(_FakeStream):
+        def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+            return (_BotoError,)
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield self._events[0]
+            # After the first event, `cancel()` tore the connection down; the next pull raises the
+            # transport's own (non-httpx) error, exactly what a real botocore/grpc stream does.
+            raise _BotoError('connection torn down')
+
+    class _NonHttpxModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            yield _NonHttpxCancelStream(model_request_parameters, segment.events, segment.response)
+
+    model = _NonHttpxModel(
+        [
+            _Segment(
+                events=_starts((0, 'a'), (1, 'b')),
+                response=_response(
+                    parts=['a', 'b'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+
+    await iterator.__anext__()  # first segment in flight
+    await stream.cancel()
+
+    # Draining resumes the closed segment, which raises the non-httpx error; the guard must suppress it.
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
+    assert len(model.cancelled) == 1

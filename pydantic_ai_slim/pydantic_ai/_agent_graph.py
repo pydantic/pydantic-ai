@@ -972,6 +972,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
+
+            async def cancel_suspended_job(suspended: _messages.ModelResponse) -> None:
+                # Best-effort teardown of the server-side suspended/background job so it doesn't leak.
+                # A failing cancel (e.g. a transport error from the provider's cancel call) must not
+                # replace the exception that aborted the run — callers re-raise the original after this.
+                try:
+                    await req_ctx.model.cancel_suspended_response(suspended)
+                except Exception:
+                    pass
+
             # Loop over any suspended → complete continuation segments (Anthropic `pause_turn`,
             # OpenAI background mode), echoing each suspended response back and merging the
             # segments into one response. Only the final merged response is returned, so
@@ -987,11 +997,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     elif response.state == 'suspended':
                         iteration += 1
                         if iteration > MAX_CONTINUATIONS:
+                            # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
+                            await cancel_suspended_job(response)
                             raise exceptions.UnexpectedModelBehavior(
                                 f'Model response was suspended more than the maximum of {MAX_CONTINUATIONS} times'
                             )
                         if delay := response.suspended_retry_delay:
-                            await _agent_graph_sleep(delay)
+                            try:
+                                await _agent_graph_sleep(delay)
+                            except BaseException:
+                                # A `CancelledError` (or any error) raised while parked in the inter-poll
+                                # sleep sits outside the request's cancel guard below, so cancel the job
+                                # here too before propagating.
+                                await cancel_suspended_job(response)
+                                raise
                         messages = [*req_ctx.messages, response]
                     else:
                         return response
@@ -1005,13 +1024,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
                         # suspended/background job before letting any of them propagate so it doesn't leak.
                         if response is not None:
-                            try:
-                                await req_ctx.model.cancel_suspended_response(response)
-                            except Exception:
-                                # Best-effort: a failing cancel (e.g. a transport error from the
-                                # provider's cancel call) must not replace the exception that aborted
-                                # the run. The `raise` below re-raises that original exception.
-                                pass
+                            await cancel_suspended_job(response)
                         raise
 
                     new_response = _narrow_tool_call_parts(new_response, req_ctx.model_request_parameters)

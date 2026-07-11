@@ -14,6 +14,7 @@ the server-side job without requesting further segments.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -22,10 +23,10 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, set_agent_graph_sleep
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -526,6 +527,58 @@ async def test_nonstream_continuation_cancel_failure_preserves_original_error() 
         await agent.run('go')
 
     assert model.cancel_attempts == 1
+
+
+class _RecordingCancelModel(WrapperModel):
+    """A `WrapperModel` that records every `cancel_suspended_response` call."""
+
+    def __init__(self, wrapped: Model) -> None:
+        super().__init__(wrapped)
+        self.cancelled: list[ModelResponse] = []
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        self.cancelled.append(response)
+
+
+async def test_nonstream_cancel_during_retry_sleep_cancels_job() -> None:
+    """A cancellation during the inter-poll retry sleep cancels the suspended job and propagates the error.
+
+    The sleep between continuation polls sits outside the request's cancel guard, so a `CancelledError`
+    raised while parked in it must still tear down the server-side job before propagating, or the
+    background job leaks.
+    """
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=0.5)
+
+    model = _RecordingCancelModel(FunctionModel(fn))
+    agent = Agent(model)
+
+    async def _cancel_during_sleep(delay: float) -> None:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError), set_agent_graph_sleep(_cancel_during_sleep):
+        await agent.run('go')
+
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].state == 'suspended'
+
+
+async def test_nonstream_max_continuations_cancels_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hitting the max-continuations limit cancels the still-suspended job before raising, so it doesn't leak."""
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 2)
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    model = _RecordingCancelModel(FunctionModel(fn))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum'):
+        await agent.run('go')
+
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].state == 'suspended'
 
 
 async def test_error_on_first_streamed_segment_propagates() -> None:

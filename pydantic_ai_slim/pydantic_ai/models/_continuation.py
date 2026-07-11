@@ -85,8 +85,8 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     If the model changed between responses, replace entirely (incompatible responses should not be merged).
     Otherwise, accumulate parts, sum usage, and use other fields from the new response.
 
-    Either way, `provider_details` accumulate across the turn's segments (latest-wins) so turn-scoped
-    metadata a later segment omits isn't lost — see below.
+    Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
+    so turn-scoped data a later segment omits isn't lost — see below.
     """
     if merge_mode(existing, new) == 'replace':
         merged = new
@@ -102,13 +102,17 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         )
 
     # A turn's provider metadata accumulates across its segments. Turn-scoped identifiers — OpenAI
-    # `background`/`conversation_id`, Anthropic `container_id` — are only stamped on segments whose
-    # payload carries them, so a resumed or interrupted segment can omit one an earlier segment set.
-    # Merge latest-wins (`new` overrides) so they survive into the merged response; e.g.
-    # `cancel_suspended_response` relies on OpenAI's `background` marker to reach the server-side job.
+    # `background`/`conversation_id`, Anthropic `container_id` in `provider_details`, and the
+    # `FallbackModel` continuation pin in `metadata` — are only stamped on segments whose payload
+    # carries them, so a resumed or interrupted segment (e.g. a mid-flight cancel snapshot, whose
+    # in-flight segment hasn't stamped the pin yet) can omit one an earlier segment set. Merge
+    # latest-wins (`new` overrides) so they survive into the merged response; e.g.
+    # `cancel_suspended_response` relies on OpenAI's `background` marker and the `FallbackModel` pin
+    # to reach the server-side job.
     if existing.provider_details:
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
-
+    if existing.metadata:
+        merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
     return merged
 
 
@@ -165,6 +169,21 @@ class _ContinuationStreamedResponse(StreamedResponse):
             self._event_iterator = self._iterator_with_cancel_guard(self._segment_iterator)
         return self._event_iterator
 
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.
+
+        The cancel-guard tears the current segment down via its `close_stream()`, so the transport
+        error it raises is whatever that sub's transport produces — httpx for most providers, but
+        botocore (Bedrock) or grpc (xAI) for others, which each report their own types via an
+        override. Consult the in-flight sub (`_current_sub` is still set at exception time) on top of
+        the httpx default, so a non-httpx teardown error is suppressed into a clean `'interrupted'`
+        stop rather than escaping to the consumer.
+        """
+        errors = super().get_stream_cancel_errors()
+        if self._current_sub is not None:
+            errors = (*errors, *self._current_sub.get_stream_cancel_errors())
+        return errors
+
     async def _iterator_with_cancel_guard(
         self, iterator: AsyncIterator[ModelResponseStreamEvent]
     ) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -195,59 +214,81 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # segment reuses this (same parts under the same id); an accumulated segment appends after
         # all prior parts. See `_segment_offset`.
         last_segment_offset = 0
-        while True:
-            if self._cancelled or self._stopped:
-                break
+        try:
+            while True:
+                if self._cancelled or self._stopped:
+                    break
 
-            if response is None:
-                messages = self.base_messages
-            elif response.state == 'suspended':
-                iteration += 1
-                if iteration > self.max_continuations:
-                    raise UnexpectedModelBehavior(
-                        f'Model response was suspended more than the maximum of {self.max_continuations} times'
-                    )
-                if delay := response.suspended_retry_delay:
-                    await self.sleep_func(delay)
-                messages = [*self.base_messages, response]
-            else:
-                break
+                if response is None:
+                    messages = self.base_messages
+                elif response.state == 'suspended':
+                    iteration += 1
+                    if iteration > self.max_continuations:
+                        raise UnexpectedModelBehavior(
+                            f'Model response was suspended more than the maximum of {self.max_continuations} times'
+                        )
+                    if delay := response.suspended_retry_delay:
+                        await self.sleep_func(delay)
+                        # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
+                        # already tore down the server-side job; don't open the next sub-stream, which
+                        # for Anthropic `pause_turn` would actively resume generation and burn tokens.
+                        if self._cancelled or self._stopped:
+                            break
+                    messages = [*self.base_messages, response]
+                else:
+                    break
 
-            # While this sub is in flight, `_merged_response` holds the accumulator of
-            # all prior segments (excluding the current sub) so `get()` can fold in the
-            # live `sub.get()` snapshot without double-counting.
+                # While this sub is in flight, `_merged_response` holds the accumulator of
+                # all prior segments (excluding the current sub) so `get()` can fold in the
+                # live `sub.get()` snapshot without double-counting.
+                self._merged_response = response
+                # Resolved lazily on the first reindexable event, once `sub.provider_response_id`
+                # is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
+                segment_offset: int | None = None
+                with self.segment_context():
+                    async with self.model.request_stream(
+                        messages, self.model_settings, self.model_request_parameters, self.run_context
+                    ) as sub:
+                        self._current_sub = sub
+                        async for event in sub:
+                            if isinstance(event, FinalResultEvent):
+                                self.final_result_event = event
+                                yield event
+                                continue
+                            if segment_offset is None:
+                                segment_offset = self._segment_offset(response, sub, last_segment_offset)
+                            yield self._reindex(event, segment_offset)
+
+                last_segment_offset = segment_offset or 0
+
+                # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
+                # (e.g. a `FallbackModel` continuation pin) is captured.
+                sub_response = sub.get()
+                merged = sub_response if response is None else merge_responses(response, sub_response)
+
+                self._merged_response = merged
+                self._current_sub = None
+                self._usage = merged.usage
+                self.check_usage(merged.usage)
+                response = merged
+
             self._merged_response = response
-            # Resolved lazily on the first reindexable event, once `sub.provider_response_id`
-            # is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
-            segment_offset: int | None = None
-            with self.segment_context():
-                async with self.model.request_stream(
-                    messages, self.model_settings, self.model_request_parameters, self.run_context
-                ) as sub:
-                    self._current_sub = sub
-                    async for event in sub:
-                        if isinstance(event, FinalResultEvent):
-                            self.final_result_event = event
-                            yield event
-                            continue
-                        if segment_offset is None:
-                            segment_offset = self._segment_offset(response, sub, last_segment_offset)
-                        yield self._reindex(event, segment_offset)
-
-            last_segment_offset = segment_offset or 0
-
-            # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
-            # (e.g. a `FallbackModel` continuation pin) is captured.
-            sub_response = sub.get()
-            merged = sub_response if response is None else merge_responses(response, sub_response)
-
-            self._merged_response = merged
-            self._current_sub = None
-            self._usage = merged.usage
-            self.check_usage(merged.usage)
-            response = merged
-
-        self._merged_response = response
+        except GeneratorExit:
+            # Deliberate `aclose()` detach: tear the connection down without cancelling the
+            # server-side job (that stays on the `cancel()`/`close_stream()` path). Re-raise as-is.
+            raise
+        except BaseException:
+            # A later segment failed (transport error, `check_usage` raising, or the max-continuations
+            # raise) with a suspended job in hand. The non-streaming continuation loop cancels the
+            # server-side job on exactly this class of failure; mirror it so streaming doesn't leak the
+            # job (which history would otherwise record as unresumable and uncancellable). Skip when a
+            # deliberate `cancel()`/`close_stream()` is already tearing things down — it cancels itself.
+            if response is not None and response.state == 'suspended' and not (self._cancelled or self._stopped):
+                try:
+                    await self.model.cancel_suspended_response(response)
+                except Exception:
+                    pass
+            raise
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
