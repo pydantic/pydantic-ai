@@ -1353,6 +1353,8 @@ assert any(
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
 
+    `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
+
 ## Agent Specs
 
 Agents can also be defined declaratively in YAML or JSON using [agent specs](agent-spec.md). This separates agent configuration from application code:
