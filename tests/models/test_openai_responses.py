@@ -1,5 +1,6 @@
 import json
 import re
+import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -57,11 +59,12 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import APIConnectionError, AsyncOpenAI
+    from openai import APIConnectionError, AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
@@ -83,7 +86,9 @@ with try_import() as imports_successful:
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -161,6 +166,222 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'expected_reasoning'),
+    [
+        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard'}),
+        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro'}),
+        (
+            {
+                'openai_reasoning_effort': 'high',
+                'openai_reasoning_mode': 'pro',
+                'openai_reasoning_summary': 'concise',
+            },
+            {'effort': 'high', 'mode': 'pro', 'summary': 'concise'},
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_mode(
+    allow_model_requests: None,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_reasoning: dict[str, str],
+) -> None:
+    """Not a VCR test: this pins the exact typed `reasoning` request object."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model=model, model_settings=model_settings).run('Solve this carefully.')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
+
+
+async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -> None:
+    """Not a VCR test: exact request kwargs prove the OpenRouter Responses profile enables mode."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+
+
+async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> None:
+    """Not a VCR test: exact request kwargs prove the Azure GPT-5.6 profile enables mode."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+    )
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
+    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+):
+    """Not a VCR test: unsupported paths must omit `reasoning.mode` before sending."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel('openai/gpt-5.4', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
+
+    assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
+
+
+async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: the real GPT-5.6 Responses API accepts `reasoning.mode='pro'` end to end.
+
+    The mock tests above pin the request shape; this records the real request and response so the
+    `reasoning.mode` wire contract is validated against the provider. The request-body assertion
+    guards against a serialization regression that the cassette matcher would not catch on its own.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_mode='pro')
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
+
+
+async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: the real GPT-5.6 API accepts sampling params while reasoning is off.
+
+    GPT-5.6 reasons by default but accepts `effort='none'`, and in that mode honors sampling
+    parameters — the fact behind `openai_supports_reasoning_effort_none=True` in its profile.
+    The request-body assertion proves `temperature` was actually sent rather than dropped.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='none', temperature=0.5)
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    request_body = single_request_body(vcr)
+    assert request_body['reasoning'] == snapshot({'effort': 'none'})
+    assert request_body['temperature'] == 0.5
+
+
+async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: GPT-5.5 reasons by default, so sampling params must be dropped when no effort is set.
+
+    The live API rejects `temperature` on gpt-5.5 unless `effort='none'` is sent — i.e.
+    `openai_reasoning_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
+    The request-body assertion proves `temperature` was dropped so the request succeeds.
+    """
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert 'temperature' not in single_request_body(vcr)
+
+
+@pytest.mark.parametrize(
+    ('settings', 'temperature_kept'),
+    [
+        # GPT-5.6 reasons on by default at 'medium', so an omitted effort drops sampling params.
+        ({'temperature': 0.5}, False),
+        # `effort='none'` turns reasoning off, so sampling params are kept (real API accepts them).
+        ({'temperature': 0.5, 'openai_reasoning_effort': 'none'}, True),
+        # An active effort drops sampling params.
+        ({'temperature': 0.5, 'openai_reasoning_effort': 'low'}, False),
+    ],
+)
+async def test_openai_responses_gpt_5_6_sampling_params(
+    allow_model_requests: None, settings: 'OpenAIResponsesModelSettings', temperature_kept: bool
+) -> None:
+    """Not a VCR test: pins GPT-5.6 sampling-param handling before the request is sent.
+
+    GPT-5.6 defaults to reasoning on at 'medium' yet accepts `effort='none'`. The probe against the
+    real API confirmed sampling is rejected while reasoning is active and accepted when it is off;
+    this pins that pydantic-ai drops/keeps `temperature` to match, which a cassette would not verify.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        await Agent(model=model, model_settings=settings).run('Hello')
+
+    temperature = get_mock_responses_kwargs(mock_client)[0].get('temperature', omit)
+    warned = any('Sampling parameters' in str(w.message) for w in caught)
+    if temperature_kept:
+        assert temperature == 0.5
+        assert not warned
+    else:
+        assert temperature is omit
+        assert warned
 
 
 async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
@@ -13051,6 +13272,7 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
+    assert openai_model_profile('gpt-5.6-sol').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
     assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True

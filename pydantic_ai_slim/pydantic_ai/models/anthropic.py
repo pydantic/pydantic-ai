@@ -264,6 +264,7 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
@@ -798,7 +799,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
@@ -858,10 +859,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         model_settings: AnthropicModelSettings,
         anthropic_profile: AnthropicModelProfile,
+        messages: list[ModelMessage],
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set
+        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set,
+        auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
         and ensuring `User-Agent` is set.
         """
         extra_headers = dict(model_settings.get('extra_headers', {}))
@@ -883,7 +886,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
+        if self._messages_use_anthropic_uploaded_file(messages):
+            betas.add(_ANTHROPIC_FILES_API_BETA)
+
         return betas, extra_headers
+
+    def _messages_use_anthropic_uploaded_file(self, messages: list[ModelMessage]) -> bool:
+        """Whether any normalized message contains an Anthropic-hosted `UploadedFile`.
+
+        Used to gate auto-attachment of the `files-api-2025-04-14` beta header.
+        Mirrors the per-item `provider_name == self.system` check the request
+        mappers (`_map_user_prompt`, `_map_message`'s `ToolReturnPart` branch)
+        already perform — so the beta is added exactly when the wire shape
+        requires it. `UploadedFile`s for other providers are intentionally
+        ignored here; they will raise the existing `UserError` later in the
+        request-mapping path.
+        """
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                    for item in part.content:
+                        if isinstance(item, UploadedFile) and item.provider_name == self.system:
+                            return True
+                elif isinstance(part, ToolReturnPart):
+                    for item in part.content_items(mode='raw'):
+                        if isinstance(item, UploadedFile) and item.provider_name == self.system:
+                            return True
+        return False
 
     def _effective_speed(
         self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
@@ -970,7 +1001,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)

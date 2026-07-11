@@ -47,6 +47,11 @@ def _replace_run_context(
                 # plus the static capability set, so it adds no entropy the two fields above don't.
                 'loaded_capability_ids': sorted(value.loaded_capability_ids),
                 'discovered_tool_names': sorted(value.discovered_tool_names),
+                # A tool or capability may read `usage_limits` to fork its behavior (e.g. budget
+                # disclosure), so two runs identical except for their limits must not share a cache
+                # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
+                # hash it by value; `None` (bare/synthetic context) hashes distinctly.
+                'usage_limits': value.usage_limits,
             }
 
     return inputs
