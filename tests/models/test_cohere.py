@@ -988,6 +988,41 @@ async def test_stream_request_non_http_error(allow_model_requests: None) -> None
     assert exc_info.value.model_name == 'command-r'
 
 
+async def test_stream_request_status_error_mid_stream(allow_model_requests: None) -> None:
+    """Regression: `chat_stream()` returns an async iterator without making any request, so an
+    `ApiError` from the underlying HTTP call only ever surfaces once the stream is iterated, not
+    when it's opened. It must still be mapped to `ModelHTTPError` like the call-opening case above.
+    """
+    events: list[MockStreamEvent] = [
+        *_text_stream_events(['hello '])[:-1],  # content-start + content-delta, no message-end yet
+        ApiError(status_code=500, body={'error': 'test error'}),
+    ]
+    mock_client = MockAsyncClientV2.create_stream_mock(events)
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text(debounce_by=None):
+                pass
+    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+
+
+async def test_stream_request_non_http_error_mid_stream(allow_model_requests: None) -> None:
+    """Same as above but for the non-HTTP (`status_code=None`) branch of the error mapping."""
+    events: list[MockStreamEvent] = [
+        *_text_stream_events(['hello '])[:-1],
+        ApiError(status_code=None, body={'error': 'connection error'}),
+    ]
+    mock_client = MockAsyncClientV2.create_stream_mock(events)
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text(debounce_by=None):
+                pass
+    assert exc_info.value.model_name == 'command-r'
+
+
 async def test_stream_event_edge_cases():
     """Regression: boundary conditions in `_get_event_iterator` that must yield no part event."""
     events: list[Any] = [
