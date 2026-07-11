@@ -1,11 +1,24 @@
-"""Context capability: discover and load a repo's accumulated context engineering."""
+"""Deprecated import location for `pydantic_ai_harness.context`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.context._capability import RepoContext
-from pydantic_ai_harness.experimental.context._inventory import AgentContextInventory, AssetRoot
-from pydantic_ai_harness.experimental.context._loader import ContextFile
-from pydantic_ai_harness.experimental.context._toolset import RepoContextToolset
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.context` instead.
+"""
 
-warn_experimental('context')
+from pydantic_ai_harness.context import (
+    AgentContextInventory,
+    AssetRoot,
+    ContextFile,
+    RepoContext,
+    RepoContextToolset,
+)
+from pydantic_ai_harness.experimental._warn import warn_moved
 
-__all__ = ['AgentContextInventory', 'AssetRoot', 'ContextFile', 'RepoContext', 'RepoContextToolset']
+warn_moved('context', 'context')
+
+__all__ = [
+    'AgentContextInventory',
+    'AssetRoot',
+    'ContextFile',
+    'RepoContext',
+    'RepoContextToolset',
+]

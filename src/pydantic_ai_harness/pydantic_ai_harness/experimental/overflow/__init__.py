@@ -1,30 +1,26 @@
-"""Overflow capability: reduce oversized tool returns at production time.
+"""Deprecated import location for `pydantic_ai_harness.overflowing_tool_output`.
 
-`OverflowingToolOutput` intercepts a tool return when it is produced and reduces it --
-truncating, spilling to a queryable file, or summarizing -- so an oversized payload does
-not persist in history and get re-sent on every later model request. Combine the three
-modes through an ordered list of size `bands`.
-
-Spilled payloads are read back on demand through the registered `read_tool_result` tool;
-the `OverflowStore` protocol is the seam for a durable backend (the local-file default
-ships for single-process runs).
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.overflowing_tool_output` instead.
 """
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.overflow._bands import (
+from pydantic_ai_harness.experimental._warn import warn_moved
+from pydantic_ai_harness.overflowing_tool_output import (
+    READ_TOOL_NAME,
     Action,
     Band,
+    LocalFileStore,
+    OverflowingToolOutput,
+    OverflowStore,
     Passthrough,
     Spill,
     Summarize,
     SummarizeFunc,
     Truncate,
+    TruncationStrategy,
 )
-from pydantic_ai_harness.experimental.overflow._capability import READ_TOOL_NAME, OverflowingToolOutput
-from pydantic_ai_harness.experimental.overflow._payload import TruncationStrategy
-from pydantic_ai_harness.experimental.overflow._store import LocalFileStore, OverflowStore
 
-warn_experimental('overflow')
+warn_moved('overflow', 'overflowing_tool_output')
 
 __all__ = [
     'READ_TOOL_NAME',

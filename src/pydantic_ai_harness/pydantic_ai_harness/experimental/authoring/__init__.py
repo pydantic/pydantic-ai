@@ -1,16 +1,21 @@
-"""Runtime capability authoring: let an agent write, validate, and register real capabilities."""
+"""Deprecated import location for `pydantic_ai_harness.runtime_authoring`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.authoring._capability import RuntimeAuthoring
-from pydantic_ai_harness.experimental.authoring._store import AuthoredCapability, CapabilityStore
-from pydantic_ai_harness.experimental.authoring._toolset import AuthoringToolset
-from pydantic_ai_harness.experimental.authoring._validate import (
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.runtime_authoring` instead.
+"""
+
+from pydantic_ai_harness.experimental._warn import warn_moved
+from pydantic_ai_harness.runtime_authoring import (
+    AuthoredCapability,
+    AuthoringToolset,
+    CapabilityStore,
     CapabilityValidationError,
+    RuntimeAuthoring,
     load_capability_instance,
     validate_capability_file,
 )
 
-warn_experimental('authoring')
+warn_moved('authoring', 'runtime_authoring')
 
 __all__ = [
     'AuthoredCapability',

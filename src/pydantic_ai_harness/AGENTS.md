@@ -44,9 +44,12 @@ Before implementing or reviewing a capability change:
    signatures when needed. Do not assume a contributor's local checkout layout.
 5. Use `pydantic_ai_harness.code_mode` as the exemplar for capability shape,
    docs, tests, and public exports until another capability becomes a better
-   example. `code_mode` is a released top-level capability; new capabilities
-   start under `pydantic_ai_harness.experimental` (see
-   `agent_docs/capability-authoring.md`, "Experimental Vs Released Exports").
+   example. Capabilities live in their own top-level submodule
+   `pydantic_ai_harness/<name>/` (module name = capability name; one module per
+   capability or strategy) and are not re-exported from the root `__init__.py`,
+   so each keeps its own optional dependencies. The `experimental` tier is
+   retired; ACP is the sole remaining experimental capability (see
+   `agent_docs/capability-authoring.md`, "Capability Submodules And Exports").
 
 ## Capabilities API reference
 

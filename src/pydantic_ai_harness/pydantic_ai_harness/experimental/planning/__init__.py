@@ -1,9 +1,22 @@
-"""Planning capability: model-owned, cache-friendly task planning for agents."""
+"""Deprecated import location for `pydantic_ai_harness.planning`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.planning._capability import Planning
-from pydantic_ai_harness.experimental.planning._toolset import PlanItem, PlanningToolset, TaskStatus
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.planning` instead.
+"""
 
-warn_experimental('planning')
+from pydantic_ai_harness.experimental._warn import warn_moved
+from pydantic_ai_harness.planning import (
+    PlanItem,
+    Planning,
+    PlanningToolset,
+    TaskStatus,
+)
 
-__all__ = ['PlanItem', 'Planning', 'PlanningToolset', 'TaskStatus']
+warn_moved('planning', 'planning')
+
+__all__ = [
+    'PlanItem',
+    'Planning',
+    'PlanningToolset',
+    'TaskStatus',
+]

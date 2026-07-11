@@ -1,12 +1,21 @@
-"""Sub-agent capability: delegate self-contained tasks to named child agents."""
+"""Deprecated import location for `pydantic_ai_harness.subagents`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.subagents._capability import SubAgents, ToolResolver
-from pydantic_ai_harness.experimental.subagents._disk import AgentOverride
-from pydantic_ai_harness.experimental.subagents._effort import MINIMUM_EFFORT_FLOOR, clamp_effort
-from pydantic_ai_harness.experimental.subagents._toolset import SubAgent, SubAgentToolset
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.subagents` instead.
+"""
 
-warn_experimental('subagents')
+from pydantic_ai_harness.experimental._warn import warn_moved
+from pydantic_ai_harness.subagents import (
+    MINIMUM_EFFORT_FLOOR,
+    AgentOverride,
+    SubAgent,
+    SubAgents,
+    SubAgentToolset,
+    ToolResolver,
+    clamp_effort,
+)
+
+warn_moved('subagents', 'subagents')
 
 __all__ = [
     'MINIMUM_EFFORT_FLOOR',

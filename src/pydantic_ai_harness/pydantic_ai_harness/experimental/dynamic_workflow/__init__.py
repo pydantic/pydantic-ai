@@ -1,13 +1,22 @@
-"""Dynamic workflow capability: orchestrate sub-agents from a sandboxed Python script."""
+"""Deprecated import location for `pydantic_ai_harness.dynamic_workflow`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.dynamic_workflow._capability import DynamicWorkflow
-from pydantic_ai_harness.experimental.dynamic_workflow._toolset import (
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.dynamic_workflow` instead.
+"""
+
+from pydantic_ai_harness.dynamic_workflow import (
+    DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
     WorkflowResourceLimits,
 )
+from pydantic_ai_harness.experimental._warn import warn_moved
 
-warn_experimental('dynamic_workflow')
+warn_moved('dynamic_workflow', 'dynamic_workflow')
 
-__all__ = ['DynamicWorkflow', 'DynamicWorkflowToolset', 'WorkflowAgent', 'WorkflowResourceLimits']
+__all__ = [
+    'DynamicWorkflow',
+    'DynamicWorkflowToolset',
+    'WorkflowAgent',
+    'WorkflowResourceLimits',
+]

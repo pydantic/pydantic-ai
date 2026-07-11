@@ -1,9 +1,20 @@
-"""Docs capability: an on-demand tool that locates Pydantic AI documentation."""
+"""Deprecated import location for `pydantic_ai_harness.docs`.
 
-from pydantic_ai_harness.experimental._warn import warn_experimental
-from pydantic_ai_harness.experimental.docs._capability import PyaiDocs
-from pydantic_ai_harness.experimental.docs._toolset import PyaiDocsToolset, PyaiDocsTopic
+This capability graduated out of `experimental`; importing from here still works but
+emits a `DeprecationWarning`. Import from `pydantic_ai_harness.docs` instead.
+"""
 
-warn_experimental('docs')
+from pydantic_ai_harness.docs import (
+    PyaiDocs,
+    PyaiDocsToolset,
+    PyaiDocsTopic,
+)
+from pydantic_ai_harness.experimental._warn import warn_moved
 
-__all__ = ['PyaiDocs', 'PyaiDocsToolset', 'PyaiDocsTopic']
+warn_moved('docs', 'docs')
+
+__all__ = [
+    'PyaiDocs',
+    'PyaiDocsToolset',
+    'PyaiDocsTopic',
+]

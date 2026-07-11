@@ -21,6 +21,14 @@ _PACKAGE = _ROOT / 'pydantic_ai_harness'
 _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
 
 
+def _is_deprecation_shim(package: Path) -> bool:
+    """A package left at a moved capability's old path re-exports it and calls `warn_moved`.
+
+    Such shims carry no docs of their own, so they are excluded from the capability tables.
+    """
+    return 'warn_moved(' in (package / '__init__.py').read_text(encoding='utf-8')
+
+
 def _capability_packages() -> list[Path]:
     """Directories that are importable packages and represent a capability's public surface."""
     candidates: list[Path] = []
@@ -31,7 +39,7 @@ def _capability_packages() -> list[Path]:
             # A non-package dir under the capability roots does not occur in a clean tree, so this guard stays uncovered.
             if not (child / '__init__.py').exists():  # pragma: no cover
                 continue
-            if child in _NAMESPACE_PACKAGES:
+            if child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
                 continue
             candidates.append(child)
     return candidates

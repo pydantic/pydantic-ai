@@ -36,18 +36,33 @@ Do **not** use this skill for:
 `CodeMode` has a full reference below; it is the flagship capability and the one this skill goes deep on.
 The rest ship today and each has its own README with API and examples.
 
-**Stable** (imported from `pydantic_ai_harness`):
+Each capability lives in its own submodule and is imported from there
+(`from pydantic_ai_harness.<module> import ...`). Capabilities are not importable from the top-level
+`pydantic_ai_harness` package by design, so each one keeps its own optional dependencies isolated.
+`CodeMode`, `FileSystem`, `Shell`, and `ManagedPrompt` also have top-level re-exports (importable directly
+from `pydantic_ai_harness`).
 
-| Capability | Description | Reference |
+APIs are subject to change between releases; breaking changes ship deprecation warnings where practical.
+
+| Capability | Module | Description |
 |---|---|---|
-| `CodeMode` | Wraps eligible tools into a single sandboxed `run_code` tool so the model orchestrates them in Python | [Code Mode](./references/CODE-MODE.md) |
-| `FileSystem` | Read, write, edit, and search files under a root directory, with traversal prevention | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/filesystem) |
-| `Shell` | Run commands in a subprocess with allowlists, a default denylist, timeouts, and env masking | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/shell) |
-| `ManagedPrompt` | Back an agent's instructions with a Logfire-managed prompt | [README](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/logfire) |
+| `CodeMode` | `pydantic_ai_harness.code_mode` (also top-level) | Wraps eligible tools into a single sandboxed `run_code` tool so the model orchestrates them in Python -- see [Code Mode](./references/CODE-MODE.md) |
+| `FileSystem` | `pydantic_ai_harness.filesystem` (also top-level) | Read, write, edit, and search files under a root directory, with traversal prevention |
+| `Shell` | `pydantic_ai_harness.shell` (also top-level) | Run commands in a subprocess with allowlists, a default denylist, timeouts, and env masking |
+| `ManagedPrompt` | `pydantic_ai_harness.logfire` (also top-level) | Back an agent's instructions with a Logfire-managed prompt |
+| `SubAgents` | `pydantic_ai_harness.subagents` | Delegate subtasks to specialized child agents |
+| `DynamicWorkflow` | `pydantic_ai_harness.dynamic_workflow` | Orchestrate sub-agents from a model-written Python script |
+| `Planning` | `pydantic_ai_harness.planning` | Break complex tasks into structured plans before execution |
+| compaction family (`SlidingWindow`, `SummarizingCompaction`, ...) | `pydantic_ai_harness.compaction` | Trim or summarize conversation history to stay within token limits |
+| `OverflowingToolOutput` | `pydantic_ai_harness.overflowing_tool_output` | Truncate, summarize, or spill large tool outputs |
+| `RepoContext` | `pydantic_ai_harness.context` | Auto-load CLAUDE.md/AGENTS.md and repo structure |
+| `StepPersistence` | `pydantic_ai_harness.step_persistence` | Save, restore, resume, and fork run state |
+| `PyaiDocs` | `pydantic_ai_harness.docs` | On-demand `read_pyai_docs` tool for Pydantic AI docs |
+| `RuntimeAuthoring` | `pydantic_ai_harness.runtime_authoring` | Let an agent author, validate, and load real capabilities at runtime |
+| media externalization | `pydantic_ai_harness.media` | Offload large `BinaryContent` to content-addressed stores |
 
-**Experimental** (imported from `pydantic_ai_harness.experimental`, may change in any release): `SubAgents`,
-`Planning`, a compaction family (`SlidingWindow`, `SummarizingCompaction`, ...), `OverflowingToolOutput`,
-`RepoContext`, `StepPersistence`, `PyaiDocs`, `RuntimeAuthoring`, and an ACP server adapter.
+Still experimental: an ACP server adapter, imported from `pydantic_ai_harness.experimental.acp`. Importing it
+emits a `HarnessExperimentalWarning`.
 
 The full, current list with links and status is in the
 [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
