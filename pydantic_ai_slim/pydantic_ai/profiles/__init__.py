@@ -108,6 +108,9 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    supports_tool_examples: bool = False
+    """Whether the model natively supports providing structured tool examples."""
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 

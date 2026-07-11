@@ -121,6 +121,8 @@ class ToolOutput(Generic[OutputDataT]):
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    examples: list[Any] | None
+    """Example inputs demonstrating correct tool usage."""
     sequential: bool
     """Whether this output tool must run as a barrier, not overlapping with other tool calls.
 
@@ -137,6 +139,7 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        examples: list[Any] | None = None,
         sequential: bool = False,
     ):
         if max_retries is not None and max_retries < 0:
@@ -146,6 +149,7 @@ class ToolOutput(Generic[OutputDataT]):
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.examples = examples
         self.sequential = sequential
 
 

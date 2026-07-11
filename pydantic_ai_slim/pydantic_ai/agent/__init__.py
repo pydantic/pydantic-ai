@@ -2094,6 +2094,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2116,6 +2117,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2175,6 +2177,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -2202,6 +2206,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                examples=examples,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
@@ -2230,6 +2235,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2252,6 +2258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2312,6 +2319,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -2337,6 +2346,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                examples=examples,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,

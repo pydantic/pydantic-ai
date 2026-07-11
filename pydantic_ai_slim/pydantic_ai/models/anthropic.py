@@ -2119,6 +2119,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         }
         if f.strict and self.profile.get('supports_json_schema_output', False):
             tool_param['strict'] = f.strict
+
+        if f.examples and self.profile.supports_tool_examples:
+            tool_param['input_examples'] = f.examples
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
         if f.with_native == ToolSearchTool.kind:

@@ -73,6 +73,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -11256,6 +11257,30 @@ System prompt 2\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_tool_definition_examples(allow_model_requests: None):
+    examples = [{'x': 1}]
+    tool_def = ToolDefinition(name='foo', description='bar', examples=examples)
+
+    mock_client = MockAnthropic.create_mock(completion_message([], BetaUsage(input_tokens=0, output_tokens=0)))
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    mapped = m._map_tool_definition(tool_def, {})  # pyright: ignore[reportPrivateUsage]
+    assert mapped.get('input_examples') == examples
+
+
+async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain(examples=[{'x': 5}])
+    def add_one(x: int) -> int:
+        """Add one to x."""
+        return x + 1
+
+    result = await agent.run('Call the add_one tool with 5')
+    assert result.output == snapshot('The result of calling `add_one` with 5 is **6**.')
 
 
 async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):
