@@ -99,6 +99,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'ollama',
         'openrouter',
         'ovhcloud',
+        'requesty',
         'sambanova',
         'together',
         'vercel',
@@ -1056,6 +1057,10 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'requesty':
+        from .requesty import RequestyModel
+
+        return RequestyModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 

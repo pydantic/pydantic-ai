@@ -77,6 +77,7 @@ anthropic = ["anthropic>=0.108.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.45.0"]
+requesty = ["openai>=2.45.0"]
 # `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
 mistral = ["mistralai>=2.0.0,!=2.4.6"]
 bedrock = ["boto3>=1.42.63"]
