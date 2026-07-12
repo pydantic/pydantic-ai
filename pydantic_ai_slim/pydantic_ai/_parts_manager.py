@@ -72,6 +72,10 @@ class ModelResponsePartsManager:
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
+    _string_buffers: dict[int, list[str]] = field(
+        default_factory=dict[int, list[str]], init=False, repr=False, compare=False
+    )
+    """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
     """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
 
@@ -79,6 +83,33 @@ class ModelResponsePartsManager:
         self._tool_kind_by_name = {
             td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
         }
+
+    def __repr__(self) -> str:
+        self._materialize_string_buffers()
+        return (
+            f'{type(self).__qualname__}('
+            f'model_request_parameters={self.model_request_parameters!r}, '
+            f'_parts={self._parts!r}, '
+            f'_vendor_id_to_part_index={self._vendor_id_to_part_index!r})'
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is self.__class__:
+            assert isinstance(other, ModelResponsePartsManager)
+            self._materialize_string_buffers()
+            other._materialize_string_buffers()
+            return (
+                self.model_request_parameters,
+                self._parts,
+                self._vendor_id_to_part_index,
+                self._tool_kind_by_name,
+            ) == (
+                other.model_request_parameters,
+                other._parts,
+                other._vendor_id_to_part_index,
+                other._tool_kind_by_name,
+            )
+        return NotImplemented
 
     def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
         return self._tool_kind_by_name.get(tool_name)
@@ -102,6 +133,9 @@ class ModelResponsePartsManager:
         Returns:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
+        for part_index in tuple(self._string_buffers):
+            if not isinstance(self._parts[part_index], ToolCallPartDelta):
+                self._materialize_part(part_index)
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
@@ -115,7 +149,7 @@ class ModelResponsePartsManager:
         """
         part_index = self._vendor_id_to_part_index.get(vendor_id)
         if part_index is not None:
-            return self._parts[part_index]
+            return self._materialize_part(part_index)
         return None
 
     def handle_text_delta(
@@ -177,6 +211,7 @@ class ModelResponsePartsManager:
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
+                    existing_part = self._materialize_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
         if thinking_tags and content == thinking_tags[0]:
@@ -203,7 +238,19 @@ class ModelResponsePartsManager:
                 provider_name=self._resolve_provider_name(existing_text_part, provider_name),
                 provider_details=provider_details,
             )
-            self._parts[part_index] = part_delta.apply(existing_text_part)
+            updated_part = existing_text_part
+            if (
+                part_delta.provider_name is not None
+                or part_delta.provider_details is not None
+                or existing_text_part.provider_details == {}
+            ):
+                metadata_delta = replace(part_delta, content_delta='')
+                updated_part = metadata_delta.apply(existing_text_part)
+            elif existing_text_part.provider_details:
+                updated_part = replace(existing_text_part, provider_details=existing_text_part.provider_details.copy())
+            if content:
+                self._buffer_string_delta(part_index, existing_text_part.content, content)
+            self._parts[part_index] = updated_part
             yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def handle_thinking_delta(
@@ -251,6 +298,7 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ThinkingPart):
+                    existing_part = self._materialize_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
                 existing_thinking_part_and_index = existing_part, part_index
 
@@ -286,7 +334,34 @@ class ModelResponsePartsManager:
                 provider_name=self._resolve_provider_name(existing_thinking_part, provider_name),
                 provider_details=provider_details,
             )
-            self._parts[part_index] = part_delta.apply(existing_thinking_part)
+            updated_part = existing_thinking_part
+            if (
+                signature is not None
+                or part_delta.provider_name is not None
+                or provider_details is not None
+                or existing_thinking_part.provider_details == {}
+            ):
+                metadata_delta = replace(part_delta, content_delta=None)
+                if callable(provider_details):
+                    buffer = self._string_buffers.get(part_index)
+                    buffer_length = len(buffer) if buffer is not None else 0
+                    resolved_details = provider_details(existing_thinking_part.provider_details)
+                    metadata_delta = replace(metadata_delta, provider_details=resolved_details)
+                    updated_part = metadata_delta.apply(existing_thinking_part)
+                    if buffer is None:
+                        self._string_buffers.pop(part_index, None)
+                    else:
+                        del buffer[buffer_length:]
+                        self._string_buffers[part_index] = buffer
+                else:
+                    updated_part = metadata_delta.apply(existing_thinking_part)
+            elif existing_thinking_part.provider_details:
+                updated_part = replace(
+                    existing_thinking_part, provider_details=existing_thinking_part.provider_details.copy()
+                )
+            if content:
+                self._buffer_string_delta(part_index, updated_part.content, content)
+            self._parts[part_index] = updated_part
             yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def handle_tool_call_delta(
@@ -344,6 +419,7 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart):
+                    existing_part = self._materialize_part(part_index)
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 
@@ -373,9 +449,20 @@ class ModelResponsePartsManager:
                 provider_name=self._resolve_provider_name(existing_part, provider_name),
                 provider_details=provider_details,
             )
-            updated_part = delta.apply(existing_part)
-            if isinstance(updated_part, ToolCallPart):
-                updated_part = self._typed_call_part(updated_part)
+            buffer = self._string_buffers.get(part_index)
+            buffer_length = len(buffer) if buffer is not None else 0
+            try:
+                updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
+                if isinstance(updated_part, ToolCallPart):
+                    updated_part = self._typed_call_part(updated_part)
+            except Exception:
+                self._parts[part_index] = existing_part
+                if buffer is None:
+                    self._string_buffers.pop(part_index, None)
+                else:
+                    del buffer[buffer_length:]
+                    self._string_buffers[part_index] = buffer
+                raise
             self._parts[part_index] = updated_part
             if isinstance(updated_part, ToolCallPart | NativeToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
@@ -431,9 +518,10 @@ class ModelResponsePartsManager:
         else:
             # vendor_part_id is provided, so find and overwrite or create a new ToolCallPart.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], ToolCallPart):
+            existing_part = self._parts[maybe_part_index] if maybe_part_index is not None else None
+            if maybe_part_index is not None and isinstance(existing_part, ToolCallPart):
                 new_part_index = maybe_part_index
-                self._parts[new_part_index] = new_part
+                self._replace_part(new_part_index, new_part)
             else:
                 new_part_index = self._append_part(new_part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
@@ -462,9 +550,10 @@ class ModelResponsePartsManager:
         else:
             # vendor_part_id is provided, so find and overwrite or create a new part.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], type(part)):
+            existing_part = self._parts[maybe_part_index] if maybe_part_index is not None else None
+            if maybe_part_index is not None and isinstance(existing_part, type(part)):
                 new_part_index = maybe_part_index
-                self._parts[new_part_index] = part
+                self._replace_part(new_part_index, part)
             else:
                 new_part_index = self._append_part(part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
@@ -482,6 +571,108 @@ class ModelResponsePartsManager:
         if vendor_part_id is not None:
             self._vendor_id_to_part_index[vendor_part_id] = new_index
         return new_index
+
+    def _apply_tool_call_delta(
+        self,
+        part_index: int,
+        existing_part: ToolCallPartDelta | ToolCallPart | NativeToolCallPart,
+        delta: ToolCallPartDelta,
+    ) -> ToolCallPartDelta | ToolCallPart | NativeToolCallPart:
+        """Apply a tool call delta while buffering string arguments."""
+        args = delta.args_delta
+        if not isinstance(args, str):
+            should_materialize = isinstance(args, dict) or (
+                isinstance(existing_part, ToolCallPartDelta) and delta.tool_name_delta is not None
+            )
+            if should_materialize and part_index in self._string_buffers:
+                materialized_part = self._materialize_part(part_index)
+                if not isinstance(
+                    materialized_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart
+                ):  # pragma: no cover
+                    raise AssertionError(f'Expected a tool call, got {materialized_part!r}')
+                existing_part = materialized_part
+            return delta.apply(existing_part)
+
+        if isinstance(existing_part, ToolCallPartDelta):
+            current_args = existing_part.args_delta
+            if isinstance(current_args, dict):
+                return delta.apply(existing_part)
+
+            if delta.tool_name_delta is not None:
+                materialized_part = self._materialize_part(part_index)
+                if not isinstance(materialized_part, ToolCallPartDelta):  # pragma: no cover
+                    raise AssertionError(f'Expected an incomplete tool call, got {materialized_part!r}')
+                existing_part = materialized_part
+                return delta.apply(existing_part)
+
+            if not args and part_index not in self._string_buffers:
+                return delta.apply(existing_part)
+
+            updated_part = existing_part
+            if delta.tool_call_id or delta.provider_name or delta.provider_details:
+                metadata_delta = replace(delta, args_delta=None)
+                updated_part = metadata_delta.apply(existing_part)
+                if not isinstance(updated_part, ToolCallPartDelta):  # pragma: no cover
+                    raise AssertionError(f'Expected an incomplete tool call, got {updated_part!r}')
+            self._buffer_string_delta(part_index, current_args, args)
+            return updated_part
+
+        current_args = existing_part.args
+        if isinstance(current_args, dict):
+            return delta.apply(existing_part)
+
+        if not args and part_index not in self._string_buffers:
+            return delta.apply(existing_part)
+
+        updated_part = existing_part
+        if delta.tool_name_delta or delta.tool_call_id or delta.provider_name or delta.provider_details:
+            metadata_delta = replace(delta, args_delta=None)
+            updated_part = metadata_delta.apply(existing_part)
+        self._buffer_string_delta(part_index, current_args, args)
+        return updated_part
+
+    def _buffer_string_delta(self, part_index: int, current_value: str | None, delta: str) -> None:
+        """Buffer a string append while preserving a `None`-to-empty transition."""
+        if not delta:
+            return
+        buffer = self._string_buffers.get(part_index)
+        if buffer is None:
+            buffer = self._string_buffers[part_index] = [current_value or '']
+        buffer.append(delta)
+
+    def _materialize_part(self, part_index: int) -> ManagedPart:
+        """Materialize buffered string deltas for one part."""
+        part = self._parts[part_index]
+        buffer = self._string_buffers.pop(part_index, None)
+        if buffer is None:
+            return part
+
+        value = ''.join(buffer)
+        if isinstance(part, TextPart | ThinkingPart):
+            part = replace(part, content=value)
+        elif isinstance(part, ToolCallPartDelta):
+            if isinstance(part.args_delta, dict):  # pragma: no cover
+                raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
+            part = replace(part, args_delta=value)
+        elif isinstance(part, ToolCallPart | NativeToolCallPart):
+            if isinstance(part.args, dict):  # pragma: no cover
+                raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
+            part = replace(part, args=value)
+        else:  # pragma: no cover
+            raise AssertionError(f'Cannot materialize string deltas for {part!r}')
+
+        self._parts[part_index] = part
+        return part
+
+    def _materialize_string_buffers(self) -> None:
+        """Materialize all buffered strings before returning a snapshot."""
+        for part_index in tuple(self._string_buffers):
+            self._materialize_part(part_index)
+
+    def _replace_part(self, part_index: int, part: ManagedPart) -> None:
+        """Fully replace a part and discard any buffered deltas."""
+        self._string_buffers.pop(part_index, None)
+        self._parts[part_index] = part
 
     def _latest_part_if_of_type(self, *part_types: type[PartT]) -> tuple[PartT, int] | None:
         """Get the latest part and its index if it's an instance of the given type(s)."""
@@ -515,7 +706,19 @@ class ModelResponsePartsManager:
             provider_name=self._resolve_provider_name(existing_part, provider_name),
             provider_details=provider_details,
         )
-        self._parts[part_index] = part_delta.apply(existing_part)
+        updated_part = existing_part
+        if (
+            part_delta.provider_name is not None
+            or part_delta.provider_details is not None
+            or existing_part.provider_details == {}
+        ):
+            metadata_delta = replace(part_delta, content_delta=None)
+            updated_part = metadata_delta.apply(existing_part)
+        elif existing_part.provider_details:
+            updated_part = replace(existing_part, provider_details=existing_part.provider_details.copy())
+        if content:
+            self._buffer_string_delta(part_index, existing_part.content, content)
+        self._parts[part_index] = updated_part
         yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:

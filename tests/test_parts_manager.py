@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     NativeToolCallPart,
@@ -80,6 +81,329 @@ def test_handle_dovetailed_text_deltas():
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello world', part_kind='text'), TextPart(content='goodbye Samuel', part_kind='text')]
     )
+
+
+def test_string_deltas_materialize_on_reads_and_replacement(mocker: MockerFixture):
+    """Internal buffer lifecycle and replacement are not observable in provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    next(
+        manager.handle_text_delta(
+            vendor_part_id='text', content='text', provider_name='provider', provider_details={'first': 1}
+        )
+    )
+    next(manager.handle_thinking_delta(vendor_part_id='thinking', content='thinking'))
+    manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool', args='{"value":', tool_call_id='call')
+
+    for suffix in ('-one', '-two', '-three'):
+        next(
+            manager.handle_text_delta(
+                vendor_part_id='text',
+                content=suffix,
+                provider_name='provider',
+                provider_details={suffix: True},
+            )
+        )
+        next(manager.handle_thinking_delta(vendor_part_id='thinking', content=suffix))
+        manager.handle_tool_call_delta(vendor_part_id='tool', args=suffix)
+
+    assert manager.get_part_by_vendor_id('text') == TextPart(
+        'text-one-two-three',
+        provider_name='provider',
+        provider_details={'first': 1, '-one': True, '-two': True, '-three': True},
+    )
+    snapshot_parts = manager.get_parts()
+    assert snapshot_parts == [
+        TextPart(
+            'text-one-two-three',
+            provider_name='provider',
+            provider_details={'first': 1, '-one': True, '-two': True, '-three': True},
+        ),
+        ThinkingPart('thinking-one-two-three'),
+        ToolCallPart('tool', '{"value":-one-two-three', 'call'),
+    ]
+
+    next(manager.handle_text_delta(vendor_part_id='text', content='-discarded'))
+    assert snapshot_parts[0] == TextPart(
+        'text-one-two-three',
+        provider_name='provider',
+        provider_details={'first': 1, '-one': True, '-two': True, '-three': True},
+    )
+    replacement = TextPart('replacement')
+    mocker.patch.object(manager, '_materialize_part', side_effect=AssertionError('replacement materialized old part'))
+    assert manager.handle_part(vendor_part_id='text', part=replacement) == PartStartEvent(index=0, part=replacement)
+    assert manager.get_parts() == [
+        replacement,
+        ThinkingPart('thinking-one-two-three'),
+        ToolCallPart('tool', '{"value":-one-two-three', 'call'),
+    ]
+
+
+def _emit_string_part_delta(manager: ModelResponsePartsManager, part_kind: str, content: str, **kwargs: Any) -> Any:
+    if part_kind == 'text':
+        return next(manager.handle_text_delta(vendor_part_id='part', content=content, **kwargs))
+    if part_kind == 'thinking':
+        return next(manager.handle_thinking_delta(vendor_part_id='part', content=content, **kwargs))
+    return next(
+        manager.handle_text_delta(
+            vendor_part_id='part', content=content, thinking_tags=('<think>', '</think>'), **kwargs
+        )
+    )
+
+
+@pytest.mark.parametrize('part_kind', ['text', 'thinking', 'embedded-thinking'])
+def test_content_only_delta_matches_provider_details_normalization(part_kind: str):
+    """Empty metadata normalization is not observable in provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    embedded = part_kind == 'embedded-thinking'
+    initial_content = '<think>' if embedded else 'a'
+    initial_part: TextPart | ThinkingPart = (
+        TextPart('a', provider_details={})
+        if part_kind == 'text'
+        else ThinkingPart('' if embedded else 'a', provider_details={})
+    )
+    delta_type = TextPartDelta if part_kind == 'text' else ThinkingPartDelta
+    start_event = _emit_string_part_delta(manager, part_kind, initial_content, provider_details={})
+
+    normalized_delta = delta_type(content_delta='b')
+    pure_content_delta = delta_type(content_delta='c')
+    metadata_delta = delta_type(content_delta='d', provider_name='provider', provider_details={'metadata': True})
+    expected_part = normalized_delta.apply(initial_part)
+    expected_final_part = metadata_delta.apply(pure_content_delta.apply(expected_part))
+
+    assert start_event == PartStartEvent(index=0, part=initial_part)
+    assert _emit_string_part_delta(manager, part_kind, 'b') == PartDeltaEvent(index=0, delta=normalized_delta)
+    assert expected_part.provider_details is None
+    assert manager.get_parts() == [expected_part]
+    assert manager.get_part_by_vendor_id('part') == expected_part
+    assert _emit_string_part_delta(manager, part_kind, 'c') == PartDeltaEvent(index=0, delta=pure_content_delta)
+    assert _emit_string_part_delta(
+        manager, part_kind, 'd', provider_name='provider', provider_details={'metadata': True}
+    ) == PartDeltaEvent(index=0, delta=metadata_delta)
+    assert manager.get_parts() == [expected_final_part]
+
+
+@pytest.mark.parametrize('part_kind', ['text', 'thinking', 'embedded-thinking'])
+def test_content_delta_keeps_previous_provider_details_snapshot_isolated(part_kind: str):
+    """Mutable provider metadata aliasing is not observable in provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    initial_content = '<think>' if part_kind == 'embedded-thinking' else 'a'
+    start_event = _emit_string_part_delta(manager, part_kind, initial_content, provider_details={'stable': 1})
+    _emit_string_part_delta(manager, part_kind, 'b')
+
+    assert isinstance(start_event, PartStartEvent)
+    assert start_event.part.provider_details is not None
+    start_event.part.provider_details['stable'] = 99
+    assert manager.get_parts()[0].provider_details == {'stable': 1}
+
+
+def test_thinking_content_with_callable_metadata_stays_buffered(mocker: MockerFixture):
+    """The combined callable/content path is not produced by current provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    next(manager.handle_thinking_delta(vendor_part_id='part', content='a', provider_details={'count': 0}))
+    materialize_spy = mocker.spy(manager, '_materialize_part')
+
+    def increment(details: dict[str, Any] | None) -> dict[str, Any]:
+        return {'count': (details or {}).get('count', 0) + 1}
+
+    for _ in range(2_048):
+        next(manager.handle_thinking_delta(vendor_part_id='part', content='b', provider_details=increment))
+
+    assert materialize_spy.call_count == 0
+    assert manager.get_parts() == [ThinkingPart('a' + 'b' * 2_048, provider_details={'count': 2_048})]
+
+
+@pytest.mark.parametrize('size', [8_192, 16_384])
+def test_incomplete_tool_call_string_arguments_are_buffered(mocker: MockerFixture, size: int):
+    """Private apply/materialization counts cannot be asserted through a provider cassette."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    apply_spy = mocker.spy(ToolCallPartDelta, 'apply')
+    materialize_spy = mocker.spy(manager, '_materialize_part')
+
+    for _ in range(size):
+        assert manager.handle_tool_call_delta(vendor_part_id='tool', args='x') is None
+        assert manager.get_parts() == []
+
+    assert apply_spy.call_count == 0
+    assert materialize_spy.call_count == 0
+    assert (
+        manager.handle_tool_call_delta(
+            vendor_part_id='tool',
+            tool_call_id='call',
+            provider_name='provider',
+            provider_details={'first': True},
+        )
+        is None
+    )
+    assert apply_spy.call_count == 1
+
+    event = manager.handle_tool_call_delta(
+        vendor_part_id='tool', tool_name='tool', provider_name='provider', provider_details={'second': True}
+    )
+    assert isinstance(event, PartStartEvent)
+    assert event.part == ToolCallPart(
+        'tool',
+        'x' * size,
+        'call',
+        provider_name='provider',
+        provider_details={'first': True, 'second': True},
+    )
+    assert apply_spy.call_count == 2
+    assert manager.get_parts() == [event.part]
+
+
+def test_tool_call_buffer_changes_are_atomic_when_typed_promotion_fails(mocker: MockerFixture):
+    """Injected internal promotion failures cannot be produced by a provider cassette."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool', args='initial', tool_call_id='call')
+    manager.handle_tool_call_delta(vendor_part_id='tool', args=' buffered')
+
+    promotion = mocker.patch.object(manager, '_typed_call_part', side_effect=RuntimeError('typed promotion failed'))
+    with pytest.raises(RuntimeError, match='typed promotion failed'):
+        manager.handle_tool_call_delta(vendor_part_id='tool', args=' discarded')
+    mocker.stop(promotion)
+
+    assert manager.get_parts() == [ToolCallPart('tool', 'initial buffered', 'call')]
+    event = manager.handle_tool_call_delta(vendor_part_id='tool', args=' accepted')
+    assert isinstance(event, PartDeltaEvent)
+    assert manager.get_parts() == [ToolCallPart('tool', 'initial buffered accepted', 'call')]
+
+
+def test_equality_and_repr_materialize_string_buffers():
+    """Manager equality and repr are internal state contracts outside provider responses."""
+
+    def build_manager(*, buffered: bool) -> ModelResponsePartsManager:
+        manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+        next(manager.handle_text_delta(vendor_part_id='text', content='a' if buffered else 'ab'))
+        manager.handle_tool_call_delta(vendor_part_id='tool', args='{' if buffered else '{"value": true}')
+        if buffered:
+            next(manager.handle_text_delta(vendor_part_id='text', content='b'))
+            manager.handle_tool_call_delta(vendor_part_id='tool', args='"value": true}')
+        return manager
+
+    assert repr(build_manager(buffered=True)) == repr(build_manager(buffered=False))
+    assert build_manager(buffered=True) == build_manager(buffered=False)
+
+
+def test_thinking_delta_callback_failure_is_atomic():
+    """Injected provider-details callback failures are not representable in a cassette."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    next(
+        manager.handle_thinking_delta(
+            vendor_part_id='thinking',
+            content='initial',
+            provider_details={'keep': True},
+        )
+    )
+    next(manager.handle_thinking_delta(vendor_part_id='thinking', content=' pending'))
+
+    def fail_provider_details(_details: dict[str, Any] | None) -> dict[str, Any]:
+        raise RuntimeError('provider details failed')
+
+    with pytest.raises(RuntimeError, match='provider details failed'):
+        next(
+            manager.handle_thinking_delta(
+                vendor_part_id='thinking',
+                content=' leaked',
+                provider_details=fail_provider_details,
+            )
+        )
+
+    assert manager.get_parts() == [ThinkingPart('initial pending', provider_details={'keep': True})]
+    next(manager.handle_thinking_delta(vendor_part_id='thinking', content=' accepted'))
+    assert manager.get_parts() == [ThinkingPart('initial pending accepted', provider_details={'keep': True})]
+
+
+@pytest.mark.parametrize('read_method', ['get_parts', 'repr'])
+def test_thinking_delta_callback_can_read_materialized_parts(read_method: str):
+    """Reentrant reads inside a private callback cannot be exercised by provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    next(
+        manager.handle_thinking_delta(
+            vendor_part_id='thinking',
+            content='initial',
+            provider_details={'count': 1},
+        )
+    )
+    next(manager.handle_thinking_delta(vendor_part_id='thinking', content=' pending'))
+
+    observed_reprs: list[str] = []
+
+    def update_provider_details(details: dict[str, Any] | None) -> dict[str, Any]:
+        if read_method == 'get_parts':
+            observed_reprs.append(repr(manager.get_parts()))
+        else:
+            observed_reprs.append(repr(manager))
+        return {**(details or {}), 'count': (details or {}).get('count', 0) + 1}
+
+    next(
+        manager.handle_thinking_delta(
+            vendor_part_id='thinking',
+            content=' current',
+            provider_details=update_provider_details,
+        )
+    )
+
+    assert len(observed_reprs) == 1
+    assert "ThinkingPart(content='initial pending', provider_details={'count': 1})" in observed_reprs[0]
+    assert manager.get_parts() == [ThinkingPart('initial pending current', provider_details={'count': 2})]
+
+
+@pytest.mark.parametrize(
+    ('mutation', 'initial_chunks', 'nested_part', 'expected_content'),
+    [
+        pytest.param(
+            'append',
+            ('a', 'b'),
+            ThinkingPart('abd', provider_details={'count': 1}),
+            'abc',
+            id='append',
+        ),
+        pytest.param('replacement', ('a',), ThinkingPart('replacement'), 'ac', id='replacement'),
+    ],
+)
+def test_thinking_delta_nested_callback_mutation_matches_unbuffered_apply(
+    mutation: str,
+    initial_chunks: tuple[str, ...],
+    nested_part: ThinkingPart,
+    expected_content: str,
+):
+    """Nested callback writes are an internal ordering contract outside provider cassettes."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    next(
+        manager.handle_thinking_delta(
+            vendor_part_id='thinking', content=initial_chunks[0], provider_details={'count': 1}
+        )
+    )
+    for chunk in initial_chunks[1:]:
+        next(manager.handle_thinking_delta(vendor_part_id='thinking', content=chunk))
+
+    def update_provider_details(details: dict[str, Any] | None) -> dict[str, Any]:
+        if mutation == 'append':
+            assert next(manager.handle_thinking_delta(vendor_part_id='thinking', content='d')) == PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='d')
+            )
+        else:
+            assert manager.handle_part(vendor_part_id='thinking', part=nested_part) == PartStartEvent(
+                index=0, part=nested_part
+            )
+        assert manager.get_parts() == [nested_part]
+        assert repr(nested_part) in repr(manager)
+        return {**(details or {}), 'count': 2}
+
+    event = next(
+        manager.handle_thinking_delta(vendor_part_id='thinking', content='c', provider_details=update_provider_details)
+    )
+    assert event == PartDeltaEvent(
+        index=0, delta=ThinkingPartDelta(content_delta='c', provider_details=update_provider_details)
+    )
+
+    original_part = ThinkingPart(''.join(initial_chunks), provider_details={'count': 1})
+    expected_part = ThinkingPartDelta(content_delta='c', provider_details={'count': 2}).apply(original_part)
+    assert expected_part == ThinkingPart(expected_content, provider_details={'count': 2})
+    assert manager.get_parts() == [expected_part]
 
 
 def test_handle_text_deltas_with_think_tags():
