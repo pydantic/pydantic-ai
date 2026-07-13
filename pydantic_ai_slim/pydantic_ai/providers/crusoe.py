@@ -16,6 +16,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -36,7 +37,7 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return 'https://managed-inference-api-proxy.crusoecloud.com/v1'
+        return 'https://api.inference.crusoecloud.com/v1'
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -51,6 +52,7 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
             'google': google_model_profile,
             'openai': harmony_model_profile,  # used for gpt-oss models on Crusoe
             'moonshotai': moonshotai_model_profile,
+            'zai': zai_model_profile,
         }
 
         profile = None

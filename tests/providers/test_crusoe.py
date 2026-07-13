@@ -13,6 +13,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -32,7 +33,7 @@ pytestmark = [
 def test_crusoe_provider():
     provider = CrusoeProvider(api_key='api-key')
     assert provider.name == 'crusoe'
-    assert provider.base_url == 'https://managed-inference-api-proxy.crusoecloud.com/v1'
+    assert provider.base_url == 'https://api.inference.crusoecloud.com/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'api-key'
 
@@ -70,6 +71,7 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     meta_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     qwen_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
+    zai_mock = mocker.patch(f'{ns}.zai_model_profile', wraps=zai_model_profile)
     google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
     harmony_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
     moonshotai_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
@@ -81,20 +83,20 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test deepseek provider
-    profile = provider.model_profile('deepseek-ai/DeepSeek-R1-0528')
-    deepseek_mock.assert_called_with('deepseek-r1-0528')
+    profile = provider.model_profile('deepseek-ai/DeepSeek-V3-0324')
+    deepseek_mock.assert_called_with('deepseek-v3-0324')
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test qwen provider
-    qwen_profile = provider.model_profile('Qwen/Qwen3-235B-A22B-Instruct-2507')
-    qwen_mock.assert_called_with('qwen3-235b-a22b-instruct-2507')
+    qwen_profile = provider.model_profile('qwen/Qwen3-235B-A22B')
+    qwen_mock.assert_called_with('qwen3-235b-a22b')
     assert qwen_profile is not None
     assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test google provider
-    google_profile = provider.model_profile('google/gemma-3-12b-it')
-    google_mock.assert_called_with('gemma-3-12b-it')
+    google_profile = provider.model_profile('google/gemma-4-31b-it')
+    google_mock.assert_called_with('gemma-4-31b-it')
     assert google_profile is not None
     assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
@@ -105,10 +107,15 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test moonshotai provider
-    moonshotai_profile = provider.model_profile('moonshotai/Kimi-K2-Thinking')
-    moonshotai_mock.assert_called_with('kimi-k2-thinking')
+    moonshotai_profile = provider.model_profile('moonshotai/Kimi-K2.6')
+    moonshotai_mock.assert_called_with('kimi-k2.6')
     assert moonshotai_profile is not None
     assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # Test zai provider
+    zai_profile = provider.model_profile('zai/GLM-5.2')
+    zai_mock.assert_called_with('glm-5.2')
+    assert zai_profile is not None
 
     # Test unknown provider
     unknown_profile = provider.model_profile('unknown-provider/unknown-model')

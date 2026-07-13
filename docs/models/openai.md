@@ -407,7 +407,7 @@ You can set the `CRUSOE_API_KEY` environment variable and use [`CrusoeProvider`]
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('crusoe:meta-llama/Llama-3.3-70B-Instruct')
+agent = Agent('crusoe:zai/GLM-5.2')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -421,7 +421,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.crusoe import CrusoeProvider
 
 model = OpenAIChatModel(
-    'meta-llama/Llama-3.3-70B-Instruct',
+    'zai/GLM-5.2',
     provider=CrusoeProvider(api_key='your-crusoe-api-key'),
 )
 agent = Agent(model)
