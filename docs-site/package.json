@@ -23,6 +23,7 @@
 		"@protobufjs/utf8": "^1.1.1",
 		"undici": "^7.28.0",
 		"@opentelemetry/core": "^2.8.0",
-		"esbuild": "^0.28.1"
+		"esbuild": "^0.28.1",
+		"ws": "^8.21.0"
 	}
 }
