@@ -474,7 +474,7 @@ def test_sync_stream_bridge_init_interrupt_cleans_owner():
     async def stream_context() -> AsyncGenerator[object]:
         loop.call_soon(interrupt)
         await asyncio.sleep(1)
-        yield object()
+        yield object()  # pragma: no cover
 
     with pytest.raises(KeyboardInterrupt):
         SyncStreamBridge(stream_context(), async_alternative='`async_method`')
