@@ -7,11 +7,13 @@ instead of relying on a human to catch it in review.
 
 from __future__ import annotations
 
-import dataclasses
 import importlib
 import inspect
-import pkgutil
-from collections.abc import Callable, Iterator
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable
 
 import pytest
 from inline_snapshot import snapshot
@@ -296,19 +298,36 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def _is_public_dotted_path(dotted: str) -> bool:
-    return not any(part.startswith('_') for part in dotted.split('.'))
+# Walking the package imports every module, including ones whose optional dependency is missing in
+# the current environment. Those imports execute the module's `raise ImportError` guard, whose lines
+# are marked `pragma: no cover` — covering them here would fail CI's strict pragma audit. Running
+# the walk in a subprocess with the `COVERAGE_*` environment scrubbed keeps it invisible to
+# coverage while still inspecting every importable module.
+_KW_ONLY_WALKER_SCRIPT = """
+import dataclasses
+import importlib
+import json
+import pkgutil
 
+import pydantic_ai
 
-def _iter_pydantic_ai_dataclasses() -> Iterator[tuple[str, type]]:
-    for module_info in pkgutil.walk_packages(pydantic_ai.__path__, f'{pydantic_ai.__name__}.'):
-        try:
-            module = importlib.import_module(module_info.name)
-        except ImportError:  # pragma: lax no cover
-            continue
-        for obj in vars(module).values():
-            if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == module_info.name:
-                yield f'{obj.__module__}.{obj.__qualname__}', obj
+offenders: set[str] = set()
+for module_info in pkgutil.walk_packages(pydantic_ai.__path__, 'pydantic_ai.'):
+    try:
+        module = importlib.import_module(module_info.name)
+    except ImportError:
+        continue
+    for obj in vars(module).values():
+        if isinstance(obj, type) and dataclasses.is_dataclass(obj) and obj.__module__ == module_info.name:
+            name = f'{obj.__module__}.{obj.__qualname__}'
+            if any(part.startswith('_') for part in name.split('.')):
+                continue
+            positional_init_fields = [f for f in dataclasses.fields(obj) if f.init and not f.kw_only]
+            if len(positional_init_fields) >= 2:
+                offenders.add(name)
+
+print(json.dumps(sorted(offenders)))
+"""
 
 
 def test_new_public_dataclasses_are_keyword_only():
@@ -320,13 +339,15 @@ def test_new_public_dataclasses_are_keyword_only():
     ships with two or more positional fields, which is where the "add a field, break callers" trap
     lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer sign-off.
     """
-    offenders: set[str] = set()
-    for name, cls in _iter_pydantic_ai_dataclasses():
-        if not _is_public_dotted_path(name):
-            continue
-        positional_init_fields = [field for field in dataclasses.fields(cls) if field.init and not field.kw_only]
-        if len(positional_init_fields) >= 2:
-            offenders.add(name)
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    process = subprocess.run(
+        [sys.executable, '-c', _KW_ONLY_WALKER_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+    offenders = set(json.loads(process.stdout))
 
     unexpected_offenders = offenders - _KW_ONLY_ALLOWLIST
     assert unexpected_offenders == set()
@@ -365,7 +386,7 @@ def _parameter_kinds(method: Callable[..., object]) -> dict[str, str]:
 def test_durable_wrapper_run_family_signature_parity(wrapper: type[AbstractAgent[object, object]], method_name: str):
     """Durable-execution agent wrappers hand-mirror `Agent`'s run-family signatures.
 
-    `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` re-declare each of `run`, `run_sync`,
+    `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` redeclare each of `run`, `run_sync`,
     `run_stream`, `run_stream_events`, `iter`, and `override` so they can wrap the run in a
     workflow/activity. Nothing forces a new keyword added to `Agent` to be copied into each wrapper,
     so a wrapper silently drops support for it. This asserts every wrapper method accepts (at least)
