@@ -284,6 +284,20 @@ The installed Anthropic SDK exposes the current literal set and still allows arb
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
+DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset(
+    {
+        # https://platform.claude.com/docs/en/about-claude/model-deprecations
+        # Retired 2026-04-20
+        'claude-3-haiku-20240307',
+        # Retired 2026-06-15
+        'claude-opus-4-0',
+        'claude-opus-4-20250514',
+        'claude-sonnet-4-0',
+        'claude-sonnet-4-20250514',
+    }
+)
+"""Models that have been retired by Anthropic but are still present in the SDK's type definitions."""
+
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
 ]
