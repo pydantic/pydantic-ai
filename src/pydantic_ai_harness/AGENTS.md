@@ -155,4 +155,3 @@ need.
 - Always link sources for any claims made during research
 - Run `make lint && make typecheck && make test` before every commit
 - Commit messages should summarize the "why", not the "what"
-- All GitHub comments must start with "Claude here: "
