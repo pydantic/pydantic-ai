@@ -13,7 +13,7 @@ from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModelName
+    from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.google import GoogleModelName
@@ -30,6 +30,7 @@ if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
 
@@ -77,19 +78,15 @@ _PROVIDER_TO_MODEL_NAMES = {
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
+    'anthropic': DEPRECATED_ANTHROPIC_MODELS,
     'openai': DEPRECATED_OPENAI_MODELS,
     'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
-        'gateway/anthropic:claude-3-haiku-20240307',
         'gateway/anthropic:claude-mythos-5',
         'gateway/anthropic:claude-mythos-preview',
-        'gateway/anthropic:claude-opus-4-0',
-        'gateway/anthropic:claude-opus-4-20250514',
-        'gateway/anthropic:claude-sonnet-4-0',
-        'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
@@ -145,17 +142,13 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
-        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',
-        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3-pro-preview',
         'gateway/google-cloud:gemini-flash-latest',
         'gateway/google-cloud:gemini-flash-lite-latest',
         'gateway/google:gemini-2.0-flash',
         'gateway/google:gemini-2.0-flash-lite',
-        'gateway/google:gemini-2.5-flash-lite-preview-09-2025',
         'gateway/google:gemini-2.5-flash-preview-09-2025',
-        'gateway/google:gemini-3.1-flash-lite-preview',
         'gateway/google:gemini-3-pro-preview',
         'gateway/google:gemini-flash-latest',
         'gateway/google:gemini-flash-lite-latest',
@@ -163,7 +156,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
         'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
         'gateway/groq:whisper-large-v3',
@@ -172,7 +164,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:codex-mini-latest',
         'gateway/openai:gpt-3.5-turbo-0301',
         'gateway/openai:gpt-3.5-turbo-0613',
-        'gateway/openai:gpt-3.5-turbo-16k',
         'gateway/openai:gpt-3.5-turbo-16k-0613',
         'gateway/openai:gpt-4-0125-preview',
         'gateway/openai:gpt-4-0314',
@@ -188,10 +179,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-mini-search-preview',
-        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
-        'gateway/openai:gpt-4o-search-preview',
-        'gateway/openai:gpt-4o-search-preview-2025-03-11',
         'gateway/openai:gpt-5.1-mini',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
