@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -23,6 +23,7 @@ from pydantic_ai.durable_exec._utils import (
     model_request,
     model_request_stream,
     process_event_stream,
+    unwrap_model,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -33,6 +34,34 @@ from pydantic_ai.toolsets import AbstractToolset
 
 from ._toolset import PrefectWrapperToolset, prefectify_toolset as _default_prefectify_toolset
 from ._types import TaskConfig, default_task_config
+
+
+def _wrap_event_stream_handler_in_tasks(
+    handler: EventStreamHandler[Any] | None,
+    task_config: TaskConfig,
+) -> EventStreamHandler[Any] | None:
+    """Wrap an event stream handler so each event is handled in its own Prefect task.
+
+    Mirrors the deprecated `PrefectAgent`, which runs the handler once per event inside a
+    `@task` (named `'Handle Stream Event'`, configurable via `event_stream_handler_task_config`)
+    so each event's side effects are individually checkpointed. Returns `None` unchanged so
+    the caller can pass the result straight through to `process_event_stream`.
+    """
+    if handler is None:
+        return None
+
+    async def handle_events_in_flow(ctx: RunContext[Any], stream: AsyncIterable[_messages.AgentStreamEvent]) -> None:
+        @task(name='Handle Stream Event', **task_config)
+        async def handle_event(event: _messages.AgentStreamEvent) -> None:
+            async def single_event() -> AsyncIterator[_messages.AgentStreamEvent]:
+                yield event
+
+            await handler(ctx, single_event())
+
+        async for event in stream:
+            await handle_event(event)
+
+    return handle_events_in_flow
 
 
 @dataclass(init=False)
@@ -131,7 +160,12 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         # instance-level one so it fires inside the task alongside the capability chain.
         if bound._event_stream_handler is None:
             bound._event_stream_handler = agent.event_stream_handler
-        event_stream_handler = bound._event_stream_handler
+        # Process each streamed event in its own Prefect task (tunable via
+        # `event_stream_handler_task_config`), mirroring the deprecated `PrefectAgent` so
+        # completed event side effects are checkpointed within the streaming task.
+        event_stream_handler = _wrap_event_stream_handler_in_tasks(
+            bound._event_stream_handler, bound._event_stream_handler_task_config
+        )
         bound._prefect_toolsets_by_id = {}
 
         # --- Model request tasks ---
@@ -288,8 +322,11 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         # construction-time model, so a model set at run time via `run(model=...)` or
         # `override(model=...)` can't cross the durable boundary and would be silently ignored.
         # Reject it instead of answering from the wrong model, matching the deprecated
-        # `PrefectAgent`. Compared by `model_id` so an outer instrumentation wrapper is transparent.
-        if self._model is not None and request_context.model.model_id != self._model.model_id:
+        # `PrefectAgent`. Instances are unwrapped and compared by identity (not `model_id`): an
+        # outer `Instrumentation` wrapper is transparent, while a genuine override — even one that
+        # happens to share the construction-time model's `model_id` (same name, different
+        # provider/credentials) — is still caught.
+        if self._model is not None and unwrap_model(request_context.model) is not unwrap_model(self._model):
             raise UserError(
                 'The model cannot be changed at agent run time when using `PrefectDurability`; '
                 'it must be set when creating the agent. '

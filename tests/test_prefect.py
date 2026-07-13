@@ -1786,11 +1786,23 @@ async def test_prefect_durability_rejects_override_model() -> None:
             await agent.run('hello')
 
 
+async def test_prefect_durability_rejects_same_model_id_override() -> None:
+    """A different instance that shares the construction-time model's `model_id` is still rejected.
+
+    Two `TestModel()` instances share `model_id` `'test'`, so a by-`model_id` comparison would let
+    the override slip through and silently answer from the construction-time model. The guard unwraps
+    any wrapper layers and compares instances by identity instead, so the override is caught.
+    """
+    agent = Agent(TestModel(), name='durability_same_model_id', capabilities=[PrefectDurability()])
+    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
+        await agent.run('hello', model=TestModel())
+
+
 async def test_prefect_durability_allows_instrumented_default_model() -> None:
     """An outer `Instrumentation` capability wraps the model, but the default model is still accepted.
 
-    The runtime-model guard compares by `model_id`, which delegates through the instrumentation
-    wrapper, so a normal instrumented run isn't mistaken for a runtime override.
+    The runtime-model guard unwraps the `InstrumentedModel` wrapper before comparing instances by
+    identity, so a normal instrumented run isn't mistaken for a runtime override.
     """
     agent = Agent(
         _durability_fn_model,
@@ -1943,3 +1955,39 @@ async def test_prefect_durability_runtime_handler_receives_buffered_events() -> 
         if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
     ]
     assert delta_events == ['ed ', 'response']
+
+
+async def test_prefect_durability_event_stream_handler_runs_per_event_task() -> None:
+    """The construction-time handler runs once per event, each in its own Prefect task.
+
+    PrefectDurability wraps the handler like the deprecated `PrefectAgent` does, so
+    `event_stream_handler_task_config` applies to a `'Handle Stream Event'` task per event.
+    A single once-per-stream invocation would silently ignore that config and lose per-event
+    checkpointing, so assert the handler is invoked once per streamed event, not once total.
+    """
+    invocations = 0
+    events_received: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal invocations
+        invocations += 1
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_per_event_task',
+        capabilities=[PrefectDurability(event_stream_handler=handler)],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Streamed response'
+    # One invocation per event (each event wrapped in its own task), not a single call.
+    assert invocations > 1
+    assert invocations == len(events_received)
