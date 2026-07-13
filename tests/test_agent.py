@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
@@ -107,6 +108,7 @@ else:
         from pydantic_ai.providers.alibaba import AlibabaProvider
         from pydantic_ai.providers.azure import AzureProvider
         from pydantic_ai.providers.cerebras import CerebrasProvider
+        from pydantic_ai.providers.crusoe import CrusoeProvider
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider
@@ -122,7 +124,7 @@ else:
         from pydantic_ai.providers.vercel import VercelProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
-        FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
+        CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None  # type: ignore
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
         TogetherProvider = VercelProvider = None  # type: ignore
@@ -8631,6 +8633,7 @@ async def test_azure_provider_lifecycle_closes_client():
             id='azure',
         ),
         pytest.param(lambda: CerebrasProvider(api_key='t'), marks=[requires_openai], id='cerebras'),
+        pytest.param(lambda: CrusoeProvider(api_key='t'), marks=[requires_openai], id='crusoe'),
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
