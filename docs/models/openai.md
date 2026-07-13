@@ -10,7 +10,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 ## Configuration
 
-To use `OpenAIChatModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
+To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 ## Environment variable
 
@@ -20,27 +20,29 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-You can then use `OpenAIChatModel` by name:
+The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which uses the modern [Responses API](https://platform.openai.com/docs/api-reference/responses).
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.6-sol')
 ...
 ```
+
+To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
 
 Or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.6-sol')
 agent = Agent(model)
 ...
 ```
 
-By default, the `OpenAIChatModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
+By default, the model uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
 
 ## Configure the provider
 
@@ -49,10 +51,10 @@ If you want to pass parameters in code to the provider, you can programmatically
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -65,11 +67,11 @@ agent = Agent(model)
 from openai import AsyncOpenAI
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -98,33 +100,53 @@ agent = Agent(model)
 ...
 ```
 
-## OpenAI Responses API
+## Model settings
 
-Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openai-responses:gpt-5.2')
-...
-```
-
-Or initialise the model directly with just the model name:
+You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel('gpt-5.2')
-agent = Agent(model)
+settings = OpenAIResponsesModelSettings(
+    temperature=0.2,
+    service_tier='flex',
+)
+agent = Agent(model, model_settings=settings)
 ...
 ```
 
-You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+### Service tier
 
-### Built-in tools
+OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
-The Responses API has built-in tools that you can use instead of building your own:
+## Responses API features
+
+The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+
+### Reasoning mode
+
+Models that support it (currently the GPT-5.6 family) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
+
+Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.6-sol')
+settings = OpenAIResponsesModelSettings(openai_reasoning_mode='pro')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+The setting is ignored on models that don't support reasoning mode, per [`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode].
+
+### Native tools
+
+The Responses API has native tools that you can use instead of building your own:
 
 - [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
@@ -132,9 +154,9 @@ The Responses API has built-in tools that you can use instead of building your o
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
-Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
+Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_native_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this native tool.
 
 ```python {title="computer_use_tool.py" test="skip"}
 from openai.types.responses import ComputerToolParam
@@ -143,7 +165,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model_settings = OpenAIResponsesModelSettings(
-    openai_builtin_tools=[
+    openai_native_tools=[
         ComputerToolParam(
             type='computer_use',
         )
@@ -158,8 +180,33 @@ print(result.output)
 
 #### Referencing earlier responses
 
-The Responses API supports referencing earlier model responses in a new request using a `previous_response_id` parameter, to ensure the full [conversation state](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#passing-context-from-the-previous-response) including [reasoning items](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context) are kept in context. This is available through the `openai_previous_response_id` field in
+The Responses API supports referencing earlier model responses in a new request using a `previous_response_id` parameter, to ensure the full [conversation state](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#passing-context-from-the-previous-response) including [reasoning items](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context) is kept in context without having to resend it. This is available through the [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] field in
 [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
+
+When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model=model)
+
+result1 = agent.run_sync('Tell me a joke.')
+print(result1.output)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
+
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+result2 = agent.run_sync(
+    'Explain?',
+    message_history=result1.new_messages(),
+    model_settings=model_settings
+)
+print(result2.output)
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
+```
+
+As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
 ```python
 from pydantic_ai import Agent
@@ -177,34 +224,120 @@ print(result.output)
 #> 1234
 ```
 
-By passing the `provider_response_id` from an earlier run, you can allow the model to build on its own prior reasoning without needing to resend the full message history.
+!!! note
+    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
 
-##### Automatically referencing earlier responses
+#### Using durable conversations
 
-When the `openai_previous_response_id` field is set to `'auto'`, Pydantic AI will automatically select the most recent `provider_response_id` from message history and omit messages that came before it, letting the OpenAI API leverage server-side history instead for improved efficiency.
+OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#using-the-conversations-api) works with the Responses API to persist conversation state in a durable conversation object. If you already have an OpenAI conversation ID, pass it with [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
-result1 = agent.run_sync('Tell me a joke.')
-print(result1.output)
-#> Did you hear about the toothpaste scandal? They called it Colgate.
+model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
+result = agent.run_sync('What did we discuss last time?', model_settings=model_settings)
+print(result.output)
+```
 
-# When set to 'auto', the most recent provider_response_id
-# and messages after it are sent as request.
-model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+
+When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model=model)
+
+model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
+result = agent.run_sync('What did we discuss last time?', model_settings=model_settings)
+
+follow_up_settings = OpenAIResponsesModelSettings(openai_conversation_id='auto')
 result2 = agent.run_sync(
-    'Explain?',
-    message_history=result1.new_messages(),
-    model_settings=model_settings
+    'Summarize the next step.',
+    message_history=result.new_messages(),
+    model_settings=follow_up_settings,
 )
 print(result2.output)
-#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
+
+Pydantic AI does not create OpenAI conversations for you. Use the OpenAI client to create the conversation, then pass its ID to `openai_conversation_id`. The `conversation` and `previous_response_id` parameters are mutually exclusive in the OpenAI API, so `openai_conversation_id` cannot be combined with [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+
+#### Message Compaction
+
+The Responses API supports [compacting message history](https://developers.openai.com/api/docs/guides/compaction) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability:
+
+```python {title="openai_compaction.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction()],
+)
+```
+
+By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
+
+To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
+
+```python {title="openai_compaction_token_threshold.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction(token_threshold=100_000)],
+)
+```
+
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+
+```python {title="openai_compaction_stateless.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction(message_count_threshold=20)],
+)
+```
+
+The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+!!! tip
+    Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
+
+For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+## Chat Completions API
+
+If you need the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead of the default [Responses API](https://platform.openai.com/docs/api-reference/responses), pin to it with the `'openai-chat:'` prefix or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-chat:gpt-5.2')
+...
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+
+model = OpenAIChatModel('gpt-5.2')
+agent = Agent(model)
+...
+```
+
+`OpenAIChatModel` is also what backs every [OpenAI-compatible provider](#openai-compatible-models) below — they all speak the Chat Completions wire format, so the same model class applies.
 
 ## OpenAI-compatible Models
 
@@ -250,12 +383,20 @@ model = OpenAIChatModel(
         base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
     ),
     profile=OpenAIModelProfile(
-        json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class on a plain ModelProfile
-        openai_supports_strict_tool_definition=False  # Supported by OpenAIModel only, requires OpenAIModelProfile
+        json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class via the base ModelProfile
+        openai_supports_strict_tool_definition=False,  # Supported by OpenAIChatModel and OpenAIResponsesModel
+        openai_chat_supports_multiple_system_messages=False,  # Supported by OpenAIChatModel only — for strict providers (e.g. some vLLM/LiteLLM setups) that require exactly one initial system message
+        openai_chat_supports_max_completion_tokens=False,  # Supported by OpenAIChatModel only — for providers (e.g. OpenRouter) that only accept the older `max_tokens` field instead of `max_completion_tokens`
     )
 )
 agent = Agent(model)
 ```
+
+#### Models that accept only one leading system message
+
+Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
+
+Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown above) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
 
 ### DeepSeek
 
@@ -349,55 +490,16 @@ agent = Agent(model)
 ...
 ```
 
+!!! note "Document input is not supported"
+    The DashScope compatible-mode Chat Completions API does not accept document content parts, so passing a [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] or document [`BinaryContent`][pydantic_ai.messages.BinaryContent] to an [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] backed by [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] raises a `UserError`.
+
 ### Ollama
 
-Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud).
-
-For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
-
-You can set the `OLLAMA_BASE_URL` and (optionally) `OLLAMA_API_KEY` environment variables and use [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('ollama:gpt-oss:20b')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-
-
-class CityLocation(BaseModel):
-    city: str
-    country: str
-
-
-ollama_model = OpenAIChatModel(
-    model_name='gpt-oss:20b',
-    provider=OllamaProvider(base_url='http://localhost:11434/v1'),  # (1)!
-)
-agent = Agent(ollama_model, output_type=CityLocation)
-
-result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.output)
-#> city='London' country='United Kingdom'
-print(result.usage())
-#> RunUsage(input_tokens=57, output_tokens=8, requests=1)
-```
-
-1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
-
+See [Ollama](ollama.md) for dedicated Ollama documentation, including structured output and Ollama Cloud limitations.
 
 ### Azure AI Foundry
 
-To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION` environment variables and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
+To use [Azure AI Foundry](https://ai.azure.com/) as your provider, set `AZURE_OPENAI_ENDPOINT` to a URL whose path ends in `/v1` (for example `https://<resource>.openai.azure.com/openai/v1/` or `https://<resource>.services.ai.azure.com/openai/v1/`), set `AZURE_OPENAI_API_KEY`, and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -416,14 +518,78 @@ from pydantic_ai.providers.azure import AzureProvider
 model = OpenAIChatModel(
     'gpt-5.2',
     provider=AzureProvider(
-        azure_endpoint='your-azure-endpoint',
-        api_version='your-api-version',
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
         api_key='your-api-key',
     ),
 )
 agent = Agent(model)
 ...
 ```
+
+This targets the [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle), which Microsoft recommends for all new projects. It also pairs naturally with the Responses API — see [Using Azure with the Responses API](#using-azure-with-the-responses-api) below.
+
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] also recognises [Azure AI Foundry serverless model deployments](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/endpoints) at `https://<model>.<region>.models.ai.azure.com` and connects to them the same way.
+
+#### Connecting to an existing `api-version`-based deployment
+
+If your resource still uses the dated `api-version` API, pass `api_version` (or set the `OPENAI_API_VERSION` environment variable) and point `azure_endpoint` at the resource root instead:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIChatModel(
+    'gpt-5.2',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/',
+        api_version='2024-12-01-preview',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+#### Using Azure with the Responses API
+
+Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. This is particularly recommended when working with document inputs ([`DocumentUrl`][pydantic_ai.DocumentUrl] and [`BinaryContent`][pydantic_ai.BinaryContent]), as Azure's Chat Completions API does not support these input types.
+
+Use the `azure-responses:` prefix to select the Responses API by name (the `azure:` prefix uses the Chat Completions API):
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('azure-responses:gpt-5.2')
+...
+```
+
+!!! note
+    Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, the web search built-in tool is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
+
+Or initialise the model and provider directly:
+
+??? example "Document processing with Azure using Responses API"
+    ```python
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+
+    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
+
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=AzureProvider(
+            azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+            api_key='your-api-key',
+        ),
+    )
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
+    ])
+    ```
 
 ### Vercel AI Gateway
 
@@ -644,6 +810,13 @@ print(result.output)
 ...
 ```
 
+!!! note
+    If your model rejects requests with more than one leading system message (for example, you
+    see `System message must be at the beginning.`), set
+    `openai_chat_supports_multiple_system_messages=False` on its profile. See
+    [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
+    for details.
+
 ### Nebius AI Studio
 
 Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
@@ -762,4 +935,52 @@ model = OpenAIChatModel(
 )
 agent = Agent(model)
 ...
+```
+
+### Atlas Cloud
+
+[Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible API gateway that provides access to 300+ models from a single endpoint, including DeepSeek, Qwen, Claude, GPT, and Gemini.
+
+Atlas Cloud doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'deepseek-ai/deepseek-v4-pro',
+    provider=OpenAIProvider(
+        base_url='https://api.atlascloud.ai/v1',
+        api_key='your-atlas-cloud-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Rapid-MLX (Apple Silicon)
+
+[Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) is an OpenAI-compatible inference server for Apple Silicon, built on Apple's MLX framework.
+
+```bash
+pip install rapid-mlx
+rapid-mlx serve mlx-community/Qwen3.5-4B-MLX-4bit
+```
+
+The server listens on `http://localhost:8000/v1` and implements the OpenAI chat completions API, so you can point [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] at it:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+rapid_mlx_model = OpenAIChatModel(
+    model_name='default',
+    provider=OpenAIProvider(
+        base_url='http://localhost:8000/v1',
+        api_key='not-needed',
+    ),
+)
+agent = Agent(rapid_mlx_model)
 ```

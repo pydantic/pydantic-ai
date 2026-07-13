@@ -12,6 +12,7 @@ from tests.cassette_utils import (
     CassetteContext,
     _get_cassette_bodies_from_yaml,  # pyright: ignore[reportPrivateUsage]
     _get_xai_cassette_request_bodies,  # pyright: ignore[reportPrivateUsage]
+    get_first_post_body,
 )
 
 from ._inline_snapshot import snapshot
@@ -75,6 +76,20 @@ class TestGetCassetteBodiesFromYaml:
         bodies = _get_cassette_bodies_from_yaml(path)
         assert len(bodies) == 1
         assert '"role": "user"' in bodies[0]
+
+
+def test_get_first_post_body_skips_non_post_request() -> None:
+    from vcr.cassette import Cassette
+    from vcr.request import Request
+
+    cassette = Cassette('fake.yaml')
+    cassette.append(Request('GET', 'https://example.com', None, dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(  # pyright: ignore[reportUnknownMemberType]
+        Request('POST', 'https://example.com', b'{"key": "value"}', dict[str, str]()),
+        {},
+    )
+
+    assert get_first_post_body(cassette) == {'key': 'value'}
 
 
 class TestCassetteContextGetBodies:

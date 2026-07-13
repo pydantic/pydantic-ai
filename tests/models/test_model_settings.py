@@ -60,6 +60,12 @@ def test_wrapper_model_settings_delegation():
     assert wrapper_no_settings.settings is None
 
 
+async def test_wrapper_model_context_manager():
+    wrapper = WrapperModel(TestModel())
+    async with wrapper:
+        pass
+
+
 def test_wrapper_model_customize_request_parameters_delegation():
     """Test that WrapperModel delegates request parameter customization to wrapped model."""
 
@@ -132,13 +138,14 @@ def test_settings_merge_hierarchy():
         return ModelResponse(parts=[TextPart('captured')])
 
     # Model settings (lowest priority)
-    model_settings = ModelSettings(max_tokens=100, temperature=0.5, top_p=0.8, seed=123)
+    model_settings = ModelSettings(max_tokens=100, temperature=0.5, top_p=0.8, top_k=20, seed=123)
     model = FunctionModel(capture_settings, settings=model_settings)
 
     # Agent settings (medium priority)
     agent_settings = ModelSettings(
         max_tokens=200,  # overrides model
         temperature=0.6,  # overrides model
+        top_k=30,  # overrides model
         frequency_penalty=0.1,  # new setting
     )
     agent = Agent(model=model, model_settings=agent_settings)
@@ -146,6 +153,7 @@ def test_settings_merge_hierarchy():
     # Run settings (highest priority)
     run_settings = ModelSettings(
         temperature=0.7,  # overrides agent and model
+        top_k=40,  # overrides agent and model
         presence_penalty=0.2,  # new setting
         seed=456,  # overrides model
     )
@@ -157,6 +165,7 @@ def test_settings_merge_hierarchy():
     # Verify the merged settings follow the correct precedence
     assert captured_settings is not None
     assert captured_settings['temperature'] == 0.7  # from run_settings
+    assert captured_settings['top_k'] == 40  # from run_settings
     assert captured_settings['max_tokens'] == 200  # from agent_settings
     assert captured_settings['top_p'] == 0.8  # from model_settings
     assert captured_settings['seed'] == 456  # from run_settings

@@ -44,6 +44,7 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
+- `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
 ### CLI Options
 
@@ -165,7 +166,7 @@ clai web --agent my_module:my_agent
 # With specific models (first is default when no --agent)
 clai web -m openai:gpt-5.2 -m anthropic:claude-sonnet-4-6
 
-# With builtin tools
+# With native tools
 clai web -m openai:gpt-5.2 -t web_search -t code_execution
 
 # Generic agent with system instructions
@@ -176,7 +177,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 ```
 
 !!! note "Memory Tool"
-    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
+    The [`memory`](native-tools.md#memory-tool) native tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent and provide it via `--agent`.
 
 ### Web UI Options
 
@@ -184,7 +185,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 |--------|-------------|
 | `--agent`, `-a` | Agent to serve in [`module:variable` format](#custom-agents) |
 | `--model`, `-m` | Models to list as options in the UI (repeatable) |
-| `--tool`, `-t` | [Builtin tool](builtin-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#builtin-tool-support). |
+| `--tool`, `-t` | [Native tool](native-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#native-tool-support). |
 | `--instructions`, `-i` | System instructions. When `--agent` is specified, these are additional to the agent's existing instructions. |
 | `--host` | Host to bind server (default: 127.0.0.1) |
 | `--port` | Port to bind server (default: 7932) |

@@ -1,7 +1,7 @@
 """API routes for the web chat UI."""
 
 from collections.abc import Mapping, Sequence
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
@@ -11,8 +11,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -21,6 +22,13 @@ OutputDataT = TypeVar('OutputDataT')
 
 # Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
 ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
+
+# The bundled chat UI ships v7 of the Vercel AI SDK, so the API path targets `sdk_version=7` to match
+# it. v7's data-stream protocol equals v6's (same wire, including the tool-approval chunks that enable
+# tool-approval streaming), so 7 emits identically to 6 today; targeting 7 keeps the value aligned with
+# the UI's real SDK major and reserves it for future v7-only chunks. `to_web()` controls both ends
+# (server + bundled UI). See `VercelAIAdapter.sdk_version`.
+BUNDLED_UI_SDK_VERSION: Literal[7] = 7
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -79,10 +87,11 @@ def validate_request_options(
 def create_api_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
+    sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -92,11 +101,14 @@ def create_api_app(
             - A sequence of model names/instances (e.g., `['openai:gpt-5', Model(...)]`)
             - A dict mapping display labels to model names/instances
             If not provided, the UI will have no model options.
-        builtin_tools: Optional list of additional builtin tools to make available in the UI.
+        native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+        sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
+            `7` to match the bundled v7 UI, which enables tool-approval streaming (7 emits the same
+            wire as 6, since v7's data-stream protocol equals v6's).
 
     Returns:
         A Starlette application with the API endpoints.
@@ -105,9 +117,9 @@ def create_api_app(
     model_id_to_ref: dict[str, Model | str] = {}
     model_infos: list[ModelInfo] = []
 
-    # Filter out builtin_tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._cap_builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
-    ui_builtin_tools = [t for t in (builtin_tools or []) if t.unique_id not in agent_tool_ids]
+    # Filter out tools that are already configured on the agent (they're always included)
+    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
+    ui_native_tools = [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
 
     # Build combined models: agent's model first (if exists), then provided models
     all_models: list[tuple[str | None, Model | str]] = []
@@ -125,14 +137,14 @@ def create_api_app(
             continue
         seen_model_ids.add(model_id)
         display_name = label or model.label
-        model_supported_tools = model.profile.supported_builtin_tools
-        supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
+        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref
         model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
     model_ids = set(model_id_to_ref.keys())
-    allowed_tool_ids = {tool.unique_id for tool in ui_builtin_tools}
+    allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
     async def options_chat(request: Request) -> Response:
         """Handle CORS preflight requests."""
@@ -142,7 +154,7 @@ def create_api_app(
         """Endpoint to configure the frontend with available models and tools."""
         config = ConfigureFrontend(
             models=model_infos,
-            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_builtin_tools],
+            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_native_tools],
         )
         return JSONResponse(config.model_dump(by_alias=True))
 
@@ -152,19 +164,23 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(request, agent=agent)
+        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+            request, agent=agent, sdk_version=sdk_version
+        )
         extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
 
         model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
-        request_builtin_tools = [tool for tool in ui_builtin_tools if tool.unique_id in extra_data.builtin_tools]
+        request_native_tools = [tool for tool in ui_native_tools if tool.unique_id in extra_data.builtin_tools]
+        request_capabilities: list[NativeTool[AgentDepsT]] = [NativeTool(tool) for tool in request_native_tools]
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
+            sdk_version=sdk_version,
             model=model_ref,
-            builtin_tools=request_builtin_tools,
+            capabilities=request_capabilities,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

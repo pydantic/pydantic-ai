@@ -4,11 +4,12 @@ import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
+_JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
 @dataclass(init=False)
@@ -28,7 +29,7 @@ class JsonSchemaTransformer(ABC):
         *,
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
-        simplify_nullable_unions: bool = False,  # TODO (v2): Remove this, no longer used
+        simplify_nullable_unions: bool = False,
     ):
         self.schema = schema
 
@@ -60,6 +61,7 @@ class JsonSchemaTransformer(ABC):
         # First, handle everything but $defs:
         schema.pop('$defs', None)
         handled = self._handle(schema)
+        assert not isinstance(handled, bool)
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
@@ -82,7 +84,10 @@ class JsonSchemaTransformer(ABC):
 
         return handled
 
-    def _handle(self, schema: JsonSchema) -> JsonSchema:
+    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:
+        if isinstance(schema, bool):
+            return schema
+
         nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
@@ -107,9 +112,14 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
+            schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        if type_ is not None:
+            for union_kind in ('allOf', 'anyOf', 'oneOf'):
+                if members := schema.get(union_kind):
+                    schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         schema = self.transform(schema)
 
@@ -148,7 +158,7 @@ class JsonSchemaTransformer(ABC):
 
         return schema
 
-    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
+    def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
             members = schema.pop(union_kind)
         except KeyError:
@@ -156,12 +166,13 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
             # In this case, no need to retain the union
-            return handled[0] | schema
+            if isinstance(handled[0], dict):
+                return handled[0] | schema
+            # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()
@@ -169,19 +180,20 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     @staticmethod
-    def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
-        # TODO (v2): Remove this method, no longer used
+    def _simplify_nullable_union(cases: list[_JsonSchemaNode]) -> list[_JsonSchemaNode]:
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(
                 (item for item in cases if item != {'type': 'null'}),
                 None,
             )
-            if non_null_schema:
+            if isinstance(non_null_schema, dict):
                 # Create a new schema based on the non-null part, mark as nullable
                 new_schema = deepcopy(non_null_schema)
                 new_schema['nullable'] = True
                 return [new_schema]
+            if non_null_schema is not None:
+                return cases
             else:  # pragma: no cover
                 # they are both null, so just return one of them
                 return [cases[0]]

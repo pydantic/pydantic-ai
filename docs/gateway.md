@@ -5,10 +5,7 @@ status: new
 
 # Pydantic AI Gateway
 
-**[Pydantic AI Gateway](https://logfire.pydantic.dev/)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://logfire.pydantic.dev/). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
-
-!!! warning "Migrated to Pydantic Logfire"
-    The AI Gateway has moved from `gateway.pydantic.dev` to [Pydantic Logfire](https://logfire.pydantic.dev/). If you were using the standalone gateway, see [Pydantic AI Gateway is Moving to Pydantic Logfire](https://logfire.pydantic.dev/docs/gateway-migration/).
+**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://pydantic.dev/logfire). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
 Sign up at [logfire.pydantic.dev](https://logfire.pydantic.dev/).
 
@@ -25,6 +22,7 @@ To help you get started with Pydantic AI Gateway, some code examples on the Pyda
 - **Cost Limits**: Set spending limits at project, user, and API key levels with daily, weekly, and monthly caps.
 - **BYOK and managed providers:** Bring your own API keys (BYOK) from LLM providers, or pay for inference directly through the platform.
 - **Multi-provider support:** Access models from OpenAI, Anthropic, Google Vertex, Groq, and AWS Bedrock. _More providers coming soon_.
+- **Routing groups:** Configure [routing groups](#routing-groups) to fail over between providers serving the same model, or load-balance traffic across them by weight.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
 - **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, **Pydantic AI Gateway** allows requests to flow through directly in each provider's native format. This gives you immediate access to new model features as soon as they are released.
 - **Enterprise ready**: Inherits Logfire's enterprise features — including SSO, custom roles and permissions.
@@ -68,7 +66,7 @@ Examples of providers and models that can be used are:
 | --- |-----------------|------------------------------------------|
 | OpenAI | `openai`        | `gateway/openai:gpt-5.2`                 |
 | Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-6`    |
-| Google Vertex | `google-vertex` | `gateway/google-vertex:gemini-3-flash-preview` |
+| Google Cloud (formerly Vertex AI) | `google-cloud` | `gateway/google-cloud:gemini-3-flash-preview` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
@@ -96,63 +94,61 @@ export PYDANTIC_AI_GATEWAY_API_KEY="pylf_v..."
 
 You can access multiple models with the same API key, as shown in the code snippet below.
 
-=== "Hello World"
+```python {title="hello_world.py"}
+from pydantic_ai import Agent
 
-    ```python {title="hello_world.py"}
-    from pydantic_ai import Agent
+agent = Agent('gateway/openai:gpt-5.2')
 
-    agent = Agent('gateway/openai:gpt-5.2')
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+#### Passing API Key directly
 
-=== "Passing API Key directly"
+Pass your API key directly using the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
 
-    Pass your API key directly using the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+```python {title="passing_api_key.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.gateway import gateway_provider
 
-    ```python {title="passing_api_key.py"}
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.gateway import gateway_provider
+provider = gateway_provider('openai', api_key='pylf_v...')
+model = OpenAIChatModel('gpt-5.2', provider=provider)
+agent = Agent(model)
 
-    provider = gateway_provider('openai', api_key='pylf_v...')
-    model = OpenAIChatModel('gpt-5.2', provider=provider)
-    agent = Agent(model)
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+#### Using a different upstream provider
 
-=== "Using a different upstream provider"
+To use an alternate provider or routing group, you can specify it in the route parameter:
 
-    To use an alternate provider or routing group, you can specify it in the route parameter:
+```python {title="routing_via_provider.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.gateway import gateway_provider
 
-    ```python {title="routing_via_provider.py"}
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.gateway import gateway_provider
+provider = gateway_provider(
+    'openai',
+    api_key='pylf_v...',
+    route='builtin-openai'
+)
+model = OpenAIChatModel('gpt-5.2', provider=provider)
+agent = Agent(model)
 
-    provider = gateway_provider(
-        'openai',
-        api_key='pylf_v...',
-        route='builtin-openai'
-    )
-    model = OpenAIChatModel('gpt-5.2', provider=provider)
-    agent = Agent(model)
-
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
 ### Claude Code
 
@@ -308,15 +304,123 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
     #> Hello user
     ```
 
+#### Vercel AI SDK
+
+The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointing each provider's `baseURL` at the matching proxy path (e.g. `/proxy/openai` or `/proxy/anthropic`). Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`).
+
+=== "US"
+
+    ```typescript
+    import { createOpenAI } from "@ai-sdk/openai";
+    import { generateText } from "ai";
+
+    const apiKey = process.env.PYDANTIC_AI_GATEWAY_API_KEY;
+    if (!apiKey) throw new Error("set PYDANTIC_AI_GATEWAY_API_KEY");
+
+    const openai = createOpenAI({
+      apiKey,
+      baseURL: "https://gateway-us.pydantic.dev/proxy/openai",
+    });
+
+    async function main() {
+      const openaiResult = await generateText({
+        model: openai("gpt-5.2"),
+        prompt: "what color is the sky? reply concisely",
+      });
+      console.log("openai:", openaiResult.text);
+    }
+
+    main().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+    ```
+
+=== "EU"
+
+    ```typescript
+    import { createOpenAI } from "@ai-sdk/openai";
+    import { generateText } from "ai";
+
+    const apiKey = process.env.PYDANTIC_AI_GATEWAY_API_KEY;
+    if (!apiKey) throw new Error("set PYDANTIC_AI_GATEWAY_API_KEY");
+
+    const openai = createOpenAI({
+      apiKey,
+      baseURL: "https://gateway-eu.pydantic.dev/proxy/openai",
+    });
+
+    async function main() {
+      const openaiResult = await generateText({
+        model: openai("gpt-5.2"),
+        prompt: "what color is the sky? reply concisely",
+      });
+      console.log("openai:", openaiResult.text);
+    }
+
+    main().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+    ```
+
+## Routing groups
+
+A **routing group** is a named collection of providers that all serve the same model. Each member has a **priority**, a **weight**, and an **active** flag, and those three values together let a single group express two different routing strategies:
+
+- **Failover / fallback**: Assign members different priorities. The Gateway always tries the highest-priority active member first, and only falls through to a lower-priority member when the higher one is unavailable (for example if it is down, rate-limited, or returns an error).
+- **Load balancing**: Assign two or more members the same priority and give each a weight. The Gateway splits traffic across those members in proportion to their weights.
+
+The two strategies compose: you can have, for example, a top priority tier with two providers load-balanced 70/30, and a second priority tier that only receives traffic when both top-tier providers fail.
+
+### Creating a routing group
+
+Routing groups are managed from your organization's Gateway settings in Logfire:
+
+1. Open **Gateway -> Routing Groups** and click **Add Routing Group**.
+2. Give the group a slug (e.g. `anthropic-routing`) and an optional description.
+3. Open the group's **Members** page and add one or more providers. For each member set:
+    - **Priority** - higher values are tried first. Use different priorities across members for failover.
+    - **Weight** - load-balancing weight used between members that share the same priority.
+    - **Active** - inactive members are skipped during routing.
+
+### Using a routing group
+
+Point the Gateway provider at the group via the `route` parameter (the group's slug):
+
+```python {title="routing_group.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.gateway import gateway_provider
+
+provider = gateway_provider(
+    'anthropic',
+    api_key='pylf_v...',
+    route='anthropic-routing',  # (1)!
+)
+model = AnthropicModel('claude-sonnet-4-6', provider=provider)
+agent = Agent(model)
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
+
+1. The slug of the routing group you created in Logfire.
+
 ## Troubleshooting
 
 ### Unable to calculate spend
 
-The gateway needs to know the cost of the request in order to provide insights about the spend, and to enforce spending limits.
-If it's unable to calculate the cost, it will return a 400 error with the message "Unable to calculate spend".
+The gateway needs to know the cost of a request in order to provide spend insights and enforce spending limits.
 
-When configuring a provider, you need to decide if you want the gateway to block
-the API key if it's unable to calculate the cost. If you choose to block the API key, any further requests using that API key will fail.
+Each provider has a **Require pricing data** toggle in its settings. When enabled (the default), the gateway rejects requests for models it has no pricing data for before forwarding them upstream. When disabled, those requests are allowed through, but their cost will not be tracked and they will not count toward spending limits.
 
-We are actively working on supporting more providers, and models.
-If you have a specific provider that you would like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or [open an issue on `genai-prices`](https://github.com/pydantic/genai-prices/issues/new).
+The rejection response depends on the provider type:
+
+- **Built-in providers** (Pydantic-managed): `404` with a message asking you to let us know on Slack so we can add the model.
+- **Custom providers** (your own API keys): `400` indicating that pricing data is required, with a hint to disable the toggle if you want the request through anyway.
+
+We are actively working on supporting more providers and models. If there's a specific provider or model you'd like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or [open an issue on `genai-prices`](https://github.com/pydantic/genai-prices/issues/new).
