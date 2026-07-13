@@ -160,11 +160,11 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
+    * Gemini (numeric seconds only, not `httpx.Timeout`)
     * Anthropic
     * OpenAI
     * Groq
-    * Mistral
+    * Mistral (numeric seconds only, not `httpx.Timeout`)
     * xAI
     """
 
