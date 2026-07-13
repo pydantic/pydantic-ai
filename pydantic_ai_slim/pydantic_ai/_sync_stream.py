@@ -1,4 +1,4 @@
-"""Bridge async streaming context managers to synchronous code via a dedicated event-loop thread.
+"""Bridge async streaming context managers to synchronous code on the caller's event loop.
 
 The synchronous streaming wrappers (`Agent.run_stream_sync` and `direct.model_request_stream_sync`) need
 to drive an async stream from sync code. Pumping via repeated `loop.run_until_complete(anext(...))` runs
@@ -7,25 +7,27 @@ the agent graph's per-node scopes, or `group_by_temporal`'s debouncer) straddles
 `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`. It also leaves
 OpenTelemetry spans dangling, since the run span never closes in the task that opened it.
 
-`SyncStreamBridge` instead runs the whole stream on a single dedicated event-loop thread (an
-[`anyio` blocking portal][anyio.from_thread.BlockingPortal]): the async context manager is entered and
-exited in the same portal task, and each streaming pass runs its entire `async for` in one task.
+`SyncStreamBridge` instead keeps a long-lived task holding the async context manager open, and each
+streaming pass runs its entire `async for` in another long-lived task. All tasks run on the caller's event
+loop, preserving the event-loop affinity of async clients and other resources reused across sync calls.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, suppress
+from contextvars import Context, copy_context
+from dataclasses import dataclass
+from threading import get_ident
 from types import TracebackType
-from typing import Any, Generic, cast
+from typing import Generic
 
 import anyio
 import anyio.streams.memory
-from anyio.from_thread import BlockingPortal, start_blocking_portal
-from opentelemetry import context as otel_context
-from typing_extensions import TypeVar, TypeVarTuple, Unpack
+from typing_extensions import TypeIs, TypeVar, TypeVarTuple, Unpack
 
 from . import _utils
 
@@ -36,52 +38,149 @@ _PosArgsT = TypeVarTuple('_PosArgsT')
 _ExcInfo = tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
 
 
-@asynccontextmanager
-async def _capture_otel_context(
-    cm: AbstractAsyncContextManager[StreamT], captured: list[otel_context.Context]
-) -> AsyncGenerator[StreamT]:
-    """Enter `cm` and capture the OTel context that's active at its yield point.
-
-    `cm` opens its run/request span in the task it's entered in. We capture that task's OTel context so
-    that operations we later run in *other* portal tasks (streaming, `get_output`, ...) can re-attach it,
-    keeping their child spans parented under the run span and the run span's attributes complete.
-    """
-    async with cm as stream:
-        captured.append(otel_context.get_current())
-        yield stream
+def _is_awaitable(value: T | Awaitable[T]) -> TypeIs[Awaitable[T]]:
+    return inspect.isawaitable(value)
 
 
-def _shutdown_portal(
-    portal_cm: AbstractContextManager[BlockingPortal],
-    stream_cm: AbstractContextManager[Any],
+async def _hold_context_manager(
+    cm: AbstractAsyncContextManager[StreamT],
+    ready: asyncio.Future[tuple[StreamT, Context]],
+    exit_requested: asyncio.Future[_ExcInfo],
+) -> None:
+    """Enter and exit `cm` in one task, remaining parked while sync code uses the yielded stream."""
+    try:
+        stream = await cm.__aenter__()
+    except BaseException as exc:
+        ready.set_exception(exc)
+        return
+
+    ready.set_result((stream, copy_context()))
+    try:
+        exc_info = await exit_requested
+    except BaseException as exc:
+        if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
+            raise
+    else:
+        await cm.__aexit__(*exc_info)
+
+
+def _shutdown_loop(
+    loop: asyncio.AbstractEventLoop,
+    owner_task: asyncio.Task[None],
+    exit_requested: asyncio.Future[_ExcInfo],
+    pump_tasks: set[asyncio.Task[None]],
     exc_info: _ExcInfo,
 ) -> None:
-    """Exit the (portal-held) stream context manager, then stop the portal thread."""
+    """Tell the owner task to exit the stream context manager, then drive its cleanup to completion."""
+    for task in tuple(pump_tasks):
+        task.cancel()
+    for task in tuple(pump_tasks):
+        try:
+            loop.run_until_complete(task)
+        except BaseException:
+            # A completed call task can still have its `run_until_complete()` stop callback queued when
+            # `KeyboardInterrupt` starts teardown. If that stale callback stops this first drain, drive
+            # the pump once more so its iterator finishes closing before the owner context exits.
+            if not task.done():
+                with suppress(BaseException):
+                    loop.run_until_complete(task)
+    pump_tasks.clear()
+
+    if not exit_requested.done():
+        exit_requested.set_result(exc_info)
     try:
-        stream_cm.__exit__(*exc_info)
-    finally:
-        portal_cm.__exit__(None, None, None)
+        loop.run_until_complete(owner_task)
+    except BaseException:
+        # `KeyboardInterrupt` and `SystemExit` can stop `run_until_complete()` before task-group cleanup
+        # finishes. Keep driving the owner task so its context manager cannot be stranded.
+        if not owner_task.done():
+            with suppress(BaseException):
+                loop.run_until_complete(owner_task)
+        raise
+
+
+async def _request_exit(
+    owner_task: asyncio.Task[None],
+    exit_requested: asyncio.Future[_ExcInfo],
+    pump_tasks: set[asyncio.Task[None]],
+) -> None:
+    """Cancel active stream pumps before allowing the context-manager owner to exit."""
+    tasks = tuple(pump_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    pump_tasks.clear()
+    if not exit_requested.done():
+        exit_requested.set_result((None, None, None))
+    # Garbage-collection cleanup is best effort, but the owner task's exception must still be retrieved
+    # so an error from `__aexit__` is not reported later as "Task exception was never retrieved".
+    with suppress(BaseException):
+        await owner_task
+
+
+def _finalize_loop(
+    loop: asyncio.AbstractEventLoop,
+    owner_task: asyncio.Task[None],
+    exit_requested: asyncio.Future[_ExcInfo],
+    pump_tasks: set[asyncio.Task[None]],
+    owner_thread_id: int,
+) -> None:
+    """Best-effort finalizer for callers that do not close the synchronous wrapper explicitly."""
+    if loop.is_closed() or owner_task.done():
+        return
+
+    def request_exit() -> None:
+        loop.create_task(_request_exit(owner_task, exit_requested, pump_tasks))
+
+    if loop.is_running() or get_ident() != owner_thread_id:
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(request_exit)
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        with suppress(BaseException):
+            _shutdown_loop(loop, owner_task, exit_requested, pump_tasks, (None, None, None))
+    else:
+        # Another event loop is running in this thread, so the owner loop cannot be driven synchronously.
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(request_exit)
+
+
+@dataclass(frozen=True, slots=True)
+class _Received(Generic[T]):
+    value: T
+
+
+async def _receive_one(receive_stream: anyio.streams.memory.MemoryObjectReceiveStream[T]) -> _Received[T] | None:
+    """Receive one item without leaking `EndOfStream` through an asyncio task traceback."""
+    try:
+        return _Received(await receive_stream.receive())
+    except anyio.EndOfStream:
+        return None
 
 
 class SyncStreamBridge(Generic[StreamT]):
-    """Runs an async streaming context manager on a dedicated event-loop thread and bridges it to sync.
+    """Runs an async streaming context manager on the caller's event loop and bridges it to sync.
 
-    Constructing the bridge enters `cm` inside an [`anyio` blocking portal][anyio.from_thread.BlockingPortal]
-    and exposes the yielded object as [`stream`][pydantic_ai._sync_stream.SyncStreamBridge.stream]. Cancel
-    scopes entered and exited by the async code never straddle tasks, and OpenTelemetry spans stay correctly
-    nested. The owning sync wrapper calls [`shutdown`][pydantic_ai._sync_stream.SyncStreamBridge.shutdown]
-    (from its own `__exit__`) to exit the stream and stop the portal thread; a `weakref.finalize` fallback
-    does the same at garbage collection if the wrapper is dropped without being closed.
+    Constructing the bridge enters `cm` in a long-lived owner task and exposes the yielded object as
+    [`stream`][pydantic_ai._sync_stream.SyncStreamBridge.stream]. Cancel scopes entered and exited by the
+    async code never straddle tasks, OpenTelemetry spans stay correctly nested, and async resources remain
+    on the same event loop across synchronous calls. The owning sync wrapper calls
+    [`shutdown`][pydantic_ai._sync_stream.SyncStreamBridge.shutdown] (from its own `__exit__`) to exit the
+    stream. A `weakref.finalize` fallback requests the same cleanup if the wrapper is dropped without
+    being closed, but callers should use the wrapper as a context manager for deterministic cleanup.
     """
 
     stream: StreamT
-    """The object yielded by the async context manager (entered in the portal task)."""
+    """The object yielded by the async context manager."""
 
     def __init__(self, cm: AbstractAsyncContextManager[StreamT], *, async_alternative: str) -> None:
-        """Enter `cm` on a fresh portal thread, capturing its OTel context.
+        """Enter `cm` in a persistent task on the caller's event loop, capturing its context variables.
 
         Args:
-            cm: The async streaming context manager to run on the portal thread.
+            cm: The async streaming context manager to run on the caller's event loop.
             async_alternative: How to name the async counterpart in error messages (e.g. `run_stream`).
         """
         try:
@@ -93,117 +192,151 @@ class SyncStreamBridge(Generic[StreamT]):
                 f'Cannot use a synchronous streaming method from within an async context or a running '
                 f'event loop; use {async_alternative} instead.'
             )
-        if _utils._disable_threads.get():  # pyright: ignore[reportPrivateUsage]
-            raise RuntimeError(
-                f'Synchronous streaming runs on a dedicated event-loop thread, which is unavailable in this '
-                f'environment (e.g. emscripten or a Temporal workflow); use {async_alternative} instead.'
-            )
 
-        captured: list[otel_context.Context] = []
-        portal_cm = start_blocking_portal()
-        portal = portal_cm.__enter__()
+        loop = _utils.get_event_loop()
+        caller_context = copy_context()
+        ready = loop.create_future()
+        exit_requested = loop.create_future()
+        owner_task = loop.create_task(_hold_context_manager(cm, ready, exit_requested))
         try:
-            stream_cm = portal.wrap_async_context_manager(_capture_otel_context(cm, captured))
-            stream = stream_cm.__enter__()
-        except BaseException as exc:
-            portal_cm.__exit__(type(exc), exc, exc.__traceback__)
+            stream, run_context = loop.run_until_complete(ready)
+        except BaseException:
+            owner_task.cancel()
+            try:
+                loop.run_until_complete(owner_task)
+            except BaseException:
+                # A `KeyboardInterrupt` can leave the completed `ready` future's stop callback queued.
+                # Drive the loop once more after that callback has run so owner cancellation can finish.
+                if not owner_task.done():  # pragma: no cover
+                    with suppress(BaseException):
+                        loop.run_until_complete(owner_task)
+            # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `ready`.
+            # Retrieve it so the abandoned future cannot report an unhandled exception later.
+            with suppress(BaseException):
+                ready.result()
             raise
 
         self.stream = stream
-        self._portal = portal
-        self._portal_cm = portal_cm
-        self._stream_cm = stream_cm
-        # The run span's OTel context, captured in the portal task that holds `cm` open.
-        self._otel_context = captured[0]
-        # Clean up if the caller never uses the `with` block: exit the stream and stop the portal at GC.
-        self._finalizer = weakref.finalize(self, _shutdown_portal, portal_cm, stream_cm, (None, None, None))
+        self._loop = loop
+        self._owner_task = owner_task
+        self._exit_requested = exit_requested
+        self._caller_context = caller_context
+        self._run_context = run_context
+        self._owner_thread_id = get_ident()
+        self._pump_tasks: set[asyncio.Task[None]] = set()
+        # Clean up if the caller never uses the `with` block: exit the stream at GC.
+        self._finalizer = weakref.finalize(
+            self, _finalize_loop, loop, owner_task, exit_requested, self._pump_tasks, self._owner_thread_id
+        )
+
+    def _task_context(self) -> Context:
+        """Merge run-owned context changes into the sync caller's current context."""
+        context = copy_context()
+        for var in self._run_context:
+            value = self._run_context[var]
+            if var not in self._caller_context or self._caller_context[var] is not value:
+                context.run(var.set, value)
+        return context
+
+    def _check_owner_thread(self) -> None:
+        if get_ident() != self._owner_thread_id:
+            raise RuntimeError('A synchronous stream must be used and closed on the thread where it was created.')
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        raise RuntimeError('A synchronous stream cannot be used or closed while an event loop is running.')
 
     def shutdown(self, exc_info: _ExcInfo = (None, None, None)) -> None:
-        """Exit the stream context manager and stop the portal thread, at most once.
+        """Exit the stream context manager, at most once.
 
         `detach()` disarms the finalizer (returning true iff it was still live), guarding against a double
-        shutdown from the owning wrapper's `__exit__`, a Ctrl-C teardown, and a later GC. The exception is
-        propagated into the stream context manager so it can tear the stream down correctly.
+        shutdown from the owning wrapper's `__exit__`, a Ctrl-C teardown, and a later GC. The exception
+        information is passed to the stream context manager so it can tear the stream down correctly.
         """
+        self._check_owner_thread()
         if self._finalizer.detach() is not None:
-            _shutdown_portal(self._portal_cm, self._stream_cm, exc_info)
+            _shutdown_loop(self._loop, self._owner_task, self._exit_requested, self._pump_tasks, exc_info)
+
+    def _run(self, awaitable: Awaitable[T]) -> T:
+        """Run `awaitable` on the bridge's event loop and clean up its task if the caller interrupts."""
+        task = self._task_context().run(asyncio.ensure_future, awaitable, loop=self._loop)
+        try:
+            return self._loop.run_until_complete(task)
+        except BaseException:
+            if not task.done():
+                task.cancel()
+                with suppress(BaseException):
+                    self._loop.run_until_complete(task)
+            raise
+
+    async def _call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: Unpack[_PosArgsT]) -> T:
+        result = func(*args)
+        if _is_awaitable(result):
+            return await result
+        return result
 
     def call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: Unpack[_PosArgsT]) -> T:
-        """Run `func` in the portal task, tearing the run down if the caller is interrupted while it blocks.
+        """Run `func` on the bridge's event loop, tearing the run down if the caller is interrupted.
 
         Without this, a `KeyboardInterrupt` (Ctrl-C) or `SystemExit` landing while we're blocked on the
-        portal would unwind the caller while leaving the async code's pending tasks and open sockets
-        running on the portal thread until garbage collection. See #5975.
+        event loop would unwind the caller while leaving the async code's pending tasks and open sockets
+        until garbage collection. See #5975.
         """
+        if not self._finalizer.alive:
+            raise RuntimeError('This synchronous stream is already closed.')
+        self._check_owner_thread()
         try:
-            # `portal.call` accepts sync or async `func` (`Awaitable[T] | T`); the union defeats the
-            # return-type inference, so we narrow it back the same way anyio does internally.
-            return cast(T, self._portal.call(func, *args))
+            return self._run(self._call(func, *args))
         except (KeyboardInterrupt, SystemExit) as exc:
             self.shutdown((type(exc), exc, exc.__traceback__))
             raise
 
     def call_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
         """Like [`call`][pydantic_ai._sync_stream.SyncStreamBridge.call], with the run span's OTel context attached."""
-        return self.call(self._run_with_otel_context, func)
+        return self.call(func)
 
-    async def _run_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
-        token = otel_context.attach(self._otel_context)
-        try:
-            return await func()
-        finally:
-            otel_context.detach(token)
-
+    @staticmethod
     async def _pump_to_stream(
-        self, make_aiter: Callable[[], AsyncIterator[T]], send_stream: anyio.streams.memory.MemoryObjectSendStream[T]
+        make_aiter: Callable[[], AsyncIterator[T]], send_stream: anyio.streams.memory.MemoryObjectSendStream[T]
     ) -> None:
-        """Drive `make_aiter()` to completion in a single portal task, forwarding items to `send_stream`.
+        """Drive `make_aiter()` to completion in one task, forwarding items to `send_stream`.
 
         Running the whole `async for` in one task keeps the source iterator's cancel scopes (e.g.
         `group_by_temporal`'s) from being entered and exited in different tasks.
         """
-        token = otel_context.attach(self._otel_context)
-        try:
-            async with send_stream:
-                aiter = make_aiter()
-                try:
-                    async for item in aiter:
-                        try:
-                            await send_stream.send(item)
-                        except anyio.BrokenResourceError:
-                            # The consumer stopped iterating early and closed the receive end.
-                            return
-                finally:
-                    # The source iterators are async generators at runtime even though they're typed as
-                    # `AsyncIterator`, so this narrows to the closable case.
-                    if isinstance(aiter, AsyncGenerator):  # pragma: no branch
-                        await aiter.aclose()
-        finally:
-            otel_context.detach(token)
+        async with send_stream:
+            aiter = make_aiter()
+            try:
+                async for item in aiter:
+                    await send_stream.send(item)
+            finally:
+                # The source iterators are async generators at runtime even though they're typed as
+                # `AsyncIterator`, so this narrows to the closable case.
+                if isinstance(aiter, AsyncGenerator):  # pragma: no branch
+                    await aiter.aclose()
 
     def stream_sync(self, make_aiter: Callable[[], AsyncIterator[T]]) -> Iterator[T]:
-        """Synchronously iterate the items produced by `make_aiter()`, driven on the portal thread."""
+        """Synchronously iterate the items produced by `make_aiter()` on the bridge's event loop."""
+        self._check_owner_thread()
         send_stream, receive_stream = anyio.create_memory_object_stream[T](max_buffer_size=0)
-        future = self._portal.start_task_soon(self._pump_to_stream, make_aiter, send_stream)
+        pump_task = self._task_context().run(self._loop.create_task, self._pump_to_stream(make_aiter, send_stream))
+        self._pump_tasks.add(pump_task)
         try:
             while True:
-                try:
-                    yield self.call(receive_stream.receive)
-                except anyio.EndOfStream:
+                received = self.call(_receive_one, receive_stream)
+                if received is None:
                     break
+                yield received.value
             # Stream exhausted normally: surface any error raised inside the pump task.
-            future.result()
+            self._run(pump_task)
         finally:
-            # Unblock the pump (in case of early exit), then wait for it to finish its own cleanup
-            # (closing the source iterator). Suppress errors raised purely during that teardown
-            # (including the portal already being shut down), matching the async iterator's `aclose`
-            # behavior.
-            with suppress(BaseException):
-                self._portal.call(receive_stream.aclose)
-            with suppress(BaseException):
-                future.result()
-            # If the portal was already torn down (e.g. by a `KeyboardInterrupt`), the on-loop `aclose`
-            # above was suppressed and the receive stream is still open; close it synchronously so it
-            # isn't leaked. Safe and idempotent here: the pump is no longer running, so there are no
-            # waiting senders to wake across threads.
+            # Closing and cancelling unblocks the pump whether it is waiting to send or waiting on the
+            # source iterator. Then drive its task so the source iterator closes in that same task.
             receive_stream.close()
+            if not pump_task.done():
+                pump_task.cancel()
+            with suppress(BaseException):
+                self._run(pump_task)
+            self._pump_tasks.discard(pump_task)

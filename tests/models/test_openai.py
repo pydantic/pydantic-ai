@@ -591,13 +591,12 @@ async def test_stream_text(allow_model_requests: None):
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
     """`run_stream_sync` must stream and complete against a real, recorded streaming model.
 
-    End-to-end coverage for the portal-based implementation (#3716, refs #3714, #5975): the whole
-    run -- including a tool call, so the agent graph crosses node boundaries -- executes on a single
-    dedicated event-loop thread, and text streams incrementally before `get_output()` returns the
-    final result. This path can't be exercised with `TestModel` or a mock client (no real async
-    stream), so it's a VCR test.
+    End-to-end coverage for the task-stable implementation (#3716, refs #3714, #5975): the whole run,
+    including a tool call so the agent graph crosses node boundaries, keeps each async lifecycle in one
+    task, and text streams incrementally before `get_output()` returns the final result. This path can't
+    be exercised with `TestModel` or a mock client because they have no real async stream, so it's a VCR test.
 
-    Note: the pre-portal implementation pumped the stream via repeated
+    Note: the previous task-unstable implementation pumped the stream via repeated
     `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
     `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
     straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a

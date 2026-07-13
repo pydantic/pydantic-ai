@@ -721,11 +721,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods.
 
-    All of the run's async work happens in a single dedicated event loop thread (an
-    [`anyio` blocking portal][anyio.from_thread.BlockingPortal]), so cancel scopes entered and exited
-    by the agent graph never straddle tasks, and OpenTelemetry spans stay correctly nested.
+    All of the run's async work happens on the caller's event loop. Context-manager and iterator
+    lifecycles remain in stable tasks, so cancel scopes entered and exited by the agent graph never
+    straddle tasks and OpenTelemetry spans stay correctly nested. The wrapper must be used and closed
+    on the thread where it was created.
 
-    This is a synchronous context manager; the underlying stream and event loop are cleaned up on exit:
+    This is a synchronous context manager; the underlying stream is cleaned up on exit:
 
     ```python
     from pydantic_ai import Agent
@@ -738,8 +739,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             #> The capital of the UK is London.
     ```
 
-    Using it without a `with` block also works for backwards compatibility; cleanup then happens when
-    the object is garbage collected.
+    Using it without a `with` block also works for backwards compatibility. Garbage collection requests
+    best-effort cleanup on the owner loop, but it cannot drive a stopped owner loop from another thread
+    or while another loop is running. A `with` block should be used whenever deterministic cleanup matters.
     """
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
@@ -747,7 +749,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def __init__(self, run_stream_cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]) -> None:
         if isinstance(run_stream_cm, StreamedRunResult):
             # This wrapper used to take an already-entered `StreamedRunResult`, but it now needs the
-            # `run_stream()` context manager so it can enter it on the portal thread. Construct it via
+            # `run_stream()` context manager so it can enter it in a stable task. Construct it via
             # `agent.run_stream_sync(...)` instead. TODO (v3): remove this check.
             raise TypeError(
                 '`StreamedRunResultSync` now takes the `run_stream()` context manager rather than an '
@@ -840,7 +842,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        return self._bridge.stream_sync(lambda: self._streamed_run_result.stream_output(debounce_by=debounce_by))
+        result = self._streamed_run_result
+        return self._bridge.stream_sync(lambda: result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
         """Stream the text result as an iterable.
@@ -857,9 +860,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        return self._bridge.stream_sync(
-            lambda: self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by)
-        )
+        result = self._streamed_run_result
+        return self._bridge.stream_sync(lambda: result.stream_text(delta=delta, debounce_by=debounce_by))
 
     def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[_messages.ModelResponse]:
         """Stream the response as an iterable of `ModelResponse` snapshots.
@@ -875,7 +877,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of `ModelResponse` snapshots.
         """
-        return self._bridge.stream_sync(lambda: self._streamed_run_result.stream_response(debounce_by=debounce_by))
+        result = self._streamed_run_result
+        return self._bridge.stream_sync(lambda: result.stream_response(debounce_by=debounce_by))
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
