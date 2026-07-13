@@ -28,7 +28,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1806,3 +1806,167 @@ async def test_fallback_model_concurrent_entry():
     await task2
     assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
     assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+# `(exception, model)` and `(response, model)` handlers + failure-to-model attribution
+
+
+def exception_notes(exc: BaseException) -> list[str]:
+    """The PEP 678 notes attached to an exception (typeshed only exposes `__notes__` on Python 3.11+)."""
+    return exc.__notes__  # type: ignore[attr-defined]
+
+
+def first_http_failure(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError(status_code=500, model_name='first', body=None)
+
+
+def second_http_failure(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError(status_code=503, model_name='second', body=None)
+
+
+async def test_two_arg_exception_handler_receives_failing_model() -> None:
+    """A 2-arg `fallback_on` handler is called with the exception and the model that raised it, per attempt."""
+    seen: list[tuple[str, int]] = []
+
+    def should_fallback(exc: Exception, model: Model) -> bool:
+        assert isinstance(exc, ModelHTTPError)
+        seen.append((model.model_name, exc.status_code))
+        return True
+
+    first_model = FunctionModel(first_http_failure)
+    second_model = FunctionModel(second_http_failure)
+    fallback = FallbackModel(first_model, second_model, fallback_on=should_fallback)
+    agent = Agent(model=fallback)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await agent.run('hello')
+
+    # The handler saw each model paired with its own exception, in attempt order.
+    assert seen == [('function:first_http_failure:', 500), ('function:second_http_failure:', 503)]
+
+    # The grouped sub-exceptions are ordered by attempt and annotated with the failing model's name.
+    exceptions = exc_info.value.exceptions
+    assert [exception_notes(e) for e in exceptions] == snapshot(
+        [
+            ["Raised by fallback model 'function:first_http_failure:'."],
+            ["Raised by fallback model 'function:second_http_failure:'."],
+        ]
+    )
+
+
+async def test_two_arg_exception_handler_per_model_decision() -> None:
+    """A 2-arg handler can make different fallback decisions depending on which model raised."""
+
+    def only_fall_back_from_primary(exc: Exception, model: Model) -> bool:
+        # Fall back away from the primary model, but let the secondary's failure propagate as-is.
+        return model.model_name == 'function:first_http_failure:'
+
+    first_model = FunctionModel(first_http_failure)
+    second_model = FunctionModel(second_http_failure)
+    fallback = FallbackModel(first_model, second_model, fallback_on=only_fall_back_from_primary)
+    agent = Agent(model=fallback)
+
+    # Primary falls back to secondary; secondary's error is re-raised directly (not wrapped in a group).
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+    assert exc_info.value.status_code == 503
+
+
+async def test_two_arg_async_exception_handler_receives_model() -> None:
+    """Async 2-arg exception handlers receive the failing model too."""
+    seen: list[str] = []
+
+    async def should_fallback(exc: Exception, model: Model) -> bool:
+        seen.append(model.model_name)
+        return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(failure_model, success_model, fallback_on=should_fallback)
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'success'
+    assert seen == ['function:failure_response:']
+
+
+def test_var_args_exception_handler_receives_model() -> None:
+    """A `*args` handler is recognized as accepting the model and is called with both arguments."""
+    seen: list[int] = []
+
+    def should_fallback(*args: object) -> bool:
+        seen.append(len(args))
+        exc = args[0]
+        return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(failure_model, success_model, fallback_on=should_fallback)
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
+    assert seen == [2]  # called with (exception, model)
+
+
+async def test_two_arg_response_handler_receives_producing_model() -> None:
+    """A 2-arg response handler is called with the response and the model that produced it."""
+    seen: list[str] = []
+
+    def reject_primary(response: ModelResponse, model: Model, **_: object) -> bool:
+        # The trailing `**_` also exercises handler-arity detection past positional parameters.
+        seen.append(model.model_name)
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
+
+    fallback = FallbackModel(primary_model, fallback_model_impl, fallback_on=reject_primary)
+    agent = Agent(model=fallback)
+
+    result = await agent.run('hello')
+    assert result.output == 'fallback response'
+    assert seen == ['function:primary_response:', 'function:fallback_response:']
+
+
+async def test_two_arg_exception_handler_streaming_attribution() -> None:
+    """Streaming fallback passes the failing model to 2-arg handlers and annotates grouped exceptions."""
+    seen: list[str] = []
+
+    def should_fallback(exc: Exception, model: Model) -> bool:
+        seen.append(model.model_name)
+        return True
+
+    fallback = FallbackModel(failure_model_stream, failure_model_stream, fallback_on=should_fallback)
+    agent = Agent(model=fallback)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with agent.run_stream('hello') as result:
+            [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
+
+    assert seen == ['function::failure_response_stream', 'function::failure_response_stream']
+    exceptions = exc_info.value.exceptions
+    assert [exception_notes(e) for e in exceptions] == snapshot(
+        [
+            ["Raised by fallback model 'function::failure_response_stream'."],
+            ["Raised by fallback model 'function::failure_response_stream'."],
+        ]
+    )
+
+
+def test_success_path_reports_serving_model() -> None:
+    """The successful `ModelResponse` identifies the underlying model that served it, not the `FallbackModel`."""
+    fallback = FallbackModel(failure_model, success_model)
+    agent = Agent(model=fallback)
+
+    result = agent.run_sync('hello')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'function:success_response:'
+    assert fallback.model_name == 'fallback:function:failure_response:,function:success_response:'
+
+
+async def test_success_path_reports_serving_model_streaming() -> None:
+    """Streaming responses also identify the underlying model that served the request."""
+    fallback = FallbackModel(failure_model_stream, success_model_stream)
+    agent = Agent(model=fallback)
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+        response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'function::success_response_stream'
