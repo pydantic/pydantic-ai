@@ -2706,6 +2706,14 @@ def test_map_content_concatenates_text_chunks() -> None:
     assert thinking == []
 
 
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match='Timeout object is not yet supported for MistralModel.'):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_map_content_handles_reference_chunk() -> None:
     """Test that _map_content does not fail when encountering a MistralReferenceChunk."""
     content: list[MistralContentChunk] = [

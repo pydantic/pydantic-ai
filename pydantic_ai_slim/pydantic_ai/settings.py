@@ -86,7 +86,7 @@ class ModelSettings(TypedDict, total=False):
     * xAI
     """
 
-    timeout: float | Timeout
+    timeout: int | float | Timeout
     """Override the client-level default timeout for a request, in seconds.
 
     Supported by:
