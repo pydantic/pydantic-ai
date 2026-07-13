@@ -986,8 +986,8 @@ class TestMCPToolsetIntegration:
         run_context = replace(run_context, max_retries=5)
         toolset = MCPToolset('https://example.com/mcp')
         tool = toolset.tool_for_tool_def(
-            run_context,
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
+            ctx=run_context,
         )
         assert tool.max_retries == 5
 
@@ -997,10 +997,20 @@ class TestMCPToolsetIntegration:
         run_context = replace(run_context, max_retries=5)
         toolset = MCPToolset('https://example.com/mcp', max_retries=2)
         tool = toolset.tool_for_tool_def(
-            run_context,
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
+            ctx=run_context,
         )
         assert tool.max_retries == 2
+
+    async def test_tool_for_tool_def_defaults_to_one_retry_without_ctx(self):
+        """`ctx` is optional to keep the pre-existing `tool_for_tool_def(tool_def)` calling convention working."""
+        from pydantic_ai.tools import ToolDefinition
+
+        toolset = MCPToolset('https://example.com/mcp')
+        tool = toolset.tool_for_tool_def(
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
+        )
+        assert tool.max_retries == 1
 
     async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')

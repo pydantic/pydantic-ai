@@ -78,7 +78,9 @@ class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @abstractmethod
-    def tool_for_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -112,12 +114,12 @@ class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
         # depend on what earlier runs warmed in the worker, shifting recorded step order on recovery.
         cache_key = self.id or ''
         if self._cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self.tool_for_tool_def(ctx, tool_def) for name, tool_def in cached.items()}
+            return {name: self.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
 
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
         if self._cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self.tool_for_tool_def(ctx, tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]

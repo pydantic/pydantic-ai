@@ -1779,7 +1779,7 @@ class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     def _cache_tools(self) -> bool:
         return False  # pragma: no cover
 
-    def tool_for_tool_def(self, ctx: RunContext[int], tool_def: ToolDefinition) -> ToolsetTool[int]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[int] | None = None) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
