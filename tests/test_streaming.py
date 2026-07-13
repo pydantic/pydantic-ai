@@ -6,9 +6,11 @@ import datetime
 import gc
 import json
 import re
+import sys
 import threading
+import warnings
 import weakref
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -59,6 +61,7 @@ from pydantic_ai._sync_stream import (
     SyncStreamBridge,
     _finalize_loop,  # pyright: ignore[reportPrivateUsage]
     _request_exit,  # pyright: ignore[reportPrivateUsage]
+    _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
@@ -301,14 +304,20 @@ def test_streamed_text_sync_response():
 
 
 async def test_run_stream_sync_rejects_running_event_loop():
-    """`run_stream_sync` drives the caller's event loop, so it must refuse to run inside an existing one."""
+    """`run_stream_sync` drives the caller's event loop, so it must refuse to run inside an existing one.
+
+    This is an in-process loop-state guard that a provider cassette cannot exercise.
+    """
     agent = Agent(TestModel())
     with pytest.raises(RuntimeError, match=r'from within an async context or a running event loop; use `run_stream`'):
         agent.run_stream_sync('Hello')
 
 
 def test_run_stream_sync_works_with_disabled_threads():
-    """`run_stream_sync` does not need a worker thread."""
+    """`run_stream_sync` does not need a worker thread.
+
+    VCR cannot observe whether the synchronous bridge starts a thread.
+    """
     agent = Agent(TestModel())
     with _utils.disable_threads():
         with agent.run_stream_sync('Hello') as result:
@@ -335,7 +344,10 @@ def _interrupt_next_loop_run(
 
 
 def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch):
-    """A Ctrl-C while driving the event loop cancels the run instead of leaking tasks or sockets (#5975)."""
+    """A Ctrl-C while driving the event loop cancels the run instead of leaking tasks or sockets (#5975).
+
+    VCR cannot reproduce the required in-process interrupt timing or inspect pending tasks.
+    """
     agent = Agent(TestModel())
     result = agent.run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
@@ -357,7 +369,10 @@ def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.Mo
 
 
 def test_sync_stream_bridge_call_propagates_keyboard_interrupt():
-    """An interrupt raised by a bridge call propagates after the context manager exits."""
+    """An interrupt raised by a bridge call propagates after the context manager exits.
+
+    VCR cannot inject a synchronous interrupt into the bridge call lifecycle.
+    """
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -374,8 +389,69 @@ def test_sync_stream_bridge_call_propagates_keyboard_interrupt():
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
 
 
+def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
+    """A stale loop-stop callback cannot mask an interrupt when no stream pump is active.
+
+    VCR cannot control event-loop callback ordering or inject a synchronous interrupt.
+    """
+    cleanup_complete = False
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        nonlocal cleanup_complete
+        try:
+            yield object()
+        finally:
+            cleanup_complete = True
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    original_error = KeyboardInterrupt('original')
+
+    def interrupt() -> None:
+        raise original_error
+
+    def finish_then_interrupt() -> None:
+        # Finishing the call queues its `run_until_complete()` stop callback behind this interrupt.
+        loop.call_soon(interrupt)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        bridge.call(finish_then_interrupt)
+
+    assert exc_info.value is original_error
+    assert cleanup_complete
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    assert loop.run_until_complete(asyncio.sleep(0)) is None
+
+
+def test_sync_stream_bridge_task_drain_propagates_unexpected_runtime_error(monkeypatch: pytest.MonkeyPatch):
+    """Task draining only retries asyncio's early-stop error, not unrelated runtime failures.
+
+    VCR cannot replace the local event-loop driver or observe its pending cleanup tasks.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+
+    def fail(_awaitable: Awaitable[object]) -> object:
+        raise RuntimeError('other')
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', fail)
+        with pytest.raises(RuntimeError, match='other'):
+            _run_task_to_completion(loop, task)
+
+    pending = asyncio.all_tasks(loop)
+    for pending_task in pending:
+        pending_task.cancel()
+    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.close()
+
+
 def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
-    """A stale loop-stop callback cannot let owner cleanup overtake a cancelled stream pump."""
+    """A stale loop-stop callback cannot let owner cleanup overtake a cancelled stream pump.
+
+    VCR cannot control event-loop callback ordering or observe task cleanup order.
+    """
     source_cleaned = False
     owner_saw_source_cleaned: bool | None = None
 
@@ -417,23 +493,26 @@ def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
 
     assert source_cleaned
     assert owner_saw_source_cleaned is True
-    cast(Any, stream).close()
+    cast(Generator[str, None, None], stream).close()
 
 
 def test_sync_stream_bridge_rejects_use_from_another_thread():
-    """Normal use never moves the caller-owned event loop to another thread."""
+    """Normal use never moves the caller-owned event loop to another thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
         yield object()
 
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
-    errors: list[BaseException] = []
+    errors: list[RuntimeError] = []
 
     def use_bridge() -> None:
         try:
             bridge.call(lambda: None)
-        except BaseException as exc:
+        except RuntimeError as exc:
             errors.append(exc)
 
     thread = threading.Thread(target=use_bridge)
@@ -441,13 +520,196 @@ def test_sync_stream_bridge_rejects_use_from_another_thread():
     thread.join()
 
     assert len(errors) == 1
-    assert isinstance(errors[0], RuntimeError)
     assert str(errors[0]) == 'A synchronous stream must be used and closed on the thread where it was created.'
     bridge.shutdown()
 
 
+def test_sync_stream_bridge_defers_iterator_close_from_another_thread():
+    """Closing a suspended iterator queues its pump cleanup back to the owner thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+
+    def close_stream() -> None:
+        cast(Generator[str, None, None], stream).close()
+
+    thread = threading.Thread(target=close_stream)
+    thread.start()
+    thread.join()
+
+    assert cleanup_thread_id is None
+
+    bridge.call(asyncio.sleep, 0)
+    bridge.call(asyncio.sleep, 0)
+    assert cleanup_thread_id == owner_thread_id
+    assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_rejects_iterator_resume_from_another_thread():
+    """Resuming a suspended iterator cannot move its pump cleanup to another thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+    errors: list[RuntimeError] = []
+
+    def resume_stream() -> None:
+        try:
+            next(stream)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=resume_stream)
+    thread.start()
+    thread.join()
+
+    assert len(errors) == 1
+    assert str(errors[0]) == 'A synchronous stream must be used and closed on the thread where it was created.'
+    assert cleanup_thread_id is None
+
+    bridge.shutdown()
+    assert cleanup_thread_id == owner_thread_id
+
+
+def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: pytest.MonkeyPatch):
+    """Foreign-thread iterator GC queues cleanup without emitting an unraisable exception.
+
+    VCR cannot control garbage collection or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+    holder = [stream]
+    del stream
+
+    def drop_stream() -> None:
+        holder.clear()
+        gc.collect()
+
+    thread = threading.Thread(target=drop_stream)
+    thread.start()
+    thread.join()
+
+    assert not unraisable
+    assert cleanup_thread_id is None
+
+    bridge.call(asyncio.sleep, 0)
+    bridge.call(asyncio.sleep, 0)
+    assert cleanup_thread_id == owner_thread_id
+    assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytest.MonkeyPatch):
+    """Foreign-thread iterator GC closes its receive stream after wrapper shutdown.
+
+    VCR cannot control garbage collection or observe the bridge's in-process stream resources.
+    """
+    original_loop = _utils.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    cleanup_thread_id: int | None = None
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    try:
+        bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+        stream = bridge.stream_sync(source)
+        assert next(stream) == 'first'
+        bridge.shutdown()
+        assert cleanup_thread_id == threading.get_ident()
+        holder = [stream]
+        del stream
+
+        def drop_stream() -> None:
+            holder.clear()
+            gc.collect()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', ResourceWarning)
+            thread = threading.Thread(target=drop_stream)
+            thread.start()
+            thread.join()
+            loop.close()
+            gc.collect()
+    finally:
+        if not loop.is_closed():  # pragma: no cover
+            loop.close()
+        asyncio.set_event_loop(original_loop)
+
+    assert not unraisable
+
+
 def test_sync_stream_bridge_rejects_use_while_another_loop_runs():
-    """A sync bridge never nests its owner loop inside another running event loop."""
+    """A sync bridge never nests its owner loop inside another running event loop.
+
+    This is an in-process loop-state guard that a provider cassette cannot exercise.
+    """
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -464,7 +726,10 @@ def test_sync_stream_bridge_rejects_use_while_another_loop_runs():
 
 
 def test_sync_stream_bridge_init_interrupt_cleans_owner():
-    """An interrupt during context entry cancels the owner task without leaking its ready future."""
+    """An interrupt during context entry cancels the owner task without leaking its ready future.
+
+    VCR cannot inject the interrupt timing or inspect the bridge's pending futures.
+    """
     loop = _utils.get_event_loop()
 
     def interrupt() -> None:
@@ -481,7 +746,10 @@ def test_sync_stream_bridge_init_interrupt_cleans_owner():
 
 
 def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
-    """An interrupt after context entry still runs the context manager's cleanup."""
+    """An interrupt after context entry still runs the context manager's cleanup.
+
+    VCR cannot inject an interrupt between context entry and result delivery.
+    """
     original_loop = _utils.get_event_loop()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -502,6 +770,7 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     try:
         with pytest.raises(KeyboardInterrupt):
             SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
     finally:
         loop.close()
         asyncio.set_event_loop(original_loop)
@@ -509,8 +778,53 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     assert exited
 
 
+@pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
+def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
+    """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
+
+    VCR cannot inject an in-process base exception into the context-manager entry protocol.
+    """
+    original_loop = _utils.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    error = error_type('entry failed')
+    forced_stop = False
+
+    class FailingContextManager:
+        async def __aenter__(self) -> object:
+            raise error
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
+            pytest.fail('`__aexit__` must not be called when `__aenter__` fails')
+
+    def force_stop() -> None:
+        nonlocal forced_stop
+        forced_stop = True
+        loop.stop()
+
+    stop_handle = loop.call_later(0.05, force_stop)
+    try:
+        with pytest.raises(error_type) as exc_info:
+            SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        assert exc_info.value is error
+        assert not forced_stop
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
+    finally:
+        stop_handle.cancel()
+        loop.close()
+        asyncio.set_event_loop(original_loop)
+
+
 def test_sync_stream_bridge_exit_error_propagates():
-    """An error raised after context-manager cleanup is complete propagates to the sync caller."""
+    """An error raised after context-manager cleanup is complete propagates to the sync caller.
+
+    VCR cannot make the in-process context manager fail during its exit protocol.
+    """
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -528,7 +842,10 @@ def test_sync_stream_bridge_exit_error_propagates():
 
 
 def test_sync_stream_bridge_owner_cancellation_can_be_suppressed():
-    """Owner cancellation follows the async context manager's suppression semantics."""
+    """Owner cancellation follows the async context manager's suppression semantics.
+
+    VCR cannot control task cancellation or inspect the context manager's exception arguments.
+    """
     exit_type: type[BaseException] | None = None
 
     class SuppressingContextManager:
@@ -554,7 +871,10 @@ def test_sync_stream_bridge_owner_cancellation_can_be_suppressed():
 
 
 def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
-    """Shutdown remains idempotent if cleanup was already requested on the owner loop."""
+    """Shutdown remains idempotent if cleanup was already requested on the owner loop.
+
+    VCR cannot place the bridge into this internal cleanup state.
+    """
 
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
@@ -568,7 +888,10 @@ def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
 
 
 def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
-    """The non-context-manager fallback can request cleanup from its running owner loop."""
+    """The non-context-manager fallback can request cleanup from its running owner loop.
+
+    VCR cannot control garbage collection or inspect owner-task completion.
+    """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
@@ -590,7 +913,10 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
 
 
 def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
-    """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs."""
+    """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs.
+
+    VCR cannot control garbage collection or inspect the in-process pump tasks.
+    """
     result = Agent(TestModel(custom_output_text='The cat sat on the mat.')).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
     owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
@@ -608,7 +934,10 @@ def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
 
 
 def test_sync_stream_bridge_running_loop_finalizer_drains_pumps():
-    """Finalization on a running loop cancels pumps before releasing the owner task."""
+    """Finalization on a running loop cancels pumps before releasing the owner task.
+
+    VCR cannot trigger this finalizer state or observe task cancellation order.
+    """
 
     async def run() -> None:
         loop = asyncio.get_running_loop()
@@ -639,7 +968,10 @@ def test_sync_stream_bridge_running_loop_finalizer_drains_pumps():
 
 
 def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
-    """Best-effort GC cleanup consumes an error raised while the owner context exits."""
+    """Best-effort GC cleanup consumes an error raised while the owner context exits.
+
+    VCR cannot inspect whether an in-process task exception was retrieved.
+    """
 
     async def run() -> None:
         loop = asyncio.get_running_loop()
@@ -661,7 +993,10 @@ def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
 
 
 def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
-    """The non-context-manager fallback requests cleanup if another event loop is active."""
+    """The non-context-manager fallback requests cleanup if another event loop is active.
+
+    VCR cannot control garbage collection while a second event loop is running.
+    """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
     owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
@@ -685,7 +1020,10 @@ def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
 
 
 def test_sync_stream_bridge_finalizes_on_another_thread():
-    """The GC fallback never moves the stopped caller-owned loop to the finalizer thread."""
+    """The GC fallback never moves the stopped caller-owned loop to the finalizer thread.
+
+    VCR cannot control the finalizer thread or observe event-loop thread affinity.
+    """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
     owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
@@ -709,16 +1047,24 @@ def test_sync_stream_bridge_finalizes_on_another_thread():
 
 
 def test_sync_stream_bridge_finalizer_ignores_closed_loop():
-    """The GC fallback cannot drive a loop that its owner has already closed."""
+    """The GC fallback cannot drive a loop that its owner has already closed.
+
+    Once a caller closes the owner loop, async cleanup cannot safely run in-process. A provider cassette
+    cannot observe this local lifecycle guard. A pending Future stands in for the owner task so the guard
+    can be exercised without knowingly leaking a real task.
+    """
     loop = asyncio.new_event_loop()
     exit_requested: asyncio.Future[tuple[type[BaseException] | None, BaseException | None, TracebackType | None]] = (
         loop.create_future()
     )
-    owner_task = loop.create_task(asyncio.sleep(0))
-    loop.run_until_complete(owner_task)
+    owner_task = cast(asyncio.Task[None], loop.create_future())
+    assert not owner_task.done()
     loop.close()
 
     _finalize_loop(loop, owner_task, exit_requested, set(), threading.get_ident())
+
+    assert not owner_task.done()
+    assert not exit_requested.done()
 
 
 def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pytest.MonkeyPatch):
@@ -784,11 +1130,14 @@ def test_run_stream_sync_early_break_tears_down_pump():
         assert next(stream)  # pull one chunk while the pump still has more to send
         # `stream_text` is typed `Iterator` but is a generator at runtime; closing it abandons the stream,
         # closing the receive end the pump is sending into.
-        cast(Any, stream).close()
+        cast(Generator[str, None, None], stream).close()
 
 
 def test_sync_stream_bridge_early_close_cancels_waiting_pump():
-    """Closing a sync iterator cancels a pump waiting indefinitely on its source."""
+    """Closing a sync iterator cancels a pump waiting indefinitely on its source.
+
+    VCR cannot inspect the pump task or deterministically hold its source pending.
+    """
     source_closed = False
     wait_forever = asyncio.Event()
 
@@ -808,15 +1157,57 @@ def test_sync_stream_bridge_early_close_cancels_waiting_pump():
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
     stream = bridge.stream_sync(source)
     assert next(stream) == 'first'
-    cast(Any, stream).close()
+    cast(Generator[str, None, None], stream).close()
 
     assert source_closed
     assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
     bridge.shutdown()
 
 
+@pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
+def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error_type: type[BaseException]):
+    """A base exception from a completed pump escapes without stranding the caller's event loop.
+
+    VCR cannot inject an in-process base exception into the iterator pump task.
+    """
+    error = error_type('pump failed')
+    forced_stop = False
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        yield 'first'
+        raise error
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    stream = bridge.stream_sync(source)
+
+    def force_stop() -> None:
+        nonlocal forced_stop
+        forced_stop = True
+        loop.stop()
+
+    stop_handle = loop.call_later(0.05, force_stop)
+    try:
+        with pytest.raises(error_type) as exc_info:
+            while True:
+                next(stream)
+        assert exc_info.value is error
+        assert not forced_stop
+        assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
+    finally:
+        stop_handle.cancel()
+
+
 def test_run_stream_sync_preserves_capability_contextvars():
-    """Tasks driven by the sync bridge inherit context set inside the agent run."""
+    """Tasks driven by the sync bridge inherit context set inside the agent run.
+
+    VCR cannot observe in-process context-variable propagation between tasks.
+    """
     run_context: contextvars.ContextVar[str] = contextvars.ContextVar('run_context')
 
     @dataclass
@@ -850,7 +1241,10 @@ def test_run_stream_sync_preserves_capability_contextvars():
 
 
 def test_run_stream_sync_preserves_current_caller_contextvars():
-    """Run-owned context merges into caller values changed after constructing the sync result."""
+    """Run-owned context merges into caller values changed after constructing the sync result.
+
+    VCR cannot observe caller context changes made between construction and consumption.
+    """
     caller_context: contextvars.ContextVar[str] = contextvars.ContextVar('caller_context')
     seen: list[str | None] = []
     agent = Agent(TestModel(custom_output_text='done'))

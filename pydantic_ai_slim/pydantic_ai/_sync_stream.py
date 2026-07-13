@@ -50,6 +50,11 @@ async def _hold_context_manager(
     """Enter and exit `cm` in one task, remaining parked while sync code uses the yielded stream."""
     try:
         stream = await cm.__aenter__()
+    except (KeyboardInterrupt, SystemExit):
+        # Futures deliberately do not stop `run_until_complete()` for these exceptions because tasks
+        # normally re-raise them directly from the event loop. Preserve that behavior instead of
+        # forwarding them through `ready`, which would leave the loop running indefinitely.
+        raise
     except BaseException as exc:
         ready.set_exception(exc)
         return
@@ -64,6 +69,32 @@ async def _hold_context_manager(
         await cm.__aexit__(*exc_info)
 
 
+async def _wait_for_task(task: asyncio.Task[None]) -> None:
+    """Wait for a task without propagating its result, then remain pending for one extra loop turn."""
+    if not task.done():
+        await asyncio.wait((task,))
+    await asyncio.sleep(0)
+
+
+def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[None]) -> None:
+    """Drive a task and consume a stale `run_until_complete()` stop callback if one is queued."""
+    waiter = loop.create_task(_wait_for_task(task))
+    try:
+        try:
+            loop.run_until_complete(waiter)
+        except RuntimeError as exc:
+            if str(exc) != 'Event loop stopped before Future completed.':
+                raise
+            loop.run_until_complete(waiter)
+    except BaseException:
+        with suppress(BaseException):
+            loop.run_until_complete(waiter)
+        with suppress(BaseException):
+            task.exception()
+        raise
+    task.result()
+
+
 def _shutdown_loop(
     loop: asyncio.AbstractEventLoop,
     owner_task: asyncio.Task[None],
@@ -75,28 +106,13 @@ def _shutdown_loop(
     for task in tuple(pump_tasks):
         task.cancel()
     for task in tuple(pump_tasks):
-        try:
-            loop.run_until_complete(task)
-        except BaseException:
-            # A completed call task can still have its `run_until_complete()` stop callback queued when
-            # `KeyboardInterrupt` starts teardown. If that stale callback stops this first drain, drive
-            # the pump once more so its iterator finishes closing before the owner context exits.
-            if not task.done():
-                with suppress(BaseException):
-                    loop.run_until_complete(task)
+        with suppress(BaseException):
+            _run_task_to_completion(loop, task)
     pump_tasks.clear()
 
     if not exit_requested.done():
         exit_requested.set_result(exc_info)
-    try:
-        loop.run_until_complete(owner_task)
-    except BaseException:
-        # `KeyboardInterrupt` and `SystemExit` can stop `run_until_complete()` before task-group cleanup
-        # finishes. Keep driving the owner task so its context manager cannot be stranded.
-        if not owner_task.done():
-            with suppress(BaseException):
-                loop.run_until_complete(owner_task)
-        raise
+    _run_task_to_completion(loop, owner_task)
 
 
 async def _request_exit(
@@ -201,15 +217,10 @@ class SyncStreamBridge(Generic[StreamT]):
         try:
             stream, run_context = loop.run_until_complete(ready)
         except BaseException:
-            owner_task.cancel()
-            try:
-                loop.run_until_complete(owner_task)
-            except BaseException:
-                # A `KeyboardInterrupt` can leave the completed `ready` future's stop callback queued.
-                # Drive the loop once more after that callback has run so owner cancellation can finish.
-                if not owner_task.done():  # pragma: no cover
-                    with suppress(BaseException):
-                        loop.run_until_complete(owner_task)
+            if not owner_task.done():
+                owner_task.cancel()
+            with suppress(BaseException):
+                _run_task_to_completion(loop, owner_task)
             # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `ready`.
             # Retrieve it so the abandoned future cannot report an unhandled exception later.
             with suppress(BaseException):
@@ -262,6 +273,10 @@ class SyncStreamBridge(Generic[StreamT]):
     def _run(self, awaitable: Awaitable[T]) -> T:
         """Run `awaitable` on the bridge's event loop and clean up its task if the caller interrupts."""
         task = self._task_context().run(asyncio.ensure_future, awaitable, loop=self._loop)
+        # `run_until_complete()` deliberately does not stop for a Future that already holds
+        # `KeyboardInterrupt` or `SystemExit`. Read completed tasks directly so teardown cannot hang.
+        if task.done():
+            return task.result()
         try:
             return self._loop.run_until_complete(task)
         except BaseException:
@@ -322,7 +337,33 @@ class SyncStreamBridge(Generic[StreamT]):
         self._check_owner_thread()
         send_stream, receive_stream = anyio.create_memory_object_stream[T](max_buffer_size=0)
         pump_task = self._task_context().run(self._loop.create_task, self._pump_to_stream(make_aiter, send_stream))
-        self._pump_tasks.add(pump_task)
+        pump_tasks = self._pump_tasks
+        pump_tasks.add(pump_task)
+
+        def discard_pump(task: asyncio.Task[None]) -> None:
+            pump_tasks.discard(task)
+            # A deferred close may finish without the sync iterator being resumed. Retrieve any error
+            # here so it cannot be reported later as "Task exception was never retrieved".
+            with suppress(BaseException):
+                task.exception()
+
+        pump_task.add_done_callback(discard_pump)
+
+        def cancel_pump() -> None:
+            receive_stream.close()
+            if not pump_task.done():
+                pump_task.cancel()
+
+        def defer_pump_cleanup() -> None:
+            if pump_task.done():
+                # The send side has already exited, so closing the receive side cannot wake loop-bound
+                # senders and is safe even if shutdown completed before foreign-thread iterator GC.
+                receive_stream.close()
+            else:
+                with suppress(RuntimeError):
+                    self._loop.call_soon_threadsafe(cancel_pump)
+
+        cleanup_deferred = False
         try:
             while True:
                 received = self.call(_receive_one, receive_stream)
@@ -331,12 +372,30 @@ class SyncStreamBridge(Generic[StreamT]):
                 yield received.value
             # Stream exhausted normally: surface any error raised inside the pump task.
             self._run(pump_task)
+        except GeneratorExit:
+            # Explicit close and CPython's implicit close during GC both inject `GeneratorExit`. If that
+            # happens off the owner thread, queue cleanup without raising an unraisable exception from GC.
+            try:
+                self._check_owner_thread()
+            except RuntimeError:
+                defer_pump_cleanup()
+                cleanup_deferred = True
+                return
+            raise
         finally:
-            # Closing and cancelling unblocks the pump whether it is waiting to send or waiting on the
-            # source iterator. Then drive its task so the source iterator closes in that same task.
-            receive_stream.close()
-            if not pump_task.done():
-                pump_task.cancel()
-            with suppress(BaseException):
-                self._run(pump_task)
-            self._pump_tasks.discard(pump_task)
+            if not cleanup_deferred:
+                # Resuming iteration can also reach this block on another thread. Check again before
+                # touching the receive stream or pump task so cleanup cannot move the caller-owned loop.
+                try:
+                    self._check_owner_thread()
+                except RuntimeError:
+                    # Queue cleanup for the owner loop. It will run when the owner next drives that loop,
+                    # including during `shutdown()`, without touching loop-bound state from this thread.
+                    defer_pump_cleanup()
+                    raise
+                # Closing and cancelling unblocks the pump whether it is waiting to send or waiting on the
+                # source iterator. Then drive its task so the source iterator closes in that same task.
+                cancel_pump()
+                with suppress(BaseException):
+                    self._run(pump_task)
+                self._pump_tasks.discard(pump_task)
