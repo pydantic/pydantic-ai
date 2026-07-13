@@ -1,4 +1,4 @@
-# Compaction capabilities
+# Compaction
 
 > [!NOTE]
 > Import these capabilities from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -10,12 +10,14 @@
 > The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
 A menu of strategies for keeping an agent's conversation history within a model's context
-window. Each is a Pydantic AI `Capability` that runs in the `before_model_request` hook; edits
-**persist** into the run's message history, so a trim/clear/summary carries forward to later
+window. Each is a Pydantic AI `Capability` that edits the message history just before each
+request goes out; edits **persist** into the run's message history, so a trim/clear/summary carries forward to later
 steps (it is not recomputed from the full history every turn).
 
 All strategies preserve tool-call / tool-return **pairing** -- core does not validate this, and a
 provider rejects an orphaned pair. The zero-LLM strategies never call a model.
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/compaction/)
 
 ## The menu
 
@@ -26,7 +28,7 @@ provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 | `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
-| `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want the SOTA default: spend the expensive summary only when needed |
+| `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `LimitWarner` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 
 ## Triggers
@@ -94,6 +96,23 @@ TieredCompaction(
 )
 ```
 
+## `SlidingWindow` and `ClearToolResults` options
+
+`SlidingWindow` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead for a token
+budget rather than a message count. By default `preserve_first_user_message=True` keeps the first user
+turn even when it falls outside the window, so the agent does not lose the original task.
+
+`ClearToolResults` keeps the last `keep_pairs` intact. Set `clear_tool_inputs=True` to also blank the
+arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
+cleared.
+
+## `LimitWarner` thresholds
+
+Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL
+for iterations once the remaining request count drops to `critical_remaining_iterations` (default `3`).
+It watches `max_iterations`, `max_context_tokens`, and `max_total_tokens`, warning on whichever are
+configured; narrow that with `warn_on`.
+
 ## Cost: why summarization is the last resort
 
 Summarization turns input tokens into output tokens, which are billed at a premium and generated
@@ -140,6 +159,11 @@ from the edit point onward -- the next request pays a cache-write. Use `ClearToo
 
 `SummarizingCompaction(model=...)` accepts a model name or `Model`; when left `None` it inherits the
 running agent's model. No token caps are imposed on the summary call.
+
+By default `incremental=True` extends an existing summary from a prior compaction rather than
+regenerating it from scratch, and `preserve_first_user_message=True` keeps the original task turn even
+when it falls outside the window. Pass `keep_tokens` to trim the retained tail to a token budget instead
+of `keep_messages`.
 
 ## Usage accounting
 

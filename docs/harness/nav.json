@@ -1,0 +1,24 @@
+[
+  {
+    "label": "Pydantic AI Harness",
+    "items": [
+      { "label": "Overview", "slug": "index" },
+      { "label": "Code Mode", "slug": "code-mode" },
+      { "label": "FileSystem", "slug": "filesystem" },
+      { "label": "Shell", "slug": "shell" },
+      { "label": "Context", "slug": "context" },
+      { "label": "Pydantic AI Docs", "slug": "pydantic-ai-docs" },
+      { "label": "Compaction", "slug": "compaction" },
+      { "label": "Overflowing Tool Output", "slug": "overflowing-tool-output" },
+      { "label": "Step Persistence", "slug": "step-persistence" },
+      { "label": "Media", "slug": "media" },
+      { "label": "Subagents", "slug": "subagents" },
+      { "label": "Dynamic Workflow", "slug": "dynamic-workflow" },
+      { "label": "Planning", "slug": "planning" },
+      { "label": "Runtime Authoring", "slug": "runtime-authoring" },
+      { "label": "Guardrails", "slug": "guardrails" },
+      { "label": "Managed Prompt", "slug": "managed-prompt" },
+      { "label": "ACP", "slug": "acp" }
+    ]
+  }
+]

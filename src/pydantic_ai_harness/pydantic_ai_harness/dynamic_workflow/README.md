@@ -13,6 +13,8 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 > The extensions planned in [What is coming](#what-is-coming), structured sub-agent inputs and durable
 > workflows, touch the sub-agent call contract itself.
 
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/)
+
 ## The idea
 
 Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the

@@ -1,4 +1,4 @@
-# RepoContext
+# Context
 
 > [!NOTE]
 > Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -10,6 +10,8 @@
 > The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
 Discover and load a repo's accumulated coding-assistant context engineering (CE).
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/context/)
 
 ## The problem
 
@@ -43,6 +45,9 @@ context first, most specific last. Files are deduped by resolved real path and b
 content hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing
 identical content load once.
 
+When `home_dir` is `None` (the default), only `workspace_dir` is scanned -- no
+walk-up. Pass `home_dir=Path.home()` to walk up to your home directory.
+
 ### 2. Asset inventory (on by default)
 
 Exposes one tool, `inventory_agent_context()`, that reports where the repo's CE
@@ -51,6 +56,9 @@ the `skills/` (SKILL.md), `agents/` (`.md`), and `settings.json` (hooks) it
 contains. It returns a structured `AgentContextInventory`; it locates assets and
 does not parse them, leaving translation to the orchestrator.
 
+Rename the tool with `inventory_tool_name`, or scope which roots it scans with
+`asset_roots`.
+
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, surface that directory's
@@ -58,12 +66,24 @@ When the model lists or reads a directory, surface that directory's
 opt-in and configurable:
 
 ```python
-RepoContext(
-    workspace_dir=Path('.'),
-    nested_traversal=True,
-    traversal_tool_names=frozenset({'list_dir', 'read_file'}),  # match your tools
-    traversal_path_arg='path',                                   # the path arg key
-    nested_inject='pointer',                                     # or 'contents'
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import FileSystem
+from pydantic_ai_harness.context import RepoContext
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        FileSystem(root_dir='.'),
+        RepoContext(
+            workspace_dir=Path('.'),
+            nested_traversal=True,
+            traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # the FileSystem tool names to hook
+            traversal_path_arg='path',                                   # the path arg key
+            nested_inject='pointer',                                     # or 'contents'
+        )
+    ],
 )
 ```
 
@@ -110,4 +130,4 @@ files once per run, so mid-run edits to those files are not reloaded.
 ## Further reading
 
 - [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Pydantic AI hooks](https://ai.pydantic.dev/capabilities/#lifecycle-hooks)
+- [Pydantic AI hooks](https://ai.pydantic.dev/hooks/)

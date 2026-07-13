@@ -1,25 +1,29 @@
+---
+title: Overflowing Tool Output
+description: Reduce oversized tool returns when they are produced -- truncate, spill to a queryable file, or summarize -- so a large payload does not persist in history.
+---
+
 # Overflowing Tool Output
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.overflowing_tool_output import OverflowingToolOutput
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
-A tool can return a payload large enough to dominate the context window. Tool returns
-persist in history as `ToolReturnPart`s, so an oversized one is re-sent on every later
-model request -- paying its token cost for the rest of the run. `OverflowingToolOutput`
-intercepts a return when it is produced, reduces it once, and lets the reduced
-form persist. The reduction is not recomputed per request.
-
-This is the overflow-to-file follow-up the `compaction` README names as out of scope: it
-moves large tool outputs *out* of the window at production time, rather than compressing or
-dropping context already inside it.
+`OverflowingToolOutput` reduces a tool return that is large enough to dominate the context
+window. Tool returns persist in history as `ToolReturnPart`s, so an oversized one is re-sent
+on every later model request, paying its token cost for the rest of the run. This capability
+intercepts a return when it is produced, reduces it once, and lets the reduced form persist --
+the reduction is not recomputed per request.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/overflowing_tool_output/)
+
+> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+
+## The problem
+
+A tool can return a payload large enough to dominate the context window: a big file read, a
+verbose log, a large JSON document. Because tool returns persist in history, an oversized one
+is re-sent on every later model request, paying its token cost for the rest of the run.
+
+This is the overflow-to-file follow-up the [compaction](compaction.md) capability names as out
+of scope: it moves large tool outputs *out* of the window at production time, rather than
+compressing or dropping context already inside it.
 
 ## The three modes
 
@@ -34,16 +38,23 @@ the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool
 Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
-hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
-reduction, so a `read_tool_result` result is never itself spilled or truncated.
+hang the host with catastrophic backtracking.
 
-### Both `return_value` and `content` are reduced
+## Usage
 
-A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
-separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same band logic (they spill to distinct handles). Text `content` is
-reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
-a `warnings.warn`, since it cannot be safely truncated.
+Construct an `Agent` with `OverflowingToolOutput()` in its `capabilities`. With no arguments it
+uses the default band: spill returns of 10,000 characters or more, with a bounded truncation
+fallback if the store cannot accept the write.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.overflowing_tool_output import OverflowingToolOutput
+
+agent = Agent('openai:gpt-4o', capabilities=[OverflowingToolOutput()])
+```
+
+The capability registers a single `read_tool_result` tool so the model can page back into any
+spilled payload. Its own returns are exempt from reduction.
 
 ## Bands: combine the modes
 
@@ -66,9 +77,9 @@ agent = Agent(
     capabilities=[
         OverflowingToolOutput(
             bands=[
-                Band(over=100_000, action=Spill()),       # huge: keep losslessly, read back on demand
-                Band(over=20_000, action=Summarize()),     # large: compress with the run's model
-                Band(over=5_000, action=Truncate()),       # medium: cheap clamp
+                Band(over=100_000, action=Spill()),      # huge: keep losslessly, read back on demand
+                Band(over=20_000, action=Summarize()),    # large: compress with the run's model
+                Band(over=5_000, action=Truncate()),      # medium: cheap clamp
             ],
             # below 5,000: passthrough
         )
@@ -76,8 +87,9 @@ agent = Agent(
 )
 ```
 
-The default band, when you pass no `bands`, is `Spill(then=Truncate())`: lossless when a
-store accepts the write, a bounded truncation otherwise -- zero LLM cost and no silent drop.
+The default band, when you pass no `bands`, is `Spill(then=Truncate())` at a 10,000-character
+threshold: lossless when a store accepts the write, a bounded truncation otherwise -- zero LLM
+cost and no silent drop.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
@@ -96,7 +108,7 @@ spill -> truncate.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.experimental.overflow import (
+from pydantic_ai_harness.overflowing_tool_output import (
     Band,
     OverflowingToolOutput,
     Truncate,
@@ -117,11 +129,23 @@ agent = Agent(
 )
 ```
 
+`TruncationStrategy` has three members: `head` (keep the first characters, good for headers and
+schemas), `tail` (keep the last characters, good for build and test output where errors land
+last), and `head_tail` (keep both ends, elide the middle -- the default).
+
+## Both `return_value` and `content` are reduced
+
+A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
+separate, model-visible part which also persists in history. This capability measures and
+reduces both with the same band logic (they spill to distinct handles). Text `content` is
+reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
+a `warnings.warn`, since it cannot be safely truncated.
+
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as `compaction`); pass a `tokenizer`
-callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
+estimated tokens (the same ~4-chars-per-token heuristic as [compaction](compaction.md)); pass a
+`tokenizer` callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. Set `strip_ansi=True` to strip ANSI
 escape sequences from text returns before measuring and reducing.
 
@@ -161,7 +185,7 @@ agent that still wants to read a spill. To bound disk use, opt into age-based pr
 from datetime import timedelta
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.experimental.overflow import LocalFileStore, OverflowingToolOutput
+from pydantic_ai_harness.overflowing_tool_output import LocalFileStore, OverflowingToolOutput
 
 store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
 agent = Agent('openai:gpt-4o', capabilities=[OverflowingToolOutput(store=store)])
@@ -214,10 +238,13 @@ built-in prompt entirely. The `summary_prompt` template on the capability must c
 
 ## Relationship to other capabilities
 
-- Supersedes the spill scope of PR #185 `ToolOutputManagement` (one-way truncate / spill with
-  no read-back); this capability's truncation and ANSI / binary handling are harvested from it.
+- Distinct from [compaction](compaction.md), which compresses or drops context already inside
+  the window; this capability moves large tool outputs out of the window at production time.
 - Consumes core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) (the canonical
   queryable-file primitive) through the `OverflowStore` seam once it lands.
-- Distinct from `compaction`, which compresses or drops context already inside the window, and
-  from `ClampOversizedMessages` (PR #286), which clamps runaway model responses, not tool
+- Distinct from `ClampOversizedMessages`, which clamps runaway model responses, not tool
   returns.
+
+## API reference
+
+::: pydantic_ai_harness.overflowing_tool_output.OverflowingToolOutput

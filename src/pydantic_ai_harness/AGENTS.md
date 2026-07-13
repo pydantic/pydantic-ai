@@ -21,7 +21,7 @@ change instead of reimplementing core behavior in harness.
 - **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-ai-harness.
 - **Hook**: a lifecycle method on `AbstractCapability` that intercepts agent graph execution (e.g. `before_model_request`, `wrap_run`, `after_tool_execute`)
 - **Toolset**: a collection of tools that a capability can provide to the agent
-- **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuardrail`, `CostGuard`)
+- **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuard`, `OutputGuard`)
 - **Harness**: this package -- a collection of pre-made capabilities for Pydantic AI.
 - **AICA**: AI Code Assistant -- the automated agent that implements issues, reviews plans, and handles PR feedback
 - **Ralph loop**: the state-machine-based workflow that drives AICA through phases (TRIAGE -> GOALS -> PLAN -> CODE -> VERIFY -> REVIEW -> PUBLISH)
@@ -114,19 +114,18 @@ Always run `make lint && make typecheck && make test` before committing.
 
 ## File structure
 
-```
-pydantic_ai_harness/
-  __init__.py          # public API re-exports
-  <capability>/        # each capability gets its own package
-    __init__.py        # public exports for the capability
-    _capability.py     # capability class (AbstractCapability subclass)
-    _toolset.py        # toolset implementation
-    README.md          # standalone docs for the capability
-tests/
-  conftest.py          # shared fixtures (TestModel, test_agent)
-  <capability>/        # tests mirror source packages
-    test_<capability>.py
-```
+The tree is discoverable by listing it; only the conventions that are not are
+recorded here.
+
+Each released capability is a self-contained package under
+`pydantic_ai_harness/<capability>/` (naming and exports are covered in the
+preflight above), with tests under `tests/<capability>/`. It ships **two**
+hand-maintained docs that must stay in sync: the `README.md` next to the code
+(GitHub/PyPI) and the `docs/<capability>.md` page (the docs site at
+pydantic.dev/docs/ai/harness). The `docs/` folder is flat -- there are no
+`capabilities/` or `experimental/` subdirectories. A user-facing change updates
+both; `agent_docs/review-checklist.md` "Docs" and the `docs-parity-reviewer`
+subagent enforce the parity before merge.
 
 Do not add placeholder template files for new capabilities. Start from the
 existing `CodeMode` package shape, then delete what the new capability does not

@@ -1,4 +1,4 @@
-# Media
+# Media Externalization
 
 > [!NOTE]
 > Import these helpers from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -18,6 +18,8 @@
 Content-addressed stores and walker helpers that move large binary payloads out of message history and put them back on demand.
 
 These are building blocks, not a capability. There is no class you add to `Agent(capabilities=[...])` yet. [`StepPersistence`](../step_persistence/) uses them to keep snapshots small when messages carry `BinaryContent`. A forthcoming `MediaExternalizer` capability will reuse the same stores to rewrite `BinaryContent` into URL parts before the model sees them.
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/media/)
 
 ## Why
 

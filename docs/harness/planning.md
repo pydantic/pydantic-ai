@@ -1,17 +1,15 @@
+---
+title: Planning
+description: Give an agent a structured, self-updating task plan through a single write_plan tool, without ever invalidating the prompt cache.
+---
+
 # Planning
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.planning import Planning
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
-Give an agent a structured, self-updating task plan -- without ever invalidating the prompt cache.
+`Planning` gives the model a structured, self-updating task plan through a single `write_plan` tool -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/planning/)
+
+> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
 ## The problem
 
@@ -25,6 +23,10 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 - A `CachePoint` is placed immediately *before* the reminder, so the cached prefix (tools + system + real conversation) stays byte-identical turn over turn. Only the reminder falls outside the cache.
 
 So the plan stays current in the model's view while the cached prefix is never invalidated; the only added cost is re-reading the reminder each turn.
+
+## Usage
+
+Construct an `Agent` with `Planning()` in its `capabilities`. The `write_plan` tool is registered automatically, and the static usage guidance is added to the system prompt:
 
 ```python
 from pydantic_ai import Agent
@@ -70,17 +72,21 @@ Planning(
 )
 ```
 
+- `guidance` -- static planning guidance added to the system prompt. It is identical on every request, so it stays cache-stable. Leave it as `None` for the built-in default, or set `''` to omit guidance entirely.
+- `cache_ttl` -- TTL for the cache breakpoint placed before the plan reminder. One of `'5m'` or `'1h'`.
+
 ## Observing the plan
 
-Plan state is per-run (a fresh, isolated plan each run via `for_run`), so it
-doesn't live on the `Planning()` instance you construct. To see the final
-plan, read the most recent `write_plan` tool return from the run's messages --
-its content is the rendered plan:
+Plan state is per-run (a fresh, isolated plan each run via `for_run`), so it doesn't live on the `Planning()` instance you construct. To see the final plan, read the most recent `write_plan` tool return from the run's messages -- its content is the rendered plan:
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai_harness.planning import Planning
 
-result = agent.run_sync('...')
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
+
+result = agent.run_sync('Refactor the auth module and add tests.')
 plans = [
     part.content
     for message in result.all_messages()
@@ -88,11 +94,18 @@ plans = [
     if isinstance(part, ToolReturnPart) and part.tool_name == 'write_plan'
 ]
 latest_plan = plans[-1] if plans else None
+print(latest_plan)
 ```
+
+## Composition
+
+`Planning` contributes a single leaf toolset (`write_plan`), some static instructions, and a `wrap_model_request` hook. It does not wrap or intercept other toolsets, so it composes cleanly alongside other capabilities and your own tools in the same `Agent(..., capabilities=[...])`.
+
+The tail reminder is only appended when the last message in the request is a `ModelRequest` and the plan is non-empty, so an empty plan adds nothing to the request. Because the reminder and its `CachePoint` live only in the per-request copy and never enter the durable history, `Planning` is safe with message-history replay and does not accumulate stale reminders across turns.
 
 ## Agent spec (YAML/JSON)
 
-`Planning` works with Pydantic AI's [agent spec](https://ai.pydantic.dev/agent-spec/):
+`Planning` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) feature for defining agents in YAML or JSON:
 
 ```yaml
 # agent.yaml
@@ -106,10 +119,25 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.planning import Planning
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
+result = agent.run_sync('...')
+print(result.output)
+```
+
+Pass `custom_capability_types` so the spec loader knows how to instantiate `Planning`. Arguments can be passed in the YAML too:
+
+```yaml
+capabilities:
+  - Planning:
+      cache_ttl: '1h'
 ```
 
 ## Further reading
 
-- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Hooks](https://ai.pydantic.dev/hooks/) -- `wrap_model_request` is the ephemeral injection point used here
+- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Hooks](/ai/core-concepts/hooks/) -- `wrap_model_request` is the ephemeral injection point used here
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
+- [Code Mode](code-mode.md) -- another prompt-cache-aware harness capability
+
+## API reference
+
+::: pydantic_ai_harness.planning.Planning

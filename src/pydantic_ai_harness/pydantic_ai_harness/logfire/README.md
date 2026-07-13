@@ -9,6 +9,8 @@ Install the extra:
 pip install 'pydantic-ai-harness[logfire]'
 ```
 
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/logfire/)
+
 ## `ManagedPrompt`
 
 Back an agent's instructions with a Logfire-managed
@@ -23,7 +25,7 @@ Back an agent's instructions with a Logfire-managed
 ### The problem
 
 Prompts are critical to agent behavior, but iterating on them through the normal
-edit → review → deploy loop is slow, and you can't easily A/B test a change or roll it
+edit -> review -> deploy loop is slow, and you can't easily A/B test a change or roll it
 back the moment it misbehaves in production.
 
 ### The solution
@@ -142,13 +144,13 @@ Rendering requires `pydantic-handlebars` (install `pydantic-ai-slim[spec]`). It 
 ### Prompt-cache trade-off
 
 The resolved value lands in the agent's **system instructions**. Provider prompt caches (Anthropic,
-OpenAI, etc.) key strictly by prefix -- `tools → system → messages` -- so any change to the system
+OpenAI, etc.) key strictly by prefix -- `tools -> system -> messages` -- so any change to the system
 block invalidates the cached prefix for the affected runs.
 
 | Mode | Cache impact |
 | --- | --- |
 | Pinned `label='production'`, no rollout split | **Cache-stable.** The value only changes on a deliberate prompt rollout, which is the same cost as a redeploy. |
-| Percentage rollout across labels (no `label=`) | Different runs land on different labels → splits the cache into one lane per label. |
+| Percentage rollout across labels (no `label=`) | Different runs land on different labels -> splits the cache into one lane per label. |
 | `targeting_key` per user/tenant with multiple labels in play | Cache lanes per assigned label; deterministic per key but still N lanes overall. |
 | Mid-traffic label flip in the Logfire UI | One-shot cold-invalidation for everyone on that label. |
 

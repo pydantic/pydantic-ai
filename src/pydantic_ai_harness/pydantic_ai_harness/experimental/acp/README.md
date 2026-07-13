@@ -21,6 +21,8 @@
 
 Expose a Pydantic AI agent to editors and terminal UIs over the [Agent Client Protocol](https://agentclientprotocol.com).
 
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/experimental/acp/)
+
 ## The problem
 
 Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio JSON-RPC protocol that lets a TUI or editor drive an external coding agent -- streaming its text, rendering its file edits as diffs, and prompting the user to approve sensitive tool calls. To plug a Pydantic AI agent into one of these editors you would otherwise have to implement the ACP server side yourself.
@@ -223,7 +225,7 @@ Each completed turn reports its token counts (input/output/total, plus cached to
 
 ## API
 
-```python
+```python {test="skip"}
 run_acp_stdio(            # async; serve until the client disconnects
     agent,
     *,

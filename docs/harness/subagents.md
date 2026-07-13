@@ -1,17 +1,15 @@
+---
+title: Subagents
+description: Let an agent delegate self-contained tasks to named child agents via a single delegate_task tool, with per-delegate budgets and failure handling.
+---
+
 # Subagents
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.subagents import SubAgent, SubAgents
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
-Let an agent delegate self-contained tasks to named child agents.
+`SubAgents` lets an agent delegate self-contained tasks to named child agents. It takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/subagents/)
+
+> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
 ## The problem
 
@@ -165,7 +163,7 @@ Every agent the capability builds runs at a minimum thinking-effort floor. `MINI
 A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
 ```python
-from pydantic_ai_harness.experimental.subagents import SubAgents
+from pydantic_ai_harness.subagents import SubAgents
 
 def resolve(tool_name: str):
     return TOOLSETS.get(tool_name)  # -> Sequence[AgentToolset[object]] | None
@@ -208,7 +206,7 @@ SubAgent(
 )
 ```
 
-`SubAgents` is not serializable via the agent spec (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
+`SubAgents` is not serializable via the [agent spec](/ai/core-concepts/agent-spec/) (it holds live `Agent` instances), so `get_serialization_name()` returns `None`.
 
 ## Notes
 
@@ -217,5 +215,13 @@ SubAgent(
 
 ## Further reading
 
-- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Multi-agent applications](https://ai.pydantic.dev/multi-agent-applications/)
+- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Multi-agent applications](/ai/guides/multi-agent-applications/)
+
+## API reference
+
+::: pydantic_ai_harness.subagents.SubAgents
+
+::: pydantic_ai_harness.subagents.SubAgent
+
+::: pydantic_ai_harness.subagents.AgentOverride

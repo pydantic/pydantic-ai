@@ -1,6 +1,14 @@
+---
+title: FileSystem
+description: Give a Pydantic AI agent sandboxed, glob-filtered file access scoped to a single directory tree, with symlink-safe containment checks.
+---
+
 # FileSystem
 
-Give an agent sandboxed, pattern-filtered access to a directory tree.
+`FileSystem` gives an agent a fixed set of file tools -- read, write, edit, list,
+search, find, create, and inspect -- all scoped to a single `root_dir`. Every path is
+resolved and containment-checked (symlinks included) before any I/O, and access
+is filtered through allow / deny / protected glob patterns.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/filesystem/)
 
@@ -11,12 +19,13 @@ Letting an agent touch the filesystem directly is risky: path traversal
 leaking `.env` secrets. Hand-rolling the guards around every tool call is
 repetitive and easy to get subtly wrong.
 
-## The solution
+`FileSystem` centralizes those guards. It exposes one bounded, sandboxed
+toolset so you configure the boundary once and reuse it across agents.
 
-`FileSystem` exposes a fixed set of file tools, all scoped to a single
-`root_dir`. Every path is resolved and containment-checked (symlinks included)
-before any I/O, and access is filtered through allow / deny / protected glob
-patterns.
+## Usage
+
+Add `FileSystem` to your agent's `capabilities` with a `root_dir`. Everything
+the agent reads or writes is confined to that directory.
 
 ```python
 from pydantic_ai import Agent
@@ -31,7 +40,13 @@ result = agent.run_sync('Read config.toml and tell me the package name.')
 print(result.output)
 ```
 
+`root_dir` defaults to the current directory (`.`), but passing an explicit
+workspace path is the recommended practice -- the sandbox is only as tight as
+the root you give it.
+
 ## Tools
+
+`FileSystem` contributes eight tools, all path-scoped to `root_dir`:
 
 | Tool | Purpose |
 |---|---|
@@ -43,6 +58,12 @@ print(result.output)
 | `find_files` | Glob search over file names (e.g. `*.py`, `**/*.json`). |
 | `create_directory` | Create a directory and any missing parents. |
 | `file_info` | Metadata for a file or directory (size, type, line count, hash, symlink target). |
+
+Tool errors the model can correct -- a missing file, a denied path, a stale
+edit -- are surfaced as
+[`ModelRetry`](/ai/core-concepts/agent/#reflection-and-self-correction),
+so the agent gets the error message back and can adjust rather than aborting
+the run.
 
 ## Security model
 
@@ -68,8 +89,24 @@ need `**`.
 | `denied_patterns` | Matching paths are always rejected (denylist). |
 | `protected_patterns` | Matching paths are read-only -- reads succeed, writes are rejected. |
 
-`protected_patterns` defaults to `.git/*`, `.env`/`.env.*`, `*.pem`, `*.key`,
+`protected_patterns` defaults to `.git/*`, `.env`, `.env.*`, `*.pem`, `*.key`,
 and `**/secrets*`. Pass an empty list to disable protection.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import FileSystem
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        FileSystem(
+            root_dir='./workspace',
+            allowed_patterns=['*.py', '*.toml'],
+            denied_patterns=['**/node_modules/*'],
+        ),
+    ],
+)
+```
 
 ### Direct access vs. walkers
 
@@ -93,9 +130,10 @@ Note that the walkers filter entries with write-level access, so
 and `find_files` output even though those exact paths remain directly readable
 via `read_file`/`file_info`.
 
-> Dotfiles and dot-directories (`.git`, `.env`, `.github`, ...) are skipped by
-> all three walkers -- `list_directory`, `search_files`, and `find_files` --
-> regardless of patterns.
+!!! note
+    Dotfiles and dot-directories (`.git`, `.env`, `.github`, ...) are skipped by
+    all three walkers -- `list_directory`, `search_files`, and `find_files` --
+    regardless of patterns.
 
 ## Configuration
 
@@ -113,15 +151,15 @@ FileSystem(
 )
 ```
 
-The integer limits must be positive; they are validated at construction.
+The three integer limits must be positive; they are validated at construction
+and raise `ValueError` otherwise.
 
 ## Agent spec (YAML/JSON)
 
 `FileSystem` works with Pydantic AI's
-[agent spec](https://ai.pydantic.dev/agent-spec/):
+[agent spec](/ai/core-concepts/agent-spec/):
 
 ```yaml
-# agent.yaml
 model: anthropic:claude-sonnet-4-6
 capabilities:
   - FileSystem:
@@ -141,5 +179,10 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 
 ## Further reading
 
-- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Toolsets](https://ai.pydantic.dev/toolsets/)
+- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
+- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [the capabilities overview](index.md)
+
+## API reference
+
+::: pydantic_ai_harness.FileSystem

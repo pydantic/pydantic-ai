@@ -1,4 +1,4 @@
-# StepPersistence
+# Step Persistence
 
 > [!NOTE]
 > Import `StepPersistence` and the `media` stores from their submodules -- there is no top-level
@@ -20,6 +20,8 @@ investigation with a follow-up question).
 It is not a full graph-state checkpoint. Capability-state restore, workspace
 snapshots, and graph-node resume are out of scope and tracked separately
 (see `pydantic-ai-harness` issues #149 and #196).
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/step_persistence/)
 
 ## What it gives you
 
@@ -61,21 +63,21 @@ primitive for it (see [Three-level identity](#three-level-identity)).
 
 `run_id` resolution per call:
 
-- **Explicit `run_id='libr-1'`** → used as-is for this one call.
+- **Explicit `run_id='libr-1'`** becomes the id for this one call.
   Single-shot use cases (deterministic id for testing, replay, debugging,
   a one-off scripted run). Reusing one capability instance with the same
-  explicit `run_id` across multiple `.run()` calls **raises `ValueError`
-  in `before_run`** -- the tool-effect ledger is keyed by
+  explicit `run_id` across multiple `.run()` calls raises `ValueError`
+  in `before_run` -- the tool-effect ledger is keyed by
   `(run_id, tool_call_id)` and providers reuse deterministic tool-call
   ids, so a silent collision would erase the `unknown_after_crash`
   signal. Use `conversation_id=` for multi-turn grouping instead.
-- **`agent_name` set, `run_id` unset** → `'{agent_name}-{8-char-hex}'`,
+- **`agent_name` set, `run_id` unset** derives `'{agent_name}-{8-char-hex}'`,
   freshly materialised in `for_run` per `.run()` call. Reusing one
   capability instance across runs yields distinct ids
-  (`code_librarian-a3b2`, `code_librarian-c9d1`, …). This is the
+  (`code_librarian-a3b2`, `code_librarian-c9d1`, and so on). This is the
   recommended default for delegate capabilities.
-- **Neither set** → `ctx.run_id` (pydantic_ai's auto-generated id) per
-  `.run()` call, falling back to a UUID4.
+- **Neither set** falls back to `ctx.run_id` (pydantic_ai's auto-generated
+  id) per `.run()` call, and to a UUID4 if that is absent.
 
 The orchestrator pattern -- one logical agent serving many turns -- uses
 `conversation_id`, not a shared `run_id`:
@@ -143,15 +145,16 @@ run gets a fresh `run_id` and probably a fresh `conversation_id`).
 
 ### What "safe to continue from" means
 
-`continue_run` only returns the messages of the **latest provider-valid
-snapshot** for that `run_id`. Snapshots are written at two boundaries:
+`continue_run` only returns the messages of the latest provider-valid
+snapshot for that `run_id`. Snapshots are written at two boundaries:
 
 - after every `CallToolsNode` completes (all tool calls returned), and
-- at `after_run`.
+- at `after_run`, as a fallback if the run reached no such boundary.
 
 A run that crashed mid-tool-call has events (`tool_call_started`) but no
 snapshot for that point. `continue_run` returns the snapshot from the
-**previous** safe boundary, not the failed step.
+previous safe boundary, not the failed step. If no continuable snapshot
+exists at all, `continue_run` raises `LookupError`.
 
 ## Run lineage -- `parent_run_id`
 
@@ -162,7 +165,7 @@ two things:
 - `store.list_runs(parent_run_id='orch-1')` returns every delegate run
   pointing at that orchestrator.
 
-It is **auto-inferred for in-process delegation**: when an orchestrator's
+It is auto-inferred for in-process delegation: when an orchestrator's
 tool synchronously calls a delegate's `Agent.run(...)`, the delegate's
 `StepPersistence` picks up the orchestrator's `run_id` via a `ContextVar`
 that the orchestrator's `wrap_run` set. No threading required:
@@ -196,7 +199,7 @@ delegates = await store.list_runs(parent_run_id=orch_run_id)
 Set `parent_run_id=` explicitly to override (e.g. cross-process delegation
 where `ContextVar`s do not propagate).
 
-`parent_run_id` is **distinct from `conversation_id`**. The orchestrator
+`parent_run_id` is distinct from `conversation_id`. The orchestrator
 and delegate usually live in *different* conversations (the orchestrator
 talks to a user; the delegate talks to itself). But they share a
 parent-child link.
@@ -253,6 +256,7 @@ write external state should annotate their in-flight `ToolEffectRecord`
 via `annotate_tool_effect`:
 
 ```python
+from pydantic_ai import RunContext
 from pydantic_ai_harness.step_persistence import annotate_tool_effect
 
 @orchestrator.tool
@@ -269,7 +273,8 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
 
 The helper reads the active `run_id` from the `StepPersistence`
 `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the
-metadata into the prior record. `after_tool_execute` preserves both
+metadata into the prior record. It is a no-op when called outside a
+step-persistence-wrapped tool call. `after_tool_execute` preserves both
 fields when it writes the terminal `completed` / `failed` entry.
 
 ## Backends
@@ -307,7 +312,7 @@ IDs should still sanitise first.
 `BinaryContent` payloads (images, audio, documents, video) inline as
 base64 inside a snapshot would balloon every file/row containing the
 message. Both `FileStepStore` and `SqliteStepStore` externalize any
-`BinaryContent.data` ≥ **64 KiB** through a configured `MediaStore`,
+`BinaryContent.data` at or above 64 KiB through a configured `MediaStore`,
 leaving a URI reference in the snapshot. Round-trip is transparent --
 `latest_snapshot(...).messages[*]` returns `BinaryContent` with the
 original bytes.
@@ -472,13 +477,13 @@ always safe -- you only ever lose wire savings, never correctness.
 ### Persisting unsupported backends
 
 DynamoDB, Postgres, Redis, GCS, and other backends are out of scope for
-this release. Write your own `StepStore` (≈ ten methods on a Protocol) or
+this release. Write your own `StepStore` (about ten methods on a Protocol) or
 your own `MediaStore` (three methods) and pass it via `store=` /
 `media_store=`. Please open an issue if you ship one -- we want to feed
-the eventual shared adapter layer with N≥3 real implementations before
+the eventual shared adapter layer with N >= 3 real implementations before
 abstracting.
 
-## What this capability does **not** do
+## What this capability does not do
 
 - It does not restore capability per-run state, graph-node state, retry
   counters, or in-flight streaming responses.

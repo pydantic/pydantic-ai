@@ -1,4 +1,4 @@
-# RuntimeAuthoring
+# Runtime Authoring
 
 > [!NOTE]
 > Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -10,6 +10,8 @@
 > The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
 
 Let an agent author, validate, and persist real pydantic-ai capabilities at runtime.
+
+[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/runtime_authoring/)
 
 ## The problem
 
@@ -46,6 +48,10 @@ authoring = RuntimeAuthoring(directory=Path('.authored'))
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[authoring])
 ```
 
+`RuntimeAuthoring` also contributes static, cache-stable system-prompt guidance
+explaining these tools. Leave `guidance=None` for the default text, or pass your own
+string; set `guidance=''` to omit it entirely.
+
 ## Activation boundary
 
 A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves
@@ -64,11 +70,22 @@ active capabilities into each run. With `agent.run(..., capabilities=...)`, the 
 capability is live on the very next loop iteration -- no process restart.
 
 ```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.experimental.authoring import RuntimeAuthoring
+
+authoring = RuntimeAuthoring(directory=Path('.authored'))
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[authoring])
+
 history = None
+done = False
+next_prompt = 'Start the task.'
 while not done:
     extra = authoring.store.load_active()
     result = await agent.run(next_prompt, message_history=history, capabilities=extra)
     history = result.all_messages()
+    # ... decide `next_prompt` and `done` from `result` ...
 ```
 
 Because the capabilities also persist to disk (`<directory>/<name>.py` plus a
@@ -78,11 +95,20 @@ Because the capabilities also persist to disk (`<directory>/<name>.py` plus a
 `manifest.json` records each capability's name, module file, class name, status, and last
 validation error -- the surface a UI can read to show what the agent has authored.
 
+Capability names must be lowercase letters, digits, and underscores, starting with a
+letter; reusing a name replaces the previous capability of that name.
+
 ## Trust boundary and the sandboxed alternative
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
-operates under, which is the deliberate choice here.
+operates under, which is the deliberate choice here. Do not point it at a directory whose
+contents you would not run yourself, and treat authored capabilities as code the agent is
+executing on your host.
+
+Because authored capabilities hold live code, they are not spec-serializable
+(`get_serialization_name()` returns `None`) and are persisted as source rather than as an
+agent spec.
 
 The sandboxed alternative is the dormant `pa` Monty hook-slot registration system in the
 Loopy tree (`pa/slots.py`, `pa/registration_tools.py`, `pa/capability.py`
