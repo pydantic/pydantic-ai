@@ -6,7 +6,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -52,5 +52,5 @@ class TemporalMCPToolset(TemporalMCPToolsetBase[AgentDepsT]):
     def _cache_tools(self) -> bool:
         return self._toolset.cache_tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._toolset.tool_for_tool_def(tool_def)
+    def tool_for_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        return self._toolset.tool_for_tool_def(ctx, tool_def)

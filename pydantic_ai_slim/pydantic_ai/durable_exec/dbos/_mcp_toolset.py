@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._mcp import DBOSMCPToolsetBase
 from ._utils import StepConfig
@@ -37,5 +37,5 @@ class DBOSMCPToolset(DBOSMCPToolsetBase[AgentDepsT]):
     def _cache_tools(self) -> bool:
         return self._toolset.cache_tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        return self._toolset.tool_for_tool_def(tool_def)
+    def tool_for_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        return self._toolset.tool_for_tool_def(ctx, tool_def)

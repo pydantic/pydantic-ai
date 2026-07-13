@@ -94,7 +94,7 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
                     params.name,
                     params.tool_args,
                     run_context,
-                    self.tool_for_tool_def(params.tool_def),
+                    self.tool_for_tool_def(run_context, params.tool_def),
                 )
             )
 
@@ -106,7 +106,7 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
     @abstractmethod
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -154,7 +154,7 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         # what earlier runs warmed in the worker, breaking replay determinism (TMPRL1100).
         cache_key = self.id or ''
         if self._cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
+            return {name: self.tool_for_tool_def(ctx, tool_def) for name, tool_def in cached.items()}
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
@@ -168,7 +168,7 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         )
         if self._cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self.tool_for_tool_def(ctx, tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(
         self,

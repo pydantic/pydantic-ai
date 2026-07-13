@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -979,14 +980,27 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset('https://example.com/mcp')
         assert 'MCPToolset' in toolset.label
 
-    async def test_tool_for_tool_def_uses_default_retries_when_unset(self):
+    async def test_tool_for_tool_def_inherits_ctx_retries_when_unset(self, run_context: RunContext):
         from pydantic_ai.tools import ToolDefinition
 
+        run_context = replace(run_context, max_retries=5)
         toolset = MCPToolset('https://example.com/mcp')
         tool = toolset.tool_for_tool_def(
-            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
+            run_context,
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
         )
-        assert tool.max_retries == 1
+        assert tool.max_retries == 5
+
+    async def test_tool_for_tool_def_explicit_retries_take_precedence(self, run_context: RunContext):
+        from pydantic_ai.tools import ToolDefinition
+
+        run_context = replace(run_context, max_retries=5)
+        toolset = MCPToolset('https://example.com/mcp', max_retries=2)
+        tool = toolset.tool_for_tool_def(
+            run_context,
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
+        )
+        assert tool.max_retries == 2
 
     async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')

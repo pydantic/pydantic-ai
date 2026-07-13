@@ -1158,11 +1158,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
