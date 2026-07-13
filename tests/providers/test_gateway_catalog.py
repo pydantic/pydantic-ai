@@ -9,7 +9,6 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import infer_model, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
-from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 from ..models.test_model_names import UNSUPPORTED_GATEWAY_MODEL_NAMES
@@ -54,9 +53,7 @@ async def _run_gateway_smoke_test(model_name: str) -> None:
     # (`finish_reason='length'` with no parts). Give them more headroom while keeping the cheap
     # models cheap.
     max_tokens = 4096 if model.profile.get('thinking_always_enabled', False) else 256
-    model_settings: ModelSettings = {'max_tokens': max_tokens}
-
-    agent = Agent(model, model_settings=model_settings, retries={'tools': 3, 'output': 3})
+    agent = Agent(model, model_settings={'max_tokens': max_tokens}, retries={'tools': 3, 'output': 3})
     result = await agent.run('Reply with exactly OK.')
     assert result.output.strip()
 
