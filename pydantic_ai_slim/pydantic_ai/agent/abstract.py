@@ -172,13 +172,18 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             return
 
         self._closed = True
-        # Cancel before closing the receive end: the run may be blocked pushing an event into the zero-buffer
-        # stream, and cancellation unblocks it and drives its own cleanup. If iteration was never started,
-        # `_task` is `None` and there's nothing to tear down.
+        # Cancel the run first so it tears down via its own cancellation, unblocking a run that's
+        # parked pushing an event into the zero-buffer stream. But if the run *absorbs* that
+        # cancellation (e.g. a durable step under Temporal's cooperative cancellation) it can resume
+        # and block again on `send`, so close the receive end before draining: the blocked `send` then
+        # fails with `BrokenResourceError` and the drain can complete instead of deadlocking. A run
+        # that unwound normally is unaffected. If iteration was never started, `_task` is `None`.
         if self._task is not None:
-            await _utils.cancel_and_drain(self._task)
+            self._task.cancel()
         if self._receive_stream is not None:
             await self._receive_stream.aclose()
+        if self._task is not None:
+            await _utils.cancel_and_drain(self._task)
 
     async def _ensure_started(self) -> None:
         if self._task is not None:
@@ -1641,6 +1646,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1650,6 +1656,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1673,6 +1680,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
         )
@@ -1684,6 +1692,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1693,6 +1702,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -1707,6 +1717,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 prog_name=prog_name,
                 message_history=message_history,
+                model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
             )

@@ -447,20 +447,26 @@ def _drop_sampling_params_for_reasoning(
 ) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
-    Reasoning models (o-series, GPT-5, GPT-5.1+) don't support sampling parameters when
-    reasoning is active. For models that support reasoning_effort='none' (GPT-5.1+),
-    sampling params are allowed when reasoning is off.
+    Reasoning models don't support sampling parameters while reasoning is active. For models that
+    can turn reasoning off (`openai_supports_reasoning_effort_none`), sampling params are allowed
+    when reasoning is off. Whether reasoning is on when no effort is set depends on the model's
+    default (`openai_reasoning_enabled_by_default`): the GPT-5.1..5.4 mainline models default to
+    off, while the o-series, the original GPT-5, and GPT-5.5+ default to on.
     """
     if not profile.get('openai_supports_reasoning', False):
         return
 
     reasoning_effort = model_settings.get('openai_reasoning_effort')
     thinking = model_request_parameters.thinking
-    # Determine if reasoning is effectively active
-    reasoning_active = reasoning_effort not in (None, 'none') or (
-        reasoning_effort is None and thinking is not None and thinking is not False
-    )
-    # On GPT-5.1+ models, sampling params are allowed when reasoning is off
+    # Determine if reasoning is effectively active. Explicit effort wins; then the unified `thinking`
+    # setting; otherwise fall back to the model's default.
+    if reasoning_effort is not None:
+        reasoning_active = reasoning_effort != 'none'
+    elif thinking is not None:
+        reasoning_active = thinking is not False
+    else:
+        reasoning_active = profile.get('openai_reasoning_enabled_by_default', False)
+    # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
     if profile.get('openai_supports_reasoning_effort_none', False) and not reasoning_active:
         return
 
@@ -588,6 +594,21 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+    """
+
+    openai_reasoning_mode: Literal['standard', 'pro']
+    """The reasoning mode to use, for models that support it (currently the GPT-5.6 family).
+
+    `standard` is the default. `pro` performs more model work to improve reliability on difficult
+    tasks, at the cost of higher latency and token usage. Reasoning mode is independent of
+    [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort],
+    and the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting only influences
+    the effort, never the mode. This setting is ignored when the resolved model profile does not
+    support reasoning mode
+    ([`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode]).
+
+    See [OpenAI's reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)
+    for more details.
     """
 
     openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
@@ -2346,6 +2367,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_mode = model_settings.get('openai_reasoning_mode', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
@@ -2355,6 +2377,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         reasoning: Reasoning = {}
         if reasoning_effort:
             reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
+        if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
+            reasoning['mode'] = reasoning_mode
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
@@ -2439,7 +2463,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
-                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+                container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
+                if tool.files:
+                    # Cross-provider files are dropped silently here, not raised via
+                    # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                    provider_file_ids = [file.file_id for file in tool.files if file.provider_name == self.system]
+                    if provider_file_ids:
+                        container['file_ids'] = provider_file_ids
+                tools.append({'type': 'code_interpreter', 'container': container})
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',

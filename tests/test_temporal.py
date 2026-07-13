@@ -70,7 +70,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
@@ -3357,6 +3357,22 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
+def test_temporal_run_context_serializes_usage_limits():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        usage_limits=UsageLimits(request_limit=7, total_tokens_limit=1000),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage_limits'] == ctx.usage_limits
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage_limits == ctx.usage_limits
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4684,6 +4700,69 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')
+
+
+@nested_multimodal_tool_return_agent.tool
+def get_nested_multimodal_content(ctx: RunContext) -> dict[str, str | MultiModalContent]:
+    """Return multimodal content nested inside a mapping."""
+    return {
+        'caption': 'see attached',
+        'attachment': BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        'source': DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    }
+
+
+nested_multimodal_tool_return_temporal_agent = TemporalAgent(
+    nested_multimodal_tool_return_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class NestedMultiModalToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await nested_multimodal_tool_return_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_nested_multimodal_tool_return_survives_temporal(client: Client):
+    """Nested multimodal values in tool returns survive the Temporal activity boundary."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NestedMultiModalToolReturnWorkflow],
+        plugins=[AgentPlugin(nested_multimodal_tool_return_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            NestedMultiModalToolReturnWorkflow.run,
+            args=['inspect attachment'],
+            id='test_nested_multimodal_tool_return',
+            task_queue=TASK_QUEUE,
+        )
+
+    tool_return = next(
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_nested_multimodal_content'
+    )
+    tool_return_content_obj = tool_return.content
+    assert isinstance(tool_return_content_obj, dict)
+    tool_return_content = cast(dict[str, object], tool_return_content_obj)
+    assert tool_return_content['caption'] == 'see attached'
+
+    attachment = tool_return_content['attachment']
+    assert isinstance(attachment, BinaryImage)
+    assert attachment.media_type == 'image/png'
+    assert attachment.data == b'\x89PNG'
+
+    source = tool_return_content['source']
+    assert isinstance(source, DocumentUrl)
+    assert source.media_type == 'application/pdf'
+    assert source.url == 'https://example.com/doc/12345'
 
 
 async def test_text_content_serialization_in_workflow(client: Client):
