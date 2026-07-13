@@ -77,10 +77,11 @@ from ._openai_protocol import (
     turn_detection_config,
 )
 
-# `input_transcription_model='auto'` resolves to this — OpenAI's most broadly available realtime
-# transcription model. Kept behind the `'auto'` sentinel (see `resolve_transcription_model`) so it can be
-# bumped (e.g. to a lower-latency streaming transcriber) without changing the behavior of apps on `'auto'`.
-_AUTO_TRANSCRIPTION_MODEL = 'whisper-1'
+# `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
+# ("For the lowest-latency streaming transcription path, use gpt-realtime-whisper"; it's natively streaming
+# and designed for realtime sessions, unlike the legacy `whisper-1`). Kept behind the `'auto'` sentinel
+# (see `resolve_transcription_model`) so it can be bumped without changing the behavior of apps on `'auto'`.
+_AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
 __all__ = (
     'OpenAIRealtimeModel',

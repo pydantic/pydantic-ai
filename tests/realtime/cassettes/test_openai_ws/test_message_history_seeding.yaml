@@ -67,7 +67,7 @@ interactions:
             create_response: true
             interrupt_response: true
           transcription:
-            model: whisper-1
+            model: gpt-realtime-whisper
         output:
           format:
             type: audio/pcm
@@ -104,7 +104,7 @@ interactions:
             type: audio/pcm
             rate: 24000
           transcription:
-            model: whisper-1
+            model: gpt-realtime-whisper
             language: null
             prompt: null
           noise_reduction: null

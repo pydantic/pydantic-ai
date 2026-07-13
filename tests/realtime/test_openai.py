@@ -307,7 +307,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
         'create_response': True,
         'interrupt_response': True,
     }
-    assert session['audio']['input']['transcription'] == {'model': 'whisper-1'}  # `'auto'` default resolved
+    assert session['audio']['input']['transcription'] == {'model': 'gpt-realtime-whisper'}  # `'auto'` resolved
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
