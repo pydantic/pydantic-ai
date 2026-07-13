@@ -307,7 +307,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
         'create_response': True,
         'interrupt_response': True,
     }
-    assert session['audio']['input']['transcription'] == {'model': 'whisper-1'}
+    assert session['audio']['input']['transcription'] == {'model': 'whisper-1'}  # `'auto'` default resolved
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
@@ -979,10 +979,23 @@ async def test_connect_tool_without_description(monkeypatch: pytest.MonkeyPatch)
 async def test_connect_without_transcription_model_omits_transcription(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', input_audio_transcription_model='')
-    async with model.connect(instructions='x'):
-        pass
+    model = OpenAIRealtimeModel('gpt-realtime', input_transcription_model=None)
+    async with model.connect(instructions='x') as conn:
+        # A disabled transcription model reports `input_transcription_enabled=False`, so the session
+        # finalizes user turns from retained audio instead of waiting for transcripts that never arrive.
+        assert conn.input_transcription_enabled is False
     assert 'transcription' not in json.loads(ws.sent[0])['session']['audio']['input']
+
+
+@pytest.mark.anyio
+async def test_connect_transcription_model_explicit_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    # An explicit id is used verbatim, overriding the `'auto'` default; the connection reports transcription on.
+    model = OpenAIRealtimeModel('gpt-realtime', input_transcription_model='gpt-4o-transcribe')
+    async with model.connect(instructions='x') as conn:
+        assert conn.input_transcription_enabled is True
+    assert json.loads(ws.sent[0])['session']['audio']['input']['transcription'] == {'model': 'gpt-4o-transcribe'}
 
 
 @pytest.mark.anyio

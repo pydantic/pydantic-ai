@@ -49,9 +49,9 @@ from ._base import (
     RateLimitsEvent,
     RealtimeConnection,
     RealtimeEvent,
-    RealtimeInput,
     RealtimeModelProfile,
     RealtimeSessionEvent,
+    RealtimeSessionInput,
     ReconnectedEvent,
     SessionErrorEvent,
     SessionUsageEvent,
@@ -214,6 +214,10 @@ class RealtimeSession:
         self._audio_retention = audio_retention
         self._retain_input = audio_retention in ('input', 'both')
         self._retain_output = audio_retention in ('output', 'both')
+        # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
+        # arrives to finalize a user turn, so retained input audio is finalized as an audio-only turn
+        # instead (see `_finalize_audio_only_user`).
+        self._input_transcription_enabled = connection.input_transcription_enabled
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
@@ -259,14 +263,17 @@ class RealtimeSession:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
 
-    async def send(self, content: RealtimeInput) -> None:
-        """Feed a [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] into the session.
+    async def send(self, content: RealtimeSessionInput) -> None:
+        """Feed a [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] into the session.
 
         Dispatches to the typed helpers (`send_audio`, `send_text`, `send_image`, `commit_audio`,
         `clear_audio`, `create_response`, `truncate_output`, `interrupt`), so every input goes through
         the same history bookkeeping and model-profile guards rather than bypassing them. Prefer calling
-        those helpers directly; this is for code that already holds a `RealtimeInput` value. Tool results
-        are sent by the session itself and cannot be sent here.
+        those helpers directly; this is for code that already holds a `RealtimeSessionInput` value.
+
+        [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
+        is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends
+        tool results itself as each tool completes (see `_execute_tool`).
         """
         if isinstance(content, AudioInput):
             await self.send_audio(content.data)
@@ -285,11 +292,11 @@ class RealtimeSession:
         elif isinstance(content, CancelResponse):
             await self.interrupt()
         else:
-            # `ToolResult` is the only remaining `RealtimeInput`; the session sends tool results itself
-            # (see `_execute_tool`), so a caller has no business sending one.
+            # Unreachable for a well-typed caller: `RealtimeSessionInput` is exhausted above and excludes
+            # `ToolResult`. Guard the untyped-caller case (a `ToolResult` passed dynamically) with a clear
+            # error, since the session sends tool results itself (see `_execute_tool`).
             raise UserError(
-                'Tool results are sent automatically by the realtime session and cannot be sent via '
-                '`session.send()`.'
+                'Tool results are sent automatically by the realtime session and cannot be sent via `session.send()`.'
             )
 
     async def send_audio(self, data: bytes) -> None:
@@ -482,7 +489,11 @@ class RealtimeSession:
         span.end()
 
     def _handle_turn_complete(self, event: RealtimeSessionEvent) -> list[RealtimeSessionEvent]:
-        events = self._finalize_assistant_part()
+        # Catch-all boundary for an audio-only user turn on providers that don't emit `SpeechStoppedEvent`
+        # (e.g. Gemini): finalize it before the assistant response so history reads user-then-assistant.
+        # A no-op when `SpeechStoppedEvent`/`commit_audio` already finalized it (nothing left retained).
+        events = self._finalize_audio_only_user()
+        events.extend(self._finalize_assistant_part())
         self._finalize_response()
         events.append(event)
         return events
@@ -534,6 +545,34 @@ class RealtimeSession:
             self._history.append(ModelRequest(parts=[part]))
         return [PartEndEvent(index=0, part=part)]
 
+    def _finalize_audio_only_user(self) -> list[RealtimeSessionEvent]:
+        """Finalize a user turn from retained input audio when no transcript will arrive.
+
+        With input transcription disabled but input audio retained (`audio_retention='input'`/`'both'`),
+        the user's turn produces no [`InputTranscript`][pydantic_ai.realtime.InputTranscript], so the
+        transcript-driven `_finalize_user` never runs. This is called at each user-turn boundary (speech
+        stopped / commit / turn complete) to finalize an audio-only user
+        [`SpeechPart`][pydantic_ai.messages.SpeechPart] so the turn still lands in history.
+
+        Gated on transcription being *off*: when it's on we wait for the transcript instead, so an
+        (asynchronously delivered) transcript can never race this into a duplicate user turn. A no-op
+        when there's an active transcript-driven user part, nothing retained, or transcription is on.
+        """
+        if self._input_transcription_enabled or not self._retain_input:
+            return []
+        if self._active_user is not None or not self._input_audio:
+            return []
+        part = SpeechPart(
+            speaker='user',
+            transcript=None,
+            audio=BinaryContent(data=bytes(self._input_audio), media_type=_PCM_MEDIA_TYPE),
+        )
+        self._input_audio.clear()
+        self._history.append(ModelRequest(parts=[part]))
+        # No deltas to stream (there's no transcript), so bracket the turn with just start/end so a
+        # streaming consumer still sees the user turn boundary.
+        return [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)]
+
     def _translate_event(self, event: _TranslatableEvent) -> list[RealtimeSessionEvent]:
         """Translate a low-level codec event into shared session events, building history as a side effect.
 
@@ -550,6 +589,10 @@ class RealtimeSession:
             return self._handle_assistant_transcript(event.text, output_text=event.output_text)
         if isinstance(event, InputTranscript):
             return self._handle_input_transcript(event.text, event.is_final)
+        if isinstance(event, SpeechStoppedEvent):
+            # The user's speech segment ended (server VAD). Finalize an audio-only user turn from retained
+            # input audio if transcription is off (a no-op otherwise), then pass the boundary event through.
+            return [*self._finalize_audio_only_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
         if isinstance(event, NativeToolParts):
@@ -565,7 +608,6 @@ class RealtimeSession:
             event,
             (
                 SpeechStartedEvent,
-                SpeechStoppedEvent,
                 ReconnectedEvent,
                 RateLimitsEvent,
                 SourcesEvent,

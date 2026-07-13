@@ -16,7 +16,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -584,7 +584,7 @@ async def test_early_break_finishes_chat_span() -> None:
     settings, exporter = _settings()
     conn = _Connection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01')])  # no TurnCompleteEvent
     session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
-    agen = session.__aiter__()
+    agen = cast(AsyncGenerator[Any], session.__aiter__())
     await agen.__anext__()  # first audio delta opens the assistant `chat` span (still in-flight)
     await agen.aclose()  # break before the turn completes
     # Every started span must be finished — including the `chat` child, which used to be left open.

@@ -55,6 +55,7 @@ from pydantic_ai.realtime import (
     SessionErrorEvent,
     SessionUsageEvent,
     SourcesEvent,
+    SpeechStoppedEvent,
     TextInput,
     ToolCall,
     ToolResult,
@@ -102,10 +103,21 @@ def _profile(
 class FakeRealtimeConnection(RealtimeConnection):
     """A connection that replays a fixed list of events and records what is sent."""
 
-    def __init__(self, events: list[RealtimeEvent], *, release: asyncio.Event | None = None) -> None:
+    def __init__(
+        self,
+        events: list[RealtimeEvent],
+        *,
+        release: asyncio.Event | None = None,
+        input_transcription_enabled: bool = True,
+    ) -> None:
         self._events = events
         self._release = release
+        self._input_transcription_enabled = input_transcription_enabled
         self.sent: list[RealtimeInput] = []
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        return self._input_transcription_enabled
 
     async def send(self, content: RealtimeInput) -> None:
         self.sent.append(content)
@@ -643,12 +655,32 @@ async def test_send_enforces_model_profile_guard() -> None:
     assert conn.sent == []
 
 
+async def test_send_dispatches_control_inputs_through_helpers() -> None:
+    # Every control `RealtimeSessionInput` variant routes through its typed helper (which applies the
+    # model-profile guards) rather than reaching the connection raw.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.send(CommitAudio())
+    await session.send(ClearAudio())
+    await session.send(CreateResponse())
+    await session.send(TruncateOutput(audio_end_ms=120))
+    await session.send(CancelResponse())
+    assert conn.sent == [
+        CommitAudio(),
+        ClearAudio(),
+        CreateResponse(),
+        TruncateOutput(audio_end_ms=120),
+        CancelResponse(),
+    ]
+
+
 async def test_send_rejects_tool_result() -> None:
-    # Tool results are sent by the session itself; a caller can't inject one via `send()`.
+    # Tool results are sent by the session itself; a caller can't inject one via `send()`. `ToolResult`
+    # is excluded from `RealtimeSessionInput` (hence the type-ignore), so this also guards the runtime path.
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
     with pytest.raises(UserError, match='Tool results are sent automatically'):
-        await session.send(ToolResult(tool_call_id='c', output='x'))
+        await session.send(ToolResult(tool_call_id='c', output='x'))  # type: ignore[arg-type]
     assert conn.sent == []
 
 
@@ -845,6 +877,83 @@ async def test_clear_audio_discards_retained_input() -> None:
                         speaker='user',
                         transcript='hello',
                         audio=BinaryContent(data=b'\xcc', media_type='audio/pcm'),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
+    # Transcription off + input audio retained: no `InputTranscript` arrives, so the user's turn is
+    # finalized from the retained audio at the speech-stopped boundary (server VAD), as an audio-only
+    # `SpeechPart` (no transcript). Bracketed with start/end, since there are no transcript deltas.
+    conn = FakeRealtimeConnection(
+        [SpeechStoppedEvent(), Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
+        input_transcription_enabled=False,
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    await session.send_audio(b'\xaa\xbb')
+    events = [e async for e in session]
+    user_part = SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
+    assert events[:3] == [
+        PartStartEvent(index=0, part=user_part),
+        PartEndEvent(index=0, part=user_part),
+        SpeechStoppedEvent(),
+    ]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))]
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
+            ),
+        ]
+    )
+
+
+async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
+    # Providers without a speech-stopped signal (e.g. Gemini): the audio-only user turn is finalized at
+    # the turn-complete boundary, before the assistant response, so history reads user-then-assistant.
+    conn = FakeRealtimeConnection(
+        [Transcript(text='Hi', is_final=True), TurnCompleteEvent()],
+        input_transcription_enabled=False,
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    await session.send_audio(b'\xaa\xbb')
+    _ = [e async for e in session]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))]
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='Hi')], model_name='m', timestamp=IsDatetime()
+            ),
+        ]
+    )
+
+
+async def test_audio_retained_with_transcription_enabled_waits_for_transcript() -> None:
+    # With transcription enabled, a speech-stopped boundary does NOT emit an audio-only turn: the turn is
+    # finalized from the (asynchronously delivered) transcript instead, so there's exactly one user turn —
+    # never a duplicate audio-only one racing the transcript.
+    conn = FakeRealtimeConnection(
+        [SpeechStoppedEvent(), InputTranscript(text='hello', is_final=True), TurnCompleteEvent()],
+        input_transcription_enabled=True,
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m', audio_retention='input')
+    await session.send_audio(b'\xaa\xbb')
+    _ = [e async for e in session]
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SpeechPart(
+                        speaker='user',
+                        transcript='hello',
+                        audio=BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'),
                     )
                 ]
             )

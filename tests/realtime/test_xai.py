@@ -119,12 +119,18 @@ def test_session_config_shape() -> None:
     }
 
 
-def test_session_config_transcription_by_default() -> None:
-    """Input transcription defaults to `grok-transcribe` → `audio.input.transcription.model`, so the
-    user's audio turns are transcribed into history (xAI transcription is otherwise off on the wire,
-    which would drop every user turn under the default `transcript_only` retention)."""
+def test_session_config_transcription_auto_by_default() -> None:
+    """The default `input_transcription_model='auto'` resolves to xAI's recommended transcription model
+    (`grok-transcribe`) → `audio.input.transcription.model`, so the user's audio turns are transcribed
+    into history under the default `transcript_only` retention (they'd otherwise be dropped)."""
     config = _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe'}
+
+
+def test_session_config_transcription_explicit_override() -> None:
+    """An explicit model id is used verbatim, overriding the `'auto'` default."""
+    config = _model(input_transcription_model='grok-transcribe-next')._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe-next'}
 
 
 def test_session_config_transcription_disabled() -> None:

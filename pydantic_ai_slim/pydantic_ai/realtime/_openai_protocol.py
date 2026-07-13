@@ -65,6 +65,24 @@ def realtime_websocket_url(base_url: str) -> str:
     return f'{url}/realtime'
 
 
+AUTO_TRANSCRIPTION_MODEL = 'auto'
+"""Sentinel `input_transcription_model` value: resolve to the provider's recommended transcription model."""
+
+
+def resolve_transcription_model(value: str | None, *, default: str) -> str | None:
+    """Resolve an `input_transcription_model` setting to a concrete model id, or `None` to disable transcription.
+
+    `'auto'` (the always-supported default) resolves to `default`, the provider's current recommended
+    realtime transcription model. Keeping the public default as a stable sentinel — rather than a hardcoded
+    model id — lets the concrete model it maps to change over releases without silently altering the
+    behavior of apps that pinned a specific id. Any other string is used verbatim; `None` disables
+    transcription (no user transcripts; see `audio_retention` to retain the raw audio instead).
+    """
+    if value == AUTO_TRANSCRIPTION_MODEL:
+        return default
+    return value
+
+
 # The OpenAI event names differ between the GA and beta realtime surfaces; accept both.
 AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
 _AUDIO_TRANSCRIPT_DELTA_TYPES = frozenset({'response.output_audio_transcript.delta', 'response.audio_transcript.delta'})

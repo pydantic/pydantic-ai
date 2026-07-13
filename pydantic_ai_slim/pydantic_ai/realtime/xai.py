@@ -54,6 +54,7 @@ from ._openai_protocol import (
     expect_event,
     map_event as _map_openai_event,
     realtime_websocket_url,
+    resolve_transcription_model,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
@@ -63,6 +64,11 @@ from .openai import OpenAIRealtimeConnection, ServerVAD
 
 if TYPE_CHECKING:
     from ..providers.xai import XaiProvider
+
+# `input_transcription_model='auto'` resolves to this — xAI's realtime transcription model. Kept behind
+# the `'auto'` sentinel (see `resolve_transcription_model`) so it can change without altering the behavior
+# of apps on `'auto'`.
+_AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
 
 def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
@@ -111,9 +117,11 @@ class XaiRealtimeModel(RealtimeModel):
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
         voice: Voice for audio output — one of `eve` (default), `ara`, `rex`, `sal`, `leo`, or a custom
             voice ID. `None` uses the server default (`eve`).
-        input_transcription_model: Model used to transcribe the user's audio input, `grok-transcribe`
-            by default so the user's turns are captured into history (pass `None` to disable). Transcripts
-            are surfaced at the end of each user turn (see [`map_event`][pydantic_ai.realtime.xai.map_event]).
+        input_transcription_model: Model used to transcribe the user's audio input, so their turns are
+            captured into history. `'auto'` (the default) uses xAI's recommended realtime transcription
+            model; pass a specific id to pin one, or `None` to disable transcription (see `audio_retention`
+            to retain the raw audio instead). Transcripts are surfaced at the end of each user turn (see
+            [`map_event`][pydantic_ai.realtime.xai.map_event]).
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
         turn_detection: How the server decides when the user's turn ends. A
@@ -128,7 +136,7 @@ class XaiRealtimeModel(RealtimeModel):
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
     voice: str | None = None
-    input_transcription_model: str | None = 'grok-transcribe'
+    input_transcription_model: str | None = 'auto'
     handshake_timeout: float = 30.0
     turn_detection: ServerVAD | None = field(default_factory=ServerVAD)
     reconnect: ReconnectPolicy | None = None
@@ -153,6 +161,11 @@ class XaiRealtimeModel(RealtimeModel):
         return self.model
 
     @property
+    def _resolved_transcription_model(self) -> str | None:
+        """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
+        return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         # `supports_output_truncation=False`: xAI has no `conversation.item.truncate`, so barge-in cancels the
         # response (`supports_interruption`) but can't sync the transcript to a mid-audio playback point.
@@ -171,8 +184,8 @@ class XaiRealtimeModel(RealtimeModel):
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
         audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
-        if self.input_transcription_model:
-            audio_input['transcription'] = {'model': self.input_transcription_model}
+        if (transcription_model := self._resolved_transcription_model) is not None:
+            audio_input['transcription'] = {'model': transcription_model}
         config: dict[str, Any] = {
             'instructions': instructions,
             'turn_detection': turn_detection_config(self.turn_detection),
@@ -232,7 +245,12 @@ class XaiRealtimeModel(RealtimeModel):
             # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
             for item in seed_items(messages or ()):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            yield XaiRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
+            yield XaiRealtimeConnection(
+                ws,
+                dial=dial,
+                reconnect=self.reconnect,
+                input_transcription_enabled=self._resolved_transcription_model is not None,
+            )
         finally:
             if cm is not None:
                 await cm.__aexit__(None, None, None)

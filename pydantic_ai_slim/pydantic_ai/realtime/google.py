@@ -570,6 +570,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
+                input_transcription_enabled=self.input_transcription,
             )
         finally:
             if cm is not None:
@@ -586,8 +587,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         provider_name: str = 'google',
         dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
         reconnect: ReconnectPolicy | None = None,
+        input_transcription_enabled: bool = True,
     ) -> None:
         self._session = session
+        self._input_transcription_enabled = input_transcription_enabled
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -606,6 +609,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._dial = dial
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        return self._input_transcription_enabled
 
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the Gemini Live API.

@@ -14,8 +14,8 @@ The flow of a session:
 
 ```mermaid
 graph LR
-    App -- "send(): RealtimeInput" --> S[RealtimeSession]
-    S --> C[RealtimeConnection]
+    App -- "send(): RealtimeSessionInput" --> S[RealtimeSession]
+    S -- "send(): RealtimeInput" --> C[RealtimeConnection]
     M[RealtimeModel] -- "connect()" --> C
     C -- "RealtimeEvent" --> S
     S -- "RealtimeSessionEvent" --> App
@@ -44,16 +44,21 @@ intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sendi
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic (sync/background) tool dispatch. |
 | [`ToolRunner`][pydantic_ai.realtime.ToolRunner] | Async callable a session uses to execute a tool by name. |
 
-**Inputs** — [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput], sent via `send()`:
+**Inputs** — you feed a [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] into
+[`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]:
 data — [`AudioInput`][pydantic_ai.realtime.AudioInput],
 [`TextInput`][pydantic_ai.realtime.TextInput],
-[`ImageInput`][pydantic_ai.realtime.ImageInput],
-[`ToolResult`][pydantic_ai.realtime.ToolResult];
+[`ImageInput`][pydantic_ai.realtime.ImageInput];
 control verbs — [`CommitAudio`][pydantic_ai.realtime.CommitAudio],
 [`ClearAudio`][pydantic_ai.realtime.ClearAudio],
 [`CreateResponse`][pydantic_ai.realtime.CreateResponse],
 [`CancelResponse`][pydantic_ai.realtime.CancelResponse],
 [`TruncateOutput`][pydantic_ai.realtime.TruncateOutput].
+
+The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send] accepts the
+superset [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput], which additionally includes
+[`ToolResult`][pydantic_ai.realtime.ToolResult] — the session sends those itself as each tool
+completes, so it is deliberately excluded from what a caller passes to `session.send()`.
 
 **Connection events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], the low-level codec
 vocabulary yielded by a connection:

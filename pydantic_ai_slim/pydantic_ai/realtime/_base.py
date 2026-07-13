@@ -133,11 +133,23 @@ class TruncateOutput:
     """Milliseconds of the current output audio that were actually played before the interruption."""
 
 
-RealtimeInput = TypeAliasType(
-    'RealtimeInput',
-    'AudioInput | ImageInput | TextInput | ToolResult | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput',
+RealtimeSessionInput = TypeAliasType(
+    'RealtimeSessionInput',
+    'AudioInput | ImageInput | TextInput | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput',
 )
-"""Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send]."""
+"""The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
+
+This is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus [`ToolResult`][pydantic_ai.realtime.ToolResult]:
+the session sends tool results itself (see `RealtimeSession`), so a caller never sends one.
+"""
+
+RealtimeInput = TypeAliasType('RealtimeInput', 'RealtimeSessionInput | ToolResult')
+"""Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send].
+
+A superset of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]: the low-level
+connection additionally accepts [`ToolResult`][pydantic_ai.realtime.ToolResult], which the session sends
+on the caller's behalf when a tool completes.
+"""
 
 
 # Connection-level events (yielded by `RealtimeConnection.__aiter__`).
@@ -470,6 +482,18 @@ class RealtimeConnection(ABC):
     def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         """Iterate over events received from the model."""
         raise NotImplementedError
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether this connection will emit [`InputTranscript`][pydantic_ai.realtime.InputTranscript] events for the user's audio.
+
+        Providers that transcribe the user's input (the default) leave this `True`. When it is `False`,
+        no transcript arrives, so [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] finalizes a
+        user turn from retained input audio instead (see `audio_retention`). Defaults to `True` so a
+        connection that doesn't override it never triggers the audio-only path (which would risk a
+        duplicate turn if transcripts did arrive).
+        """
+        return True
 
 
 class RealtimeModel(ABC):

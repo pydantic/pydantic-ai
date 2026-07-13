@@ -271,14 +271,28 @@ model = XaiRealtimeModel(
     'grok-voice-latest',
     voice='eve',                                       # eve (default), ara, rex, sal, leo, or a custom ID
     turn_detection=ServerVAD(threshold=0.85),          # or None for push-to-talk
-    input_transcription_model='grok-transcribe',       # the default; pass None to disable
+    input_transcription_model='auto',                  # the default (see Transcribing user input)
 )
 ```
 
 `tool_choice`, `parallel_tool_calls`, and `max_tokens` are read from `model_settings` passed to
-`realtime_session`. Input transcription defaults to `grok-transcribe` so the user's turns are captured
-into history; its transcript is surfaced at the end of each user turn (Grok Voice reports it as
-cumulative snapshots that can retroactively correct earlier text, so live partials are not streamed).
+`realtime_session`. Grok Voice reports the input transcript as cumulative snapshots that can
+retroactively correct earlier text, so live partials are not streamed — the transcript is surfaced at
+the end of each user turn.
+
+### Transcribing user input
+
+To hand a voice session off to a text agent, the user's turns need to reach history as text. OpenAI and
+xAI transcribe the user's audio with a dedicated model, set via `input_transcription_model`:
+
+| Value | Behaviour |
+| --- | --- |
+| `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. The concrete model behind `'auto'` can change across releases; pin a specific id to opt out of that. |
+| An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. |
+| `None` | Transcription disabled. No user transcripts arrive, so set [`audio_retention`](#message-history) to `'input'`/`'both'` to keep the raw audio instead — each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). |
+
+Gemini transcribes with a boolean `input_transcription` (on by default) rather than a model id: the
+Live model transcribes natively, so there is no separate transcription model to choose.
 
 ## Turn-taking and barge-in
 

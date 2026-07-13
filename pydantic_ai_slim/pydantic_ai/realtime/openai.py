@@ -69,11 +69,17 @@ from ._openai_protocol import (
     map_event,
     obj,
     realtime_websocket_url,
+    resolve_transcription_model,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
 )
+
+# `input_transcription_model='auto'` resolves to this — OpenAI's most broadly available realtime
+# transcription model. Kept behind the `'auto'` sentinel (see `resolve_transcription_model`) so it can be
+# bumped (e.g. to a lower-latency streaming transcriber) without changing the behavior of apps on `'auto'`.
+_AUTO_TRANSCRIPTION_MODEL = 'whisper-1'
 
 __all__ = (
     'OpenAIRealtimeModel',
@@ -125,12 +131,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         *,
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
+        input_transcription_enabled: bool = True,
     ) -> None:
         self._ws = ws
         # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
         # recover from a dropped WebSocket.
         self._dial = dial
         self._reconnect = reconnect
+        self._input_transcription_enabled = input_transcription_enabled
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
@@ -141,6 +149,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # single cooperative event loop the plain reads/writes are safe and eventually consistent.
         self._current_item_id: str | None = None
         self._current_content_index = 0
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        return self._input_transcription_enabled
 
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
@@ -342,7 +354,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
         voice: Voice for audio output, e.g. `alloy`, `echo`, or `shimmer`.
-        input_audio_transcription_model: Model used to transcribe the user's audio input.
+        input_transcription_model: Model used to transcribe the user's audio input, so their turns are
+            captured into history. `'auto'` (the default) uses OpenAI's recommended realtime transcription
+            model; pass a specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable
+            transcription (see `audio_retention` to retain the raw audio instead).
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
         turn_detection: How the server decides when the user's turn ends. A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]
@@ -361,7 +376,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     voice: str | None = None
-    input_audio_transcription_model: str = 'whisper-1'
+    input_transcription_model: str | None = 'auto'
     handshake_timeout: float = 30.0
     turn_detection: ServerVAD | SemanticVAD | None = field(default_factory=ServerVAD)
     input_noise_reduction: Literal['near_field', 'far_field'] | None = None
@@ -390,6 +405,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self.model
 
     @property
+    def _resolved_transcription_model(self) -> str | None:
+        """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
+        return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,
@@ -408,8 +428,8 @@ class OpenAIRealtimeModel(RealtimeModel):
             'format': {'type': 'audio/pcm', 'rate': 24000},
             'turn_detection': turn_detection_config(self.turn_detection),
         }
-        if self.input_audio_transcription_model:
-            audio_input['transcription'] = {'model': self.input_audio_transcription_model}
+        if (transcription_model := self._resolved_transcription_model) is not None:
+            audio_input['transcription'] = {'model': transcription_model}
         if self.input_noise_reduction is not None:
             audio_input['noise_reduction'] = {'type': self.input_noise_reduction}
         audio_output: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
@@ -477,7 +497,12 @@ class OpenAIRealtimeModel(RealtimeModel):
             # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
             for item in seed_items(messages or ()):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            yield OpenAIRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
+            yield OpenAIRealtimeConnection(
+                ws,
+                dial=dial,
+                reconnect=self.reconnect,
+                input_transcription_enabled=self._resolved_transcription_model is not None,
+            )
         finally:
             if cm is not None:
                 await cm.__aexit__(None, None, None)
