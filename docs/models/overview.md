@@ -67,12 +67,13 @@ When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted 
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
-### Inspecting model capabilities
+### Inspecting a model's profile
 
-A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile`. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling or native JSON-schema output before relying on it:
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling, native JSON-schema output, or a specific native tool before relying on it:
 
 ```python
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 
 model = TestModel()
 profile = model.profile
@@ -81,9 +82,13 @@ print(profile['supports_tools'])
 #> True
 print(profile['supports_json_schema_output'])
 #> False
+print(WebSearchTool in profile['supported_native_tools'])
+#> True
 ```
 
-Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. See [`ModelProfile`][pydantic_ai.profiles.ModelProfile] for the full set of capability fields (including `supported_native_tools`).
+`model.profile` is always the fully *resolved* profile: every documented capability field is populated (merged from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE]), so direct key access like `profile['supports_tools']` is safe. If you build a partial profile yourself, use `profile.get('supports_tools', <default>)` to tolerate missing keys.
+
+Any [`Model`][pydantic_ai.models.Model] instance exposes its resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. Don't confuse this with [Capabilities](../capabilities.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 ## HTTP Client Lifecycle
 
