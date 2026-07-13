@@ -2088,11 +2088,23 @@ async def test_dbos_durability_rejects_override_model(dbos: DBOS) -> None:
             await agent.run('hello')
 
 
+async def test_dbos_durability_rejects_same_model_id_override(dbos: DBOS) -> None:
+    """A different instance that shares the construction-time model's `model_id` is still rejected.
+
+    Two `TestModel()` instances share `model_id` `'test'`, so a by-`model_id` comparison would let
+    the override slip through and silently answer from the construction-time model. The guard unwraps
+    any wrapper layers and compares instances by identity instead, so the override is caught.
+    """
+    agent = Agent(TestModel(), name='durability_same_model_id', capabilities=[DBOSDurability()])
+    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
+        await agent.run('hello', model=TestModel())
+
+
 async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> None:
     """An outer `Instrumentation` capability wraps the model, but the default model is still accepted.
 
-    The runtime-model guard compares by `model_id`, which delegates through the instrumentation
-    wrapper, so a normal instrumented run isn't mistaken for a runtime override.
+    The runtime-model guard unwraps the `InstrumentedModel` wrapper before comparing instances by
+    identity, so a normal instrumented run isn't mistaken for a runtime override.
     """
     agent = Agent(
         _durability_fn_model,

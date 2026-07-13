@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._utils import (
     model_request,
     model_request_stream,
     process_event_stream,
+    unwrap_model,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -317,8 +318,11 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         # construction-time model, so a model set at run time via `run(model=...)` or
         # `override(model=...)` can't cross the durable boundary and would be silently ignored.
         # Reject it instead of answering from the wrong model, matching the deprecated `DBOSAgent`.
-        # Compared by `model_id` so an outer instrumentation wrapper is transparent.
-        if self._model is not None and request_context.model.model_id != self._model.model_id:
+        # Instances are unwrapped and compared by identity (not `model_id`): an outer
+        # `Instrumentation` wrapper is transparent, while a genuine override — even one that
+        # happens to share the construction-time model's `model_id` (same name, different
+        # provider/credentials) — is still caught.
+        if self._model is not None and unwrap_model(request_context.model) is not unwrap_model(self._model):
             raise UserError(
                 'The model cannot be changed at agent run time when using `DBOSDurability`; '
                 'it must be set when creating the agent. '
