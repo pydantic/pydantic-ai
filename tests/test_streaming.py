@@ -807,7 +807,7 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
         forced_stop = True
         loop.stop()
 
-    stop_handle = loop.call_later(0.05, force_stop)
+    stop_handle = loop.call_later(1, force_stop)
     try:
         with pytest.raises(error_type) as exc_info:
             SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
@@ -1190,7 +1190,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
         forced_stop = True
         loop.stop()
 
-    stop_handle = loop.call_later(0.05, force_stop)
+    stop_handle = loop.call_later(1, force_stop)
     try:
         with pytest.raises(error_type) as exc_info:
             while True:

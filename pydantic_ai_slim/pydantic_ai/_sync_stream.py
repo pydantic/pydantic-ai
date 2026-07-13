@@ -309,7 +309,7 @@ class SyncStreamBridge(Generic[StreamT]):
             raise
 
     def call_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
-        """Like [`call`][pydantic_ai._sync_stream.SyncStreamBridge.call], with the run span's OTel context attached."""
+        """Like [`call`][pydantic_ai._sync_stream.SyncStreamBridge.call]; the task context propagates the run span."""
         return self.call(func)
 
     @staticmethod
