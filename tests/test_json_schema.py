@@ -199,9 +199,9 @@ def test_typed_schema_anyof_member_is_recursed_google():
     """GoogleJsonSchemaTransformer should strip unsupported keys from anyOf members of a typed node.
 
     Before the fix, composition members (allOf/anyOf/oneOf) were only recursed when the node
-    had no ``type``. A typed node (e.g. ``type: object``) with a sibling ``anyOf`` left its
-    members untransformed, so provider-specific cleanup (Google strips ``title`` and
-    ``exclusiveMinimum``) was never applied to them.
+    had no `type`. A typed node (e.g. `type: object`) with a sibling `anyOf` left its
+    members untransformed, so provider-specific cleanup (Google strips `title` and
+    `exclusiveMinimum`) was never applied to them.
     """
     from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
 
@@ -223,7 +223,7 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     """OpenAIJsonSchemaTransformer strict should add strict fields to anyOf members of a typed node.
 
     Before the fix, composition members of a typed node were never walked, so OpenAI strict
-    mode additions (``additionalProperties: false`` and ``required``) were missing from them.
+    mode additions (`additionalProperties: false` and `required`) were missing from them.
     """
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
