@@ -44,6 +44,7 @@ from ..providers import infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ._base import (
+    KnownRealtimeTranscriptionModelName,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -136,7 +137,7 @@ class XaiRealtimeModel(RealtimeModel):
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
     voice: str | None = None
-    input_transcription_model: str | None = 'auto'
+    input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
     turn_detection: ServerVAD | None = field(default_factory=ServerVAD)
     reconnect: ReconnectPolicy | None = None

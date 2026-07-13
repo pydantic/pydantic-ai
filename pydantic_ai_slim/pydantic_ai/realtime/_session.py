@@ -218,6 +218,16 @@ class RealtimeSession:
         # arrives to finalize a user turn, so retained input audio is finalized as an audio-only turn
         # instead (see `_finalize_audio_only_user`).
         self._input_transcription_enabled = connection.input_transcription_enabled
+        if not self._input_transcription_enabled and not self._retain_input:
+            # Neither transcription nor input-audio retention: the user's turns would be silently dropped
+            # from history (nothing to build a user turn from), breaking the session's history/handoff
+            # contract. Make the contradictory config an explicit error rather than a silent gap.
+            raise UserError(
+                "This realtime session can't capture the user's turns: input transcription is disabled "
+                "and `audio_retention` doesn't retain input audio. Enable transcription (set the model's "
+                "`input_transcription_model`), or pass `audio_retention='input'` or `'both'` to keep the "
+                'raw audio instead.'
+            )
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 

@@ -45,6 +45,7 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
+    KnownRealtimeTranscriptionModelName,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -376,7 +377,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     voice: str | None = None
-    input_transcription_model: str | None = 'auto'
+    input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
     turn_detection: ServerVAD | SemanticVAD | None = field(default_factory=ServerVAD)
     input_noise_reduction: Literal['near_field', 'far_field'] | None = None

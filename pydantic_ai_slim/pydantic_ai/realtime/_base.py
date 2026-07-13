@@ -151,6 +151,26 @@ connection additionally accepts [`ToolResult`][pydantic_ai.realtime.ToolResult],
 on the caller's behalf when a tool completes.
 """
 
+KnownRealtimeTranscriptionModelName = TypeAliasType(
+    'KnownRealtimeTranscriptionModelName',
+    Literal[
+        'auto',
+        'whisper-1',
+        'gpt-4o-transcribe',
+        'gpt-4o-mini-transcribe',
+        'gpt-realtime-whisper',
+        'grok-transcribe',
+    ],
+)
+"""Known values for the OpenAI-protocol models' `input_transcription_model`, surfaced for autocomplete.
+
+`'auto'` is the sentinel that resolves to the provider's recommended transcription model; the rest are
+concrete model ids. The values span providers, so an id valid for one provider (e.g. `'grok-transcribe'`
+for xAI) is rejected by another at connect time. The field also accepts any other `str`, so a newer id
+not listed here still works — this is just an autocomplete aid, like
+[`KnownModelName`][pydantic_ai.models.KnownModelName].
+"""
+
 
 # Connection-level events (yielded by `RealtimeConnection.__aiter__`).
 

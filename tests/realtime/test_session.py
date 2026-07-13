@@ -961,6 +961,20 @@ async def test_audio_retained_with_transcription_enabled_waits_for_transcript() 
     )
 
 
+async def test_no_transcription_and_no_input_retention_raises() -> None:
+    # Transcription off + retention that doesn't keep input audio = user turns silently dropped. That
+    # contradictory config is rejected up front rather than producing a lossy history.
+    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
+    with pytest.raises(UserError, match="can't capture the user's turns"):
+        RealtimeSession(conn, _noop_runner)  # default audio_retention='transcript_only'
+
+
+async def test_no_transcription_with_input_retention_is_allowed() -> None:
+    # Disabling transcription is fine as long as input audio is retained (audio-only user turns).
+    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
+    RealtimeSession(conn, _noop_runner, audio_retention='input')  # no error
+
+
 async def test_text_output_modality_produces_text_part() -> None:
     # A text-output response (`Transcript(output_text=True)`, from `output_modalities=('text',)`) must
     # be emitted and persisted as a `TextPart`, not a `SpeechPart` — it carries no speech.

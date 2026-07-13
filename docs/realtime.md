@@ -288,8 +288,8 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | Value | Behaviour |
 | --- | --- |
 | `'auto'` (default) | The provider's recommended transcription model, so user turns are captured under the default `audio_retention='transcript_only'`. The concrete model behind `'auto'` can change across releases; pin a specific id to opt out of that. |
-| An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. |
-| `None` | Transcription disabled. No user transcripts arrive, so set [`audio_retention`](#message-history) to `'input'`/`'both'` to keep the raw audio instead — each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). |
+| An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
+| `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#message-history) **must** be `'input'`/`'both'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
 
 Gemini transcribes with a boolean `input_transcription` (on by default) rather than a model id: the
 Live model transcribes natively, so there is no separate transcription model to choose.
