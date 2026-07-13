@@ -215,7 +215,6 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
         'codex-mini-latest',
         # https://developers.openai.com/api/docs/deprecations#2023-11-06-chat-model-updates
         'gpt-3.5-turbo-0613',
-        'gpt-3.5-turbo-16k',
         'gpt-3.5-turbo-16k-0613',
         # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
         'gpt-4-0125-preview',
@@ -228,11 +227,6 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
         'gpt-4-vision-preview',
         # https://developers.openai.com/api/docs/deprecations#2025-06-10-gpt-4o-audio-preview-2024-10-01
         'gpt-4o-audio-preview-2024-10-01',
-        # https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots
-        'gpt-4o-mini-search-preview',
-        'gpt-4o-mini-search-preview-2025-03-11',
-        'gpt-4o-search-preview',
-        'gpt-4o-search-preview-2025-03-11',
         # Does not exist
         'gpt-5.1-mini',
         # https://developers.openai.com/api/docs/deprecations#2025-04-28-o1-preview-and-o1-mini
