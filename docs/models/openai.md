@@ -446,6 +446,31 @@ agent = Agent(model)
 ...
 ```
 
+### DaoXE
+
+[DaoXE](https://daoxe.com) is a multi-model multi-protocol API gateway with an OpenAI-compatible Chat Completions endpoint. It also exposes OpenAI Responses and Anthropic Messages for other clients; with Pydantic AI you typically use the OpenAI-compatible Chat Completions path below.
+
+Create an API key in the [DaoXE dashboard](https://daoxe.com), then use an exact model ID from your DaoXE account catalog (`GET /v1/models` or your account UI). Prefer live account IDs over hard-coded public lists. DaoXE is not available in mainland China.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'YOUR_DAOXE_MODEL_ID',  # exact ID from your DaoXE account
+    provider=OpenAIProvider(
+        base_url='https://daoxe.com/v1',
+        api_key='your-daoxe-api-key',
+    ),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+```
+
+You can also set `OPENAI_BASE_URL=https://daoxe.com/v1` and `OPENAI_API_KEY` and use `OpenAIChatModel` without constructing `OpenAIProvider` explicitly. See [OpenAI-compatible Models](#openai-compatible-models).
+
 ### Alibaba Cloud Model Studio (DashScope)
 
 To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
