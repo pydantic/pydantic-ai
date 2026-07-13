@@ -367,7 +367,7 @@ async def main():
 asyncio.run(main())
 ```
 
-For details on file management, persistence, and container behavior, see the [Anthropic Files API documentation](https://docs.anthropic.com/en/api/files).
+For details on file management, persistence, and container behavior, see the [Anthropic Files API documentation](https://platform.claude.com/docs/en/build-with-claude/files).
 
 #### OpenAI
 
