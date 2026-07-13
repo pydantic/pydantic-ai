@@ -16,6 +16,7 @@ from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
 from ...messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -632,6 +633,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 else:
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+            elif isinstance(part, AgentMessagePart):
+                # Agent messages are not displayed in the UI as user input
+                pass
             else:
                 assert_never(part)
 

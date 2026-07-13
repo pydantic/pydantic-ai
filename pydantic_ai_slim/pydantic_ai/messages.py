@@ -1596,6 +1596,56 @@ class RetryPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class AgentMessagePart:
+    """A message from another agent, injected into the current agent's conversation.
+
+    This part type represents inter-agent communication — including subagent results,
+    progress updates, error notifications, and other messages from agents. It is mapped
+    to a `role='user'` text message in all provider APIs (prefixed with the agent name
+    for context), but is distinguished from `UserPromptPart` in the internal message
+    history and skipped by UI adapters so it is not displayed as user input.
+
+    Use this part with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
+    to inject agent messages into the conversation.
+    """
+
+    agent_name: str
+    """The name of the agent that sent this message."""
+
+    content: str
+    """The text content of the agent message."""
+
+    _: KW_ONLY
+
+    message_type: Literal['result', 'progress', 'error', 'notification'] = 'result'
+    """The type of agent message.
+
+    - `'result'`: A final result from a completed subagent.
+    - `'progress'`: A progress update from a running subagent.
+    - `'error'`: An error notification from a subagent.
+    - `'notification'`: A general notification from an agent.
+    """
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the message."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional metadata for the message."""
+
+    part_kind: Literal['agent-message'] = 'agent-message'
+    """Part type identifier, used as a discriminator."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [
+            _otel_messages.TextPart(
+                type='text', **({'content': f'[Agent: {self.agent_name}] {self.content}'} if settings.include_content else {})
+            )
+        ]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 # `ModelRequestPart` is defined further down (after the typed `ToolSearchReturnPart`
 # subclass) so it can include the local `search_tools` return as a discriminated-union
 # member. The forward reference inside `ModelRequest.parts` works because of
@@ -2170,7 +2220,8 @@ ModelRequestPart = Annotated[
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
-    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
+    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
+    | Annotated[AgentMessagePart, pydantic.Tag('agent-message')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""

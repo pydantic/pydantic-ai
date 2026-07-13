@@ -13,6 +13,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -486,6 +487,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, AgentMessagePart):
+                yield ChatCompletionInputMessage.parse_obj_as_instance(  # type: ignore
+                    {'role': 'user', 'content': f"[Agent '{part.agent_name}']: {part.content}"}
+                )
             else:
                 assert_never(part)
         if file_content:

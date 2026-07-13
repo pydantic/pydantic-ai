@@ -20,6 +20,7 @@ from typing_extensions import assert_never
 from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -679,6 +680,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
+            elif isinstance(part, AgentMessagePart):
+                # Agent messages are not displayed in the UI as user input
+                pass
             else:
                 assert_never(part)
 

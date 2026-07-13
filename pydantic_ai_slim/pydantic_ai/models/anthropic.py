@@ -20,6 +20,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -1457,7 +1458,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
-                    elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
+                    elif isinstance(request_part, RetryPromptPart):
                         if request_part.tool_name is None:
                             text = request_part.model_response()
                             retry_param = BetaTextBlockParam(type='text', text=text)
@@ -1469,6 +1470,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
+                    elif isinstance(request_part, AgentMessagePart):
+                        user_content_params.append(
+                            BetaTextBlockParam(type='text', text=f"[Agent '{request_part.agent_name}']: {request_part.content}")
+                        )
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):

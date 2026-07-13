@@ -17,6 +17,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
+    AgentMessagePart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -1029,6 +1030,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, AgentMessagePart):
+                        message_parts.append({'text': f"[Agent '{part.agent_name}']: {part.content}"})
                     else:
                         assert_never(part)
 

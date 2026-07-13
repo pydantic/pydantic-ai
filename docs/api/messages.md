@@ -8,6 +8,7 @@ graph RL
     UserPromptPart(UserPromptPart) --- ModelRequestPart
     ToolReturnPart(ToolReturnPart) --- ModelRequestPart
     RetryPromptPart(RetryPromptPart) --- ModelRequestPart
+    AgentMessagePart(AgentMessagePart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
     ThinkingPart(ThinkingPart) --- ModelResponsePart

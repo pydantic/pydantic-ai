@@ -46,6 +46,7 @@ from .exceptions import (
 )
 from .format_prompt import format_as_xml
 from .messages import (
+    AgentMessagePart,
     AgentStreamEvent,
     AudioFormat,
     AudioMediaType,
@@ -204,6 +205,7 @@ __all__ = (
     'UsageLimitExceeded',
     'UserError',
     # messages
+    'AgentMessagePart',
     'AgentStreamEvent',
     'AudioFormat',
     'AudioMediaType',
