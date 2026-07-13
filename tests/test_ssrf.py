@@ -982,21 +982,28 @@ class TestSafeDownload:
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
         """`warn_legacy_httpx_catch=False` lets internal callers that handle the error themselves
-        (e.g. `web_fetch`, which converts it to `ModelRetry`) skip the deprecation warning.
+        (e.g. `web_fetch`, which converts it to `ModelRetry`) skip the deprecation warning on both
+        error-translation sites (`RequestError` from `client.get()` and `HTTPStatusError` from
+        `raise_for_status()`).
         """
         import warnings
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         request = httpx.Request('GET', 'https://example.com/file.txt')
-        response = httpx.Response(404, request=request)
 
         mock_client = AsyncMock()
-        mock_client.get.return_value = response
         mock_ssrf_client.return_value = mock_client
 
         with warnings.catch_warnings():
             warnings.simplefilter('error')
+
+            mock_client.get.side_effect = httpx.ConnectError('connection refused', request=request)
+            with pytest.raises(httpx.RequestError):
+                await safe_download('https://example.com/file.txt', warn_legacy_httpx_catch=False)
+
+            mock_client.get.side_effect = None
+            mock_client.get.return_value = httpx.Response(404, request=request)
             with pytest.raises(httpx.HTTPStatusError):
                 await safe_download('https://example.com/file.txt', warn_legacy_httpx_catch=False)
 
