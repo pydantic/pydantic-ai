@@ -800,9 +800,9 @@ def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[Base
             exc_value: BaseException | None,
             traceback: TracebackType | None,
         ) -> None:
-            pytest.fail('`__aexit__` must not be called when `__aenter__` fails')
+            pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
 
-    def force_stop() -> None:
+    def force_stop() -> None:  # pragma: no cover
         nonlocal forced_stop
         forced_stop = True
         loop.stop()
@@ -1185,7 +1185,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
     loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
 
-    def force_stop() -> None:
+    def force_stop() -> None:  # pragma: no cover
         nonlocal forced_stop
         forced_stop = True
         loop.stop()
