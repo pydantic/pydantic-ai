@@ -69,7 +69,7 @@ There are five ways to run an agent:
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
-4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — an async context manager which yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.agent.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph_builder.Graph].
 
 Here's a simple example demonstrating the first four:
@@ -96,11 +96,11 @@ async def main():
             #> The capital of the UK is
             #> The capital of the UK is London.
 
-    events: list[AgentStreamEvent | AgentRunResultEvent] = []
-    async with agent.run_stream_events('What is the capital of Mexico?') as stream:
-        async for event in stream:
-            events.append(event)
-    print(events)
+    collected: list[AgentStreamEvent | AgentRunResultEvent] = []
+    async with agent.run_stream_events('What is the capital of Mexico?') as events:
+        async for event in events:
+            collected.append(event)
+    print(collected)
     """
     [
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
@@ -238,7 +238,7 @@ Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_s
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
 
-For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`, which returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] async context manager that yields [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
     As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
@@ -256,8 +256,8 @@ from run_stream_event_stream_handler import handle_event, output_messages, weath
 async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
-    async with weather_agent.run_stream_events(user_prompt) as stream:
-        async for event in stream:
+    async with weather_agent.run_stream_events(user_prompt) as events:
+        async for event in events:
             if isinstance(event, AgentRunResultEvent):
                 output_messages.append(f'[Final Output] {event.result.output}')
             else:
@@ -588,7 +588,7 @@ usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
-Consider the following example, where we limit the number of response tokens:
+Consider the following example, where we limit the number of output tokens:
 
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
@@ -597,7 +597,7 @@ agent = Agent('anthropic:claude-sonnet-4-6')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
-    usage_limits=UsageLimits(response_tokens_limit=10),
+    usage_limits=UsageLimits(output_tokens_limit=10),
 )
 print(result_sync.output)
 #> Rome
@@ -607,7 +607,7 @@ print(result_sync.usage)
 try:
     result_sync = agent.run_sync(
         'What is the capital of Italy? Answer with a paragraph.',
-        usage_limits=UsageLimits(response_tokens_limit=10),
+        usage_limits=UsageLimits(output_tokens_limit=10),
     )
 except UsageLimitExceeded as e:
     print(e)
@@ -682,10 +682,12 @@ except UsageLimitExceeded as e:
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
+Tools and [capabilities](capabilities.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
-This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
+This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`, `top_k`,
 `timeout`, and more.
 
 There are three ways to apply these settings, with a clear precedence order:
@@ -1295,8 +1297,65 @@ with capture_run_messages() as messages:  # (2)!
 
 _(This example is complete, it can be run "as is")_
 
+When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
+
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. Half-finished tool call parts are not turned into synthetic tool results; only completed tool returns are captured.
+
+In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
+
+```python {title="capture_interrupted_run.py"}
+from pydantic_ai import Agent, ModelRequest, capture_run_messages
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='get_volume', args={'size': 6}, tool_call_id='volume_call'),
+            ToolCallPart(tool_name='get_mass', args={'size': 6}, tool_call_id='mass_call'),
+        ]
+    )
+
+
+agent = Agent(FunctionModel(function=call_tools))
+
+
+@agent.tool_plain(sequential=True)
+def get_volume(size: int) -> int:
+    return size**3
+
+
+@agent.tool_plain(sequential=True)
+def get_mass(size: int) -> int:
+    raise RuntimeError('missing density')
+
+
+with capture_run_messages() as messages:
+    try:
+        agent.run_sync('Calculate volume and mass.')
+    except RuntimeError as exc:
+        print(f'Run failed: {exc}')
+        #> Run failed: missing density
+
+interrupted_request = next(
+    message for message in messages if isinstance(message, ModelRequest) and message.state == 'interrupted'
+)
+assert any(
+    isinstance(part, ToolReturnPart) and part.tool_name == 'get_volume' and part.content == 216
+    for part in interrupted_request.parts
+)
+```
+
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+
+    `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
 
 ## Agent Specs
 

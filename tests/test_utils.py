@@ -1,28 +1,34 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import contextvars
 import functools
+import importlib
 import os
+import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from importlib.metadata import distributions
+from typing import Any
 
 import pytest
 
+import pydantic_ai._utils as utils_module
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
-    validate_empty_kwargs,
 )
 
 from ._inline_snapshot import snapshot
@@ -53,6 +59,28 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
         assert groups == expected
+
+
+async def test_group_by_temporal_first_window_starts_on_first_item():
+    """The debounce window must start when the first item arrives, not when iteration begins.
+
+    Regression test for #5946. A slow first item — e.g. the latency before a model's first
+    streamed token — used to have its window measured from iteration start, so the window
+    elapsed before the item arrived and it was emitted in a group of its own. Here the first
+    item is delayed well past the window, yet must still group with a second item that arrives
+    within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
+    """
+    interval = 0.05
+
+    async def yield_groups() -> AsyncIterator[int]:
+        await asyncio.sleep(interval * 3)  # first item arrives long after iteration started
+        yield 1
+        await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
+        yield 2
+
+    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == [[1, 2]]
 
 
 def test_check_object_json_schema():
@@ -116,7 +144,7 @@ def test_check_object_json_schema():
     }
 
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
-    with pytest.raises(UserError, match='^Schema must be an object$'):
+    with pytest.raises(UserError, match=r'^Schema must be an object$'):
         check_object_json_schema(array_schema)
 
 
@@ -156,6 +184,61 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must drive our own coroutine's cleanup
+    (closing model streams and HTTP connections via its `async with`/`finally` blocks) and leave no
+    pending task, without cancelling other tasks on the caller-owned loop.
+
+    This is a unit test rather than a public-API/VCR test because it requires a real interrupt to
+    arrive mid-`run_until_complete` while the coroutine is suspended, which can't be triggered
+    reliably through the public API; we simulate the interrupt by patching the loop.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = utils_module.get_event_loop()
+
+    # An unrelated task on the (caller-owned) loop that must survive: the reporter's `all_tasks()`
+    # sledgehammer would cancel this, ours must not.
+    async def bystander() -> None:
+        await asyncio.Event().wait()
+
+    bystander_task = loop.create_task(bystander())
+    tasks_before = asyncio.all_tasks(loop)
+
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task (and the bystander) start and suspend, then simulate Ctrl-C reaching the
+            # caller of `run_until_complete`.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            utils_module.run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+    assert not bystander_task.cancelled()  # the unrelated task was left alone
+    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
+
+    bystander_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        loop.run_until_complete(bystander_task)
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
@@ -250,6 +333,37 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
                 assert result is main_thread
     finally:
         executor.shutdown(wait=True)
+
+
+async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    importlib.reload(utils_module)
+    try:
+        main_thread = threading.current_thread()
+
+        def check_thread() -> threading.Thread:
+            return threading.current_thread()
+
+        result = await utils_module.run_in_executor(check_thread)
+        assert result is not main_thread
+    finally:
+        importlib.reload(utils_module)
+
+
+async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'emscripten')
+    importlib.reload(utils_module)
+    try:
+        main_thread = threading.current_thread()
+
+        def check_thread() -> threading.Thread:
+            return threading.current_thread()
+
+        result = await utils_module.run_in_executor(check_thread)
+        assert result is main_thread
+    finally:
+        monkeypatch.setattr(sys, 'platform', 'linux')
+        importlib.reload(utils_module)
 
 
 def test_is_async_callable():
@@ -791,6 +905,7 @@ def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\r\n{"foo": "bar"}\r\n```') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{\n  "foo": "bar"\n}') == '{\n  "foo": "bar"\n}'
     assert (
         strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')
@@ -812,38 +927,93 @@ def test_strip_markdown_fences():
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
 
 
-def test_validate_empty_kwargs_empty():
-    """Test that empty dict passes validation."""
-    validate_empty_kwargs({})
+class _AmbiguousBool:
+    """Mimics the result of a numpy array comparison: its truth value is ambiguous."""
+
+    def __bool__(self) -> bool:
+        raise ValueError('The truth value of an array with more than one element is ambiguous.')
 
 
-def test_validate_empty_kwargs_with_unknown():
-    """Test that unknown kwargs raise UserError."""
-    with pytest.raises(UserError, match='Unknown keyword arguments: `unknown_arg`'):
-        validate_empty_kwargs({'unknown_arg': 'value'})
+class _ArrayLike:
+    """Mimics a numpy array: `!=` returns a value whose `bool()` raises, instead of a plain bool."""
+
+    def __ne__(self, other: object) -> Any:
+        return _AmbiguousBool()
+
+    def __repr__(self) -> str:
+        return 'ArrayLike()'
 
 
-def test_validate_empty_kwargs_multiple_unknown():
-    """Test that multiple unknown kwargs are properly formatted."""
-    with pytest.raises(UserError, match='Unknown keyword arguments: `arg1`, `arg2`'):
-        validate_empty_kwargs({'arg1': 'value1', 'arg2': 'value2'})
+@dataclass(repr=False)
+class _HasRequiredField:
+    content: Any
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
-def test_validate_empty_kwargs_message_format():
-    """Test that the error message format matches expected pattern."""
-    with pytest.raises(UserError) as exc_info:
-        validate_empty_kwargs({'test_arg': 'test_value'})
+@dataclass(repr=False)
+class _HasDefaultField:
+    content: Any = None
 
-    assert 'Unknown keyword arguments: `test_arg`' in str(exc_info.value)
+    __repr__ = dataclasses_no_defaults_repr
 
 
-def test_validate_empty_kwargs_preserves_order():
-    """Test that multiple kwargs preserve order in error message."""
-    kwargs = {'first': '1', 'second': '2', 'third': '3'}
-    with pytest.raises(UserError) as exc_info:
-        validate_empty_kwargs(kwargs)
+class _CountingIntListFactory:
+    """A `default_factory` that records how many times it is called, to prove `repr()` never calls it."""
 
-    error_msg = str(exc_info.value)
-    assert '`first`' in error_msg
-    assert '`second`' in error_msg
-    assert '`third`' in error_msg
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[int]:
+        self.calls += 1
+        return []
+
+
+_items_factory = _CountingIntListFactory()
+
+
+@dataclass(repr=False)
+class _HasMixedFields:
+    required: int
+    flag: bool = False
+    items: list[int] = field(default_factory=_items_factory)
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """repr() must not raise when a field holds a value whose `!=` returns a non-bool (e.g. a numpy array).
+
+    Regression test for #6415: `repr()` of message parts crashed with `ValueError` when a field
+    such as `ToolReturnPart.content` held a numpy array. Covers both branches of the helper: a
+    required field (no default) and a field with an explicit default that holds such a value.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # Required field: value is always shown, and the ambiguous `!=` result must not be evaluated.
+    assert repr(_HasRequiredField(content=_ArrayLike())) == '_HasRequiredField(content=ArrayLike())'
+    # Explicit-default field holding the same value: the guarded comparison falls back to showing it.
+    assert repr(_HasDefaultField(content=_ArrayLike())) == '_HasDefaultField(content=ArrayLike())'
+
+
+def test_dataclasses_no_defaults_repr_omits_defaults():
+    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown.
+
+    Also asserts `repr()` never calls the `default_factory`: some factories are impure (e.g. `uuid7()`,
+    `now_utc()`), so materializing them during `repr()` would consume randomness/time or mutate state.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # `flag` equals its default and is omitted; `items` has only a `default_factory` so it is always shown.
+    instance = _HasMixedFields(required=1)
+    _items_factory.calls = 0  # reset the count incurred while constructing the instance above
+    assert repr(instance) == '_HasMixedFields(required=1, items=[])'
+    assert _items_factory.calls == 0  # repr must not invoke the default_factory
+
+    # `flag` differs from its default and is shown.
+    instance = _HasMixedFields(required=1, flag=True)
+    _items_factory.calls = 0
+    assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
+    assert _items_factory.calls == 0

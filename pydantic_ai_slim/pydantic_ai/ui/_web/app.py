@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import httpx
 
@@ -12,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
-from .api import ModelsParam, create_api_app
+from .api import BUNDLED_UI_SDK_VERSION, ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
@@ -25,7 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '1.2.0'
+CHAT_UI_VERSION = '2.0.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -47,6 +48,40 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
+def _read_cached_file(cache_file: Path) -> bytes | None:
+    """Return cached file contents, or `None` if it is missing or empty.
+
+    An empty file is treated as a miss (a truncated/partial write left by a prior crash)
+    so the caller refetches instead of serving an incomplete payload.
+    """
+    try:
+        content = cache_file.read_bytes()
+    except FileNotFoundError:
+        return None
+    return content or None
+
+
+def _write_cached_file(cache_file: Path, content: bytes) -> None:
+    """Write `content` to `cache_file` atomically via a same-directory temp file + `os.replace`.
+
+    The temp file lives in `cache_file.parent` (same filesystem, so the rename is atomic) and is
+    unlinked on any failure — including a write failure or interruption — so a crashed write can
+    never leave the destination existing-but-incomplete nor leak a temp file.
+    """
+    tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
+    tmp_path = Path(tmp_file.name)
+    try:
+        # Close the handle before the rename: Windows refuses to replace a file that still has an
+        # open handle, which would break the atomic write there.
+        with tmp_file:
+            tmp_file.write(content)
+            tmp_file.flush()
+        os.replace(tmp_path, cache_file)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
@@ -65,15 +100,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         cache_dir = _get_cache_dir()
         cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(DEFAULT_HTML_URL)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle Path instances
@@ -89,15 +124,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         url_hash = hashlib.sha256(html_source.encode()).hexdigest()[:16]
         cache_file = cache_dir / f'url_{url_hash}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(html_source)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle local file paths (strings)
@@ -115,7 +150,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
-    **_deprecated_kwargs: object,
+    sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -140,15 +175,14 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
+        sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
+            `7` to match the bundled v7 UI, which needs it for tool-approval streaming (7 emits the
+            same wire as 6, since v7's data-stream protocol equals v6's). Only lower it to `5` when
+            pairing an older UI via `html_source`.
 
     Returns:
         A configured Starlette application ready to be served
     """
-    from ... import _utils
-
-    native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-    _utils.validate_empty_kwargs(_deprecated_kwargs)
-
     api_app = create_api_app(
         agent=agent,
         models=models,
@@ -156,6 +190,7 @@ def create_web_app(
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
+        sdk_version=sdk_version,
     )
 
     routes = [Mount('/api', app=api_app)]

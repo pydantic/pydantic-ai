@@ -7,22 +7,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
-from typing_extensions import assert_never
-
 from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
-    BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CompactionPart,
     FilePart,
-    FileUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -39,7 +32,6 @@ from ..messages import (
     ToolCallPartDelta,
     ToolResultEvent,
     ToolReturnPart,
-    UploadedFile,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -98,14 +90,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
-    _handled_tool_calls: set[str] = field(default_factory=set[str])
-    """Tool call IDs whose call event has already been dispatched.
-
-    Used to dedupe the dual emission of `OutputToolCallEvent` + `FunctionToolCallEvent`
-    that fires on output-tool failure paths during the v2 transition.
-    """
-    _handled_tool_results: set[str] = field(default_factory=set[str])
-    """Tool call IDs whose result event has already been dispatched."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -182,10 +166,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
-                    if tool_call_id in self._handled_tool_calls:
-                        # Dual emission for an output-tool failure path; the new event already handled it.
-                        continue
-                    self._handled_tool_calls.add(tool_call_id)
                     kind: Literal['function', 'output'] = (
                         'output' if isinstance(event, OutputToolCallEvent) else 'function'
                     )
@@ -217,14 +197,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, ToolResultEvent):
                     tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
-                    if tool_call_id in self._handled_tool_results:
-                        # Dual emission for an output-tool failure path; the new event already handled it.
-                        continue
-                    self._handled_tool_results.add(tool_call_id)
-
-                elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
-                    # These events were deprecated before this feature was introduced
-                    continue
 
                 async for e in self.handle_event(event):
                     yield e
@@ -688,19 +660,3 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return
         yield  # Make this an async generator
-
-
-def describe_file(file: MultiModalContent) -> str:
-    """Return a text placeholder for a file in tool results.
-
-    Used by event stream protocols (Vercel AI, AG-UI) that don't support
-    multimodal content in tool results natively.
-    """
-    if isinstance(file, FileUrl):
-        return f'[File: {file.url}]'
-    elif isinstance(file, BinaryContent):
-        return f'[File: {file.media_type}]'
-    elif isinstance(file, UploadedFile):
-        return f'[File: {file.file_id}]'
-    else:
-        assert_never(file)
