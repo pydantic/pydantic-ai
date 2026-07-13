@@ -111,8 +111,15 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         Args:
             models: Optional additional models keyed by ID for runtime model
                 switching. The agent's primary model is always registered as
-                `'default'`. Pre-instantiated `Model` instances passed at
-                runtime via `agent.run(model=instance)` are accepted as-is.
+                `'default'`. A `Model` instance can't be serialized across the
+                activity boundary, so a run-time model (via `agent.run(model=...)`
+                / `agent.override(model=...)`, or swapped in by an outer capability)
+                is sent as its `model_id` string and rebuilt on the worker by
+                registry lookup, then `provider_factory` / `infer_model`. Register
+                an instance here (and reference it by key or pass the registered
+                instance) whenever its `model_id` alone wouldn't rebuild it
+                faithfully — e.g. a custom provider, client, or settings. Model-name
+                strings never need registering.
             provider_factory: Optional factory used to instantiate a
                 [`Provider`][pydantic_ai.providers.Provider] from a provider
                 name when a model-name string (e.g. `'openai:gpt-5.2'`) is
@@ -389,15 +396,23 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         Returns `None` for the agent's default model (no extra info needed),
         a registry key when an instance from `models=` is being used, or the
-        model's own `model_id` string when the model was constructed at runtime
-        (via `resolve_model` / `provider_factory`). Activities use the result to
+        model's own `model_id` string otherwise. Activities use the result to
         rebuild the same `Model` on the worker side via `_resolve_model_id`.
+
+        The `model_id` fallback covers models built from a run-time string (via
+        `resolve_model_id` / `provider_factory`) and models an outer capability
+        swaps in via `before_model_request`: the worker rebuilds them by looking
+        the `model_id` up in the registry, then falling back to `provider_factory`
+        / `infer_model`. This round-trip only reproduces a model that `infer_model`
+        (or the registry under that `model_id`) can rebuild — a pre-built instance
+        with a custom provider, client, or settings that isn't registered in
+        `models=` will not survive it faithfully.
         """
         for model_id, registered in self._models_by_id.items():
             if registered is model:
                 return None if model_id == 'default' else model_id
-        # Runtime-built Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → provider_factory → default).
+        # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
+        # rebuilds it the same way (registry lookup → provider_factory → default infer_model).
         return model.model_id
 
     def _resolve_model_id(self, model_id: str | None) -> Model:

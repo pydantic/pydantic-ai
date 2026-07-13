@@ -108,7 +108,7 @@ For more information on how to use DBOS in Python applications, see their [Pytho
 ### Wrapper-agent path (deprecated)
 
 !!! warning "Deprecated"
-    [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] is the original wrapper-agent path for DBOS integration and will be removed in v2. New code should use the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability shown above.
+    [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] is the original wrapper-agent path for DBOS integration and will be removed in v3. New code should use the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability shown above.
 
 Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get a durable agent variant. `DBOSAgent` wraps `Agent.run` / `Agent.run_sync` as DBOS workflows and routes model requests and MCP communication through DBOS steps, identically to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]:
 

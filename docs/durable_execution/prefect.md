@@ -108,7 +108,7 @@ For more information on how to use Prefect in Python applications, see their [Py
 ### Wrapper-agent path (deprecated)
 
 !!! warning "Deprecated"
-    [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v2. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
+    [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v3. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
 
 Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant. `PrefectAgent` wraps `Agent.run` / `Agent.run_sync` as Prefect flows and routes model requests, tool calls, and MCP communication through Prefect tasks, identically to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]:
 
