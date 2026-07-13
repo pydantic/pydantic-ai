@@ -115,6 +115,7 @@ _CAPABILITY_PAGE_META = {
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
+    'memory.md': ('memory', 'Memory'),
     'context.md': ('context', 'Context'),
     'pydantic-ai-docs.md': ('docs', 'Pydantic AI Docs'),
     'compaction.md': ('compaction', 'Compaction'),
