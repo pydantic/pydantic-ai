@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -2880,6 +2881,14 @@ def test_map_content_concatenates_text_chunks() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:

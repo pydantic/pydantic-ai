@@ -213,6 +213,9 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
         'chatgpt-4o-latest',
         # https://developers.openai.com/api/docs/deprecations#2025-11-17-codex-mini-latest-model-snapshot
         'codex-mini-latest',
+        # https://developers.openai.com/api/docs/deprecations#2023-11-06-chat-model-updates
+        'gpt-3.5-turbo-0613',
+        'gpt-3.5-turbo-16k-0613',
         # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
         'gpt-4-0125-preview',
         'gpt-4-1106-preview',
