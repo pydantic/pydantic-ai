@@ -77,7 +77,7 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 [`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
 
 ```python {title="deferred_hooks_capability.py"}
-from pydantic_ai import Agent, RunContext, SkipToolExecution, ToolDefinition
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import ToolCallPart
 
@@ -96,10 +96,7 @@ async def require_approval(
     tool_def: ToolDefinition,
     args: ValidatedToolArgs,
 ) -> ValidatedToolArgs:
-    # Runs only after the model loads `approval-hooks`. Enforce your rule here;
-    # this runs regardless of how the tool call reached the agent.
-    if not ctx.tool_call_approved:
-        raise SkipToolExecution('This action requires human approval.')
+    # Runs only after the model loads `approval-hooks`.
     return args
 
 
