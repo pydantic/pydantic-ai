@@ -193,3 +193,34 @@ def test_allof_with_refs_is_inlined():
     assert 'allOf' in result
     assert result['allOf'][0] == {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert result['allOf'][1] == {'type': 'object', 'properties': {'b': {'type': 'integer'}}}
+
+
+def test_inline_defs_preserves_ref_siblings():
+    """InlineDefsJsonSchemaTransformer should keep keys that sit alongside a `$ref`.
+
+    Pydantic emits a nested-model field as `{'$ref': ..., 'description': ...}` (JSON
+    Schema 2020-12 sibling semantics). Before the fix, inlining replaced the whole node
+    with the referenced definition, dropping the sibling `description`. This is a unit
+    test pinning the internal walk shape because the schema transformer is an internal
+    helper used by providers, and a VCR test wouldn't catch the dropped description since
+    cassette matchers aren't sensitive to the request body.
+    """
+
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'inner': {'$ref': '#/$defs/Inner', 'description': 'the inner thing'},
+        },
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    inner = result['properties']['inner']
+    assert inner['type'] == 'object'
+    assert inner['description'] == 'the inner thing'
+    assert '$defs' not in result

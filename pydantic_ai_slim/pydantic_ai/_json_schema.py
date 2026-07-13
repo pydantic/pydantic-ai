@@ -89,6 +89,7 @@ class JsonSchemaTransformer(ABC):
             return schema
 
         nested_refs = 0
+        ref_siblings: JsonSchema = {}
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
                 key = re.sub(r'^#/\$defs/', '', ref)
@@ -99,6 +100,12 @@ class JsonSchemaTransformer(ABC):
                     break  # recursive ref can't be unpacked
                 self.refs_stack.append(key)
                 nested_refs += 1
+
+                # Keep any keywords that accompany the `$ref` (e.g. a field-level
+                # `description`); resolving the ref below replaces the whole node.
+                for k, v in schema.items():
+                    if k != '$ref':
+                        ref_siblings.setdefault(k, v)
 
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
@@ -118,6 +125,12 @@ class JsonSchemaTransformer(ABC):
 
         # Apply the base transform
         schema = self.transform(schema)
+
+        # Re-apply the keywords that accompanied an inlined `$ref` (e.g. a field-level
+        # `description`) so they are preserved rather than dropped, matching JSON Schema
+        # 2020-12 sibling semantics and the non-inlining transformers.
+        if ref_siblings and isinstance(schema, dict):
+            schema = {**schema, **ref_siblings}
 
         if nested_refs > 0:
             self.refs_stack = self.refs_stack[:-nested_refs]
