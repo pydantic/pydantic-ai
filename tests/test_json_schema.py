@@ -193,3 +193,63 @@ def test_allof_with_refs_is_inlined():
     assert 'allOf' in result
     assert result['allOf'][0] == {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert result['allOf'][1] == {'type': 'object', 'properties': {'b': {'type': 'integer'}}}
+
+
+def test_typed_schema_anyof_member_is_recursed_google():
+    """GoogleJsonSchemaTransformer should strip unsupported keys from anyOf members of a typed node.
+
+    Before the fix, composition members (allOf/anyOf/oneOf) were only recursed when the node
+    had no ``type``. A typed node (e.g. ``type: object``) with a sibling ``anyOf`` left its
+    members untransformed, so provider-specific cleanup (Google strips ``title`` and
+    ``exclusiveMinimum``) was never applied to them.
+    """
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'properties': {'p': {'type': 'string'}},
+        'anyOf': [{'type': 'integer', 'title': 'Count', 'exclusiveMinimum': 0}],
+    }
+
+    result = GoogleJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    member = result['anyOf'][0]
+    assert member['type'] == 'integer'
+    assert 'title' not in member
+    assert 'exclusiveMinimum' not in member
+
+
+def test_typed_schema_anyof_member_is_recursed_openai_strict():
+    """OpenAIJsonSchemaTransformer strict should add strict fields to anyOf members of a typed node.
+
+    Before the fix, composition members of a typed node were never walked, so OpenAI strict
+    mode additions (``additionalProperties: false`` and ``required``) were missing from them.
+    """
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'properties': {'p': {'type': 'string'}},
+        'anyOf': [{'type': 'object', 'properties': {'q': {'type': 'integer'}}}],
+    }
+
+    result = OpenAIJsonSchemaTransformer(deepcopy(schema), strict=True).walk()
+
+    member = result['anyOf'][0]
+    assert member['type'] == 'object'
+    assert member['additionalProperties'] is False
+    assert member['required'] == ['q']
+
+
+def test_typeless_anyof_member_still_recursed():
+    """Control: typeless anyOf members continue to be recursed via _handle_union."""
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'anyOf': [{'type': 'integer', 'title': 'Count', 'exclusiveMinimum': 0}],
+    }
+
+    result = GoogleJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    # Single-member union collapses into the member, which is still transformed.
+    assert result == {'type': 'integer'}
