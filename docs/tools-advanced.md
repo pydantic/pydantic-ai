@@ -172,8 +172,8 @@ Strict mode is currently supported by **OpenAI**, **Anthropic**, **Google**, and
 |---|---|
 | OpenAI | `strict: true` on the tool definition (constrained decoding). |
 | Anthropic | `strict: true` on the tool definition. |
-| Bedrock | `strict` on the tool spec, on models whose profile sets `bedrock_supports_strict_tool_definition` (and when the installed `botocore` is new enough to send the field). |
-| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), used when every tool in the request has `strict=True`. It behaves like the default mode but the API enforces the declared schema, which mitigates the [function-name hallucination](https://github.com/googleapis/python-genai/issues/813) some Gemini models exhibit. It is applied only on models whose profile sets `google_supports_strict_tool_definition` (Gemini 2.5 and newer). |
+| Bedrock | `strict: true` on the tool spec, on supported models. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), used when every tool in the request has `strict=True`, on Gemini 2.5 and newer. It behaves like the default mode but the API enforces the declared schema. |
 
 ### Strictness values
 

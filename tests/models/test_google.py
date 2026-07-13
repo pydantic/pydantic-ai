@@ -81,6 +81,7 @@ from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
+from ..cassette_utils import get_first_post_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -638,9 +639,7 @@ async def test_google_strict_tools_use_validated_mode(
     result = await agent.run('What is the weather and the time in Paris? Use the tools.')
     assert result.output == snapshot('The weather in Paris is sunny and 24C. The time in Paris is 3pm.')
 
-    generate_requests = [r for r in vcr.requests if r.uri.endswith(':generateContent')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert generate_requests
-    first_request: dict[str, Any] = json.loads(generate_requests[0].body)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    first_request = get_first_post_body(vcr)
     assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
     assert len(first_request['tools'][0]['functionDeclarations']) == 2
 

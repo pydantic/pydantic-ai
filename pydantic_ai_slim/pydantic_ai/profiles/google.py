@@ -104,16 +104,11 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """
 
     def walk(self) -> JsonSchema:
-        # Unlike OpenAI/Anthropic strict mode, Gemini's `VALIDATED` tool mode needs no strict-mode-specific
-        # rewrites on top of the base `transform()` below (no `additionalProperties: false` injection, no
-        # forcing every property to be `required`): every schema Gemini already accepts for function calling is
-        # also valid for `VALIDATED`. Even so, we mirror Anthropic's conservative default and only treat a
-        # schema as strict-compatible when the caller explicitly opts in with `strict=True`. That keeps the
-        # default behavior (mode `AUTO`) unchanged; `VALIDATED` is a preview feature, so we don't turn it on
-        # implicitly. `_customize_tool_def` coalesces `ToolDefinition.strict = self.is_strict_compatible` when
-        # it was left as `None`.
+        schema = super().walk()
+        # Unlike OpenAI/Anthropic, Gemini's `VALIDATED` mode needs no schema rewrites; we still only enable it
+        # on an explicit `strict=True` opt-in rather than by default, since it's a preview feature.
         self.is_strict_compatible = self.strict is True
-        return super().walk()
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove properties not supported by Gemini
