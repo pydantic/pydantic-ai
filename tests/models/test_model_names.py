@@ -83,6 +83,18 @@ _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
     'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
+# Confirmed against the native OpenAI API: these succeed through Chat Completions but return
+# HTTP 404 `Model not found` through Responses.
+_OPENAI_CHAT_ONLY_MODEL_NAMES = frozenset(
+    {
+        'gpt-3.5-turbo-16k',
+        'gpt-4o-mini-search-preview',
+        'gpt-4o-mini-search-preview-2025-03-11',
+        'gpt-4o-search-preview',
+        'gpt-4o-search-preview-2025-03-11',
+    }
+)
+
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
         'gateway/anthropic:claude-mythos-5',
@@ -164,7 +176,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:codex-mini-latest',
         'gateway/openai:gpt-3.5-turbo-0301',
         'gateway/openai:gpt-3.5-turbo-0613',
-        'gateway/openai:gpt-3.5-turbo-16k',
         'gateway/openai:gpt-3.5-turbo-16k-0613',
         'gateway/openai:gpt-4-0125-preview',
         'gateway/openai:gpt-4-0314',
@@ -180,10 +191,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-mini-search-preview',
-        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
-        'gateway/openai:gpt-4o-search-preview',
-        'gateway/openai:gpt-4o-search-preview-2025-03-11',
         'gateway/openai:gpt-5.1-mini',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
@@ -194,6 +201,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:o4-mini-deep-research',
         'gateway/openai:o4-mini-deep-research-2025-06-26',
     }
+    | {f'gateway/openai:{model_name}' for model_name in _OPENAI_CHAT_ONLY_MODEL_NAMES}
 )
 
 
@@ -214,6 +222,7 @@ def test_known_model_names():  # pragma: lax no cover
         for provider, model_names in _PROVIDER_TO_MODEL_NAMES.items()
         for n in get_model_names(model_names)
         if not is_deprecated(provider, n)
+        if provider != 'openai' or n not in _OPENAI_CHAT_ONLY_MODEL_NAMES
     ]
 
     cerebras_names = get_cerebras_model_names()
