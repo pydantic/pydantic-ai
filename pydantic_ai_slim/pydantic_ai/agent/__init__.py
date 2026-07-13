@@ -1666,7 +1666,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
-        retry_overrides = _retry_overrides_from_spec(validated_spec)
+        retry_overrides = _retry_overrides_from_spec(validated_spec, int_means='output')
 
         # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
         # triggering pydantic deprecation warnings on deprecated spec fields.
@@ -2761,9 +2761,18 @@ def _merge_retries_with_spec(
     return merged
 
 
-def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
-    """Return retry fields explicitly configured on an `AgentSpec`."""
-    return _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
+def _retry_overrides_from_spec(spec: AgentSpec, *, int_means: Literal['both', 'output'] = 'both') -> AgentRetries:
+    """Return retry fields explicitly configured on an `AgentSpec`.
+
+    `int_means` mirrors `_normalize_agent_retry_overrides`: `'both'` at construction time
+    (`from_spec`), `'output'` at run/override time so a bare `int` in a run-time spec overrides
+    only the output budget, matching the `retries=` kwarg.
+    """
+    return (
+        _normalize_agent_retry_overrides(spec.retries, int_means=int_means)
+        if 'retries' in spec.model_fields_set
+        else {}
+    )
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
