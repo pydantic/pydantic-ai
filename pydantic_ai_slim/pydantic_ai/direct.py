@@ -309,8 +309,8 @@ class StreamedResponseSync:
     and iterator lifecycles in stable tasks. Exiting the `with` block cancels the underlying request promptly
     and closes the connection instead of waiting for the whole response to arrive.
 
-    This class must be used as a context manager with the `with` statement. It must be used and closed on the
-    thread where the `with` block is entered.
+    This class must be used as a context manager with the `with` statement. The synchronous stream is created
+    when the `with` block is entered and must be used and closed on that thread.
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
