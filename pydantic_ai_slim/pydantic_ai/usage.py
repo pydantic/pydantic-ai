@@ -111,11 +111,9 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(
-            v != 0
-            for field in dataclasses.asdict(self).values()
-            for v in (field.values() if isinstance(field, dict) else [field])
-        )
+        if any(getattr(self, f.name) for f in fields(self) if f.name != 'details'):
+            return True
+        return any(self.details.values())
 
 
 @dataclass(repr=False, kw_only=True)
