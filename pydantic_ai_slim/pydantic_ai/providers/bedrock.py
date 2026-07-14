@@ -7,6 +7,7 @@ from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
+from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
@@ -34,10 +35,14 @@ try:
     from botocore.exceptions import NoRegionError
     from botocore.session import Session
     from botocore.tokens import FrozenAuthToken
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not is_missing_optional_dependency(_import_error, 'boto3'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `boto3` package to use the Bedrock provider, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 

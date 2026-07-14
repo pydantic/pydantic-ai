@@ -140,6 +140,12 @@ def is_async_generator_already_running(exc: RuntimeError) -> bool:
     return 'asynchronous generator is already running' in str(exc)
 
 
+def is_missing_optional_dependency(error: ModuleNotFoundError, import_name: str) -> bool:
+    """Return whether an import failed because the optional dependency itself is missing."""
+    missing_name = error.name
+    return missing_name is not None and (missing_name == import_name or import_name.startswith(f'{missing_name}.'))
+
+
 def is_model_like(type_: Any) -> bool:
     """Check if something is a pydantic model, dataclass or typedict.
 

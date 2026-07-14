@@ -70,10 +70,14 @@ try:
     from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from groq.types.chat.completion_create_params import SearchSettings
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not _utils.is_missing_optional_dependency(_import_error, 'groq'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `groq` to use the Groq model, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
+        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 

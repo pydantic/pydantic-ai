@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from .._utils import is_missing_optional_dependency
 from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -18,10 +19,14 @@ try:
     from openai import AsyncOpenAI
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not is_missing_optional_dependency(_import_error, 'openai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `openai` package to use the Cerebras model, '
-        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"'
+        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')

@@ -3,15 +3,20 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
+from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider
 
 try:
     from voyageai.client_async import AsyncClient
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
+except ModuleNotFoundError as _import_error:  # pragma: no cover
+    if not is_missing_optional_dependency(_import_error, 'voyageai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `voyageai` package to use the VoyageAI provider, '
-        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`'
+        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 

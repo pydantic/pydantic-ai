@@ -6,6 +6,7 @@ from typing import overload
 from httpx import AsyncClient
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import is_missing_optional_dependency
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -18,10 +19,14 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 try:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not is_missing_optional_dependency(_import_error, 'huggingface_hub'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
-        "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
+        "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`",
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 from . import Provider

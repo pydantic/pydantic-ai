@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlparse
 
+from .._utils import is_missing_optional_dependency
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
@@ -14,10 +15,14 @@ try:
     from openai import AsyncOpenAI
 
     from .openai import OpenAIChatModel
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not is_missing_optional_dependency(_import_error, 'openai'):
+        raise
+    raise ModuleNotFoundError(
         'Please install the `openai` package to use the Ollama model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 __all__ = ('OllamaModel',)

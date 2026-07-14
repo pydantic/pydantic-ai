@@ -16,14 +16,20 @@ import anyio.to_thread
 from pydantic_core import to_json
 from typing_extensions import ParamSpec, assert_never
 
+from .._utils import is_missing_optional_dependency
+
 try:
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
     from botocore.model import StructureShape
-except ImportError as _import_error:
-    raise ImportError(
+except ModuleNotFoundError as _import_error:
+    if not is_missing_optional_dependency(_import_error, 'botocore'):
+        raise
+    raise ModuleNotFoundError(
         'Please install `boto3` to use the Bedrock model, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`',
+        name=_import_error.name,
+        path=_import_error.path,
     ) from _import_error
 
 from pydantic_ai import (
