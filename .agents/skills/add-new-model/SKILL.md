@@ -52,7 +52,7 @@ For every variable, tuple, and literal you're about to touch, grep its readers a
 Specifically, for a typical model add, grep for:
 
 - The previous model id literal you're mirroring (e.g. `gpt-5.4`, `claude-opus-4-5`) — `rg '<prev-id>' --glob '!**/*.yaml' --glob '!**/cassettes/**'`
-- Every variable name in the profile module you're editing (e.g. `is_gpt_5_1_plus`, `is_claude_4_plus`)
+- Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capabilities.py`
 
@@ -67,10 +67,10 @@ If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — do
 
 Snapshot/enumeration tests in this repo often tie `KnownModelName` to a literal set defined in the provider SDK. **The provider SDK frequently lags the model release by days.**
 
-For OpenAI:
+For OpenAI, check the broad union the repo actually consumes (`OpenAIModelName = str | AllModels`), **not** the chat-only `ChatModel` Literal — `AllModels` also carries Responses-API-only and embeddings ids that the enumeration test walks:
 
 ```bash
-uv run python -c "from openai.types.chat_model import ChatModel; from typing import get_args; print([m for m in get_args(ChatModel) if '<new-version>' in m])"
+uv run python -c "from openai.types import AllModels; from typing import get_args; print([m for m in get_args(AllModels) if '<new-version>' in m])"
 ```
 
 Anthropic and xAI do **not** follow this OpenAI flow — the repo bridges their SDK lag with a local `Literal` and lands green immediately, no split. See the SDK-lag bridge notes in their landmine sections below (Anthropic checks `ModelParam`, not `Model`).
@@ -138,11 +138,11 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 
 ### OpenAI
 
-- **`is_gpt_5_1_plus` tuple** in `pydantic_ai_slim/pydantic_ai/profiles/openai.py`. `str.startswith` match. Every new `gpt-5.N` series MUST be added or the model silently falls into the `is_gpt_5` branch (`thinking_always_enabled=True`, `openai_supports_reasoning_effort_none=False`) — wrong defaults, no error.
-- **`KnownModelName` has split blocks** in `pydantic_ai_slim/pydantic_ai/models/__init__.py`: a `gateway/openai:` block and an `openai:` block. The gateway block omits `-pro` and `-chat-latest` variants by convention (the gateway routes them transparently; the literal list just doesn't enumerate them). Match the existing convention exactly.
-- **`-chat-latest` variants are non-reasoning** (e.g. `gpt-5.3-chat-latest`) and need explicit handling outside the `is_gpt_5_1_plus` branch. Only add if the provider actually shipped one.
-- **`-pro` variants reject `reasoning.effort='none'`/`'low'`** — accept only `medium`/`high`/`xhigh`. Currently undermodeled in `openai_model_profile`; flag if relevant.
-- **`tests/models/test_model_names.py::test_known_model_names`** strictly enforces `set(KnownModelName) == set(provider:name for name in openai.ChatModel)`. No allow-list for "ahead-of-SDK" literals — Step 4 SDK check is mandatory.
+- **`_REASONING_SUPPORT_BY_PREFIX`** in `pydantic_ai_slim/pydantic_ai/profiles/openai.py` — a dict keyed by model-name prefix (`'gpt-5.6'`, `'gpt-5.3-chat'`, `'gpt-5'`, `'o'`, …) → `_ReasoningSupport(enabled_by_default, can_be_disabled, supports_mode)`, resolved **first-match-wins** by `_reasoning_support()`. A new `gpt-5.N` family MUST be added here, and **ordering matters**: a more specific prefix (`'gpt-5.3-chat'`) must precede the broader one it would otherwise shadow (`'gpt-5.3'`), and every newer `gpt-5.x` family must precede the plain `'gpt-5'` catch-all. Miss it and the model falls through to the `_NO_REASONING` default (`thinking_always_enabled=False`, `openai_supports_reasoning_effort_none=False`) — wrong defaults, no error. The resolved matrix is pinned in `tests/profiles/test_openai.py`.
+- **`KnownModelName` lives in `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py`** (a `TypeAliasType`), **not** `models/__init__.py`. It has split `openai:` and `gateway/openai:` blocks. Don't assume the gateway block omits `-pro`/`-chat-latest` — for the `gpt-5.x` series it enumerates them (`gateway/openai:gpt-5.2-pro`, `gateway/openai:gpt-5.3-chat-latest`, …). Mirror the exact enumeration of the most recent series across both blocks rather than guessing a convention.
+- **Most `gpt-5.x-chat` variants DO reason** (`_ALWAYS_ON_REASONING`: reason at a fixed effort, reject `reasoning_effort='none'` and sampling parameters). The non-reasoning exception is the original `gpt-5-chat`/`gpt-5-chat-latest` (`_NO_REASONING`). Verify each `-chat`/`-chat-latest` variant against the live Responses API; don't copy a sibling's reasoning class blindly.
+- **`-pro` variants map to `_ALWAYS_ON_REASONING`** (`gpt-5.2-pro`, `gpt-5.4-pro`, `gpt-5.5-pro`) — they reason and reject `effort='none'`. The three-fact `_ReasoningSupport` model doesn't encode per-effort-*value* rejection, so if a new `-pro` rejects a specific value (e.g. `'low'`), flag it rather than assuming the enum covers it.
+- **`tests/models/test_model_names.py::test_known_model_names`** asserts `known_model_names()` equals the set generated from `_PROVIDER_TO_MODEL_NAMES['openai']`, i.e. `OpenAIModelName = str | AllModels` (the broad union, not the chat-only `ChatModel`). A literal missing from `AllModels` fails this test — Step 4's SDK check is mandatory and must query `AllModels`.
 - **`tests/test_capabilities.py::test_model_json_schema_with_capabilities`** is a snapshot test enumerating every `KnownModelName`. Refresh with `--inline-snapshot=fix`.
 
 ### Anthropic
