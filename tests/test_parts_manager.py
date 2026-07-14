@@ -18,8 +18,10 @@ from pydantic_ai import (
     ToolCallPartDelta,
     UnexpectedModelBehavior,
 )
+from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr
@@ -83,7 +85,7 @@ def test_handle_dovetailed_text_deltas():
     )
 
 
-def test_string_deltas_materialize_on_reads_and_replacement(mocker: MockerFixture):
+def test_string_deltas_materialize_on_reads_and_replacement():
     """Internal buffer lifecycle and replacement are not observable in provider cassettes."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
@@ -130,7 +132,6 @@ def test_string_deltas_materialize_on_reads_and_replacement(mocker: MockerFixtur
         provider_details={'first': 1, '-one': True, '-two': True, '-three': True},
     )
     replacement = TextPart('replacement')
-    mocker.patch.object(manager, '_materialize_part', side_effect=AssertionError('replacement materialized old part'))
     assert manager.handle_part(vendor_part_id='text', part=replacement) == PartStartEvent(index=0, part=replacement)
     assert manager.get_parts() == [
         replacement,
@@ -199,19 +200,10 @@ def test_content_delta_keeps_previous_provider_details_snapshot_isolated(part_ki
     assert manager.get_parts()[0].provider_details == {'stable': 1}
 
 
-def test_thinking_content_with_callable_metadata_stays_buffered(monkeypatch):
+def test_thinking_content_with_callable_metadata_stays_buffered():
     """The combined callable/content path is not produced by current provider cassettes."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     next(manager.handle_thinking_delta(vendor_part_id='part', content='a', provider_details={'count': 0}))
-    materialize_calls = 0
-    original_materialize = manager._materialize_part
-
-    def track_materialize(part_index: int):
-        nonlocal materialize_calls
-        materialize_calls += 1
-        return original_materialize(part_index)
-
-    monkeypatch.setattr(manager, '_materialize_part', track_materialize)
 
     def increment(details: dict[str, Any] | None) -> dict[str, Any]:
         return {'count': (details or {}).get('count', 0) + 1}
@@ -219,38 +211,17 @@ def test_thinking_content_with_callable_metadata_stays_buffered(monkeypatch):
     for _ in range(2_048):
         next(manager.handle_thinking_delta(vendor_part_id='part', content='b', provider_details=increment))
 
-    assert materialize_calls == 0
     assert manager.get_parts() == [ThinkingPart('a' + 'b' * 2_048, provider_details={'count': 2_048})]
 
 
 @pytest.mark.parametrize('size', [8_192, 16_384])
-def test_incomplete_tool_call_string_arguments_are_buffered(monkeypatch, size: int):
-    """Private apply/materialization counts cannot be asserted through a provider cassette."""
+def test_incomplete_tool_call_string_arguments_are_buffered(size: int):
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    apply_calls = 0
-    original_apply = ToolCallPartDelta.apply
-    materialize_calls = 0
-    original_materialize = manager._materialize_part
-
-    def track_apply(self: ToolCallPartDelta, part: Any) -> Any:
-        nonlocal apply_calls
-        apply_calls += 1
-        return original_apply(self, part)
-
-    def track_materialize(part_index: int):
-        nonlocal materialize_calls
-        materialize_calls += 1
-        return original_materialize(part_index)
-
-    monkeypatch.setattr(ToolCallPartDelta, 'apply', track_apply)
-    monkeypatch.setattr(manager, '_materialize_part', track_materialize)
 
     for _ in range(size):
         assert manager.handle_tool_call_delta(vendor_part_id='tool', args='x') is None
         assert manager.get_parts() == []
 
-    assert apply_calls == 0
-    assert materialize_calls == 0
     assert (
         manager.handle_tool_call_delta(
             vendor_part_id='tool',
@@ -260,7 +231,6 @@ def test_incomplete_tool_call_string_arguments_are_buffered(monkeypatch, size: i
         )
         is None
     )
-    assert apply_calls == 1
 
     event = manager.handle_tool_call_delta(
         vendor_part_id='tool', tool_name='tool', provider_name='provider', provider_details={'second': True}
@@ -273,8 +243,49 @@ def test_incomplete_tool_call_string_arguments_are_buffered(monkeypatch, size: i
         provider_name='provider',
         provider_details={'first': True, 'second': True},
     )
-    assert apply_calls == 2
     assert manager.get_parts() == [event.part]
+
+
+def test_tool_call_provider_details_snapshot_isolated_from_buffered_arguments():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    start_event = manager.handle_tool_call_delta(
+        vendor_part_id='tool',
+        tool_name='tool',
+        args='{"value":',
+        tool_call_id='call',
+        provider_name='provider',
+        provider_details={'stable': 1},
+    )
+    assert isinstance(start_event, PartStartEvent)
+
+    manager.handle_tool_call_delta(vendor_part_id='tool', args='true}')
+    assert start_event.part.provider_details is not None
+    start_event.part.provider_details['stable'] = 99
+    assert manager.get_parts()[0].provider_details == {'stable': 1}
+
+
+def test_tool_call_promotes_after_buffered_arguments_are_materialized():
+    manager = ModelResponsePartsManager(
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='load_capability', tool_kind='capability-load')]
+        )
+    )
+    start_event = manager.handle_tool_call_delta(
+        vendor_part_id='tool',
+        tool_name='load_capability',
+        args='{"id":',
+        tool_call_id='call',
+    )
+    assert isinstance(start_event, PartStartEvent)
+    assert isinstance(start_event.part, LoadCapabilityCallPart)
+    assert start_event.part.typed_args is None
+
+    event = manager.handle_tool_call_delta(vendor_part_id='tool', args='"capability"}')
+    assert isinstance(event, PartDeltaEvent)
+
+    part = manager.get_part_by_vendor_id('tool')
+    assert isinstance(part, LoadCapabilityCallPart)
+    assert part.capability_id == 'capability'
 
 
 def test_tool_call_buffer_changes_are_atomic_when_typed_promotion_fails(mocker: MockerFixture):

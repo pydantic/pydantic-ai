@@ -594,29 +594,41 @@ class ModelResponsePartsManager:
             return delta.apply(existing_part)
 
         if isinstance(existing_part, ToolCallPartDelta):
-            current_args = existing_part.args_delta
-            if isinstance(current_args, dict):
-                return delta.apply(existing_part)
+            return self._apply_string_delta_to_incomplete_tool_call(part_index, existing_part, delta, args)
+        return self._apply_string_delta_to_tool_call(part_index, existing_part, delta, args)
 
-            if delta.tool_name_delta is not None:
-                materialized_part = self._materialize_part(part_index)
-                if not isinstance(materialized_part, ToolCallPartDelta):  # pragma: no cover
-                    raise AssertionError(f'Expected an incomplete tool call, got {materialized_part!r}')
-                existing_part = materialized_part
-                return delta.apply(existing_part)
+    def _apply_string_delta_to_incomplete_tool_call(
+        self, part_index: int, existing_part: ToolCallPartDelta, delta: ToolCallPartDelta, args: str
+    ) -> ToolCallPartDelta | ToolCallPart | NativeToolCallPart:
+        """Apply a buffered string delta to an incomplete tool call."""
+        current_args = existing_part.args_delta
+        if isinstance(current_args, dict):
+            return delta.apply(existing_part)
 
-            if not args and part_index not in self._string_buffers:
-                return delta.apply(existing_part)
+        if delta.tool_name_delta is not None:
+            materialized_part = self._materialize_part(part_index)
+            if not isinstance(materialized_part, ToolCallPartDelta):  # pragma: no cover
+                raise AssertionError(f'Expected an incomplete tool call, got {materialized_part!r}')
+            return delta.apply(materialized_part)
 
-            updated_part = existing_part
-            if delta.tool_call_id or delta.provider_name or delta.provider_details:
-                metadata_delta = replace(delta, args_delta=None)
-                updated_part = metadata_delta.apply(existing_part)
-                if not isinstance(updated_part, ToolCallPartDelta):  # pragma: no cover
-                    raise AssertionError(f'Expected an incomplete tool call, got {updated_part!r}')
-            self._buffer_string_delta(part_index, current_args, args)
-            return updated_part
+        if not args and part_index not in self._string_buffers:
+            return delta.apply(existing_part)
 
+        updated_part = existing_part
+        if delta.tool_call_id or delta.provider_name or delta.provider_details:
+            metadata_delta = replace(delta, args_delta=None)
+            updated_part = metadata_delta.apply(existing_part)
+            if not isinstance(updated_part, ToolCallPartDelta):  # pragma: no cover
+                raise AssertionError(f'Expected an incomplete tool call, got {updated_part!r}')
+        elif updated_part.provider_details is not None:
+            updated_part = replace(updated_part, provider_details=updated_part.provider_details.copy())
+        self._buffer_string_delta(part_index, current_args, args)
+        return updated_part
+
+    def _apply_string_delta_to_tool_call(
+        self, part_index: int, existing_part: ToolCallPart | NativeToolCallPart, delta: ToolCallPartDelta, args: str
+    ) -> ToolCallPart | NativeToolCallPart:
+        """Apply a buffered string delta to a complete tool call."""
         current_args = existing_part.args
         if isinstance(current_args, dict):
             return delta.apply(existing_part)
@@ -628,6 +640,8 @@ class ModelResponsePartsManager:
         if delta.tool_name_delta or delta.tool_call_id or delta.provider_name or delta.provider_details:
             metadata_delta = replace(delta, args_delta=None)
             updated_part = metadata_delta.apply(existing_part)
+        elif updated_part.provider_details is not None:
+            updated_part = replace(updated_part, provider_details=updated_part.provider_details.copy())
         self._buffer_string_delta(part_index, current_args, args)
         return updated_part
 
@@ -658,6 +672,8 @@ class ModelResponsePartsManager:
             if isinstance(part.args, dict):  # pragma: no cover
                 raise AssertionError('Cannot materialize string arguments onto dictionary arguments')
             part = replace(part, args=value)
+            if isinstance(part, ToolCallPart):
+                part = self._typed_call_part(part)
         else:  # pragma: no cover
             raise AssertionError(f'Cannot materialize string deltas for {part!r}')
 
