@@ -474,6 +474,26 @@ def test_output_audio_tokens_increment():
     assert run_usage.output_audio_tokens == 15
 
 
+@pytest.mark.parametrize(
+    'usage,expected',
+    [
+        (RunUsage(), False),
+        (RunUsage(details={'reasoning_tokens': 0}), False),
+        (RunUsage(details={'reasoning_tokens': 0, 'cached_tokens': 0}), False),
+        (RunUsage(details={'reasoning_tokens': 5}), True),
+        (RunUsage(input_tokens=5), True),
+        (RunUsage(input_tokens=0, details={}), False),
+        (RequestUsage(), False),
+        (RequestUsage(details={'reasoning_tokens': 0}), False),
+        (RequestUsage(details={'reasoning_tokens': 5}), True),
+        (RequestUsage(input_tokens=5), True),
+    ],
+)
+def test_has_values(usage: RequestUsage | RunUsage, expected: bool):
+    """`has_values()` checks numeric values inside `details` rather than the dict's truthiness."""
+    assert usage.has_values() == expected
+
+
 def test_add_usages_with_none_detail_value():
     """Test that None values in details are skipped when incrementing usage."""
     usage = RunUsage(
