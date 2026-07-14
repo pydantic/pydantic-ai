@@ -2966,3 +2966,75 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == ['user', 'user']
+
+
+def test_validate_required_json_schema_number_integer_value():
+    """A required `number` field must accept an integer-valued JSON number.
+
+    `pydantic_core.from_json` parses fraction-less numbers as Python `int`, but
+    JSON-Schema `number` spans both `int` and `float`. The validator previously
+    used `isinstance(value, float)`, rejecting valid integer-valued `number`
+    fields in streamed structured output.
+    """
+    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 20}, schema) is True
+
+
+def test_validate_required_json_schema_number_float_value():
+    """A required `number` field must accept a float value."""
+    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 20.5}, schema) is True
+
+
+def test_validate_required_json_schema_number_boolean_rejected():
+    """A required `number` field must reject a boolean.
+
+    `bool` subclasses `int`, so a bare `isinstance(value, int)` would wrongly
+    accept it for `number`/`integer` fields.
+    """
+    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False
+
+
+def test_validate_required_json_schema_integer_value():
+    """A required `integer` field must accept an int value."""
+    schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 42}, schema) is True
+
+
+def test_validate_required_json_schema_integer_boolean_rejected():
+    """A required `integer` field must reject a boolean (bool subclasses int)."""
+    schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False
+
+
+def test_validate_required_json_schema_nested_number_integer():
+    """A nested object with a `number` field holding an integer must validate.
+
+    The validator recurses into nested objects, so the same `number`-as-`int`
+    bug applied to nested fields.
+    """
+    schema = {
+        'properties': {
+            'outer': {
+                'type': 'object',
+                'properties': {'inner': {'type': 'number'}},
+                'required': ['inner'],
+            }
+        },
+        'required': ['outer'],
+    }
+    assert MistralStreamedResponse._validate_required_json_schema({'outer': {'inner': 20}}, schema) is True
+
+
+def test_validate_required_json_schema_array_number_integer_elements():
+    """An array of `number` items with integer elements must validate.
+
+    The array items path used the same `isinstance(item, float)` check, so
+    integer-valued `number` array elements were rejected.
+    """
+    schema = {
+        'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}},
+        'required': ['values'],
+    }
+    assert MistralStreamedResponse._validate_required_json_schema({'values': [1, 2, 3]}, schema) is True
