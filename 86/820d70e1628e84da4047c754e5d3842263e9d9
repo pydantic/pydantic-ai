@@ -1,0 +1,21 @@
+pydantic_ai_slim/pydantic_ai/_instrumentation.py
+  s_e31266c92b1cfc::t_ca154c056b241a 16,59,107-110
+tests/models/test_instrumented.py
+  s_e31266c92b1cfc::t_ca154c056b241a 2019-2070
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "86820d70e1628e84da4047c754e5d3842263e9d9",
+  "prompts": {},
+  "sessions": {
+    "s_e31266c92b1cfc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6073-1ad9-70c1-9fcf-78cb3f4e0023",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
