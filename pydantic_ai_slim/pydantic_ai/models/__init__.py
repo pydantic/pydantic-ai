@@ -42,6 +42,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseResetEvent,
     ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
@@ -713,19 +714,23 @@ class StreamedResponse(ABC):
             async def iterator_with_final_event(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
+                final_result_emitted = False
                 async for event in iterator:
-                    yield event
-                    if (
-                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
-                    ) is not None:
-                        self.final_result_event = final_result_event
-                        yield final_result_event
-                        break
+                    if isinstance(event, ModelResponseResetEvent):
+                        # Clear before yielding so reset consumers don't see stale state.
+                        final_result_emitted = False
+                        self.final_result_event = None
+                        yield event
+                        continue
 
-                # If we broke out of the above loop, we need to yield the rest of the events
-                # If we didn't, this will just be a no-op
-                async for event in iterator:
                     yield event
+                    if not final_result_emitted:
+                        if (
+                            final_result_event := _get_final_result_event(event, self.model_request_parameters)
+                        ) is not None:
+                            self.final_result_event = final_result_event
+                            final_result_emitted = True
+                            yield final_result_event
 
             async def iterator_with_part_end(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
@@ -757,6 +762,12 @@ class StreamedResponse(ABC):
 
                             event.previous_part_kind = last_start_event.part.part_kind
                         last_start_event = event
+
+                    elif isinstance(event, ModelResponseResetEvent):
+                        end_event = part_end_event()
+                        if end_event:
+                            yield end_event
+                        last_start_event = None
 
                     yield event
 

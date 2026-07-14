@@ -3,8 +3,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from collections.abc import AsyncIterator
-from datetime import timezone
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 import pytest
@@ -15,22 +17,36 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    FinalResultEvent,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelProfile,
     ModelRequest,
     ModelResponse,
+    ModelResponseResetEvent,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolDefinition,
     UserPromptPart,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    InstructionPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    ThinkingPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -304,7 +320,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'chat function::success_response_stream',
+                'name': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
@@ -327,10 +343,10 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
-                    'gen_ai.provider.name': 'function',
+                    'gen_ai.provider.name': 'fallback:function,function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
-                    'gen_ai.system': 'function',
-                    'gen_ai.request.model': 'function::success_response_stream',
+                    'gen_ai.system': 'fallback:function,function',
+                    'gen_ai.request.model': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
                     'gen_ai.output.messages': [
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]}
@@ -525,6 +541,122 @@ async def failure_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
+
+
+async def empty_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield ' '
+
+
+async def partial_failure_response_stream(
+    _model_messages: list[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[str]:
+    yield 'bad '
+    raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+
+
+async def thinking_response_stream(
+    _model_messages: list[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[dict[int, DeltaThinkingPart]]:
+    yield {0: DeltaThinkingPart(content='thinking')}
+
+
+empty_model_stream = FunctionModel(stream_function=empty_response_stream)
+partial_failure_model_stream = FunctionModel(stream_function=partial_failure_response_stream)
+thinking_model_stream = FunctionModel(stream_function=thinking_response_stream)
+
+
+class CustomStreamError(Exception):
+    pass
+
+
+async def custom_error_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    raise CustomStreamError('stream failed')
+    yield 'never'
+
+
+custom_error_model_stream = FunctionModel(stream_function=custom_error_stream)
+
+
+def reject_empty_text(response: ModelResponse) -> bool:
+    return not any(isinstance(part, TextPart) and part.content.strip() for part in response.parts)
+
+
+async def fallback_stream_events(fallback_model: FallbackModel) -> list[ModelResponseStreamEvent]:
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as stream:
+        return [event async for event in stream]
+
+
+@dataclass(kw_only=True)
+class InstrumentedStreamedResponse(StreamedResponse):
+    model_request_parameters: ModelRequestParameters
+    _model_name: str
+    events: list[ModelResponseStreamEvent]
+    closed: bool = False
+    _timestamp: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        return 'instrumented'
+
+    @property
+    def provider_url(self) -> str:
+        return 'https://example.com'
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for event in self.events:
+            yield event
+
+    async def close_stream(self) -> None:
+        self.closed = True
+
+
+@dataclass(init=False)
+class InstrumentedStreamModel(Model[None]):
+    stream: InstrumentedStreamedResponse
+
+    def __init__(self, stream: InstrumentedStreamedResponse, model_name: str = 'instrumented') -> None:
+        super().__init__()
+        self.stream = stream
+        self._model_name = model_name
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        return 'instrumented'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise AssertionError('not used')
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: Any | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        try:
+            yield self.stream
+        finally:
+            self.stream.closed = True
 
 
 async def test_first_success_streaming() -> None:
@@ -1337,6 +1469,481 @@ async def test_web_fetch_scenario() -> None:
 
     result = await agent.run('Summarize https://example.com')
     assert result.output == 'Successfully fetched and summarized the content'
+
+
+async def test_response_handler_streaming_happy_path_events() -> None:
+    fallback_model = FallbackModel(
+        success_model_stream,
+        failure_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_streaming_reject_accept_events() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content=' ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content=' ')),
+            ModelResponseResetEvent(
+                discarded_response=ModelResponse(
+                    parts=[TextPart(content=' ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::empty_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='complete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_streaming_mid_stream_exception_events() -> None:
+    fallback_model = FallbackModel(
+        partial_failure_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='bad ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='bad ')),
+            ModelResponseResetEvent(
+                discarded_response=ModelResponse(
+                    parts=[TextPart(content='bad ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::partial_failure_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_exception_only_streaming_mid_stream_exception_falls_back() -> None:
+    """Exception-only fallback (no response handler) should recover from mid-stream exceptions
+    and emit a `ModelResponseResetEvent` at the candidate boundary, matching the response-handler path."""
+    fallback_model = FallbackModel(
+        partial_failure_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='bad ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='bad ')),
+            ModelResponseResetEvent(
+                discarded_response=ModelResponse(
+                    parts=[TextPart(content='bad ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::partial_failure_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_stream_text_resets_after_rejection() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+
+    async with agent.run_stream('input') as result:
+        assert [chunk async for chunk in result.stream_text(debounce_by=None)] == snapshot(
+            [' ', 'hello ', 'hello world']
+        )
+
+
+async def test_response_handler_stream_delta_text_skips_reset_sentinel() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+
+    async with agent.run_stream('input') as result:
+        assert [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)] == snapshot(
+            [' ', 'hello ', 'world']
+        )
+
+
+async def test_response_handler_stream_response_skips_reset_only_group() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+
+    async with agent.run_stream('input') as result:
+        responses = [response async for response in result.stream_response(debounce_by=None)]
+
+    assert [response.model_name for response in responses].count('function::empty_response_stream') == 2
+    assert responses[-1] == ModelResponse(
+        parts=[TextPart(content='hello world')],
+        usage=RequestUsage(input_tokens=50, output_tokens=2),
+        model_name='function::success_response_stream',
+        timestamp=IsDatetime(),
+        run_id=IsStr(),
+        conversation_id=IsStr(),
+    )
+
+
+async def test_response_handler_stream_event_handler_sees_reset_when_candidate_yields_no_final_result() -> None:
+    fallback_model = FallbackModel(
+        thinking_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_ctx: Any, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    async with agent.run_stream('input', event_stream_handler=event_stream_handler) as result:
+        assert await result.get_output() == 'hello world'
+
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='thinking')),
+            PartEndEvent(index=0, part=ThinkingPart(content='thinking')),
+            ModelResponseResetEvent(
+                discarded_response=ModelResponse(
+                    parts=[ThinkingPart(content='thinking')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::thinking_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='complete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+        ]
+    )
+
+
+async def test_response_handler_streaming_structured_output_relinks_tool_call_id() -> None:
+    """When a candidate's structured-output tool call is rejected and a later candidate is
+    accepted, the committed `final_result` must reference the accepted candidate's
+    `tool_call_id` so the synthesized `ToolReturnPart` is tied to the accepted call. Without
+    relinking, the return part dangles against the discarded candidate's call id.
+    """
+
+    class Foo(BaseModel):
+        bar: str
+
+    bad_args = Foo(bar='bad').model_dump_json()
+    good_args = Foo(bar='good').model_dump_json()
+
+    async def bad_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, tool_call_id='id-bad')}
+        yield {0: DeltaToolCall(json_args=bad_args)}
+
+    async def good_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, tool_call_id='id-good')}
+        yield {0: DeltaToolCall(json_args=good_args)}
+
+    bad_model = FunctionModel(stream_function=bad_stream)
+    good_model = FunctionModel(stream_function=good_stream)
+
+    def reject_bad(response: ModelResponse) -> bool:
+        for part in response.parts:
+            if isinstance(part, ToolCallPart) and isinstance(part.args, str) and '"bad"' in part.args:
+                return True
+        return False
+
+    fallback_model = FallbackModel(bad_model, good_model, fallback_on=reject_bad)
+    agent = Agent(fallback_model, output_type=Foo)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == Foo(bar='good')
+        messages = result.all_messages()
+
+    tool_returns = [part for msg in messages for part in msg.parts if isinstance(part, ToolReturnPart)]
+    assert tool_returns, 'expected a ToolReturnPart for the output tool call'
+    output_return = tool_returns[-1]
+    # `tool_call_id` mirrors the accepted candidate's tool call id (the rejected candidate's
+    # call id 'id-bad' has been discarded along with its parts).
+    assert output_return.tool_call_id == 'id-good'
+    # `content` should be 'Final result processed.' — this only happens when the run loop's
+    # committed `final_result.tool_call_id` matches the accepted call. If we forget to relink
+    # `final_result` to the accepted candidate's event in `on_complete`, the committed id
+    # stays at the rejected 'id-bad', the match fails, and we synthesize the
+    # "Output tool not used" status part instead.
+    assert output_return.content == 'Final result processed.'
+
+
+async def test_response_handler_stream_open_exception_uses_next_model() -> None:
+    fallback_model = FallbackModel(
+        failure_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+
+    async with agent.run_stream('input') as result:
+        assert await result.get_output() == 'hello world'
+
+
+async def test_response_handler_stream_non_fallback_exception_propagates() -> None:
+    fallback_model = FallbackModel(
+        custom_error_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    with pytest.raises(CustomStreamError, match='stream failed'):
+        async with fallback_model.request_stream(
+            [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+        ):
+            pass
+
+
+async def test_response_handler_stream_all_candidates_rejected() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        empty_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        await fallback_stream_events(fallback_model)
+
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    assert len(exc_info.value.exceptions) == 1
+    assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
+
+
+async def test_instrumented_stream_model_abstract_surface() -> None:
+    """Exercise the abstract Model surface on the test helper so coverage sees it."""
+    stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='probe',
+        events=[],
+    )
+    model = InstrumentedStreamModel(stream, model_name='probe')
+    assert model.model_name == 'probe'
+    assert model.system == 'instrumented'
+    with pytest.raises(AssertionError, match='not used'):
+        await model.request([], None, ModelRequestParameters())
+
+
+async def test_response_handler_stream_reset_without_active_part() -> None:
+    """When a candidate is rejected before yielding any part, the reset event must
+    still flush cleanly even though there's no in-flight part to end."""
+
+    silent_stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='silent',
+        events=[],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(silent_stream, model_name='silent'),
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    events: list[ModelResponseStreamEvent] = []
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        async for event in response:
+            events.append(event)
+
+    reset_indices = [i for i, e in enumerate(events) if isinstance(e, ModelResponseResetEvent)]
+    assert reset_indices, 'silent candidate should be rejected and produce a reset event'
+    # No PartEndEvent precedes the reset because the silent candidate never opened a part.
+    assert not any(isinstance(e, PartEndEvent) for e in events[: reset_indices[0]])
+
+
+async def test_response_handler_stream_reraises_unmatched_exception() -> None:
+    """Mid-stream exceptions that aren't matched by `fallback_on` propagate, not fall back."""
+
+    class UnmatchedError(Exception):
+        pass
+
+    @dataclass(kw_only=True)
+    class RaisingStream(InstrumentedStreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self.events:
+                yield event
+            raise UnmatchedError('mid-stream')
+
+    raising_stream = RaisingStream(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='raising',
+        events=[PartStartEvent(index=0, part=TextPart('hi'))],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(raising_stream, model_name='raising'),
+        success_model_stream,
+        # `ModelHTTPError` won't match `UnmatchedError`; the response handler is what
+        # routes through `_FallbackStreamedResponse`.
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    with pytest.raises(UnmatchedError, match='mid-stream'):
+        async with fallback_model.request_stream(
+            [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+        ) as response:
+            async for _ in response:
+                pass
+
+
+async def test_response_handler_stream_early_break_closes_inner_stream() -> None:
+    stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='instrumented',
+        events=[
+            PartStartEvent(index=0, part=TextPart('hello')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world')),
+        ],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(stream),
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            break
+
+    assert stream.closed
+
+
+async def test_response_handler_stream_cancel_delegates_to_current_stream() -> None:
+    stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='instrumented',
+        events=[PartStartEvent(index=0, part=TextPart('hello'))],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(stream),
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        assert response.get_stream_cancel_errors() == stream.get_stream_cancel_errors()
+        await response.cancel()
+
+    assert stream.closed
+
+
+async def test_response_handler_streaming_clears_final_result_event_before_reset() -> None:
+    """Consumers handling a `ModelResponseResetEvent` must not observe stale `final_result_event`."""
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    seen_at_reset: list[FinalResultEvent | None] = []
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        async for event in response:
+            if isinstance(event, ModelResponseResetEvent):
+                seen_at_reset.append(response.final_result_event)
+
+    assert seen_at_reset == [None]
+
+
+async def test_response_handler_streaming_cancel_does_not_trigger_fallback() -> None:
+    """Cancel-class errors raised during teardown must not be swallowed by `fallback_on`,
+    which would open another upstream request.
+    """
+
+    class _CancelSentinel(Exception):
+        pass
+
+    @dataclass(kw_only=True)
+    class CancelRaisingStream(InstrumentedStreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self.events:
+                yield event
+            # Simulate a transport raising a cancel-class error after teardown.
+            raise _CancelSentinel('cancelled')
+
+        def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+            return (_CancelSentinel,)
+
+    cancelling_stream = CancelRaisingStream(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='cancelling',
+        events=[PartStartEvent(index=0, part=TextPart(content='partial'))],
+    )
+    fallback_attempts: list[str] = []
+
+    async def record_and_fallback_stream(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        fallback_attempts.append('opened')  # pragma: no cover
+        yield 'should-not-be-reached'  # pragma: no cover
+
+    # A response handler is required to route through `_FallbackStreamedResponse`;
+    # the broad exception handler is what would otherwise swallow the cancel-class error.
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(cancelling_stream, model_name='cancelling'),
+        FunctionModel(stream_function=record_and_fallback_stream),
+        fallback_on=[Exception, reject_empty_text],
+    )
+
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        events_seen = 0
+        async for _ in response:
+            events_seen += 1
+            if events_seen == 1:
+                await response.cancel()
+
+    assert fallback_attempts == [], 'cancel must not open the next candidate'
 
 
 def test_response_handler_sync() -> None:
