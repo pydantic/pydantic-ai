@@ -840,6 +840,7 @@ async def test_bedrock_unified_service_tier_auto_omits(
 async def test_bedrock_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
+    """Mocked because synthetic fields are needed to isolate the internal usage mapping."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
 
@@ -877,6 +878,8 @@ async def test_bedrock_usage_with_cached_tokens(
 async def test_bedrock_stream_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
+    """Mocked because synthetic stream metadata is needed to isolate the internal usage mapping."""
+
     class BedrockStream:
         def __init__(self, events: list[Any]):
             self._events = iter(events)
@@ -910,6 +913,7 @@ async def test_bedrock_stream_usage_with_cached_tokens(
                             'cacheReadInputTokens': 1504,
                             'cacheWriteInputTokens': 7,
                             'cacheDetails': [],
+                            'futureBillableTokens': 11,
                         }
                     }
                 },
@@ -922,7 +926,14 @@ async def test_bedrock_stream_usage_with_cached_tokens(
         assert await result.get_output() == 'hello'
 
     assert result.usage == snapshot(
-        RunUsage(input_tokens=1524, cache_write_tokens=7, cache_read_tokens=1504, output_tokens=5, requests=1)
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
     )
 
 
