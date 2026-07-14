@@ -1871,10 +1871,12 @@ _SYNTHESIZED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a resul
 def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
     """Find tool calls that will never receive a result, keyed by the index of their response.
 
-    Matching is an ordered walk: a `ToolReturnPart`/`RetryPromptPart` only answers a call that is
-    open (produced by an earlier response and not already answered) at that point. An out-of-place
-    result — one preceding its call, a duplicate, or one reusing the ID of an already-answered
-    call — doesn't mask a genuinely dangling call.
+    Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
+    *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
+    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
+    not already answered) at that point. An out-of-place result — one preceding its call, a
+    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call.
     """
     open_calls: dict[str, tuple[int, _messages.ToolCallPart]] = {}
     dangling_by_response: dict[int, list[_messages.ToolCallPart]] = {}
@@ -1889,7 +1891,7 @@ def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> 
                     open_calls[part.tool_call_id] = (index, part)
         elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
             for part in message.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if _is_tool_result_part(part):
                     open_calls.pop(part.tool_call_id, None)
     for response_index, call in open_calls.values():
         dangling_by_response.setdefault(response_index, []).append(call)
@@ -1901,13 +1903,14 @@ def _insert_synthesized_returns(
 ) -> _messages.ModelRequest:
     """Insert synthesized returns after the request's existing tool results (if any).
 
-    They go ahead of user-facing parts, matching where providers expect tool results.
+    They go ahead of user-facing parts — including a plain (non-tool-bound) `RetryPromptPart`,
+    which renders as user text — matching where providers expect tool results.
     """
     insert_at = next(
         (
             part_index + 1
             for part_index in range(len(request.parts) - 1, -1, -1)
-            if isinstance(request.parts[part_index], _messages.ToolReturnPart | _messages.RetryPromptPart)
+            if _is_tool_result_part(request.parts[part_index])
         ),
         0,
     )

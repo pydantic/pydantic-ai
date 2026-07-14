@@ -711,6 +711,43 @@ async def test_retry_prompt_answers_tool_call():
     assert received[0][: len(message_history)] == message_history
 
 
+async def test_plain_retry_prompt_does_not_answer_tool_call():
+    """A `RetryPromptPart` with no `tool_name` is validation feedback, not a tool result.
+
+    Even when its `tool_call_id` collides with an open call (a hand-built history), the call is
+    still dangling: it gets a synthesized return, inserted ahead of the user-facing feedback.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Atlantis'}, tool_call_id='call_1')], timestamp=TS),
+        ModelRequest(
+            parts=[RetryPromptPart('Response was not valid, try again.', tool_call_id='call_1', timestamp=TS)],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[TextPart('Let me try again.')], timestamp=TS),
+    ]
+
+    await agent.run('Thanks.', message_history=message_history)
+
+    request = received[0][2]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_weather',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='call_1',
+                metadata={'pydantic_ai_synthesized_tool_return': True},
+                timestamp=TS,
+                outcome='interrupted',
+            ),
+            RetryPromptPart(content='Response was not valid, try again.', tool_call_id='call_1', timestamp=TS),
+        ]
+    )
+
+
 async def test_reused_tool_call_id_dangling_call_repaired():
     """A `tool_call_id` reused across responses doesn't mask the later call being dangling."""
     agent, received = capture_agent()
