@@ -1582,8 +1582,7 @@ class TestGoogle:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
+    def _load_stsb_bert_tiny_model(self):
         # Load offline so sentence-transformers never revalidates the model against
         # the HF Hub (a recurring source of 429 flakes). Scoped to just this load:
         # a job-wide HF_HUB_OFFLINE would also block the HuggingFace VCR tests, whose
@@ -1593,7 +1592,7 @@ class TestSentenceTransformers:
             mp.setenv('HF_HUB_OFFLINE', '1')
             try:
                 model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
-            except OSError as e:  # pragma: no cover
+            except OSError as e:
                 # A cold HF cache under offline mode (or an unreachable/rate-limited
                 # Hub) raises OSError; skip rather than fail so a HF outage never reds
                 # the whole suite. CI keeps the cache warm (see ci.yml) so this is a
@@ -1605,6 +1604,19 @@ class TestSentenceTransformers:
         model.model_card_data.model_id = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
+
+    @pytest.fixture(scope='session')
+    def stsb_bert_tiny_model(self):
+        return self._load_stsb_bert_tiny_model()
+
+    def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=OSError('offline')))
+        skip = MagicMock(side_effect=RuntimeError('skipped'))
+        monkeypatch.setattr(pytest, 'skip', skip)
+
+        with pytest.raises(RuntimeError, match='skipped'):
+            self._load_stsb_bert_tiny_model()
+        skip.assert_called_once_with('sentence-transformers test model unavailable (HF Hub): offline')
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
