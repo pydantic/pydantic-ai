@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 import anyio
 from opentelemetry.trace import get_current_span
+from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
@@ -297,12 +298,13 @@ class FallbackModel(Model):
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span.set_attributes(
-                        {
-                            **model_attributes(model),
-                            **model_request_parameters_attributes(model_request_parameters),
-                        }
-                    )
+                    span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
+                    # Only refresh `model_request_parameters` if it was emitted at span open; its absence
+                    # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
+                    # it here would leak the attribute the setting is meant to suppress.
+                    if 'model_request_parameters' in attributes:
+                        span_attributes.update(model_request_parameters_attributes(model_request_parameters))
+                    span.set_attributes(span_attributes)
 
 
 def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:
