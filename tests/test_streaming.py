@@ -399,17 +399,16 @@ def test_sync_stream_bridge_rejects_streaming_after_shutdown_before_creating_pum
     async def stream_context() -> AsyncGenerator[object]:
         yield object()
 
-    async def source() -> AsyncIterator[object]:
-        yield object()
-
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
     bridge.shutdown()
+    source = MagicMock()
     task_context = MagicMock(side_effect=AssertionError('must not create a pump task'))
     monkeypatch.setattr(bridge, '_task_context', task_context)
 
     with pytest.raises(RuntimeError, match='already closed'):
         next(bridge.stream_sync(source))
 
+    source.assert_not_called()
     task_context.assert_not_called()
 
 
