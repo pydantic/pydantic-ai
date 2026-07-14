@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
-    from .usage import RunUsage
+    from .usage import RunUsage, UsageLimits
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -42,6 +42,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    usage_limits: UsageLimits | None = None
+    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run.
+
+    During a run this is always set: if no limits were passed, the run enforces the default
+    [`UsageLimits()`][pydantic_ai.usage.UsageLimits] (e.g. `request_limit=50`). It is only `None` on a
+    bare/synthetic `RunContext` that isn't backed by a run.
+
+    This reflects the limits the run is already enforcing, so tools and capabilities can disclose or
+    adapt to the run's budget (e.g. a budget-disclosure capability) without having to be configured
+    with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage] to compute
+    how much budget remains. Treat it as read-only: it is the live object the run enforces against, so
+    mutating a field here *would* change what the run enforces on subsequent requests.
+    """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
@@ -103,12 +116,24 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
-    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    """Queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
     Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
-    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
+    Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
+    to add messages rather than mutating it directly.
+    """
+
+    _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Per-run cache of MCP tool definitions, keyed by toolset `id`, read and written only by the
+    durable-execution MCP toolset wrappers (Temporal/DBOS) so a toolset's tool definitions are
+    fetched at most once per run rather than before every model request. It lives on the run —
+    recreated for each agent run and reconstructed identically on durable replay/recovery — not on
+    the process-shared toolset instance, so whether a wrapper schedules its `get_tools` activity/step
+    depends only on the run's own history and stays replay-deterministic.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
@@ -132,6 +157,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Seeded during run preparation from message history (`parse_loaded_capabilities`); the
     `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
     for the full set of currently-active capabilities (auto/always-on plus these).
+    Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     capability_loaded: bool | None = None
@@ -147,6 +173,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
     turn. Populated during run preparation from message history. Use `available_tool_names`
     for the full set of currently-callable tools (always-visible plus these).
+    Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     @property

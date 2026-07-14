@@ -113,6 +113,8 @@ When using DBOS with Pydantic AI agents, there are a few important consideration
 
 Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart.
 
+Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id], as DBOS derives its step names and per-run tool-defs cache key from it. This field is normally optional, but is required when using DBOS. It should not be changed once the durable agent has been deployed to production, as this would break active workflows.
+
 Tools and event stream handlers are not automatically wrapped by DBOS. You can decide how to integrate them:
 
 * Decorate with `@DBOS.step` if the function involves non-determinism or I/O.
@@ -139,6 +141,10 @@ When using `DBOSAgent`, tools are executed in parallel by default to minimize la
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting [`parallel_execution_mode='sequential'`][pydantic_ai.durable_exec.dbos.DBOSAgent] when initializing the `DBOSAgent`.
+
+### Toolsets at Runtime
+
+Additional toolsets can be passed per run via [`DBOSAgent.run(toolsets=...)`][pydantic_ai.durable_exec.dbos.DBOSAgent.run]. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.
 
 
 ## Step Configuration

@@ -135,7 +135,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .vercel import VercelProvider
 
         return VercelProvider
-    elif provider == 'azure':
+    elif provider in ('azure', 'azure-responses'):
         from .azure import AzureProvider
 
         return AzureProvider
@@ -231,6 +231,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .voyageai import VoyageAIProvider
 
         return VoyageAIProvider
+    elif provider == 'zai':
+        from .zai import ZaiProvider
+
+        return ZaiProvider
     else:
         raise ValueError(f'Unknown provider: {provider}')
 

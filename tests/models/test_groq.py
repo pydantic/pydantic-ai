@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -5462,7 +5463,9 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         content='The first call failed due to missing and extra parameters, as expected. The second call succeeded and returned: "Something with name: test".'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=336, output_tokens=96, details={'reasoning_tokens': 59}),
+                usage=RequestUsage(
+                    input_tokens=336, cache_read_tokens=256, output_tokens=96, details={'reasoning_tokens': 59}
+                ),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5827,7 +5830,7 @@ async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str)
     agent = Agent(m)
 
     with pytest.raises(
-        ModelHTTPError, match='The model `non-existent` does not exist or you do not have access to it.'
+        ModelHTTPError, match=re.escape('The model `non-existent` does not exist or you do not have access to it.')
     ):
         await agent.run('hello')
 
@@ -5968,4 +5971,26 @@ async def test_stream_cancel(allow_model_requests: None):
                 state='interrupted',
             ),
         ]
+    )
+
+
+async def test_groq_web_search_tool_domain_filters(allow_model_requests: None, groq_api_key: str, vcr: Any):
+    """`WebSearchTool` domain filters are forwarded to the Groq API as `search_settings`.
+
+    Asserts against the recorded request body rather than the response: the cassette matcher isn't
+    sensitive to the body, so a regression that dropped the filters would still replay green. Recorded
+    against the real `compound-beta` endpoint to confirm it accepts `search_settings`.
+    """
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(WebSearchTool(allowed_domains=['python.org'], blocked_domains=['w3schools.com']))],
+    )
+
+    result = await agent.run('What is the latest stable version of Python?')
+
+    assert isinstance(result.output, str)
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['search_settings'] == snapshot(
+        {'include_domains': ['python.org'], 'exclude_domains': ['w3schools.com']}
     )

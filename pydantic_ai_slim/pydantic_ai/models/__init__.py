@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
@@ -101,6 +102,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'zai',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
@@ -426,9 +428,13 @@ class Model(ABC, Generic[InterfaceClient]):
         2. `with_native` matches a supported native tool → keep on wire; the adapter
            applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
            `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
-           → drop from wire (the corpus member is currently undiscovered, so the model has
-           no way to call it on this provider).
+        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
+           paired with its native tool on this provider, so its fate turns on discovery:
+           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+           model has no way to call it); otherwise it's already discovered and stays on wire
+           as a plain function tool, but sheds `with_native` — with no native tool present, an
+           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
+           emit it unpaired and the provider would reject the request.
         4. Otherwise → keep.
 
         On top of the four-rule filter, two narrower drops apply, kept independent:
@@ -484,9 +490,17 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
-            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
-            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
-                continue
+            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
+            # native tool on this provider; its fate turns on whether it's been discovered yet.
+            if t.with_native and t.with_native not in supported_ids:
+                # Still undiscovered → drop: the model has no way to call it on this provider.
+                if t.defer_loading:
+                    continue
+                # Already discovered → keep it callable as a plain function tool, but shed
+                # `with_native`: with no native tool on the wire, an adapter that derives a native
+                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
+                # provider would reject the request.
+                t = replace(t, with_native=None)
             # Rules 2 + 4: keep.
             function_tools.append(t)
 
@@ -674,6 +688,9 @@ class StreamedResponse(ABC):
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
+    _first_chunk_monotonic: float | None = field(default=None, init=False)
+    """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
+    was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -756,6 +773,9 @@ class StreamedResponse(ABC):
                 # iteration.
                 try:
                     async for event in iterator:
+                        if self._first_chunk_monotonic is None:
+                            # First event surfaced to the consumer: stamp the monotonic clock.
+                            self._first_chunk_monotonic = time.perf_counter()
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
@@ -884,6 +904,18 @@ class StreamedResponse(ABC):
         """Whether the stream has been cancelled via `cancel()`."""
         return self._cancelled
 
+    def time_to_first_chunk(self, request_start: float) -> float | None:
+        """Seconds from `request_start` to the first chunk surfaced to the consumer, or `None` if nothing was yielded.
+
+        `request_start` must be a `time.perf_counter()` reading taken when the request was issued.
+        The first-chunk instant is stamped on the first `async for` pull, so the result reflects when
+        the consumer *received* the first event: it includes any consumer-side iteration delay
+        (debouncing, batching, or awaiting other work) on top of the chunk's transit time, which for
+        eager consumers is negligible.
+        """
+        first_chunk = self._first_chunk_monotonic
+        return first_chunk - request_start if first_chunk is not None else None
+
 
 ALLOW_MODEL_REQUESTS = True
 """Whether to allow requests to models.
@@ -1006,7 +1038,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1020,7 +1052,11 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses'):
+    elif model_kind == 'zai':
+        from .zai import ZaiModel
+
+        return ZaiModel(model_name, provider=provider)
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
@@ -1181,7 +1217,7 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
@@ -1195,7 +1231,9 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+def _customize_output_object(
+    transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
+) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
