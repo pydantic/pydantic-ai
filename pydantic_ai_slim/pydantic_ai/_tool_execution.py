@@ -267,7 +267,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             result_tool_call_ids = set(self.tool_call_results.keys())
             eligible_call_ids = {call.tool_call_id for call in eligible_calls}
             response_tool_call_ids = {call.tool_call_id for call in self.tool_calls}
-            if not eligible_call_ids <= result_tool_call_ids or not result_tool_call_ids <= response_tool_call_ids:
+            if not (eligible_call_ids <= result_tool_call_ids <= response_tool_call_ids):
                 raise exceptions.UserError(
                     'Tool call results need to be provided for all deferred tool calls. '
                     f'Expected: {eligible_call_ids}, got: {result_tool_call_ids}'
