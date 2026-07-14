@@ -764,12 +764,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                         )
 
-        u = _map_usage(
-            response['usage'],
-            self._provider.name,
-            self.base_url,
-            remove_bedrock_geo_prefix(self.model_name),
-        )
+        u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
         provider_details = {'finish_reason': raw_finish_reason}
@@ -1547,10 +1542,7 @@ class BedrockStreamedResponse(StreamedResponse):
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
                             self._usage += _map_usage(
-                                metadata['usage'],
-                                self._provider_name,
-                                self._provider_url,
-                                remove_bedrock_geo_prefix(self._model_name),
+                                metadata['usage'], self._provider_name, self._provider_url, self._model_name
                             )
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
@@ -1676,7 +1668,7 @@ def _map_usage(usage_data: TokenUsageTypeDef, provider: str, provider_url: str, 
         k: v for k, v in usage_data.items() if k not in _BEDROCK_USAGE_FIELDS if isinstance(v, int)
     }
     return usage.RequestUsage.extract(
-        dict(model=model, usage=dict(usage_data)),
+        dict(model=remove_bedrock_geo_prefix(model), usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='bedrock',
