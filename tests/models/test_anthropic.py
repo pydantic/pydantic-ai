@@ -208,6 +208,7 @@ async def test_anthropic_cancelled_read_error_is_suppressed():
         _response=_peekable_broken_stream(stream),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
+        _enabled_server_tool_names=frozenset(),
     )
 
     await response.cancel()
@@ -225,6 +226,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _response=_peekable_broken_stream(_BrokenClosableStream()),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
+        _enabled_server_tool_names=frozenset(),
     )
 
     with pytest.raises(httpx.ReadError):
