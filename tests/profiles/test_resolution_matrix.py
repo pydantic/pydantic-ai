@@ -309,6 +309,8 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_chat_prompt_cache_breakpoint_types': frozenset({'file', 'image_url', 'input_audio', 'text'}),
             'openai_responses_prompt_cache_breakpoint_types': frozenset({'input_file', 'input_image', 'input_text'}),
+            'openai_chat_prompt_cache_supported_modes': frozenset({'implicit', 'explicit'}),
+            'openai_responses_prompt_cache_supported_modes': frozenset({'implicit', 'explicit'}),
             'openai_supports_phase': True,
         }
     )
@@ -322,6 +324,8 @@ def test_openai_gpt_5_6_capabilities(model_name: str):
     intrinsic_profile = openai_model_profile(model_name)
     assert 'openai_chat_prompt_cache_breakpoint_types' not in intrinsic_profile
     assert 'openai_responses_prompt_cache_breakpoint_types' not in intrinsic_profile
+    assert 'openai_chat_prompt_cache_supported_modes' not in intrinsic_profile
+    assert 'openai_responses_prompt_cache_supported_modes' not in intrinsic_profile
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
@@ -332,6 +336,8 @@ def test_openai_gpt_5_6_capabilities(model_name: str):
     assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset(
         {'input_file', 'input_image', 'input_text'}
     )
+    assert profile.get('openai_chat_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
+    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
 
 
 @pytest.mark.parametrize(
@@ -347,6 +353,8 @@ def test_openrouter_openai_gpt_5_6_capabilities(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_mode') is True
     assert not profile.get('openai_chat_prompt_cache_breakpoint_types')
     assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset({'input_text'})
+    assert not profile.get('openai_chat_prompt_cache_supported_modes')
+    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'explicit'})
 
 
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
@@ -363,6 +371,8 @@ def test_azure_gpt_5_6_capabilities(model_name: str):
     assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset(
         {'input_file', 'input_image', 'input_text'}
     )
+    assert profile.get('openai_chat_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
+    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
 
 
 def test_openai_gpt_4o():

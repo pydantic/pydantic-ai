@@ -52,6 +52,7 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
+OpenAIPromptCacheMode = Literal['implicit', 'explicit']
 OpenAIChatPromptCacheBreakpointType = Literal['text', 'image_url', 'input_audio', 'file']
 OpenAIResponsesPromptCacheBreakpointType = Literal['input_text', 'input_image', 'input_file']
 
@@ -285,6 +286,20 @@ class OpenAIModelProfile(ModelProfile, total=False):
     the feature through only one API flavor or support a narrower set of content block types.
     """
 
+    openai_chat_prompt_cache_supported_modes: frozenset[OpenAIPromptCacheMode]
+    """Request-level prompt cache modes accepted by the provider's Chat API. Default: empty.
+
+    The OpenAI provider enables both modes for GPT-5.6 models. Compatible providers may support explicit cache
+    breakpoints without accepting OpenAI's implicit mode.
+    """
+
+    openai_responses_prompt_cache_supported_modes: frozenset[OpenAIPromptCacheMode]
+    """Request-level prompt cache modes accepted by the provider's Responses API. Default: empty.
+
+    This is separate from `openai_chat_prompt_cache_supported_modes` because compatible providers may expose
+    request-level cache controls through only one API flavor.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -298,8 +313,8 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 def openai_prompt_cache_profile(model_name: str) -> OpenAIModelProfile | None:
     """Get the full OpenAI prompt-cache protocol profile fragment for a model.
 
-    Returns the Chat and Responses breakpoint types for GPT-5.6 models, or `None` for other model
-    families. Providers implementing this wire contract can opt in by merging the result with the
+    Returns the request modes and Chat and Responses breakpoint types for GPT-5.6 models, or `None` for other
+    model families. Providers implementing this wire contract can opt in by merging the result with the
     intrinsic [`openai_model_profile`][pydantic_ai.profiles.openai.openai_model_profile]. Compatible
     APIs with a narrower contract should declare their own breakpoint types instead.
     """
@@ -308,6 +323,8 @@ def openai_prompt_cache_profile(model_name: str) -> OpenAIModelProfile | None:
     return OpenAIModelProfile(
         openai_chat_prompt_cache_breakpoint_types=frozenset({'text', 'image_url', 'input_audio', 'file'}),
         openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text', 'input_image', 'input_file'}),
+        openai_chat_prompt_cache_supported_modes=frozenset({'implicit', 'explicit'}),
+        openai_responses_prompt_cache_supported_modes=frozenset({'implicit', 'explicit'}),
     )
 
 

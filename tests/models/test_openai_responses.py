@@ -82,6 +82,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
+        OpenAIPromptCacheOptions,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
@@ -246,6 +247,69 @@ async def test_openai_responses_prompt_cache_options_without_marker(
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': mode}
     assert request['input'] == [{'role': 'user', 'content': 'No explicit marker.'}]
+
+
+async def test_openai_responses_prompt_cache_options_without_breakpoint_support(allow_model_requests: None):
+    """Request-level cache options do not require explicit breakpoint support."""
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel(
+        'custom-model',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_prompt_cache_supported_modes=frozenset({'implicit'})),
+    )
+
+    await Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'implicit'}),
+    ).run('No explicit marker.')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit'}
+
+
+@pytest.mark.parametrize(
+    'options',
+    [
+        {'mode': 'implicit'},
+        {'ttl': '30m'},
+    ],
+)
+async def test_openrouter_responses_unsupported_prompt_cache_options_omitted(
+    allow_model_requests: None,
+    options: OpenAIPromptCacheOptions,
+):
+    """OpenRouter accepts request-level options only when `mode='explicit'`."""
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_prompt_cache_options=options)).run(
+        'No explicit marker.'
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
 
 
 async def test_openai_responses_cache_point_history_prefix_stability(allow_model_requests: None):

@@ -162,7 +162,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
         openai_cache_profile = (
-            OpenRouterModelProfile(openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text'}))
+            OpenRouterModelProfile(
+                openai_responses_prompt_cache_breakpoint_types=frozenset({'input_text'}),
+                openai_responses_prompt_cache_supported_modes=frozenset({'explicit'}),
+            )
             if provider == 'openai' and model_name.startswith('gpt-5.6')
             else None
         )

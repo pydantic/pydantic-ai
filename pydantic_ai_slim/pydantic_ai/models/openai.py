@@ -528,13 +528,13 @@ class _OpenAIPromptCacheRequestOptions(TypedDict, total=False):
 
 
 def _get_openai_prompt_cache_request_options(
-    supported_breakpoint_types: frozenset[str], model_settings: OpenAIChatModelSettings
+    supported_modes: frozenset[str],
+    model_settings: OpenAIChatModelSettings,
 ) -> _OpenAIPromptCacheRequestOptions:
     request_options: _OpenAIPromptCacheRequestOptions = {}
     if (
-        supported_breakpoint_types
-        and (prompt_cache_options := model_settings.get('openai_prompt_cache_options')) is not None
-    ):
+        prompt_cache_options := model_settings.get('openai_prompt_cache_options')
+    ) is not None and prompt_cache_options.get('mode', 'implicit') in supported_modes:
         request_options['prompt_cache_options'] = prompt_cache_options
     return request_options
 
@@ -633,7 +633,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     Azure GPT-5.6 deployments receive these fields only when explicitly configured, but Azure does not
     currently document whether they produce cache writes or reads. This setting is ignored when the resolved
-    model profile does not declare any supported prompt-cache breakpoint types.
+    model profile does not support the selected request mode for the API flavor in use.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1052,7 +1052,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                     **_get_openai_prompt_cache_request_options(
-                        profile.get('openai_chat_prompt_cache_breakpoint_types', frozenset()), model_settings
+                        profile.get('openai_chat_prompt_cache_supported_modes', frozenset()),
+                        model_settings,
                     ),
                 )
             except APIStatusError as e:
@@ -2429,7 +2430,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                     **_get_openai_prompt_cache_request_options(
-                        profile.get('openai_responses_prompt_cache_breakpoint_types', frozenset()), model_settings
+                        profile.get('openai_responses_prompt_cache_supported_modes', frozenset()),
+                        model_settings,
                     ),
                 )
             except APIStatusError as e:
