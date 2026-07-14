@@ -2977,13 +2977,13 @@ def test_validate_required_json_schema_number_integer_value():
     fields in streamed structured output.
     """
     schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 20}, schema) is True
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 20}, schema) is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_number_float_value():
     """A required `number` field must accept a float value."""
     schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 20.5}, schema) is True
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 20.5}, schema) is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_number_boolean_rejected():
@@ -2993,19 +2993,27 @@ def test_validate_required_json_schema_number_boolean_rejected():
     accept it for `number`/`integer` fields.
     """
     schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False
+    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_integer_value():
     """A required `integer` field must accept an int value."""
     schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 42}, schema) is True
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 42}, schema) is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_integer_boolean_rejected():
     """A required `integer` field must reject a boolean (bool subclasses int)."""
     schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False
+    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_validate_required_json_schema_boolean_value():
+    """A required `boolean` field must accept a bool and reject non-bool values."""
+    schema = {'properties': {'value': {'type': 'boolean'}}, 'required': ['value']}
+    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is True  # pyright: ignore[reportPrivateUsage]
+    assert MistralStreamedResponse._validate_required_json_schema({'value': False}, schema) is True  # pyright: ignore[reportPrivateUsage]
+    assert MistralStreamedResponse._validate_required_json_schema({'value': 1}, schema) is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_nested_number_integer():
@@ -3024,7 +3032,7 @@ def test_validate_required_json_schema_nested_number_integer():
         },
         'required': ['outer'],
     }
-    assert MistralStreamedResponse._validate_required_json_schema({'outer': {'inner': 20}}, schema) is True
+    assert MistralStreamedResponse._validate_required_json_schema({'outer': {'inner': 20}}, schema) is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_required_json_schema_array_number_integer_elements():
@@ -3037,4 +3045,4 @@ def test_validate_required_json_schema_array_number_integer_elements():
         'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}},
         'required': ['values'],
     }
-    assert MistralStreamedResponse._validate_required_json_schema({'values': [1, 2, 3]}, schema) is True
+    assert MistralStreamedResponse._validate_required_json_schema({'values': [1, 2, 3]}, schema) is True  # pyright: ignore[reportPrivateUsage]
