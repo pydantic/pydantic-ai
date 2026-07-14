@@ -574,6 +574,58 @@ def search(*, query: str, limit: int | None = None) -> Any:
 ''')
 
 
+def test_tool_signature_renders_parameter_descriptions():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Args:
+            left: The left operand.
+            right: The right operand.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    assert Tool(multiply).tool_def.render_signature('...', is_async=True) == snapshot('''\
+async def multiply(*, left: float, right: float) -> float:
+    """
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
+
+    Args:
+        left: The left operand.
+        right: The right operand.
+    """
+    ...\
+''')
+
+    schema_tool = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Terms to search for.\nUse quoted text to match an exact phrase.',
+                }
+            },
+            'required': ['query'],
+        },
+    )
+    assert schema_tool.render_signature('...') == snapshot('''\
+def search(*, query: str) -> Any:
+    """
+    Args:
+        query: Terms to search for.
+            Use quoted text to match an exact phrase.
+    """
+    ...\
+''')
+
+
 # =============================================================================
 # Function signature edge cases
 # =============================================================================

@@ -199,6 +199,7 @@ class FunctionParam:
     name: str
     type: TypeExpr
     default: str | None = None
+    description: str | None = None
     kind: Literal['param'] = 'param'
 
     def __str__(self) -> str:
@@ -283,6 +284,15 @@ class FunctionSignature:
             parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
         else:
             parts = [f'{prefix} {name}() -> {return_str}:']
+
+        param_description_lines: list[str] = []
+        for param in self.params.values():
+            if param.description:
+                param_description = param.description.strip().replace('\n', '\n        ')
+                param_description_lines.append(f'    {param.name}: {param_description}')
+        if param_description_lines:
+            args_description = '\n'.join(['Args:', *param_description_lines])
+            description = '\n\n'.join(part for part in (description, args_description) if part)
 
         if description:
             parts.extend(_render_description(description, indent='    '))
@@ -525,19 +535,28 @@ def _build_params_from_schema(
     for prop_name, prop_schema_raw in properties.items():
         prop_schema = _normalize_schema_node(prop_schema_raw)
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
+        description = prop_schema.get('description', '') or None
 
         if 'default' in prop_schema:
             default_str = repr(prop_schema['default'])
-            optional_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default=default_str)
+            optional_params[prop_name] = FunctionParam(
+                name=prop_name, type=type_expr, default=default_str, description=description
+            )
         elif prop_name in required:
-            required_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default=None)
+            required_params[prop_name] = FunctionParam(
+                name=prop_name, type=type_expr, default=None, description=description
+            )
         else:
             # Optional without default — add | None
             if _schema_allows_null(prop_schema):
-                optional_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default='None')
+                optional_params[prop_name] = FunctionParam(
+                    name=prop_name, type=type_expr, default='None', description=description
+                )
             else:
                 nullable_expr = UnionTypeExpr(members=[type_expr, _NONE])
-                optional_params[prop_name] = FunctionParam(name=prop_name, type=nullable_expr, default='None')
+                optional_params[prop_name] = FunctionParam(
+                    name=prop_name, type=nullable_expr, default='None', description=description
+                )
 
     return {**required_params, **optional_params}
 
