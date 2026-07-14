@@ -205,6 +205,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
 
 async def test_request_usage_without_tokens(allow_model_requests: None):
+    """The mock pins billed-unit mapping when Cohere omits `tokens`, a response shape VCR cannot reliably trigger."""
     c = completion_message(
         AssistantMessageResponse(
             content=[TextAssistantMessageResponseContentItem(text='world')],
