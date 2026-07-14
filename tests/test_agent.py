@@ -9330,9 +9330,14 @@ async def test_run_handoff_survives_absorbed_cancellation():
     try:
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
     except asyncio.CancelledError:
-        pass  # expected: the run ended cancelled
+        # Expected: the swallow is on the child `before_run`/wrap task, not the run task, so the run
+        # task's own cancellation still unwinds it and the run ends cancelled — contrast the streaming
+        # sibling, where the model consumes the cancel on the run task itself and the run completes.
+        pass
     except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
         pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+    else:  # pragma: no cover - fails only on regression
+        pytest.fail('run completed instead of ending cancelled')
 
 
 async def test_streaming_handoff_survives_absorbed_cancellation():
@@ -9378,11 +9383,15 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
 
     task.cancel()
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-    except asyncio.CancelledError:
-        pass  # expected: the run ended cancelled
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
     except (TimeoutError, asyncio.TimeoutError):  # pragma: no cover - fails only on regression
         pytest.fail('deadlock: run task still pending after cancellation (#6422)')
+    # The continuation composite opens each segment lazily on the consumer/run task, so the model
+    # consumes the injected cancellation on the run task itself. An absorbed cancel on the task then
+    # proceeds per asyncio semantics (faithful to Temporal `WAIT_CANCELLATION_COMPLETED`), so the run
+    # *completes* rather than ending cancelled — pydantic-ai never absorbs the caller's cancel itself.
+    # A strict "cancel always cancels" contract is deferred to the cancellation-redesign issue.
+    assert result.output == 'success (no tool calls)'
 
 
 async def test_run_stream_events_aclose_survives_absorbed_cancellation():
