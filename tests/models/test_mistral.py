@@ -2135,6 +2135,42 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             },
             True,
         ),
+        (
+            'Integer value accepted for number field',
+            {'required': ['temperature'], 'properties': {'temperature': {'type': 'number'}}},
+            {'temperature': 20},
+            True,
+        ),
+        (
+            'Float value accepted for number field',
+            {'required': ['temperature'], 'properties': {'temperature': {'type': 'number'}}},
+            {'temperature': 20.5},
+            True,
+        ),
+        (
+            'Boolean rejected for integer field',
+            {'required': ['count'], 'properties': {'count': {'type': 'integer'}}},
+            {'count': True},
+            False,
+        ),
+        (
+            'Boolean rejected for number field',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Array of integers accepted for number array field',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, 2.5, 3]},
+            True,
+        ),
+        (
+            'Boolean rejected in number array field',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, True, 3]},
+            False,
+        ),
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:

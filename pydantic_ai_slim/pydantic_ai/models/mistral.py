@@ -817,9 +817,9 @@ class MistralStreamedResponse(StreamedResponse):
                 if not isinstance(json_dict[param], list):
                     return False
                 for item in json_dict[param]:
-                    if not isinstance(item, VALID_JSON_TYPE_MAPPING[param_items_type]):
+                    if not _matches_json_type(item, param_items_type):
                         return False
-            elif param_type and not isinstance(json_dict[param], VALID_JSON_TYPE_MAPPING[param_type]):
+            elif param_type and not _matches_json_type(json_dict[param], param_type):
                 return False
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
@@ -828,6 +828,23 @@ class MistralStreamedResponse(StreamedResponse):
                     return False
 
         return True
+
+
+def _matches_json_type(value: Any, json_type: str) -> bool:
+    """Return True if ``value`` satisfies the JSON-Schema ``type``.
+
+    ``number`` accepts ints and floats (but not bool, since bool subclasses int),
+    and ``integer`` accepts ints (but not bool). Unknown types are accepted so
+    that validation does not reject data it cannot reason about.
+    """
+    if json_type == 'number':
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if json_type == 'integer':
+        return isinstance(value, int) and not isinstance(value, bool)
+    expected = VALID_JSON_TYPE_MAPPING.get(json_type)
+    if expected is None:
+        return True
+    return isinstance(value, expected)
 
 
 VALID_JSON_TYPE_MAPPING: dict[str, Any] = {
