@@ -34,7 +34,7 @@ T = TypeVar('T')
 StreamT = TypeVar('StreamT')
 _PosArgsT = TypeVarTuple('_PosArgsT')
 
-_ExcInfo = tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+_ExitInfo = tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
 
 
 def _is_awaitable(value: T | Awaitable[T]) -> TypeIs[Awaitable[T]]:
@@ -45,7 +45,7 @@ def _is_awaitable(value: T | Awaitable[T]) -> TypeIs[Awaitable[T]]:
 async def _hold_context_manager(
     cm: AbstractAsyncContextManager[StreamT],
     entered: asyncio.Future[tuple[StreamT, Context]],
-    exit_requested: asyncio.Future[_ExcInfo],
+    exit_requested: asyncio.Future[_ExitInfo],
 ) -> None:
     """Enter and exit `cm` in one task, remaining parked while sync code uses the yielded stream."""
     try:
@@ -63,12 +63,12 @@ async def _hold_context_manager(
     # the stream for child call and pump tasks to inherit.
     entered.set_result((stream, copy_context()))
     try:
-        exc_info = await exit_requested
+        exit_info = await exit_requested
     except BaseException as exc:
         if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
             raise
     else:
-        await cm.__aexit__(*exc_info)
+        await cm.__aexit__(*exit_info)
 
 
 async def _wait_for_task(task: asyncio.Task[None]) -> None:
@@ -91,6 +91,8 @@ def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[
                 if loop.is_closed() or waiter.done():
                     raise
     except BaseException:
+        # Interrupts and other base exceptions must not strand either task. Finish best-effort cleanup,
+        # retrieve the original task's exception, then re-raise the exception that interrupted this drive.
         with suppress(BaseException):
             loop.run_until_complete(waiter)
         with suppress(BaseException):
@@ -102,9 +104,9 @@ def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[
 def _shutdown_loop(
     loop: asyncio.AbstractEventLoop,
     owner_task: asyncio.Task[None],
-    exit_requested: asyncio.Future[_ExcInfo],
+    exit_requested: asyncio.Future[_ExitInfo],
     pump_tasks: set[asyncio.Task[None]],
-    exc_info: _ExcInfo,
+    exit_info: _ExitInfo,
 ) -> None:
     """Tell the owner task to exit the stream context manager, then drive its cleanup to completion."""
     tasks = tuple(pump_tasks)
@@ -116,13 +118,13 @@ def _shutdown_loop(
     pump_tasks.clear()
 
     if not exit_requested.done():
-        exit_requested.set_result(exc_info)
+        exit_requested.set_result(exit_info)
     _run_task_to_completion(loop, owner_task)
 
 
 async def _request_exit(
     owner_task: asyncio.Task[None],
-    exit_requested: asyncio.Future[_ExcInfo],
+    exit_requested: asyncio.Future[_ExitInfo],
     pump_tasks: set[asyncio.Task[None]],
 ) -> None:
     """Cancel active stream pumps before allowing the context-manager owner to exit."""
@@ -143,7 +145,7 @@ async def _request_exit(
 def _finalize_loop(
     loop: asyncio.AbstractEventLoop,
     owner_task: asyncio.Task[None],
-    exit_requested: asyncio.Future[_ExcInfo],
+    exit_requested: asyncio.Future[_ExitInfo],
     pump_tasks: set[asyncio.Task[None]],
     owner_thread_id: int,
 ) -> None:
@@ -210,7 +212,7 @@ class SyncStreamBridge(Generic[StreamT]):
         loop = _utils.get_event_loop()
         caller_context = copy_context()
         entered: asyncio.Future[tuple[StreamT, Context]] = loop.create_future()
-        exit_requested: asyncio.Future[_ExcInfo] = loop.create_future()
+        exit_requested: asyncio.Future[_ExitInfo] = loop.create_future()
         owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested))
         try:
             stream, run_context = loop.run_until_complete(entered)
@@ -257,16 +259,16 @@ class SyncStreamBridge(Generic[StreamT]):
             return
         raise RuntimeError('A synchronous stream cannot be used or closed while an event loop is running.')
 
-    def shutdown(self, exc_info: _ExcInfo = (None, None, None)) -> None:
+    def shutdown(self, exit_info: _ExitInfo = (None, None, None)) -> None:
         """Exit the stream context manager, at most once.
 
         `detach()` disarms the finalizer (returning true iff it was still live), guarding against a double
-        shutdown from the owning wrapper's `__exit__`, a Ctrl-C teardown, and a later GC. The exception
-        information is passed to the stream context manager so it can tear the stream down correctly.
+        shutdown from the owning wrapper's `__exit__`, a Ctrl-C teardown, and a later GC. The `__exit__`
+        arguments are passed to the stream context manager so it can tear the stream down correctly.
         """
         self._check_owner_thread()
         if self._finalizer.detach() is not None:
-            _shutdown_loop(self._loop, self._owner_task, self._exit_requested, self._pump_tasks, exc_info)
+            _shutdown_loop(self._loop, self._owner_task, self._exit_requested, self._pump_tasks, exit_info)
 
     def _run(self, awaitable: Awaitable[T]) -> T:
         """Run `awaitable` on the bridge's event loop and clean up its task if the caller interrupts."""
