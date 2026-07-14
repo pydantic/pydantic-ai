@@ -181,7 +181,7 @@ class MistralModel(Model[Mistral]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Mistral:
@@ -264,6 +264,8 @@ class MistralModel(Model[Mistral]):
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
@@ -416,7 +418,7 @@ class MistralModel(Model[Mistral]):
 
         return ModelResponse(
             parts=parts,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, response.model),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -533,11 +535,11 @@ class MistralModel(Model[Mistral]):
         return 'Any'
 
     @staticmethod
-    def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
+    def _get_timeout_ms(timeout: Timeout | int | float | None) -> int | None:
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
-        if isinstance(timeout, float):  # pragma: no cover
+        if isinstance(timeout, (int, float)):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
@@ -557,7 +559,7 @@ class MistralModel(Model[Mistral]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
+                    yield MistralUserMessage(content=part.model_response())
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -602,6 +604,11 @@ class MistralModel(Model[Mistral]):
                         assert_never(part)
                 if thinking_chunks:
                     content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
+                if not content_chunks and not tool_calls:
+                    # Mistral rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
@@ -642,12 +649,16 @@ class MistralModel(Model[Mistral]):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url = MistralImageURL(url=downloaded['data'])
-                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     else:
-                        content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                        image_url = MistralImageURL(url=item.url)
+                    if metadata := item.vendor_metadata:
+                        image_url.detail = metadata.get('detail', 'auto')
+                    content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
+                        if metadata := item.vendor_metadata:
+                            image_url.detail = metadata.get('detail', 'auto')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
@@ -704,7 +715,7 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data)
+                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -839,15 +850,29 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
+def _map_usage(
+    response: MistralChatCompletionResponse | MistralCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
-    if response.usage:
-        return RequestUsage(
-            input_tokens=response.usage.prompt_tokens or 0,
-            output_tokens=response.usage.completion_tokens or 0,
-        )
-    else:
+    if response.usage is None:
         return RequestUsage()
+    usage_data = response.usage.model_dump(exclude_none=True)
+    details: dict[str, int] = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    return RequestUsage.extract(
+        dict(model=model, usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='mistral',
+        details=details or None,
+    )
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:

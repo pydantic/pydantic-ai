@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -198,6 +199,100 @@ async def test_request_simple_usage(allow_model_requests: None):
             details={
                 'input_tokens': 1,
                 'output_tokens': 1,
+            },
+        )
+    )
+
+
+async def test_request_usage_without_tokens(allow_model_requests: None):
+    """The mock pins billed-unit mapping when Cohere omits `tokens`, a response shape VCR cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=4, output_tokens=2),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            details={
+                'input_tokens': 4,
+                'output_tokens': 2,
+            },
+        )
+    )
+
+
+async def test_request_usage_with_partial_tokens(allow_model_requests: None):
+    """The mock pins optional token fields, which a VCR response cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            tokens=cohere.UsageTokens(input_tokens=4),
+            billed_units=cohere.UsageBilledUnits(input_tokens=3),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=4,
+            details={'input_tokens': 3},
+        )
+    )
+
+
+async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None):
+    """Top-level `usage.cached_tokens` surfaces as first-class `cache_read_tokens` via the genai-prices tokens flavor.
+
+    Unit-style mock rather than VCR: the SDK types these counts as floats, and this pins the
+    float-to-int normalization plus nonzero token extraction, so a silently-broken extraction
+    path (which yields all-zero tokens with details preserved) cannot pass. The VCR variant
+    `test_request_usage_with_cached_tokens` covers the recorded-API path.
+    """
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=13, output_tokens=8),
+            tokens=cohere.UsageTokens(input_tokens=542, output_tokens=8),
+            cached_tokens=37,
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=542,
+            cache_read_tokens=37,
+            output_tokens=8,
+            details={
+                'input_tokens': 13,
+                'output_tokens': 8,
             },
         )
     )
@@ -413,6 +508,20 @@ async def test_request_tool_call(allow_model_requests: None):
         )
     )
 
+    # Cohere stores billed units under `details['input_tokens']`/`details['output_tokens']`. Those names
+    # collide with the first-class `gen_ai.usage.{input,output}_tokens` attributes, so emitting them under
+    # `gen_ai.usage.details.*` too would let consumers like Langfuse sum billed + actual and double-count.
+    # They must be dropped from the OTel attributes (only the first-class counts remain) while staying
+    # accessible on `usage.details`.
+    tool_call_usage = next(m.usage for m in result.all_messages() if isinstance(m, ModelResponse) and m.usage.details)
+    assert tool_call_usage.details == {'input_tokens': 4, 'output_tokens': 2}
+    assert tool_call_usage.opentelemetry_attributes() == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 5,
+            'gen_ai.usage.output_tokens': 3,
+        }
+    )
+
 
 def test_text_content_in_request(allow_model_requests: None):
     req = ModelRequest(
@@ -461,7 +570,7 @@ async def test_multimodal(allow_model_requests: None):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
+    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
         await agent.run(
             [
                 'hello',
@@ -506,6 +615,16 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == snapshot('Hello! How can I assist you today?')
+
+
+@pytest.mark.vcr()
+async def test_request_usage_with_cached_tokens(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    # Long instructions so the prompt crosses Cohere's prompt-cache threshold and the API reports a hit.
+    long_instructions = 'You are a helpful assistant. ' * 400
+    agent = Agent(m, instructions=long_instructions)
+    result = await agent.run('Say hi in one word.')
+    assert result.usage.cache_read_tokens == snapshot(2928)
 
 
 @pytest.mark.vcr()
@@ -663,3 +782,30 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')
+
+
+async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
+    neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
+    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty response from the API payload.
+    """
+    completions = [
+        completion_message(AssistantMessageResponse(content=None)),
+        completion_message(
+            AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='hello back')])
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_mock(completions)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the payload (no assistant message with neither content nor
+    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
+    # self-correct.
+    second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
+    assert not any(message.role == 'assistant' for message in second_call_messages)
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])

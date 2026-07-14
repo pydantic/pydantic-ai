@@ -53,6 +53,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -60,7 +61,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -92,10 +93,9 @@ with try_import() as imports_successful:
         OpenAIChatModelSettings,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        OpenAISystemPromptRole,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -588,6 +588,37 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
+    """`run_stream_sync` must stream and complete against a real, recorded streaming model.
+
+    End-to-end coverage for the task-stable implementation (#3716, refs #3714, #5975): the whole run,
+    including a tool call so the agent graph crosses node boundaries, keeps each async lifecycle in one
+    task, and text streams incrementally before `get_output()` returns the final result. This path can't
+    be exercised with `TestModel` or a mock client because they have no real async stream, so it's a VCR test.
+
+    Note: the previous task-unstable implementation pumped the stream via repeated
+    `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
+    `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
+    straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a
+    live model); the OTel dangling-span symptom of the same root cause is covered by
+    `tests/test_logfire.py::test_run_stream_sync`.
+    """
+    model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_capital(country: str) -> str:
+        return 'London'
+
+    with agent.run_stream_sync('What is the capital of the UK? Use the tool, then answer.') as result:
+        chunks = [c for c in result.stream_text(debounce_by=None)]
+        output = result.get_output()
+
+    assert chunks
+    assert chunks[-1] == output
+    assert output == snapshot('The capital of the UK is London.')
+
+
 async def test_stream_text_finish_reason(allow_model_requests: None):
     first_chunk = text_chunk('hello ')
     # Test that we get the model name from a later chunk if it is not set on the first one, like on Azure OpenAI with content filter enabled.
@@ -860,7 +891,6 @@ async def test_none_choices(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
 
 
-@pytest.mark.filterwarnings('ignore:Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
 async def test_system_prompt_role(
     allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
@@ -869,10 +899,9 @@ async def test_system_prompt_role(
 
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'gpt-4o', system_prompt_role=system_prompt_role, provider=OpenAIProvider(openai_client=mock_client)
-    )
-    assert m.system_prompt_role == system_prompt_role  # type: ignore[reportDeprecated]
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    assert m.profile.get('openai_system_prompt_role') == system_prompt_role
 
     agent = Agent(m, system_prompt='some instructions')
     result = await agent.run('hello')
@@ -996,13 +1025,10 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 
 
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
-    profile = ModelProfile(supports_tools=False)
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
-    )
-    profile = OpenAIModelProfile.from_profile(model.profile)
-    assert profile.openai_system_prompt_role == 'user'
-    assert profile.supports_tools is False
+    profile = OpenAIModelProfile(openai_system_prompt_role='user', supports_tools=False)
+    model = OpenAIChatModel('o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key))
+    assert model.profile.get('openai_system_prompt_role', None) == 'user'
+    assert model.profile.get('supports_tools', True) is False
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
@@ -1011,9 +1037,8 @@ async def test_openai_o1_mini_system_role(
     system_prompt_role: Literal['system', 'developer'],
     openai_api_key: str,
 ) -> None:
-    model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
-    )
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key), profile=profile)
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
     with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
@@ -1843,7 +1868,7 @@ async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1863,7 +1888,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
@@ -2784,8 +2809,8 @@ async def test_strict_mode_cannot_infer_strict(
     # If the model profile says strict is not supported, we never pass strict
     await assert_strict(
         None,
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(
-            openai_model_profile('test-model')
+        profile=merge_profile(
+            OpenAIModelProfile(openai_supports_strict_tool_definition=False), openai_model_profile('test-model')
         ),
     )
 
@@ -3211,13 +3236,11 @@ async def test_openai_instructions_with_responses_logprobs_streaming(allow_model
         provider=OpenAIProvider(api_key=openai_api_key),
     )
     agent = Agent(m, instructions='You are a helpful assistant.')
-    events = [
-        event
-        async for event in agent.run_stream_events(
-            'What is the capital of Minas Gerais?',
-            model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
-        )
-    ]
+    async with agent.run_stream_events(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+    ) as event_stream:
+        events = [event async for event in event_stream]
     logprob_events = [
         event
         for event in events
@@ -3309,7 +3332,7 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 def test_openai_model_profile():
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    assert isinstance(m.profile, OpenAIModelProfile)
+    assert isinstance(m.profile, dict)
 
 
 def test_openai_model_profile_custom():
@@ -3318,29 +3341,32 @@ def test_openai_model_profile_custom():
         provider=OpenAIProvider(api_key='foobar'),
         profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer),
     )
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
-    assert isinstance(m.profile, OpenAIModelProfile)
-    assert m.profile.openai_supports_strict_tool_definition is False
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('openai_supports_strict_tool_definition', True) is False
 
 
-def test_openai_model_profile_function():
-    def model_profile(model_name: str) -> ModelProfile:
-        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
+def test_openai_model_profile_callable():
+    """The user `profile=` kwarg accepts a `Callable[[ModelProfile], ModelProfile]` that receives the resolved default and returns the final profile."""
 
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    def override(default: ModelProfile) -> ModelProfile:
+        return merge_profile(default, ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer))
 
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=override)
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
+
+    # The callable can also fully replace the default.
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=lambda _default: ModelProfile())
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_openai_model_profile_from_provider():
@@ -3352,12 +3378,12 @@ def test_openai_model_profile_from_provider():
             )
 
     m = OpenAIChatModel('gpt-4o', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is InlineDefsJsonSchemaTransformer
 
     m = OpenAIChatModel('gpt-4o-mini', provider=CustomProvider(api_key='foobar'))
-    assert isinstance(m.profile, ModelProfile)
-    assert m.profile.json_schema_transformer is None
+    assert isinstance(m.profile, dict)
+    assert m.profile.get('json_schema_transformer', None) is None
 
 
 def test_model_profile_strict_not_supported():
@@ -3388,7 +3414,7 @@ def test_model_profile_strict_not_supported():
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
     tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
@@ -4124,8 +4150,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) intentionally retries empty responses by emitting an
-    empty `ModelRequest` as well, relying on the model adapter to omit both from the API payload.
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    that tells the model which kinds of output are valid, while relying on the model adapter to omit
+    the empty response from the API payload.
     """
     responses = [
         completion_message(ChatCompletionMessage(content=None, role='assistant')),
@@ -4138,8 +4165,17 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'hello back'
 
+    # The empty response is omitted from the payload (no `content=None` assistant message that would
+    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
-    assert second_call_messages == [{'content': 'hello', 'role': 'user'}]
+    assert not any(message['role'] == 'assistant' for message in second_call_messages)
+    assert second_call_messages == [
+        {'content': 'hello', 'role': 'user'},
+        {
+            'role': 'user',
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+        },
+    ]
 
     assert result.all_messages() == snapshot(
         [
@@ -4164,7 +4200,18 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='hello back')],
                 model_name='gpt-4o-123',
@@ -4184,6 +4231,41 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     )
 
 
+@pytest.mark.parametrize('send_mode', ['field', 'auto'])
+async def test_thinking_only_response_skipped_in_history(
+    allow_model_requests: None, send_mode: Literal['field', 'auto']
+):
+    """A thinking-only response has no Chat Completions-valid assistant payload.
+
+    Custom reasoning fields like `reasoning_content` do not satisfy Chat Completions'
+    requirement that assistant messages have `content` unless `tool_calls` is populated.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage.model_construct(
+                content=None, reasoning_content='Let me think about this...', role='assistant'
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'deepseek-reasoner',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=send_mode,
+        ),
+    )
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assistant_messages = [message for message in second_call_messages if message.get('role') == 'assistant']
+    assert assistant_messages == []
+
+
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
@@ -4195,8 +4277,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
@@ -4211,8 +4292,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.finish_reason == 'stop'
 
 
@@ -4237,7 +4317,9 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -4256,7 +4338,9 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
+    )
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -4346,14 +4430,6 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-def test_deprecated_openai_model(openai_api_key: str):
-    with pytest.warns(DeprecationWarning):
-        from pydantic_ai.models.openai import OpenAIModel  # type: ignore[reportDeprecated]
-
-        provider = OpenAIProvider(api_key=openai_api_key)
-        OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
-
-
 async def test_cache_point_filtering(allow_model_requests: None):
     """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
@@ -4413,6 +4489,16 @@ response\
 """,
         }
     )
+
+
+def test_openai_send_back_thinking_field_requires_thinking_field():
+    """`openai_chat_send_back_thinking_parts='field'` requires `openai_chat_thinking_field` to be set."""
+    with pytest.raises(UserError, match='`openai_chat_thinking_field` must be set to a non-None value'):
+        OpenAIChatModel(
+            'foobar',
+            provider=OpenAIProvider(api_key='dummy'),
+            profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'),
+        )
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):

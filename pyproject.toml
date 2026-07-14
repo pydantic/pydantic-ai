@@ -13,13 +13,15 @@ bump = true
 [project]
 name = "pydantic-ai"
 dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
+description = "AI Agent Framework, the Pydantic way"
 authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-    { name = "David Montague", email = "david@pydantic.dev" },
-    { name = "Alex Hall", email = "alex@pydantic.dev" },
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David Sanchez", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
 ]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -47,21 +49,34 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
-a2a = ["fasta2a>=0.4.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
-outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
-outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
-outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
-outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
+# Opt-in extras forwarded from `pydantic-ai-slim` (some previously included in the
+# default `pydantic-ai` install, others newly exposed here for convenience).
+# Exposed at the root so users (and CI's `uv run --all-extras` matrix entry) can
+# pull them through `pydantic-ai[<name>]`.
+cohere = ["pydantic-ai-slim[cohere]=={{ version }}"]
+mistral = ["pydantic-ai-slim[mistral]=={{ version }}"]
+bedrock = ["pydantic-ai-slim[bedrock]=={{ version }}"]
+xai = ["pydantic-ai-slim[xai]=={{ version }}"]
+groq = ["pydantic-ai-slim[groq]=={{ version }}"]
+openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
+huggingface = ["pydantic-ai-slim[huggingface]=={{ version }}"]
+ag-ui = ["pydantic-ai-slim[ag-ui]=={{ version }}"]
+ui = ["pydantic-ai-slim[ui]=={{ version }}"]
+duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
+tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
+exa = ["pydantic-ai-slim[exa]=={{ version }}"]
+web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
+spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -92,10 +107,6 @@ members = [
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
 constraint-dependencies = [
-    # Temporary ceiling: aiohttp 3.14.0 removed the internal `aiohttp.streams.AsyncStreamReaderMixin`
-    # that vcrpy (<=8.1.1) subclasses, breaking test collection under `--resolution lowest-direct`.
-    # Dev/CI-only (not in published metadata). Remove once vcrpy ships a fix (vcrpy#995 / pydantic-ai#5751).
-    "aiohttp<3.14",
     "ray>=2.55.0",
     "authlib>=1.6.7",
     # Security-driven floors for purely transitive deps. Each line lifts the
@@ -103,7 +114,7 @@ constraint-dependencies = [
     # have to wait for upstream packages to bump.
     "urllib3>=2.7.0",
     "idna>=3.15",
-    "cryptography>=46.0.7",
+    "cryptography>=48.0.1",
     "lxml>=6.1.0",
     "mako>=1.3.12",
     "pillow>=12.2.0",
@@ -112,11 +123,18 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",
     "pygments>=2.20.0",
     "xgrammar>=0.1.32",
-    # TODO: Remove or loosen once vcrpy includes https://github.com/kevin1024/vcrpy/pull/996.
-    "aiohttp<3.14",
     "langchain-core>=1.3.3",
     "langchain-text-splitters>=1.1.2",
-    "langsmith>=0.8.0",
+    "langsmith>=0.8.18",
+    "joserfc>=1.6.7",
+    "pydantic-settings>=2.14.2",
+    "vcrpy>=8.2.1",
+    "starlette>=1.3.1",
+    "aiohttp>=3.14.1",
+    "python-multipart>=0.0.31",
+    "pyjwt>=2.13.0",
+    "torch>=2.12.1",
+    "transformers>=5.5.0",
 ]
 
 [dependency-groups]
@@ -143,12 +161,15 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.62",
+    "genai-prices>=0.0.69",
     "brotli>=1.2.0",
+    # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
+    # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
+    # `fastmcp` package alongside.
+    "fastmcp>=3.3.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
-    "pydantic-ai[a2a]",
     "black>=24.10.0",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
@@ -196,6 +217,7 @@ extend-select = [
     "Q",
     "RUF100",
     "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF043", # https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern/
     "C90",
     "UP",
     "I",
@@ -216,8 +238,6 @@ ignore = [
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
-# weird issue with ruff thinking fasta2a is still editable
-known-third-party = ["fasta2a"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -273,13 +293,11 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
-    "tests/v2/test_aci_deprecation.py",                      # imports aci-sdk under try_import; SDK not installed in CI lint env
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
 [tool.mypy]
-files = "tests/typed_agent.py,tests/typed_graph.py"
+files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
@@ -287,8 +305,6 @@ testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 filterwarnings = [
     "error",
-    # Issue with python-multipart - we don't want to bump the minimum version of starlette.
-    "ignore::PendingDeprecationWarning:starlette",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
@@ -297,24 +313,11 @@ filterwarnings = [
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
-    # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
-    "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
-    # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
-    # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
-    # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in
-    # `tests/test_capabilities.py`) cover the deprecation warning itself.
-    "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
-    "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
-    # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
-    # Most tests create providers without async context managers, so this is expected.
-    "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
-    # happens only for python < 3.12 because of vllms pins
     "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
     # This is because of cohere.
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
@@ -323,10 +326,13 @@ filterwarnings = [
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
-    # happens only for python < 3.12 because of vllms pins
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
+    # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
+    # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.
+    "ignore:The `local_dir_use_symlinks` argument is deprecated and ignored:UserWarning",
     # fastmcp v3 does standard OTel distributed tracing (inject on client, extract on server).
     # logfire's default config wraps the global propagator to warn on extract via warnings.warn(),
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
@@ -350,16 +356,10 @@ include = [
 ]
 omit = [
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
-    "tests/v2/test_aci_deprecation.py",  # paired with the omit above; aci-sdk isn't installed in the coverage env
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
-    "pydantic_ai_slim/pydantic_ai/_a2a.py",  # deprecated in 1.x, removed in v2; equivalent code now lives in `fasta2a.pydantic_ai` and is exercised through `tests/test_a2a.py` against that import. `tests/v2/test_a2a_deprecation.py` covers the deprecation warning path.
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -423,4 +423,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,aci,fpr'
+ignore-words-list = 'asend,fpr,aci'

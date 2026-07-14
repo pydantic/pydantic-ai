@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
@@ -11,6 +12,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -33,7 +35,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -53,6 +55,8 @@ with try_import() as imports_successful:
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
+        ImageURL as MistralImageURL,
+        ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk,
         TextChunk as MistralTextChunk,
@@ -64,6 +68,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.mistral import (
         MistralModel,
+        MistralModelSettings,
         MistralStreamedResponse,
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
@@ -91,6 +96,7 @@ class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     @cached_property
     def sdk_configuration(self) -> MockSdkConfiguration:
@@ -118,8 +124,9 @@ class MockMistralAI:
         return cast(Mistral, cls(stream=completions_streams))
 
     async def chat_completions_create(  # pragma: lax no cover
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
@@ -381,6 +388,28 @@ async def test_three_completions(allow_model_requests: None):
     )
 
 
+async def test_usage_with_cached_tokens(allow_model_requests: None):
+    # Mistral reports prompt-cache hits nested under `prompt_tokens_details.cached_tokens`,
+    # which genai-prices maps to the first-class `cache_read_tokens` field.
+    # https://docs.mistral.ai/studio-api/conversations/advanced/prompt-caching
+    usage = MistralUsageInfo.model_validate(
+        {
+            'prompt_tokens': 1013,
+            'completion_tokens': 30,
+            'total_tokens': 1043,
+            'prompt_tokens_details': {'cached_tokens': 1008},
+        }
+    )
+    completion = completion_message(MistralAssistantMessage(content='world'), usage=usage)
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+
+    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+
+
 #####################
 ## Completion Stream
 #####################
@@ -406,6 +435,44 @@ async def test_stream_text(allow_model_requests: None):
         assert result.is_complete
         assert result.usage.input_tokens == 5
         assert result.usage.output_tokens == 5
+
+
+async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
+    stream = [
+        MistralCompletionEvent(
+            data=MistralCompletionChunk(
+                id='x',
+                choices=[
+                    MistralCompletionResponseStreamChoice(
+                        index=0,
+                        delta=MistralDeltaMessage(content='world', role='assistant'),
+                        finish_reason='stop',
+                    )
+                ],
+                created=1704067200,
+                model='mistral-large-latest',
+                object='chat.completion.chunk',
+                usage=MistralUsageInfo.model_validate(
+                    {
+                        'prompt_tokens': 1013,
+                        'completion_tokens': 30,
+                        'total_tokens': 1043,
+                        'prompt_tokens_details': {'cached_tokens': 1008},
+                    }
+                ),
+            )
+        ),
+    ]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(debounce_by=None):
+            pass
+
+    # `prompt_tokens_details.cached_tokens` is surfaced as first-class `cache_read_tokens`.
+    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -2260,6 +2327,34 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
     )
 
 
+def get_mock_chat_completion_kwargs(mistral_client: Mistral) -> list[dict[str, Any]]:
+    if isinstance(mistral_client, MockMistralAI):
+        return mistral_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockMistralAI instance')
+
+
+async def test_image_detail_vendor_metadata(allow_model_requests: None):
+    """`vendor_metadata['detail']` is forwarded to the Mistral API for image inputs."""
+    c = completion_message(MistralAssistantMessage(content='done', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'low'})
+
+    await agent.run(['Describe these images.', image_url, binary_image])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    details = [
+        chunk.image_url.detail
+        for chunk in messages[0].content
+        if isinstance(chunk, MistralImageURLChunk) and isinstance(chunk.image_url, MistralImageURL)
+    ]
+    assert details == snapshot(['high', 'low'])
+
+
 async def test_pdf_url_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
@@ -2461,6 +2556,19 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_mistral_forwards_penalties(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m, model_settings=MistralModelSettings(presence_penalty=0.5, frequency_penalty=0.25))
+
+    result = await agent.run('hello')
+
+    assert result.output
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['presence_penalty'] == 0.5
+    assert sent['frequency_penalty'] == 0.25
 
 
 @pytest.mark.vcr()
@@ -2775,6 +2883,14 @@ def test_map_content_concatenates_text_chunks() -> None:
     assert thinking == []
 
 
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_map_content_handles_reference_chunk() -> None:
     """Test that _map_content does not fail when encountering a MistralReferenceChunk."""
     content: list[MistralContentChunk] = [
@@ -2825,3 +2941,28 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
+    neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
+    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty response from the API payload.
+    """
+    completions = [
+        completion_message(MistralAssistantMessage(content=None, role='assistant')),
+        completion_message(MistralAssistantMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockMistralAI.create_mock(completions)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the payload (no assistant message with neither content nor
+    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
+    # self-correct.
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert not any(message.role == 'assistant' for message in second_call_messages)
+    assert [message.role for message in second_call_messages] == ['user', 'user']

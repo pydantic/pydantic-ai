@@ -9,12 +9,9 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
-from http import HTTPStatus
 from typing import Any, Literal
 
-import httpx
 import pytest
-from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -54,11 +51,17 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.capabilities import Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.messages import (
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+)
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -79,9 +82,10 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolDenied,
 )
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, message, message_part, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -116,16 +120,11 @@ with try_import() as imports_successful:
 
     from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
-
-    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
-    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
-    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
-        )
-        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
+    from pydantic_ai.ui.ag_ui._utils import (
+        BUILTIN_TOOL_CALL_ID_PREFIX,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -140,12 +139,6 @@ with try_import() as interrupts_imports_successful:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -202,16 +195,6 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
     assert from_request_parameters['manage_system_prompt'].default == 'server'
 
 
-def test_deprecated_ag_ui_helpers_expose_file_url_force_download_allowlist() -> None:
-    handle_parameters = inspect.signature(handle_ag_ui_request).parameters
-    run_parameters = inspect.signature(run_ag_ui).parameters
-
-    assert 'allowed_file_url_force_download' in handle_parameters
-    assert handle_parameters['allowed_file_url_force_download'].default == frozenset()
-    assert 'allowed_file_url_force_download' in run_parameters
-    assert run_parameters['allowed_file_url_force_download'].default == frozenset()
-
-
 async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
@@ -221,7 +204,8 @@ async def run_and_collect_events(
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in run_ag_ui(agent, run_input, ag_ui_version=ag_ui_version, deps=deps, on_complete=on_complete):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -1624,6 +1608,393 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_load_capability() -> None:
+    """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.11.
+
+    The `encrypted_value` carrier landed in 0.1.11, so `tool_kind` survives from there; without it a
+    resuming agent would forget its loaded capabilities. Dumped at exactly 0.1.11 to pin the floor.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+    assert parse_loaded_capabilities(reloaded) == {'foobar'}
+
+
+def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
+    """Invalid `load_capability` args never count as loaded after a roundtrip.
+
+    AG-UI args are JSON strings, which always satisfy the typed part's `str` arm — unlike
+    Vercel's structured args the call still promotes, and invalidity surfaces as
+    `capability_id is None`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"name": "foobar"}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='load_capability',
+                    tool_call_id='load-foobar',
+                    content='Field required: id',
+                )
+            ]
+        ),
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    reloaded_call = message_part(reloaded, LoadCapabilityCallPart)
+    assert reloaded_call.capability_id is None
+    assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_load_roundtrip_load_capability_old_version() -> None:
+    """On < 0.1.11, `tool_kind` is skipped (no `encrypted_value` field) and typed parts reload as base classes.
+
+    Dumping a typed part below the floor warns, since the round-trip silently forgets loaded state.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+
+    with pytest.warns(UserWarning, match=r'ag-ui-protocol 0\.1\.10 predates the `encrypted_value` field'):
+        ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+
+    assistant_msg = ag_ui_msgs[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    # Omitted entirely (not set to `None`), so a pre-0.1.11 client never sees an unexpected field.
+    assert 'encrypted_value' not in assistant_msg.tool_calls[0].model_fields_set
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert 'encrypted_value' not in tool_msg.model_fields_set
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    assert type(reloaded[0].parts[0]) is ToolCallPart
+    assert type(reloaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_omits_encrypted_value_without_tool_kind() -> None:
+    """On a supported version, a plain call/return with no `tool_kind` still omits `encrypted_value`
+    rather than emitting a bare `null` — the field is only set when there's a claim to carry."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='regular', tool_call_id='c1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='regular', tool_call_id='c1', content='ok')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+
+    assistant_msg = ag_ui_msgs[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert 'encrypted_value' not in assistant_msg.tool_calls[0].model_fields_set
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert 'encrypted_value' not in tool_msg.model_fields_set
+
+
+def test_dump_load_roundtrip_native_tool_search() -> None:
+    """Native tool-search parts keep their typed identity through dump/load on >= 0.1.11."""
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}'),
+                NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    assert parse_discovered_tools(reloaded) == {'refund_tool'}
+    # A non-empty result proves the return part kept its typed identity; the call part's
+    # identity matters to Anthropic history replay, so pin it too.
+    assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
+
+
+def test_load_tool_kind_falls_back_to_call_claim() -> None:
+    """A ToolMessage without its own `encrypted_value` narrows via the paired call's claim.
+
+    Streamed results have no metadata slot, so client-assembled histories only carry
+    the claim on the `ToolCall`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id='load-foobar', content='{"instructions": "# Foo Bar"}'),
+        ]
+    )
+
+    assert isinstance(loaded[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(loaded[1].parts[0], LoadCapabilityReturnPart)
+    assert parse_loaded_capabilities(loaded) == {'foobar'}
+
+
+def test_load_tool_kind_error_result_stays_plain() -> None:
+    """A ToolMessage with `error` set never narrows: typed return parts imply success to their readers."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"name": "foobar"}'),
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
+                    )
+                ],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='load-foobar',
+                content='Field required: id',
+                error='Field required: id',
+            ),
+        ]
+    )
+
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(loaded) == set()
+
+
+@pytest.mark.parametrize(
+    'encrypted_value',
+    [
+        'not json',
+        '"a string"',
+        '[1]',
+        # A genuine provider blob or an un-namespaced claim (no `pydantic_ai` key) is never honored.
+        '{"tool_kind": "capability-load"}',
+        # A namespaced claim with an unknown kind is rejected by the `ToolPartKind` filter.
+        '{"pydantic_ai": {"tool_kind": "unknown-kind"}}',
+    ],
+)
+def test_load_tool_kind_garbage_encrypted_value(encrypted_value: str) -> None:
+    """`encrypted_value` is client-supplied: anything malformed or un-namespaced loads as a plain part."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='call-1',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value=encrypted_value,
+                    )
+                ],
+            ),
+        ]
+    )
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+
+
+def test_load_tool_kind_unparseable_result_content_stays_plain() -> None:
+    """A claimed return whose content isn't valid JSON degrades to the plain string part."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id='load-foobar', content='not json'),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert type(return_part) is ToolReturnPart
+    assert return_part.content == 'not json'
+
+
+def test_load_malformed_builtin_tool_call_id_degrades_to_plain() -> None:
+    """A client-supplied id starting with the builtin prefix but missing its `|` segments
+    degrades to plain tool call/return parts instead of raising on the tuple unpack."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id=BUILTIN_TOOL_CALL_ID_PREFIX,
+                        function=FunctionCall(name='web_search', arguments='{}'),
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id=BUILTIN_TOOL_CALL_ID_PREFIX, content='{}'),
+        ]
+    )
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+
+
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+async def test_run_stream_load_capability_tool_kind_encrypted_value(
+    ag_ui_version: Literal['0.1.10', '0.1.13'],
+) -> None:
+    """Streamed `load_capability` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
+
+    Clients build their `ToolCall` history from streamed events, echoing this back as
+    `encrypted_value` — without it, streaming-built histories reload as plain parts.
+    The event doesn't exist before 0.1.13, so it's skipped there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "refunds"}', tool_call_id='load-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        capabilities=[
+            Capability[object](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Help me with a refund'))
+    events = await run_and_collect_events(agent, run_input, ag_ui_version=ag_ui_version)
+
+    tool_events = [e for e in events if e['type'].startswith('TOOL_CALL') or e['type'] == 'REASONING_ENCRYPTED_VALUE']
+    encrypted_value_event = {
+        'type': 'REASONING_ENCRYPTED_VALUE',
+        'timestamp': IsInt(),
+        'subtype': 'tool-call',
+        'entityId': 'load-1',
+        'encryptedValue': '{"pydantic_ai": {"tool_kind": "capability-load"}}',
+    }
+    expected: list[dict[str, Any]] = [
+        {
+            'type': 'TOOL_CALL_START',
+            'timestamp': IsInt(),
+            'toolCallId': 'load-1',
+            'toolCallName': 'load_capability',
+            'parentMessageId': IsStr(),
+        },
+        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'load-1', 'delta': '{"id": "refunds"}'},
+        {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'load-1'},
+        {
+            'type': 'TOOL_CALL_RESULT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'toolCallId': 'load-1',
+            'content': '{"instructions":"Refund instructions."}',
+            'role': 'tool',
+        },
+    ]
+    assert tool_events == expected
+
+
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
+    ag_ui_version: Literal['0.1.10', '0.1.13'],
+) -> None:
+    """Streamed native `tool_search` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
+
+    Mirrors `test_run_stream_load_capability_tool_kind_encrypted_value`, but for the builtin
+    (`provider_executed`) streaming path, which is a distinct code path. Clients build their
+    `ToolCall` history from streamed events, echoing this back as `encrypted_value` — without
+    it, streaming-built histories reload as plain parts and `parse_discovered_tools()` is empty
+    on resume. The event doesn't exist before 0.1.13, so it's skipped there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: NativeToolSearchCallPart(
+                    tool_call_id='search-1', args='{"queries": ["refund"]}', provider_name='function'
+                )
+            }
+            yield {
+                1: NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
+                    provider_name='function',
+                )
+            }
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(UserMessage(id='msg_1', content='Find me a refund tool'))
+    events = await run_and_collect_events(agent, run_input, ag_ui_version=ag_ui_version)
+
+    builtin_id = 'pyd_ai_builtin|function|search-1'
+    tool_events = [e for e in events if e['type'].startswith('TOOL_CALL') or e['type'] == 'REASONING_ENCRYPTED_VALUE']
+    encrypted_value_event = {
+        'type': 'REASONING_ENCRYPTED_VALUE',
+        'timestamp': IsInt(),
+        'subtype': 'tool-call',
+        'entityId': builtin_id,
+        'encryptedValue': '{"pydantic_ai": {"tool_kind": "tool-search"}}',
+    }
+    expected: list[dict[str, Any]] = [
+        {
+            'type': 'TOOL_CALL_START',
+            'timestamp': IsInt(),
+            'toolCallId': builtin_id,
+            'toolCallName': 'tool_search',
+            'parentMessageId': IsStr(),
+        },
+        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': builtin_id, 'delta': '{"queries": ["refund"]}'},
+        {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': builtin_id},
+        {
+            'type': 'TOOL_CALL_RESULT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'toolCallId': builtin_id,
+            'content': '{"discovered_tools":[{"name":"refund_tool"}]}',
+            'role': 'tool',
+        },
+    ]
+    assert tool_events == expected
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [
@@ -1706,6 +2077,23 @@ def test_dump_load_roundtrip_binary_content() -> None:
                 ModelResponse(parts=[FilePart(content=BinaryImage(data=b'only file', media_type='image/png'))]),
             ],
             id='file-only',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(
+                            content=BinaryImage(
+                                data=b'generated file content',
+                                media_type='image/png',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                        ),
+                    ]
+                ),
+            ],
+            id='vendor-metadata',
         ),
     ],
 )
@@ -1851,9 +2239,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
 
     # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
     assert len(reloaded) == 4
-    assert isinstance(reloaded[2], ModelRequest)
-    retry_part = reloaded[2].parts[0]
-    assert isinstance(retry_part, ToolReturnPart)
+    retry_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
 
@@ -1874,10 +2260,77 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     # RetryPromptPart without tool becomes UserPromptPart on reload
     # Content is formatted by RetryPromptPart.model_response()
     assert len(reloaded) == 4
-    assert isinstance(reloaded[2], ModelRequest)
-    retry_part = reloaded[2].parts[0]
-    assert isinstance(retry_part, UserPromptPart)
+    retry_part = message_part(reloaded, UserPromptPart, message_index=2)
     assert 'Please try again' in str(retry_part.content)
+
+
+def test_dump_messages_preserves_part_order() -> None:
+    """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
+
+    User content was previously buffered and emitted as a single `UserMessage` at the end, so a
+    `ToolReturnPart` following a `UserPromptPart` would be reordered after it. That produces a
+    `tool_use` block without an immediately-following `tool_result`, which providers like Anthropic
+    reject on the next request. The buffer must be flushed before each tool message so the original
+    part order survives, including user prompts on both sides of a tool return.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='suggest', args={'suggestions': ['Yes', 'No']}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Before the tool return.'),
+                ToolReturnPart(tool_name='suggest', tool_call_id='call_1', content='suggested'),
+                UserPromptPart(content='After the tool return.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(
+        ['AssistantMessage', 'UserMessage', 'ToolMessage', 'UserMessage']
+    )
+    tool_msg = ag_ui_msgs[2]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.tool_call_id == 'call_1'
+    assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
+        ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
+
+
+def test_dump_messages_preserves_uploaded_file_order() -> None:
+    """Text straddling an `UploadedFile` keeps its order around the emitted `ActivityMessage`.
+
+    An `UploadedFile` is emitted as an `ActivityMessage` directly, so buffered user text must be
+    flushed before it, otherwise text that precedes the file would be reordered after it (the same
+    reordering class as #5964). The text on either side is therefore split into separate
+    `UserMessage`s rather than combined into one.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Before the file.',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic'),
+                        'After the file.',
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(['UserMessage', 'ActivityMessage', 'UserMessage'])
+    before, activity, after = ag_ui_msgs
+    assert before.content == snapshot('Before the file.')
+    assert isinstance(activity, ActivityMessage)
+    assert activity.content['file_id'] == 'file-abc123'
+    assert after.content == snapshot('After the file.')
 
 
 def test_file_part_dropped_by_default() -> None:
@@ -2003,7 +2456,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-    agent: Agent[None, str] = Agent(m, model_settings=settings)
+    agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 1+1? Reply in one word.')
     original = result.all_messages()
@@ -2241,10 +2694,11 @@ async def test_request_with_state() -> None:
         async def on_complete(result: AgentRunResult[Any]):
             seen_deps_states.append(deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete, ag_ui_version='0.1.10'):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
 
-        assert events == simple_result()
+        assert events == simple_result(outcome={'type': 'success'})
     assert seen_states == snapshot([41, 0, 0, 42])
     assert seen_deps_states == snapshot([42, 1, 1, 43])
 
@@ -2265,10 +2719,11 @@ async def test_request_with_state_without_handler() -> None:
         match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream()):
             events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result()
+    assert events == simple_result(outcome={'type': 'success'})
 
 
 async def test_request_with_empty_state_without_handler() -> None:
@@ -2283,10 +2738,11 @@ async def test_request_with_empty_state_without_handler() -> None:
     )
 
     events = list[dict[str, Any]]()
-    async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for event in adapter.encode_stream(adapter.run_stream()):
         events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result()
+    assert events == simple_result(outcome={'type': 'success'})
 
 
 async def test_request_with_state_with_custom_handler() -> None:
@@ -2314,7 +2770,8 @@ async def test_request_with_state_with_custom_handler() -> None:
         state={'value': 42},
     )
 
-    async for _ in run_ag_ui(agent, run_input, deps=CustomStateDeps(state={'value': 0})):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for _ in adapter.encode_stream(adapter.run_stream(deps=CustomStateDeps(state={'value': 0}))):
         pass
 
     assert seen_states[-1] == {'value': 42}
@@ -2393,48 +2850,6 @@ async def test_concurrent_runs() -> None:
         ]
 
 
-@pytest.mark.anyio
-@pytest.mark.filterwarnings(
-    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
-async def test_to_ag_ui() -> None:
-    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
-
-    agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
-
-    deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
-    async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as client:
-            client.base_url = 'http://localhost:8000'
-            run_input = create_input(
-                UserMessage(
-                    id='msg_1',
-                    content='Hello, world!',
-                ),
-                state=StateInt(value=42),
-            )
-            async with client.stream(
-                'POST',
-                '/',
-                content=run_input.model_dump_json(),
-                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
-            ) as response:
-                assert response.status_code == HTTPStatus.OK, f'Unexpected status code: {response.status_code}'
-                events: list[dict[str, Any]] = []
-                async for line in response.aiter_lines():
-                    if line:
-                        events.append(json.loads(line.removeprefix('data: ')))
-
-            # `to_ag_ui()` uses the default (current) ag-ui-protocol version, so the
-            # interrupt-aware run lifecycle is active and `RUN_FINISHED` carries an outcome.
-            assert events == simple_result(outcome={'type': 'success'})
-
-    # Verify the state was not mutated by the run
-    assert deps.state.value == 0
-
-
 async def test_callback_sync() -> None:
     """Test that sync callbacks work correctly."""
 
@@ -2460,8 +2875,8 @@ async def test_callback_sync() -> None:
     # Verify we can access messages
     messages = run_result.all_messages()
     assert len(messages) >= 1
-    assert isinstance(messages[0], ModelRequest)
-    assert messages[0].run_id == run_result.run_id
+    req = message(messages, ModelRequest)
+    assert req.run_id == run_result.run_id
 
     # Verify events were still streamed normally
     assert len(events) > 0
@@ -2549,6 +2964,28 @@ async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
         pass
 
     assert captured_results[0].conversation_id == 'explicit-conv-id'
+
+
+async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() -> None:
+    """`AGUIAdapter.run_stream_native(capabilities=[...])` extends the run-level capability
+    list passed through to `Agent.run_stream_events`."""
+    seen_tool_defs: list[ToolDefinition] = []
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_tool_defs.extend(tool_defs)
+        return tool_defs
+
+    def my_tool() -> str:
+        return 'ok'
+
+    agent = Agent(TestModel(), tools=[my_tool])
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(adapter.run_stream_native(capabilities=[PrepareTools(prep)])):
+        pass
+
+    assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
 
 
 async def test_callback_async() -> None:
@@ -2820,11 +3257,7 @@ async def test_builtin_tool_return_json_string_content_parsed() -> None:
     ]
 
     result = AGUIAdapter.load_messages(messages)
-    response = result[0]
-    assert isinstance(response, ModelResponse)
-
-    return_part = response.parts[1]
-    assert isinstance(return_part, NativeToolReturnPart)
+    return_part = message_part(result, NativeToolReturnPart, part_index=1)
     assert return_part.tool_name == 'web_fetch'
     assert return_part.tool_call_id == 'srvtoolu_abc123'
     assert return_part.provider_name == 'anthropic'
@@ -2855,11 +3288,7 @@ async def test_builtin_tool_return_plain_string_content_preserved() -> None:
     ]
 
     result = AGUIAdapter.load_messages(messages)
-    response = result[0]
-    assert isinstance(response, ModelResponse)
-
-    return_part = response.parts[1]
-    assert isinstance(return_part, NativeToolReturnPart)
+    return_part = message_part(result, NativeToolReturnPart, part_index=1)
     assert return_part.content == 'just a plain string, not JSON'
 
 
@@ -2887,12 +3316,37 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     ]
 
     result = AGUIAdapter.load_messages(messages)
-    response = result[0]
-    assert isinstance(response, ModelResponse)
-
-    return_part = response.parts[1]
-    assert isinstance(return_part, NativeToolReturnPart)
+    return_part = message_part(result, NativeToolReturnPart, part_index=1)
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
+
+
+async def test_builtin_tool_return_non_string_scalar_content_passthrough() -> None:
+    """A non-string, non-mapping/sequence `content` (a scalar) passes through untouched.
+
+    Only mappings/sequences can nest multimodal items, so the discriminator is skipped for a scalar and
+    the value is returned as-is rather than coerced.
+    """
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content=42,
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+                    function=FunctionCall(name='web_fetch', arguments='{"url": "https://example.com"}'),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    return_part = message_part(result, NativeToolReturnPart, part_index=1)
+    assert return_part.content == 42
 
 
 async def test_user_message_empty_content_list_skipped() -> None:
@@ -3394,7 +3848,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
     assert custom_event['timestamp'] == custom_timestamp
 
 
-async def test_handle_ag_ui_request():
+async def test_dispatch_request():
     agent = Agent(model=TestModel())
     run_input = create_input(
         UserMessage(
@@ -3417,7 +3871,7 @@ async def test_handle_ag_ui_request():
         receive=receive,
     )
 
-    response = await handle_ag_ui_request(agent, starlette_request)
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
 
     assert isinstance(response, StreamingResponse)
 
@@ -3570,6 +4024,195 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
 
 
 @pytest.mark.parametrize(
+    'case_id',
+    [
+        'plain-string',
+        'structured-dict',
+        'structured-list',
+        'single-image',
+        'text-then-audio',
+        'image-and-video',
+        'document-url',
+        'dict-with-nested-image',
+    ],
+)
+def test_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
+) -> None:
+    """Multimodal and structured `ToolReturnPart.content` ride inline in `ToolMessage.content` and round-trip with no flag.
+
+    `ag_ui.core.ToolMessage.content` is a plain `str`, but it already carries JSON for structured returns,
+    so the full content — files serialized as base64/URL dicts included — is written inline and rehydrated
+    on load via the `ToolReturnContent` discriminator. No sidecar `ActivityMessage` and no `preserve_file_data`
+    flag are involved: inline content round-trips verbatim through any frontend, whereas a custom sidecar
+    only round-trips if the frontend echoes it back. A file nested in a mapping (unreachable by
+    `BaseToolReturnPart.files`) round-trips too.
+    """
+    contents: dict[str, Any] = {
+        'plain-string': 'just some text',
+        'structured-dict': {'temperature': 21, 'unit': 'C'},
+        'structured-list': [1, 2, 3],
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'dict-with-nested-image': {'caption': 'see image', 'attachment': tiny_image},
+    }
+    content = contents[case_id]
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    # No flag: tool-return files always ride inline in the tool message, never a sidecar.
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert isinstance(tool_msgs[0].content, str)
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_dump_tool_return_none_content_becomes_empty_string() -> None:
+    """A `None` tool-return content dumps to an empty string, since AG-UI `ToolMessage.content` is text-only.
+
+    On reload the empty string is not valid JSON, so it stays `''` rather than round-tripping back to `None`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='noop', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content=None)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content == ''
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
+    )
+
+
+@pytest.mark.parametrize('content', ['123', 'true', 'null'])
+def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
+    """A string return that happens to be a valid JSON *scalar* must not change type on the round-trip.
+
+    `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
+    through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
+    discriminator on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
+    A container-shaped string (`'[1, 2]'`) is wire-indistinguishable from a real list return, so it does rehydrate —
+    that ambiguity is inherent to the text-only wire and only the scalar coercion is recoverable.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_value', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
+    """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args='{"q": "test"}',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', tiny_image],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            NativeToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
+    """A builtin tool's JSON `ToolMessage.content` rehydrates to structured content (inline, no sidecar)."""
+    prefixed_id = 'pyd_ai_builtin|anthropic|call_1'
+    raw = [
+        AssistantMessage(
+            id='msg-1',
+            tool_calls=[
+                ToolCall(
+                    id=prefixed_id,
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"q": "test"}'),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg-2',
+            content='[{"a": 1}, {"b": 2}]',
+            tool_call_id=prefixed_id,
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(raw)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            NativeToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=[{'a': 1}, {'b': 2}],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize(
     'version,expected_reasoning',
     [
         pytest.param('0.1.10', snapshot([]), id='v010-drops-thinking'),
@@ -3601,7 +4244,12 @@ def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: 
 
 
 async def test_tool_return_with_files():
-    """Test that tool returns with files include file descriptions in the output."""
+    """A tool return carrying files streams its full content inline in `ToolCallResultEvent.content`.
+
+    Files are serialized (base64 for `BinaryContent`, URL for `ImageUrl`) using the same dump as history
+    serialization, not collapsed to a `[File: ...]` placeholder, so a streaming frontend can echo the
+    content back and have the files rehydrated and re-sent to the model on the next step.
+    """
 
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
@@ -3636,7 +4284,7 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_1',
-                'content': 'Image analysis result\n[File: image/png]',
+                'content': '["Image analysis result",{"data":"aW1n","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"978ea7"}]',
                 'role': 'tool',
             },
             {
@@ -3644,9 +4292,56 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_2',
-                'content': '[File: https://example.com/image.jpg]',
+                'content': '{"url":"https://example.com/image.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"39cfc4"}',
                 'role': 'tool',
             },
+        ]
+    )
+
+
+async def test_stream_tool_return_files_roundtrip_to_history() -> None:
+    """The content a tool return streams can be replayed as history and rehydrates to the original file.
+
+    This is the round-trip that matters for a streaming frontend: the file a tool produced during the run
+    is streamed inline in `ToolCallResultEvent.content`, and when the frontend echoes that content back on
+    the next request it is recovered as a `BinaryImage` — so it can be sent to the model again (preserving
+    prompt-cache prefixes) instead of degrading to a text placeholder.
+    """
+    image = BinaryImage(data=b'img', media_type='image/png')
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='get_image', content=['here it is', image], tool_call_id='call_1')
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    result_content = next(e['content'] for e in events if e.get('type') == 'TOOL_CALL_RESULT')
+
+    # Replay the streamed content back as client-submitted history, paired with its tool call.
+    reloaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg_2',
+                tool_calls=[
+                    ToolCall(id='call_1', type='function', function=FunctionCall(name='get_image', arguments='{}')),
+                ],
+            ),
+            ToolMessage(id='msg_3', content=result_content, tool_call_id='call_1'),
+        ]
+    )
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_image', content=['here it is', image], tool_call_id='call_1', timestamp=IsDatetime()
+            )
         ]
     )
 
@@ -3880,6 +4575,98 @@ def test_load_messages_uploaded_file_dropped_by_default() -> None:
     assert uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
 
 
+def test_agui_adapter_allow_uploaded_files_end_to_end() -> None:
+    """End-to-end: with `preserve_file_data=True` the adapter reconstructs a client `UploadedFile`, and
+    with `allow_uploaded_files=True` it survives `sanitize_messages` into the agent-visible messages.
+
+    `preserve_file_data` controls the AG-UI wire representation (reconstructing the `UploadedFile` from a
+    `pydantic_ai_uploaded_file` activity message), while `allow_uploaded_files` is the inbound security
+    gate; both must be set for a client-submitted uploaded file to reach the agent.
+    """
+    activity = ActivityMessage(
+        id='activity_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+    run_input = create_input(activity)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, preserve_file_data=True, allow_uploaded_files=True)
+
+    # `preserve_file_data=True` reconstructs the `UploadedFile` from the activity message.
+    loaded_uploaded = [
+        item
+        for msg in adapter.messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(loaded_uploaded) == 1
+    assert loaded_uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
+
+    # `allow_uploaded_files=True` lets it survive sanitization with no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_uploaded = [
+        item
+        for msg in sanitized
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(sanitized_uploaded) == 1
+    assert sanitized_uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
+
+
+def test_agui_preserve_file_data_and_allow_uploaded_files_independent() -> None:
+    """`preserve_file_data` (representation) and `allow_uploaded_files` (security) are independent.
+
+    With `preserve_file_data=True, allow_uploaded_files=False`, `load_messages` still reconstructs the
+    `UploadedFile` from the activity message, but `sanitize_messages` DROPS it with the uploaded-file
+    warning because the security gate is closed.
+    """
+    activity = ActivityMessage(
+        id='activity_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+    run_input = create_input(activity)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, preserve_file_data=True, allow_uploaded_files=False)
+
+    # Representation opt-in still reconstructs the `UploadedFile`.
+    loaded_uploaded = [
+        item
+        for msg in adapter.messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(loaded_uploaded) == 1
+
+    # But the closed security gate drops it during sanitization with a warning.
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_uploaded = [
+        item
+        for msg in sanitized
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert sanitized_uploaded == []
+
+
 def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:
     """Test dump_messages includes vendor_metadata in ActivityMessage when present on UploadedFile."""
     messages: list[ModelMessage] = [
@@ -3954,6 +4741,63 @@ def test_dump_messages_uploaded_file_without_vendor_metadata() -> None:
             }
         ]
     )
+
+
+def test_dump_messages_file_part_with_vendor_metadata() -> None:
+    """Test dump_messages includes vendor_metadata in the file ActivityMessage when present on a FilePart."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryImage(
+                        data=b'generated file content',
+                        media_type='image/png',
+                        vendor_metadata={'detail': 'high'},
+                    ),
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert activity_msgs[0].activity_type == 'pydantic_ai_file'
+    assert activity_msgs[0].content.get('vendor_metadata') == {'detail': 'high'}
+
+
+def test_dump_messages_file_part_without_vendor_metadata() -> None:
+    """Test dump_messages omits vendor_metadata from the file ActivityMessage when None on a FilePart."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=b'generated file content', media_type='image/png')),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert 'vendor_metadata' not in activity_msgs[0].content
+
+
+def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
+    """Test load_messages ignores client-supplied vendor_metadata that isn't a dict.
+
+    `vendor_metadata` is typed `Any` in the wire schema and set on a `BinaryContent` that
+    doesn't validate on assignment, so a malformed value must not reach the model.
+    """
+    data_uri = BinaryImage(data=b'generated file content', media_type='image/png').data_uri
+    content: dict[str, Any] = {'url': data_uri, 'media_type': 'image/png', 'vendor_metadata': 'not-a-dict'}
+
+    reloaded = AGUIAdapter.load_messages(
+        [ActivityMessage(id='activity-1', activity_type='pydantic_ai_file', content=content)],
+        preserve_file_data=True,
+    )
+    file_parts = [part for message in reloaded for part in message.parts if isinstance(part, FilePart)]
+    assert len(file_parts) == 1
+    assert file_parts[0].content.vendor_metadata is None
 
 
 # endregion
@@ -4059,11 +4903,9 @@ def test_load_multimodal_url_sources(
     """Test that typed multimodal URL input content is converted to the correct Pydantic AI URL type."""
     messages = AGUIAdapter.load_messages([UserMessage(id='msg-1', content=[input_content])])
     assert len(messages) == 1
-    request = messages[0]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest)
     assert len(request.parts) == 1
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(messages, UserPromptPart)
     assert isinstance(part.content, list)
     assert len(part.content) == 1
     assert part.content[0] == expected_type
@@ -4151,6 +4993,272 @@ def test_dump_messages_legacy_binary_content() -> None:
     )
 
 
+def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
+    """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip (ag-ui >= 0.1.15).
+
+    Regression test for #5764: the AG-UI adapter dropped `vendor_metadata`
+    (e.g. OpenAI/xAI image `detail`, Google `video_metadata`) for every
+    `ImageUrl`/`AudioUrl`/`VideoUrl`/`DocumentUrl`/`BinaryContent`, even though the adjacent
+    `UploadedFile` branch already round-tripped it. Multimodal input content carries it under
+    a `vendor_metadata` key in the typed part's `metadata` field.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(
+                            url='https://example.com/image.png',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'high'},
+                        ),
+                        AudioUrl(
+                            url='https://example.com/audio.mp3',
+                            media_type='audio/mpeg',
+                            vendor_metadata={'foo': 'bar'},
+                        ),
+                        VideoUrl(
+                            url='https://example.com/video.mp4',
+                            media_type='video/mp4',
+                            vendor_metadata={'fps': 5},
+                        ),
+                        DocumentUrl(
+                            url='https://example.com/doc.pdf',
+                            media_type='application/pdf',
+                            vendor_metadata={'foo': 'baz'},
+                        ),
+                        BinaryContent(
+                            data=b'fake_doc',
+                            media_type='application/pdf',
+                            vendor_metadata={'detail': 'low'},
+                        ),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # The dumped `metadata` is the external contract a frontend persists and re-sends.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                        'metadata': {'vendor_metadata': {'detail': 'high'}},
+                    },
+                    {
+                        'type': 'audio',
+                        'source': {'type': 'url', 'value': 'https://example.com/audio.mp3', 'mime_type': 'audio/mpeg'},
+                        'metadata': {'vendor_metadata': {'foo': 'bar'}},
+                    },
+                    {
+                        'type': 'video',
+                        'source': {'type': 'url', 'value': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+                        'metadata': {'vendor_metadata': {'fps': 5}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/doc.pdf',
+                            'mime_type': 'application/pdf',
+                        },
+                        'metadata': {'vendor_metadata': {'foo': 'baz'}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9kb2M=', 'mime_type': 'application/pdf'},
+                        'metadata': {'vendor_metadata': {'detail': 'low'}},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    assert loaded == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                identifier='01a7df',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                vendor_metadata={'foo': 'bar'},
+                                _media_type='audio/mpeg',
+                            ),
+                            VideoUrl(
+                                url='https://example.com/video.mp4',
+                                media_type='video/mp4',
+                                identifier='8cb95e',
+                                vendor_metadata={'fps': 5},
+                            ),
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                identifier='e3337d',
+                                vendor_metadata={'foo': 'baz'},
+                            ),
+                            BinaryContent(
+                                data=b'fake_doc',
+                                media_type='application/pdf',
+                                identifier='42a9bb',
+                                vendor_metadata={'detail': 'low'},
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True),
+            id='image-true',
+        ),
+        pytest.param(
+            AudioUrl(url='https://example.com/audio.mp3', media_type='audio/mpeg', force_download='allow-local'),
+            id='audio-allow-local',
+        ),
+        pytest.param(
+            VideoUrl(url='https://example.com/video.mp4', media_type='video/mp4', force_download=True),
+            id='video-true',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf', force_download='allow-local'),
+            id='document-allow-local',
+        ),
+    ],
+)
+def test_multimodal_roundtrip_preserves_file_url_force_download(
+    content: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+) -> None:
+    """`FileUrl.force_download` survives an AG-UI multimodal dump -> load round-trip."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    user_msg = ag_ui_msgs[0]
+    assert isinstance(user_msg, UserMessage)
+    assert isinstance(user_msg.content, list)
+    dumped_content = user_msg.content[0]
+    assert isinstance(dumped_content, ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent)
+    assert dumped_content.metadata == {'force_download': content.force_download}
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(messages, loaded)
+    assert loaded == messages
+
+
+def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> None:
+    """`FileUrl.force_download` is dropped when dumping to AG-UI versions before `0.1.15`.
+
+    Legacy `BinaryInputContent` (emitted for `ag_ui_version < '0.1.15'`) has no `metadata`
+    carrier, so there is nowhere to stash `force_download` and it silently resets to `False`
+    on reload — the security-conservative default, matching the other legacy-version drops.
+    """
+    content = ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.14')
+    user_msg = ag_ui_msgs[0]
+    assert isinstance(user_msg, UserMessage)
+    assert isinstance(user_msg.content, list)
+    dumped_content = user_msg.content[0]
+    assert isinstance(dumped_content, BinaryInputContent)
+    assert not hasattr(dumped_content, 'metadata')
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    user_part = message_part(loaded, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    loaded_content = user_part.content[0]
+    assert isinstance(loaded_content, ImageUrl)
+    assert loaded_content.force_download is False
+
+
+def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
+    """A file with no `vendor_metadata` round-trips to `None` (no spurious `metadata`)."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'fake_image', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # `exclude_none` drops the `metadata` key entirely when no vendor_metadata is present.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                    },
+                    {
+                        'type': 'image',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9pbWFnZQ==', 'mime_type': 'image/png'},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    user_part = message_part(loaded, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    for item in user_part.content:
+        assert getattr(item, 'vendor_metadata', None) is None
+
+
+def test_load_multimodal_rejects_invalid_vendor_metadata() -> None:
+    """A malformed `vendor_metadata` on multimodal input content is rejected on load.
+
+    The `metadata` field is typed as `Any`, so a non-`dict` client value is passed to the file
+    constructor which raises `ValidationError` here (matching the Vercel adapter), instead of
+    being stored unvalidated and crashing a provider model later.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AGUIAdapter.load_messages(
+            [
+                UserMessage(
+                    id='msg-1',
+                    content=[
+                        ImageInputContent(
+                            source=InputContentUrlSource(
+                                type='url', value='https://example.com/image.png', mime_type='image/png'
+                            ),
+                            metadata={'vendor_metadata': 'not-a-dict'},
+                        )
+                    ],
+                )
+            ]
+        )
+
+
 def test_load_messages_unknown_type_warns() -> None:
     """Test that an unknown AG-UI message type emits a warning and is skipped."""
 
@@ -4184,7 +5292,8 @@ async def test_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4217,7 +5326,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt'
 
     run_input = create_input(
@@ -4228,7 +5337,8 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4638,7 +5748,8 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4777,10 +5888,7 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
         sanitized = adapter.sanitize_messages(crafted)
 
     assert len(sanitized) == 1
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
 
 

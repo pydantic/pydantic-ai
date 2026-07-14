@@ -1,16 +1,22 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import datetime
+import gc
 import json
 import re
+import sys
+import threading
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+import weakref
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import timezone
-from typing import Any
+from types import TracebackType
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,7 +25,6 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
-    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -46,18 +51,25 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _utils,
     capture_run_messages,
     models,
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
+from pydantic_ai._sync_stream import (
+    SyncStreamBridge,
+    _finalize_loop,  # pyright: ignore[reportPrivateUsage]
+    _request_exit,  # pyright: ignore[reportPrivateUsage]
+    _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse
-from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -65,14 +77,9 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.filterwarnings(
-        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
-    ),
-]
+pytestmark = pytest.mark.anyio
 
 
 class Foo(BaseModel):
@@ -294,6 +301,1083 @@ def test_streamed_text_sync_response():
             tool_calls=1,
         )
     )
+
+
+async def test_run_stream_sync_rejects_running_event_loop():
+    """`run_stream_sync` drives the caller's event loop, so it must refuse to run inside an existing one.
+
+    This is an in-process loop-state guard that a provider cassette cannot exercise.
+    """
+    agent = Agent(TestModel())
+    with pytest.raises(RuntimeError, match=r'from within an async context or a running event loop; use `run_stream`'):
+        agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_works_with_disabled_threads():
+    """`run_stream_sync` does not need a worker thread.
+
+    VCR cannot observe whether the synchronous bridge starts a thread.
+    """
+    agent = Agent(TestModel())
+    with _utils.disable_threads():
+        with agent.run_stream_sync('Hello') as result:
+            assert result.get_output()
+
+
+def _interrupt_next_loop_run(
+    bridge: SyncStreamBridge[Any], monkeypatch: pytest.MonkeyPatch
+) -> Callable[[Awaitable[Any]], Any]:
+    """Raise `KeyboardInterrupt` from the next blocking event-loop drive."""
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    original_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_first_run(awaitable: Awaitable[Any]) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt
+        return original_run_until_complete(awaitable)
+
+    monkeypatch.setattr(loop, 'run_until_complete', interrupt_first_run)
+    return original_run_until_complete
+
+
+def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C while driving the event loop cancels the run instead of leaking tasks or sockets (#5975).
+
+    VCR cannot reproduce the required in-process interrupt timing or inspect pending tasks.
+    """
+    agent = Agent(TestModel())
+    result = agent.run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    assert bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+
+    _interrupt_next_loop_run(bridge, monkeypatch)
+
+    # Enter the `with` block too, so its `__exit__` also calls `shutdown()`. The interrupt teardown
+    # already ran it once, so this exercises the idempotent (already-disarmed) shutdown path.
+    with pytest.raises(KeyboardInterrupt):
+        with result:
+            result.get_output()
+
+    # The run was torn down as part of handling the interrupt, leaving no pending owner task for GC.
+    assert not bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='already closed'):
+        bridge.call(lambda: None)
+
+
+def test_sync_stream_bridge_call_propagates_keyboard_interrupt():
+    """An interrupt raised by a bridge call propagates after the context manager exits.
+
+    VCR cannot inject a synchronous interrupt into the bridge call lifecycle.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        bridge.call(interrupt)
+
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sync_stream_bridge_rejects_streaming_after_shutdown_before_creating_pump(monkeypatch: pytest.MonkeyPatch):
+    """A closed bridge rejects iteration without creating another loop-bound task.
+
+    VCR cannot inspect the bridge's in-process task lifecycle.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    bridge.shutdown()
+    source = MagicMock()
+    task_context = MagicMock(side_effect=AssertionError('must not create a pump task'))
+    monkeypatch.setattr(bridge, '_task_context', task_context)
+
+    with pytest.raises(RuntimeError, match='already closed'):
+        next(bridge.stream_sync(source))
+
+    source.assert_not_called()
+    task_context.assert_not_called()
+
+
+def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
+    """An interrupt after call completion propagates and leaves the event loop reusable.
+
+    Callback ordering is deterministic: completing the call queues `run_until_complete()`'s stop callback,
+    then the already-queued interrupt escapes before that stop callback runs. Shutdown must consume the stale
+    callback so it cannot stop the next unrelated loop drive. VCR cannot control this in-process ordering.
+    """
+    cleanup_complete = False
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        nonlocal cleanup_complete
+        try:
+            yield object()
+        finally:
+            cleanup_complete = True
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    original_error = KeyboardInterrupt('original')
+
+    def interrupt() -> None:
+        raise original_error
+
+    def finish_then_interrupt() -> None:
+        # Finishing the call queues its `run_until_complete()` stop callback behind this interrupt.
+        loop.call_soon(interrupt)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        bridge.call(finish_then_interrupt)
+
+    assert exc_info.value is original_error
+    assert cleanup_complete
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    # A leftover stop callback would stop this drive before `sleep(0)` completes and raise `RuntimeError`.
+    assert loop.run_until_complete(asyncio.sleep(0)) is None
+
+
+def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch: pytest.MonkeyPatch):
+    """Task draining tolerates multiple early stops without depending on their exception text.
+
+    VCR cannot replace the local event-loop driver or inject stale stop callbacks.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def stop_twice(awaitable: Awaitable[object]) -> object:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise RuntimeError(f'custom loop early stop {calls}')
+        return original_run_until_complete(awaitable)
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', stop_twice)
+        _run_task_to_completion(loop, task)
+
+    assert calls == 3
+    assert task.done()
+    loop.close()
+
+
+def test_sync_stream_bridge_task_drain_propagates_error_after_completion(monkeypatch: pytest.MonkeyPatch):
+    """A loop-driver error after the waiter completes is propagated instead of retried.
+
+    VCR cannot replace the local event-loop driver or exercise this defensive cleanup branch.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    error = RuntimeError('loop driver failed after completing the waiter')
+
+    def finish_then_fail(awaitable: Awaitable[object]) -> object:
+        original_run_until_complete(awaitable)
+        raise error
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', finish_then_fail)
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_task_to_completion(loop, task)
+
+    assert exc_info.value is error
+    assert task.done()
+    loop.close()
+
+
+def test_sync_stream_bridge_task_drain_propagates_error_while_loop_is_running(monkeypatch: pytest.MonkeyPatch):
+    """A persistent loop-driver error is propagated instead of retried indefinitely.
+
+    VCR cannot replace the local event-loop driver or simulate another thread driving its loop.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    error = RuntimeError('event loop is already running')
+
+    def fail_to_drive_loop(awaitable: Awaitable[object]) -> object:
+        raise error
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', fail_to_drive_loop)
+        context.setattr(loop, 'is_running', lambda: True)
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_task_to_completion(loop, task)
+
+    assert exc_info.value is error
+    pending_tasks = asyncio.all_tasks(loop)
+    for pending_task in pending_tasks:
+        pending_task.cancel()
+    original_run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+    loop.close()
+
+
+def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
+    """A stale loop-stop callback cannot let owner cleanup overtake a cancelled stream pump.
+
+    VCR cannot control event-loop callback ordering or observe task cleanup order.
+    """
+    source_cleaned = False
+    owner_saw_source_cleaned: bool | None = None
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        nonlocal owner_saw_source_cleaned
+        try:
+            yield object()
+        finally:
+            owner_saw_source_cleaned = source_cleaned
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal source_cleaned
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            # Keep pump cleanup pending long enough for a stale stop callback to interrupt its first drain.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            source_cleaned = True
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    def finish_then_interrupt() -> None:
+        # The call task finishes and queues its `run_until_complete()` stop callback behind this interrupt.
+        # The interrupt escapes first, leaving that stop callback queued for the pump drain in shutdown.
+        loop.call_soon(interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        bridge.call(finish_then_interrupt)
+
+    assert source_cleaned
+    assert owner_saw_source_cleaned is True
+    cast(Generator[str, None, None], stream).close()
+
+
+def test_sync_stream_bridge_rejects_use_from_another_thread():
+    """Normal use never moves the caller-owned event loop to another thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    errors: list[RuntimeError] = []
+
+    def use_bridge() -> None:
+        try:
+            bridge.call(lambda: None)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=use_bridge)
+    thread.start()
+    thread.join()
+
+    assert len(errors) == 1
+    assert str(errors[0]) == 'A synchronous stream must be used and closed on the thread where it was created.'
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_defers_iterator_close_from_another_thread():
+    """Closing a suspended iterator queues its pump cleanup back to the owner thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+
+    def close_stream() -> None:
+        cast(Generator[str, None, None], stream).close()
+
+    thread = threading.Thread(target=close_stream)
+    thread.start()
+    thread.join()
+
+    assert cleanup_thread_id is None
+
+    bridge.call(asyncio.sleep, 0)
+    bridge.call(asyncio.sleep, 0)
+    assert cleanup_thread_id == owner_thread_id
+    assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_rejects_iterator_resume_from_another_thread():
+    """Resuming a suspended iterator cannot move its pump cleanup to another thread.
+
+    VCR cannot exercise or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+    errors: list[RuntimeError] = []
+
+    def resume_stream() -> None:
+        try:
+            next(stream)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=resume_stream)
+    thread.start()
+    thread.join()
+
+    assert len(errors) == 1
+    assert str(errors[0]) == 'A synchronous stream must be used and closed on the thread where it was created.'
+    assert cleanup_thread_id is None
+
+    bridge.shutdown()
+    assert cleanup_thread_id == owner_thread_id
+
+
+def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: pytest.MonkeyPatch):
+    """Foreign-thread iterator GC queues cleanup without emitting an unraisable exception.
+
+    VCR cannot control garbage collection or observe the bridge's in-process thread affinity.
+    """
+    owner_thread_id = threading.get_ident()
+    cleanup_thread_id: int | None = None
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+    holder = [stream]
+    del stream
+
+    def drop_stream() -> None:
+        holder.clear()
+        gc.collect()
+
+    thread = threading.Thread(target=drop_stream)
+    thread.start()
+    thread.join()
+
+    assert not unraisable
+    assert cleanup_thread_id is None
+
+    bridge.call(asyncio.sleep, 0)
+    bridge.call(asyncio.sleep, 0)
+    assert cleanup_thread_id == owner_thread_id
+    assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_closes_iterator_gc_after_shutdown(monkeypatch: pytest.MonkeyPatch):
+    """Foreign-thread iterator GC closes its receive stream after wrapper shutdown.
+
+    VCR cannot control garbage collection or observe the bridge's in-process stream resources.
+    """
+    original_loop = _utils.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    cleanup_thread_id: int | None = None
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, 'unraisablehook', unraisable.append)
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal cleanup_thread_id
+        try:
+            yield 'first'
+            await asyncio.Event().wait()
+        finally:
+            cleanup_thread_id = threading.get_ident()
+
+    try:
+        bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+        stream = bridge.stream_sync(source)
+        assert next(stream) == 'first'
+        bridge.shutdown()
+        assert cleanup_thread_id == threading.get_ident()
+        holder = [stream]
+        del stream
+
+        def drop_stream() -> None:
+            holder.clear()
+            gc.collect()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', ResourceWarning)
+            thread = threading.Thread(target=drop_stream)
+            thread.start()
+            thread.join()
+            loop.close()
+            gc.collect()
+    finally:
+        if not loop.is_closed():  # pragma: no cover
+            loop.close()
+        asyncio.set_event_loop(original_loop)
+
+    assert not unraisable
+
+
+def test_sync_stream_bridge_rejects_use_while_another_loop_runs():
+    """A sync bridge never nests its owner loop inside another running event loop.
+
+    This is an in-process loop-state guard that a provider cassette cannot exercise.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+
+    async def use_bridge() -> None:
+        with pytest.raises(RuntimeError, match='while an event loop is running'):
+            bridge.call(lambda: None)
+
+    asyncio.run(use_bridge())
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_init_interrupt_cleans_owner():
+    """An interrupt during context entry cancels the owner task without leaking its ready future.
+
+    VCR cannot inject the interrupt timing or inspect the bridge's pending futures.
+    """
+    loop = _utils.get_event_loop()
+
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        loop.call_soon(interrupt)
+        await asyncio.sleep(1)
+        yield object()  # pragma: no cover
+
+    with pytest.raises(KeyboardInterrupt):
+        SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+
+
+def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
+    """An interrupt after context entry still runs the context manager's cleanup.
+
+    VCR cannot inject an interrupt between context entry and result delivery.
+    """
+    original_loop = _utils.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    exited = False
+
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        nonlocal exited
+        loop.call_soon(interrupt)
+        try:
+            yield object()
+        finally:
+            exited = True
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
+    finally:
+        loop.close()
+        asyncio.set_event_loop(original_loop)
+
+    assert exited
+
+
+@pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
+def test_sync_stream_bridge_init_propagates_base_exception(error_type: type[BaseException]):
+    """A base exception from `__aenter__` escapes immediately instead of hanging the event loop.
+
+    VCR cannot inject an in-process base exception into the context-manager entry protocol.
+    """
+    original_loop = _utils.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    error = error_type('entry failed')
+    forced_stop = False
+
+    class FailingContextManager:
+        async def __aenter__(self) -> object:
+            raise error
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
+            pytest.fail('`__aexit__` must not be called when `__aenter__` fails')  # pragma: no cover
+
+    def force_stop() -> None:  # pragma: no cover
+        nonlocal forced_stop
+        forced_stop = True
+        loop.stop()
+
+    stop_handle = loop.call_later(1, force_stop)
+    try:
+        with pytest.raises(error_type) as exc_info:
+            SyncStreamBridge(FailingContextManager(), async_alternative='`async_method`')
+        assert exc_info.value is error
+        assert not forced_stop
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
+    finally:
+        stop_handle.cancel()
+        loop.close()
+        asyncio.set_event_loop(original_loop)
+
+
+def test_sync_stream_bridge_exit_error_propagates():
+    """An error raised after context-manager cleanup is complete propagates to the sync caller.
+
+    VCR cannot make the in-process context manager fail during its exit protocol.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        try:
+            yield object()
+        finally:
+            raise RuntimeError('exit failed')
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+
+    with pytest.raises(RuntimeError, match='exit failed'):
+        bridge.shutdown()
+
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sync_stream_bridge_owner_cancellation_can_be_suppressed():
+    """Owner cancellation follows the async context manager's suppression semantics.
+
+    VCR cannot control task cancellation or inspect the context manager's exception arguments.
+    """
+    exit_type: type[BaseException] | None = None
+
+    class SuppressingContextManager:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool:
+            nonlocal exit_type
+            exit_type = exc_type
+            return True
+
+    bridge = SyncStreamBridge(SuppressingContextManager(), async_alternative='`async_method`')
+    bridge._owner_task.cancel()  # pyright: ignore[reportPrivateUsage]
+    bridge._loop.run_until_complete(bridge._owner_task)  # pyright: ignore[reportPrivateUsage]
+
+    assert exit_type is asyncio.CancelledError
+    bridge.shutdown()
+
+
+def test_sync_stream_bridge_shutdown_accepts_prior_exit_request():
+    """Shutdown remains idempotent if cleanup was already requested on the owner loop.
+
+    VCR cannot place the bridge into this internal cleanup state.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    bridge._exit_requested.set_result((None, None, None))  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+    assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
+    """The non-context-manager fallback can request cleanup from its running owner loop.
+
+    VCR cannot control garbage collection or inspect owner-task completion.
+    """
+    result = Agent(TestModel()).run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
+    bridge_ref = weakref.ref(bridge)
+    holder = [result]
+    del result, bridge
+
+    async def drop_result() -> None:
+        holder.clear()
+        gc.collect()
+        await asyncio.sleep(0)
+
+    loop.run_until_complete(drop_result())
+    loop.run_until_complete(owner_task)
+
+    assert bridge_ref() is None
+    assert owner_task.done()
+
+
+def test_sync_stream_bridge_finalizes_with_unclosed_iterator():
+    """Dropping an active iterator releases its pump before the wrapper's GC cleanup runs.
+
+    VCR cannot control garbage collection or inspect the in-process pump tasks.
+    """
+    result = Agent(TestModel(custom_output_text='The cat sat on the mat.')).run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
+    stream = result.stream_text(delta=True, debounce_by=None)
+    assert next(stream)
+    pump_tasks = tuple(bridge._pump_tasks)  # pyright: ignore[reportPrivateUsage]
+    bridge_ref = weakref.ref(bridge)
+
+    del stream, result, bridge
+    gc.collect()
+
+    assert bridge_ref() is None
+    assert owner_task.done()
+    assert all(task.done() for task in pump_tasks)
+
+
+def test_sync_stream_bridge_running_loop_finalizer_drains_pumps():
+    """Finalization on a running loop cancels pumps before releasing the owner task.
+
+    VCR cannot trigger this finalizer state or observe task cancellation order.
+    """
+
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        exit_requested: asyncio.Future[
+            tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+        ] = loop.create_future()
+
+        async def wait_for_exit() -> None:
+            await exit_requested
+
+        async def wait_forever() -> None:
+            await asyncio.Event().wait()
+
+        owner_task = loop.create_task(wait_for_exit())
+        pump_task = loop.create_task(wait_forever())
+        pump_tasks = {pump_task}
+
+        _finalize_loop(loop, owner_task, exit_requested, pump_tasks, threading.get_ident())
+        await owner_task
+
+        assert pump_task.cancelled()
+        assert not pump_tasks
+
+        # A queued duplicate request is harmless after both cleanup signals are complete.
+        await _request_exit(owner_task, exit_requested, pump_tasks)
+
+    asyncio.run(run())
+
+
+def test_sync_stream_bridge_gc_request_retrieves_owner_exit_error():
+    """Best-effort GC cleanup consumes an error raised while the owner context exits.
+
+    VCR cannot inspect whether an in-process task exception was retrieved.
+    """
+
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        exit_requested: asyncio.Future[
+            tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+        ] = loop.create_future()
+
+        async def fail_on_exit() -> None:
+            await exit_requested
+            raise RuntimeError('exit failed')
+
+        owner_task = loop.create_task(fail_on_exit())
+        await _request_exit(owner_task, exit_requested, set())
+
+        assert owner_task.done()
+        assert isinstance(owner_task.exception(), RuntimeError)
+
+    asyncio.run(run())
+
+
+def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
+    """The non-context-manager fallback requests cleanup if another event loop is active.
+
+    VCR cannot control garbage collection while a second event loop is running.
+    """
+    result = Agent(TestModel()).run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
+    bridge_ref = weakref.ref(bridge)
+    holder = [result]
+    del result, bridge
+
+    async def drop_result() -> None:
+        holder.clear()
+        gc.collect()
+
+    try:
+        asyncio.run(drop_result())
+        owner_loop.run_until_complete(owner_task)
+    finally:
+        asyncio.set_event_loop(owner_loop)
+
+    assert bridge_ref() is None
+    assert owner_task.done()
+
+
+def test_sync_stream_bridge_finalizes_on_another_thread():
+    """The GC fallback never moves the stopped caller-owned loop to the finalizer thread.
+
+    VCR cannot control the finalizer thread or observe event-loop thread affinity.
+    """
+    result = Agent(TestModel()).run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
+    bridge_ref = weakref.ref(bridge)
+    holder = [result]
+    del result, bridge
+
+    def drop_result() -> None:
+        holder.clear()
+        gc.collect()
+
+    thread = threading.Thread(target=drop_result)
+    thread.start()
+    thread.join()
+
+    assert bridge_ref() is None
+    assert not owner_task.done()
+    owner_loop.run_until_complete(owner_task)
+    assert owner_task.done()
+
+
+def test_sync_stream_bridge_finalizer_ignores_closed_loop():
+    """The GC fallback cannot drive a loop that its owner has already closed.
+
+    Once a caller closes the owner loop, async cleanup cannot safely run in-process. A provider cassette
+    cannot observe this local lifecycle guard. A pending Future stands in for the owner task so the guard
+    can be exercised without knowingly leaking a real task.
+    """
+    loop = asyncio.new_event_loop()
+    exit_requested: asyncio.Future[tuple[type[BaseException] | None, BaseException | None, TracebackType | None]] = (
+        loop.create_future()
+    )
+    owner_task = cast(asyncio.Task[None], loop.create_future())
+    assert not owner_task.done()
+    loop.close()
+
+    _finalize_loop(loop, owner_task, exit_requested, set(), threading.get_ident())
+
+    assert not owner_task.done()
+    assert not exit_requested.done()
+
+
+def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C mid-stream tears down the still-open model stream instead of leaking it (#5975).
+
+    The model stream is still open when the interrupt lands. Teardown must close it, which we observe
+    via its `finally`.
+    """
+    stream_closed = threading.Event()
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        try:
+            # The final-result event lets `run_stream_sync` return here with the generator suspended at
+            # this `yield` — i.e. the model stream (and its notional connection) still open. The `finally`
+            # runs only when teardown closes it.
+            yield 'The cat sat on the mat.'
+        finally:
+            stream_closed.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    result = agent.run_stream_sync('Hello')
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    assert not stream_closed.is_set()  # the model stream is open and producing
+
+    _interrupt_next_loop_run(bridge, monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        with result:
+            result.get_output()
+
+    # The interrupt teardown ran the still-open model stream's `finally`, so the connection was closed
+    # rather than left pending on the loop until GC.
+    assert stream_closed.wait(timeout=5)
+
+
+def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
+
+    Without cleanup, the orphaned `MemoryObjectReceiveStream` warns from `__del__` at GC, which pytest
+    escalates to an error.
+    """
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pump running, receive stream open
+
+        _interrupt_next_loop_run(bridge, monkeypatch)
+
+        # The interrupt propagates through the `stream_sync` generator's `finally`, which closes the receive stream.
+        with pytest.raises(KeyboardInterrupt):
+            next(stream)
+
+    del stream
+    gc.collect()  # surface any unclosed `MemoryObjectReceiveStream` now, not at session teardown
+
+
+def test_run_stream_sync_early_break_tears_down_pump():
+    """Abandoning a sync stream early unblocks and closes the pump without surfacing an error."""
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pull one chunk while the pump still has more to send
+        # `stream_text` is typed `Iterator` but is a generator at runtime; closing it abandons the stream,
+        # closing the receive end the pump is sending into.
+        cast(Generator[str, None, None], stream).close()
+
+
+def test_sync_stream_bridge_early_close_cancels_waiting_pump():
+    """Closing a sync iterator cancels a pump waiting indefinitely on its source.
+
+    VCR cannot inspect the pump task or deterministically hold its source pending.
+    """
+    source_closed = False
+    wait_forever = asyncio.Event()
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal source_closed
+        try:
+            yield 'first'
+            await wait_forever.wait()
+            yield 'unreachable'  # pragma: no cover
+        finally:
+            source_closed = True
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    stream = bridge.stream_sync(source)
+    assert next(stream) == 'first'
+    cast(Generator[str, None, None], stream).close()
+
+    assert source_closed
+    assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
+    bridge.shutdown()
+
+
+@pytest.mark.parametrize('error_type', [KeyboardInterrupt, SystemExit])
+def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error_type: type[BaseException]):
+    """A base exception from a completed pump escapes without stranding the caller's event loop.
+
+    VCR cannot inject an in-process base exception into the iterator pump task.
+    """
+    error = error_type('pump failed')
+    forced_stop = False
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[str]:
+        yield 'first'
+        raise error
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    stream = bridge.stream_sync(source)
+
+    def force_stop() -> None:  # pragma: no cover
+        nonlocal forced_stop
+        forced_stop = True
+        loop.stop()
+
+    stop_handle = loop.call_later(1, force_stop)
+    try:
+        with pytest.raises(error_type) as exc_info:
+            while True:
+                next(stream)
+        assert exc_info.value is error
+        assert not forced_stop
+        assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+        assert loop.run_until_complete(asyncio.sleep(0)) is None
+    finally:
+        stop_handle.cancel()
+
+
+def test_run_stream_sync_preserves_capability_contextvars():
+    """Tasks driven by the sync bridge inherit context set inside the agent run.
+
+    VCR cannot observe in-process context-variable propagation between tasks.
+    """
+    run_context: contextvars.ContextVar[str] = contextvars.ContextVar('run_context')
+
+    @dataclass
+    class Setter(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            token = run_context.set('from-wrap-run')
+            try:
+                return await handler()
+            finally:
+                run_context.reset(token)
+
+    @dataclass
+    class Reader(AbstractCapability[Any]):
+        seen: list[str | None] = field(default_factory=lambda: [])
+
+        async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+            self.seen.append(run_context.get(None))
+            return node
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            self.seen.append(run_context.get(None))
+            return result
+
+    reader = Reader()
+    agent = Agent(TestModel(), capabilities=[Setter(), reader])
+    with agent.run_stream_sync('Hello') as result:
+        assert result.get_output()
+
+    assert reader.seen
+    assert all(value == 'from-wrap-run' for value in reader.seen)
+
+
+def test_run_stream_sync_preserves_current_caller_contextvars():
+    """Run-owned context merges into caller values changed after constructing the sync result.
+
+    VCR cannot observe caller context changes made between construction and consumption.
+    """
+    caller_context: contextvars.ContextVar[str] = contextvars.ContextVar('caller_context')
+    seen: list[str | None] = []
+    agent = Agent(TestModel(custom_output_text='done'))
+
+    @agent.output_validator
+    def validate_output(output: str) -> str:
+        seen.append(caller_context.get(None))
+        return output
+
+    construction_token = caller_context.set('construction')
+    try:
+        result = agent.run_stream_sync('Hello')
+        consumption_token = caller_context.set('consumption')
+        try:
+            with result:
+                assert result.get_output() == 'done'
+        finally:
+            caller_context.reset(consumption_token)
+    finally:
+        caller_context.reset(construction_token)
+
+    assert seen == ['consumption']
+
+
+async def test_run_stream_early_break_during_debounce_closes_cleanly():
+    """Breaking out of a debounced `stream_text()` mid-chunk must not raise from stream teardown.
+
+    `stream_text()`/`stream_output()` debounce via `group_by_temporal`, which prefetches the next item in
+    a background task. Abandoning the stream with an early `break` while that prefetch is parked in an
+    in-flight `anext` on the model source used to make the run's `aclose()` raise
+    `RuntimeError: aclose(): asynchronous generator is already running`; `PeekableAsyncStream` now
+    serializes source access so `aclose()` waits for the prefetch to release the source first.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        while True:  # `while True` (not a bounded loop) so teardown mid-loop leaves no uncovered exit branch
+            yield 'chunk '
+            await asyncio.sleep(0.2)  # keep a chunk in-flight (prefetched) when we break
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Consume one chunk (default debounce spawns the prefetch task), then abandon the still-suspended
+    # stream by leaving the `async with`. Tearing down while the prefetch is mid-`anext` must not raise.
+    # (A single `anext` rather than `async for ...: break` avoids an uncovered loop-exit branch; keeping
+    # `stream` referenced stops it being finalized early, which would cancel the prefetch and hide the bug.)
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        assert await anext(stream)
+
+
+def test_run_stream_sync_rejects_already_entered_result():
+    """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
+    with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):
+        StreamedRunResultSync(cast(Any, object.__new__(StreamedRunResult)))
 
 
 async def test_streamed_structured_response():
@@ -668,21 +1752,17 @@ async def test_call_tool():
             assert agent_info.function_tools is not None
             assert len(agent_info.function_tools) == 1
             name = agent_info.function_tools[0].name
-            first = messages[0]
-            assert isinstance(first, ModelRequest)
-            assert isinstance(first.parts[0], UserPromptPart)
-            json_string = json.dumps({'x': first.parts[0].content})
+            part = message_part(messages, UserPromptPart)
+            json_string = json.dumps({'x': part.content})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_string[:3])}
             yield {0: DeltaToolCall(json_args=json_string[3:])}
         else:
-            last = messages[-1]
-            assert isinstance(last, ModelRequest)
-            assert isinstance(last.parts[0], ToolReturnPart)
+            part = message_part(messages, ToolReturnPart, message_index=-1)
             assert agent_info.output_tools is not None
             assert len(agent_info.output_tools) == 1
             name = agent_info.output_tools[0].name
-            json_data = json.dumps({'response': [last.parts[0].content, 2]})
+            json_data = json.dumps({'response': [part.content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
@@ -825,7 +1905,13 @@ async def test_empty_response():
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[],
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -961,7 +2047,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -992,7 +2078,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1012,7 +2098,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -1040,7 +2126,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1072,7 +2158,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1095,7 +2181,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1126,7 +2212,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1174,7 +2260,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1211,7 +2297,7 @@ class TestStreamingCachedOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1238,7 +2324,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1262,7 +2348,7 @@ class TestStreamingCachedOutput:
         a deep copy, so mutations to one don't affect subsequent retrievals.
         """
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -1297,7 +2383,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
 
     async def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -1324,7 +2410,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1394,6 +2480,59 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    @pytest.mark.parametrize('output_mode', ['native', 'prompted'])
+    async def test_early_strategy_prefers_structured_text_output_over_tool_calls(self, output_mode: str):
+        """Under 'early', valid native/prompted output text streamed alongside function tool calls is the
+        final result, so the function tools are skipped — matching the non-streaming behavior."""
+        tool_called: list[str] = []
+
+        async def sf(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield '{"value": "final"}'
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        output_type = NativeOutput(OutputType) if output_mode == 'native' else PromptedOutput(OutputType)
+        agent = Agent(FunctionModel(stream_function=sf), output_type=output_type, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test early structured output') as result:
+            output = await result.get_output()
+            messages = result.all_messages()
+
+        assert output == OutputType(value='final')
+        assert tool_called == []
+        assert isinstance(messages[-1], ModelRequest)
+        skipped = messages[-1].parts[0]
+        assert isinstance(skipped, ToolReturnPart)
+        assert skipped.tool_name == 'regular_tool'
+        assert skipped.content == 'Tool not executed - a final result was already processed.'
+
+    async def test_non_early_strategy_runs_tools_alongside_structured_text_output(self):
+        """Under 'graceful', function tools streamed alongside structured text output still run. (In streaming
+        the text output is committed the instant it streams, so it remains the final result — unlike the
+        non-streaming graceful case, which continues the run and ends on the post-tool output.)"""
+        tool_called: list[str] = []
+
+        async def sf(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield '{"value": "final"}'
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=NativeOutput(OutputType), end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test graceful structured output') as result:
+            output = await result.get_output()
+
+        assert output == OutputType(value='final')
+        assert tool_called == ['regular_tool']
 
     async def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
@@ -1558,7 +2697,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1641,8 +2780,8 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
-                        RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                        ToolReturnPart(
+                            content='Tool not executed - a final result was already processed.',
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
@@ -2185,7 +3324,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2252,14 +3391,14 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
+                            tool_name='regular_tool',
+                            content=1,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='regular_tool',
-                            content=1,
+                            tool_name='final_result',
+                            content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -2316,7 +3455,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2361,25 +3500,28 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='final_result',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
@@ -2437,7 +3579,7 @@ class TestMultipleToolCalls:
         assert response.value == 'first'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got tool returns in the correct order
         assert result.all_messages() == snapshot(
@@ -2469,7 +3611,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Final result processed.',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -2518,7 +3660,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2596,7 +3738,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2677,7 +3819,7 @@ class TestMultipleToolCalls:
         assert response.value == 'valid'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2815,9 +3957,305 @@ class TestMultipleToolCalls:
             ]
         )
 
+    async def test_sequential_tool_is_a_per_tool_barrier(self):
+        """A `sequential=True` tool runs alone; other tools parallelize around it (streaming path)."""
+        active = 0
+        barrier_ran_alone = True
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='parallel_a')}
+                yield {1: DeltaToolCall(name='parallel_b')}
+                yield {2: DeltaToolCall(name='barrier')}
+                yield {3: DeltaToolCall(name='parallel_c')}
+            else:
+                yield 'done'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async def track() -> str:
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0.02)
+            active -= 1
+            return 'ok'
+
+        @agent.tool_plain
+        async def parallel_a() -> str:
+            return await track()
+
+        @agent.tool_plain
+        async def parallel_b() -> str:
+            return await track()
+
+        @agent.tool_plain(sequential=True)
+        async def barrier() -> str:
+            nonlocal barrier_ran_alone
+            if active != 0:
+                barrier_ran_alone = False  # pragma: no cover
+            await asyncio.sleep(0.02)
+            return 'barrier'
+
+        @agent.tool_plain
+        async def parallel_c() -> str:
+            return await track()
+
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+        assert barrier_ran_alone
+
+    async def test_outer_cancellation_cancels_pending_tools(self):
+        """Outer cancellation during streamed tool execution cancels still-pending tool tasks."""
+        first_done = asyncio.Event()
+        pending_started = asyncio.Event()
+        pending_cancelled = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='fast_tool')}
+                yield {1: DeltaToolCall(name='slow_tool')}
+            else:
+                yield 'done'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        async def fast_tool() -> str:
+            first_done.set()
+            return 'done'
+
+        @agent.tool_plain
+        async def slow_tool() -> str:
+            pending_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pending_cancelled.set()
+                raise
+            return 'done'  # pragma: no cover
+
+        async def run() -> None:
+            async with agent.run_stream('test') as result:
+                await result.get_output()  # pragma: no cover
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert pending_cancelled.is_set()
+
+    async def test_graceful_runs_function_tools_before_output(self):
+        """Streaming commits the output as it streams, but `graceful` still runs the function tools
+        the model emitted alongside it (their side effects happen)."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall(name='tool_b')}
+            yield {2: DeltaToolCall('final_result', '{"value": "done"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_graceful_interleaved_outputs_and_function_tools(self):
+        """Graceful streaming with outputs and function tools interleaved: the first streamed output
+        wins, later outputs are skipped, and the function tools still run."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {2: DeltaToolCall(name='tool_b')}
+            yield {3: DeltaToolCall('second_output', '{"value": "b"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_exhaustive_tool_output_sequential_barrier(self):
+        """`ToolOutput(sequential=True)` under streaming: the output is committed as it streams, so
+        (unlike the non-streaming path) it isn't held behind the function tool; the function tool
+        still runs."""
+        events: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('do_output', '{"value": "done"}')}
+
+        def do_output(output: OutputType) -> OutputType:
+            events.append('output')
+            return output
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(do_output, name='do_output', sequential=True),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            await asyncio.sleep(0.02)
+            events.append('tool_a')
+            return 'a'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert 'tool_a' in events
+
+    async def test_early_output_failure_raises_when_streaming(self):
+        """The non-streaming `early` fallback (run function tools when every output fails) has no
+        streaming equivalent: a streamed output that fails validation raises, since `run_stream()`
+        can't retry outputs."""
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('bad_output', '{"value": "x"}')}
+
+        def bad_output(output: OutputType) -> OutputType:
+            if output.value == 'x':
+                raise ModelRetry('bad')
+            return output  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(bad_output, name='bad_output'),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream\\(\\)`'):
+            async with agent.run_stream('test') as result:
+                await result.get_output()
+
+    async def test_early_multiple_outputs_and_function_tools(self):
+        """Early streaming with several output tools: the first streamed output wins, later outputs
+        are skipped, and function tools are stubbed (not run) once an output succeeds."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {1: DeltaToolCall('second_output', '{"value": "b"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert called == []
+
+    async def test_graceful_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins doesn't apply when streaming: the output is committed as it streams, so a
+        function tool's `ModelRetry` in the same response can't revoke it (`graceful`)."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        # The streamed output is committed and not suppressed, so the run ends in a single round.
+        assert output.value == 'committed'
+        assert rounds == 1
+
+    async def test_exhaustive_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins is also exempt under `exhaustive` streaming: the committed output stands."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'committed'
+        assert rounds == 1
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
+    # The retry-wins tests (a function-tool `ModelRetry` suppressing an output result) have no
+    # streaming counterpart: under `run_stream` the streamed output is committed as soon as it's
+    # detected, so retry-wins doesn't apply (see `docs/output.md`).
 
 
 async def test_custom_output_type_default_str() -> None:
@@ -3000,8 +4438,13 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
         new_message_index=0,
         run_result=run_result,
     )
-    sync_result = StreamedRunResultSync(streamed)
-    assert sync_result.metadata == {'sync': 'metadata'}
+
+    @asynccontextmanager
+    async def run_stream_cm() -> AsyncGenerator[StreamedRunResult[None, str]]:
+        yield streamed
+
+    with StreamedRunResultSync(run_stream_cm()) as sync_result:
+        assert sync_result.metadata == {'sync': 'metadata'}
 
 
 async def test_iter_stream_response():
@@ -3066,7 +4509,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
+    agent = Agent[object, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -3118,19 +4561,19 @@ async def test_unknown_tool_call_events():
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='known_tool',
-                    args={'x': 5},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=True,
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
                     tool_name='unknown_tool',
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
                 ),
                 args_valid=False,
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='known_tool',
+                    args={'x': 5},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 part=RetryPromptPart(
@@ -3147,14 +4590,6 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='known_tool',
-                    args={'x': 5},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=True,
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -3254,29 +4689,6 @@ async def test_output_tool_events():
                         ),
                     ],
                     tool_name='final_result',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                )
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'bad_value': 'invalid'},
-                    tool_call_id=IsStr(),
-                ),
-                args_valid=False,
-            ),
-            FunctionToolResultEvent(
-                part=RetryPromptPart(
-                    tool_name='final_result',
-                    content=[
-                        {
-                            'type': 'missing',
-                            'loc': ('value',),
-                            'msg': 'Field required',
-                            'input': {'bad_value': 'invalid'},
-                        }
-                    ],
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 )
@@ -3481,24 +4893,6 @@ def test_function_tool_event_tool_call_id_properties():
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
-def test_function_tool_result_event_deprecated_result_alias():
-    """`FunctionToolResultEvent(result=...)` and `event.result` keep working with a `DeprecationWarning`."""
-    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='ret_1')
-
-    with pytest.warns(DeprecationWarning, match=r'`result=\.\.\.` to `FunctionToolResultEvent` is deprecated'):
-        event = FunctionToolResultEvent(result=return_part)
-    assert event.part is return_part
-
-    with pytest.warns(DeprecationWarning, match=r'`result` is deprecated, use `part` instead\.'):
-        assert event.result is return_part  # pyright: ignore[reportDeprecated]
-
-    with pytest.raises(TypeError, match='either `part` or `result`'):
-        FunctionToolResultEvent(part=return_part, result=return_part)
-
-    with pytest.raises(TypeError, match='missing required argument'):
-        FunctionToolResultEvent()
-
-
 async def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
@@ -3548,7 +4942,7 @@ async def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -3619,7 +5013,7 @@ async def test_tool_raises_approval_required():
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    async def prepare_tool(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
@@ -3775,7 +5169,7 @@ async def test_run_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3825,7 +5219,7 @@ async def test_event_stream_handler_propagates_tool_error():
 
     events: list[AgentStreamEvent] = []
 
-    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         # Suppress the error to simulate UIEventStream.transform_stream behavior,
         # which catches exceptions and doesn't re-raise them.
         try:
@@ -3853,7 +5247,7 @@ def test_run_sync_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3901,7 +5295,7 @@ async def test_run_stream_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3940,7 +5334,7 @@ async def test_run_stream_event_stream_handler():
 async def test_run_event_stream_handler_does_not_need_to_consume_stream():
     agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         return  # never reads the stream
 
     result = await agent.run('Hello', event_stream_handler=event_stream_handler)
@@ -3951,7 +5345,7 @@ async def test_run_event_stream_handler_does_not_need_to_consume_stream():
 async def test_run_stream_event_stream_handler_does_not_need_to_consume_stream():
     agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         return  # never reads the stream
 
     async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
@@ -3974,7 +5368,7 @@ async def test_run_event_stream_handler_unconsumed_still_executes_tool_calls():
         tool_calls.append(x)
         return 'ok'
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         return  # never reads the stream
 
     await agent.run('go', event_stream_handler=event_stream_handler)
@@ -3992,7 +5386,7 @@ async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_ca
         tool_calls.append(x)
         return 'ok'
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         return  # never reads the stream
 
     async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
@@ -4018,7 +5412,7 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
 
     agent = Agent(FunctionModel(stream_function=counting_stream))
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         raise asyncio.CancelledError  # interrupted before consuming the stream
 
     with pytest.raises(asyncio.CancelledError):
@@ -4041,7 +5435,7 @@ async def test_stream_tool_returning_user_content():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -4104,7 +5498,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as event_stream:
+        events = [event async for event in event_stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -4274,8 +5669,9 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4346,8 +5742,9 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -4400,8 +5797,9 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -4433,8 +5831,9 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
-            events.append(event)
+        async with agent.run_stream_events('call add_numbers', deps=42) as event_stream:
+            async for event in event_stream:  # pragma: no branch
+                events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -4480,19 +5879,20 @@ async def test_args_validator_run_stream_event_handler():
 async def test_event_ordering_call_before_result():
     """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(TestModel(call_tools=['my_tool']))
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         """A tool."""
         return x * 2
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -4539,12 +5939,13 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4578,12 +5979,13 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -4599,7 +6001,7 @@ async def test_args_valid_none_for_tool_denied():
 async def test_deferred_tool_validation_event_in_stream():
     """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(
@@ -4608,12 +6010,13 @@ async def test_deferred_tool_validation_event_in_stream():
     )
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
@@ -4721,9 +6124,12 @@ async def test_run_stream_cancel_after_complete():
         assert not result.is_complete
         await result.get_output()
         assert result.is_complete
-        # Cancelling an already-completed stream sets the flag but doesn't error
+        assert result.response.state == 'complete'
+        # A defensive cancel() after the stream is fully consumed records the
+        # flag but must not downgrade response.state to 'interrupted'.
         await result.cancel()
         assert result.cancelled
+        assert result.response.state == 'complete'
 
 
 async def test_completed_streamed_response_cancel_noop():
@@ -4734,7 +6140,7 @@ async def test_completed_streamed_response_cancel_noop():
     await streamed_response.cancel()
 
     assert streamed_response.cancelled
-    assert streamed_response.get() is response
+    assert streamed_response.response is response
     assert response.state == 'complete'
 
 
@@ -4780,67 +6186,116 @@ async def test_stream_response_state_incomplete_after_early_break():
                 return
 
 
-async def test_run_stream_events_aclose():
-    agent = Agent(TestModel())
-
-    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-    async with agent.run_stream_events('Hello') as stream:
-        async for event in stream:  # pragma: no branch
-            events.append(event)
-            if isinstance(event, PartStartEvent):  # pragma: no branch
-                await stream.aclose()
-                break
-
-        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
-        assert [e async for e in stream] == []
-
-        # Double close is a no-op.
-        await stream.aclose()
-
-    assert len(events) >= 1
-
-
 async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
-    async with agent.run_stream_events('Hello') as stream:
-        await anext(stream)
+    async with agent.run_stream_events('Hello') as events:
+        await anext(events)
 
-    # __aexit__ closed the generator (because _closed was False);
-    # no task leak, no error.
+    # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
-async def test_agent_event_stream_standalone_break_cleanup():
-    cleanup_finished = asyncio.Event()
+def make_cleanup_signal_test_model(producer_started: asyncio.Event) -> type[TestModel]:
+    class CleanupSignalTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                producer_started.set()
+                yield stream
 
-    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+    return CleanupSignalTestModel
+
+
+async def test_run_stream_events_unstarted_iterator_cleanup():
+    """Entering and exiting the CM without advancing the iterator must not start the background task."""
+    producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
+
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
+
+    # `sleep(0)` yields to the event loop while each context is open, so an eager-start regression would
+    # get a chance to schedule its background task and set `producer_started` before we assert it didn't.
+    async with agent.run_stream_events(''):
+        await asyncio.sleep(0)
+
+    empty_context = agent.run_stream_events('')
+    await empty_context.__aexit__(None, None, None)
+
+    context = agent.run_stream_events('')
+    await context.__aenter__()
+    await asyncio.sleep(0)
+    await context.__aexit__(None, None, None)
+    await context.__aexit__(None, None, None)
+
+    reentered_context = agent.run_stream_events('')
+    await reentered_context.__aenter__()
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+        await reentered_context.__aenter__()
+    await reentered_context.__aexit__(None, None, None)
+
+    assert not producer_started.is_set()
+
+
+async def test_run_stream_events_first_iteration_starts_background_task():
+    producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
+
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
+
+    async with agent.run_stream_events('') as events:
+        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=1.0)
+        assert producer_started.is_set()
+
+
+async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
+    """Breaking on the documented final-result event must still retrieve background task errors."""
+    producer_finished = asyncio.Event()
+
+    async def stream_that_fails_after_final_result(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello'
         try:
-            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+            raise RuntimeError('producer boom')
         finally:
-            cleanup_finished.set()
+            producer_finished.set()
 
-    stream = AgentEventStream(generator())
-    async for _ in stream:  # pragma: no branch
-        break
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    handle_exception = MagicMock()
 
-    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+    loop.set_exception_handler(handle_exception)
+    try:
+        agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
 
+        async with agent.run_stream_events('') as events:
+            async for event in events:  # pragma: no branch
+                if isinstance(event, FinalResultEvent):
+                    # This mirrors the documented "stop once final result is known" pattern.
+                    # The producer task can still finish with an exception before the CM exits.
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.sleep(0)
+                    break
 
-async def test_run_stream_events_standalone_deprecation():
-    agent = Agent(TestModel())
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
 
-    stream = agent.run_stream_events('Hello')
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        async for _ in stream:  # pragma: no branch
-            break
-    await stream.aclose()
-
-    assert len(caught) == 1
-    assert issubclass(caught[0].category, DeprecationWarning)
-    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
-        caught[0].message
-    )
+    handle_exception.assert_not_called()
 
 
 async def test_run_stream_events_external_task_cancellation():
@@ -4877,7 +6332,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
             messages: list[ModelMessage],
             model_settings: models.ModelSettings | None,
             model_request_parameters: models.ModelRequestParameters,
-            run_context: RunContext[None] | None = None,
+            run_context: RunContext | None = None,
         ) -> AsyncGenerator[models.StreamedResponse]:
             async with super().request_stream(
                 messages,
@@ -4921,10 +6376,10 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     started = asyncio.Event()
     never_finishes = asyncio.Future[ModelResponse]()
 
-    class WrapModelRequestCapability(AbstractCapability[None]):
+    class WrapModelRequestCapability(AbstractCapability):
         async def wrap_model_request(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext,
             *,
             request_context: ModelRequestContext,
             handler: WrapModelRequestHandler,

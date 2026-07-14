@@ -40,15 +40,15 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 and 4.8 also support `effort='xhigh'` |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, and Sonnet 5 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
-| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
+| Groq | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='medium'`) | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='high'`) | gpt-oss: unified effort → `reasoning_effort` (`low`/`medium`/`high`, via `extra_body`; always-on, so `thinking=False` is silently ignored); qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
-| Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
-| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |
+| Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
+| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
@@ -68,6 +68,7 @@ If your provider recommends to send back these custom fields not changed, for ca
 The [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] can generate native thinking parts.
 To enable this functionality, you need to set the
 [`OpenAIResponsesModelSettings.openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_effort] and [`OpenAIResponsesModelSettings.openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary] [model settings](agent.md#model-run-settings).
+Models that support it can additionally use a `pro` [reasoning mode](models/openai.md#reasoning-mode), which is independent of the effort and never set by the unified `thinking` setting.
 
 By default, the unique IDs of reasoning, text, and function call parts from the message history are sent to the model, which can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
 if the message history you're sending does not match exactly what was received from the Responses API in a previous response, for example if you're using a [history processor](message-history.md#processing-message-history).
@@ -77,7 +78,7 @@ To disable this, you can disable the [`OpenAIResponsesModelSettings.openai_send_
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.6-sol')
 settings = OpenAIResponsesModelSettings(
     openai_reasoning_effort='low',
     openai_reasoning_summary='detailed',
@@ -94,7 +95,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7` and `claude-opus-4-8`. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, and `claude-sonnet-5`. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -127,7 +128,7 @@ agent = Agent(model, model_settings=settings)
 
 ### Adaptive Thinking & Effort
 
-Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7 and 4.8. Claude Opus 4.7 and 4.8 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7, 4.8, and Sonnet 5. Claude Opus 4.7, 4.8, and Sonnet 5 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
@@ -249,20 +250,25 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-To enable thinking, use the [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] [model setting](agent.md#model-run-settings):
+The unified [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting works across providers: it selects `reasoning_format='parsed'` so thinking parts are returned, and for the gpt-oss family its effort level also drives Groq's `reasoning_effort` (`minimal`/`low` → `'low'`, `medium` → `'medium'`, `high`/`xhigh` → `'high'`, `True` → `'medium'`).
+
+Two composable [model settings](agent.md#model-run-settings) give finer control: [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] selects how thinking parts are returned (the formats above), and [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] (sent to Groq as `reasoning_effort`) controls how much the model reasons, taking precedence over the unified `thinking` mapping:
 
 ```python {title="groq_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
 model = GroqModel('qwen/qwen3-32b')
-settings = GroqModelSettings(groq_reasoning_format='parsed')
+settings = GroqModelSettings(groq_reasoning_format='parsed', groq_reasoning_effort='default')
 agent = Agent(model, model_settings=settings)
 ...
 ```
 
 !!! note
-    Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'`.
+    Most Groq reasoning models do not support truly disabling thinking. When `thinking=False` is set via the unified setting, the behavior is family-specific: the qwen3 family truly disables reasoning via `reasoning_effort='none'` (and when combined with an explicit `groq_reasoning_effort` on qwen3, the disable wins and `groq_reasoning_effort` is ignored, with a warning); the gpt-oss family reasons always-on and cannot be disabled, so `thinking=False` is silently ignored; other reasoning models send `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally.
+
+!!! note
+    The accepted `reasoning_effort` values are family-specific (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)): the gpt-oss family accepts `'low'`, `'medium'`, and `'high'`, so unified `thinking` effort levels map onto those; the qwen3 family accepts only `'none'` and `'default'`, so unified enable-levels there control `reasoning_format` but send no `reasoning_effort` (there is no gradation to map). An explicit `groq_reasoning_effort` always takes precedence over the unified mapping.
 
 ## OpenRouter
 
@@ -283,6 +289,20 @@ agent = Agent(model, model_settings=settings)
 
     [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream is always-on (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`), `thinking=False` is silently ignored at the model-profile gate, matching the same model's direct-route behavior. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
 
+## Z.AI
+
+To enable thinking, use the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] [model setting](agent.md#model-run-settings). To preserve thinking content across multi-turn conversations, also set [`ZaiModelSettings.zai_clear_thinking`][pydantic_ai.models.zai.ZaiModelSettings.zai_clear_thinking] to `False`.
+
+```python {title="zai_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
+
+model = ZaiModel('glm-5')
+settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.
@@ -295,9 +315,3 @@ Thinking is supported by the `command-a-reasoning-08-2025` model. It does not ne
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
-
-## Outlines
-
-Some local models run through Outlines include in their text output a thinking part delimited by tags. In that case, it will be handled by Pydantic AI that will separate the thinking part from the final answer without the need to specifically enable it. The thinking tags used by default are `"<think>"` and `"</think>"`. If your model uses different tags, you can specify them in the [model profile](models/openai.md#model-profile) using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field.
-
-Outlines currently does not support thinking along with structured output. If you provide an `output_type`, the model text output will not contain a thinking part with the associated tags, and you may experience degraded performance.
