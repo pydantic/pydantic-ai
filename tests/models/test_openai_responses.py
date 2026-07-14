@@ -13682,6 +13682,40 @@ async def test_resume_expired_suspended_response(allow_model_requests: None):
         )
 
 
+async def test_resume_non_404_error_stays_http_error(allow_model_requests: None):
+    """A non-404 error while resuming is NOT an expiry — it maps to the generic `ModelHTTPError`."""
+    error = APIStatusError(
+        'server error',
+        response=httpx.Response(status_code=500, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        body={'error': {'message': 'boom'}},
+    )
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    suspended_history = ModelResponse(
+        parts=[], model_name='gpt-4o', provider_name='openai', provider_response_id='resp_500', state='suspended'
+    )
+
+    with pytest.raises(ModelHTTPError):
+        await model.request(
+            messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+
+def test_openai_continuation_delay_only_for_background():
+    """`continuation_delay` returns the poll interval only for a suspended background job, else `None`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='x'))
+    background = ModelResponse(parts=[], state='suspended', provider_details={'background': True})
+    assert model.continuation_delay(background) == 2.0
+    # A completed background response, or a suspended non-background (e.g. Anthropic-style) one: no delay.
+    assert (
+        model.continuation_delay(ModelResponse(parts=[], state='complete', provider_details={'background': True}))
+        is None
+    )
+    assert model.continuation_delay(ModelResponse(parts=[], state='suspended')) is None
+
+
 async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_requests: None):
     """Cancelling a cursor-less background-resume stream is a clean no-op, not a `NotImplementedError`.
 
