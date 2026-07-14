@@ -14,7 +14,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -57,6 +57,7 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 )
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
+_BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
 
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -104,7 +105,10 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
 
 def serialize_any(value: Any) -> str:
     try:
-        return ANY_ADAPTER.dump_python(value, mode='json')
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except UnicodeDecodeError:
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
             return str(value)
