@@ -2943,3 +2943,27 @@ async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
     assert resp.metadata == snapshot(
         {'provider_key': 'provider_value', '__pydantic_ai__': {'fallback_model_id': 'function:primary'}}
     )
+
+
+def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
+    """Without a continuation pin (e.g. a first background segment), `continuation_delay` asks each inner
+    model; only the one owning the background job returns a delay (gated on the response's `background`
+    marker), so the fallback surfaces it — and returns `None` when no model claims it."""
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover - never called
+        return ModelResponse(parts=[TextPart('x')])
+
+    class _DelayModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 2.0 if (response.provider_details or {}).get('background') else None
+
+    fallback = FallbackModel(FunctionModel(fn, model_name='a'), _DelayModel(fn, model_name='b'))
+
+    # A suspended background response carrying no pin: the fallback polls its inner models and surfaces
+    # the delay from the one that owns the job.
+    background = ModelResponse(parts=[], state='suspended', provider_details={'background': True})
+    assert fallback.continuation_delay(background) == 2.0
+
+    # No inner model claims a non-background response, so there's no delay to apply.
+    foreground = ModelResponse(parts=[], state='suspended')
+    assert fallback.continuation_delay(foreground) is None

@@ -151,11 +151,6 @@ class _ScriptedModel(Model):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
 
-    def continuation_delay(self, response: ModelResponse) -> float | None:
-        if (response.provider_details or {}).get('background'):
-            return 0.5
-        return None
-
 
 def _suspended(*, texts: list[str], provider_response_id: str, input_tokens: int, output_tokens: int) -> ModelResponse:
     return ModelResponse(
