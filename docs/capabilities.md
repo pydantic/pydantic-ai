@@ -49,10 +49,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
 
-The model does not receive the refund instructions, and `refund_status` is not callable yet. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
+The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
 1. **Request 1.** The model sees the catalog above and the user's prompt. It calls the `load_capability` tool with `id='refunds'`.
-2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result, and registers `refund_status` for the next request.
+2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
 Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
