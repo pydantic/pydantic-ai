@@ -408,14 +408,15 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         pass
                     else:
                         assert_never(item)
-                message_param = ChatCompletionInputMessage(role='assistant')
-                if texts:
-                    # Note: model responses from this model should only have one text item, so the following
-                    # shouldn't merge multiple texts into one unless you switch models between runs:
-                    message_param['content'] = '\n\n'.join(texts)
-                if tool_calls:
-                    message_param['tool_calls'] = tool_calls
-                hf_messages.append(message_param)
+                if texts or tool_calls:
+                    message_param = ChatCompletionInputMessage(role='assistant')
+                    if texts:
+                        # Note: model responses from this model should only have one text item, so the following
+                        # shouldn't merge multiple texts into one unless you switch models between runs:
+                        message_param['content'] = '\n\n'.join(texts)
+                    if tool_calls:
+                        message_param['tool_calls'] = tool_calls
+                    hf_messages.append(message_param)
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
