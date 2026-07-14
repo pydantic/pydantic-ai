@@ -575,7 +575,8 @@ class Model(ABC, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model.
+             for this model, adjusted by the provider's `_customize_model_profile()` hook
+             for capabilities that depend on provider instance state.
           3. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 

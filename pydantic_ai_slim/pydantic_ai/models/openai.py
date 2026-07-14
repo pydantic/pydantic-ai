@@ -623,6 +623,10 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_prompt_cache_retention: Literal['in_memory', '24h']
     """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
 
+    OpenAI has deprecated this field in favor of the `ttl` in `openai_prompt_cache_options`. The two are
+    independent and do not interact: this field expresses a maximum retention policy, while `ttl` expresses a
+    minimum cache lifetime.
+
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
@@ -632,7 +636,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     Explicit breakpoints are added to user content with [`CachePoint`][pydantic_ai.messages.CachePoint].
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     This setting is ignored when the resolved model profile does not support the selected request mode for the
-    API flavor in use.
+    API flavor in use. The `ttl` here is independent of the deprecated `openai_prompt_cache_retention` setting.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
