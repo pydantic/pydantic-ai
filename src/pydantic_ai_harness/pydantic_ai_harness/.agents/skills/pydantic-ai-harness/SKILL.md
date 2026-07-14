@@ -83,36 +83,35 @@ Requires Python 3.10+ and `pydantic-ai-slim>=2.1.0`.
 
 ## Quick Start
 
-A harness capability is added to the agent like any other. Here `CodeMode` wraps an MCP server's tools into
-a single `run_code` tool that the model drives with Python.
+A harness capability is added to the agent like any other. Here `CodeMode` wraps locally registered tools
+into a single `run_code` tool that the model drives with Python.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP  # MCP ships in core pydantic-ai
 
 from pydantic_ai_harness import CodeMode
 
-agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[
-        # native=False routes the MCP tools through a local toolset so CodeMode can wrap them.
-        # Without it, providers with native MCP run the tools server-side and bypass the sandbox.
-        MCP('https://hn.caseyjhand.com/mcp', native=False),
-        CodeMode(),
-    ],
-)
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+
+
+@agent.tool_plain
+def get_temperature_f(city: str) -> float:
+    return {'Paris': 68.0, 'Tokyo': 77.0}[city]
+
+
+@agent.tool_plain
+def convert_temp(fahrenheit: float) -> float:
+    return round((fahrenheit - 32) * 5 / 9, 1)
 
 result = agent.run_sync(
-    'Across the top and best Hacker News feeds, find the most-discussed story with at '
-    'least 100 points and summarize its comment thread in one paragraph.'
+    'Compare the weather in Paris and Tokyo, and report both temperatures in Celsius.'
 )
 print(result.output)
-#> The most-discussed story clearing 100 points is ...
+#> Paris is 20.0 C and Tokyo is 25.0 C.
 ```
 
-Instead of one model round-trip per tool call, the model writes a single Python script that fetches both
-feeds with `asyncio.gather`, dedupes and ranks them in plain Python, and pulls the winning thread --
-collapsing many calls into one `run_code`.
+The model writes a single Python script that fetches both temperatures with `asyncio.gather` and then
+converts them -- performing four tool calls across two dependent stages in one `run_code` invocation.
 
 ## Key Practices
 
@@ -122,6 +121,6 @@ collapsing many calls into one `run_code`.
 
 ## Common Gotchas
 
-- **`native=True` tools bypass `CodeMode`.** Provider-native MCP servers and web search execute server-side, so `run_code` never sees them. Construct them with `native=False` to keep them local and wrappable.
+- **`native=True` tools bypass `CodeMode`.** Provider-native MCP servers and web search execute server-side, so `run_code` never sees them. Use `native=False` for client-side dispatch that `CodeMode` can wrap, but do not treat a remote server as trusted or sandboxed; see the [Code Mode trust boundary](./references/CODE-MODE.md#sandbox-restrictions).
 - **The Monty sandbox is a Python subset.** No class definitions, no third-party imports, and only a small stdlib allowlist -- read [Code Mode](./references/CODE-MODE.md#sandbox-restrictions) before debugging generated code that fails to run.
 - **`CodeMode` needs its extra.** Install `pydantic-ai-harness[codemode]`, not the bare package.

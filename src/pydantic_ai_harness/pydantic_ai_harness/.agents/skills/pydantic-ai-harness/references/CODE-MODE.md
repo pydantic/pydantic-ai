@@ -1,7 +1,7 @@
 # Code Mode
 
-Standard tool calling takes one model round-trip per tool call. `CodeMode` wraps eligible tools into a
-single `run_code` tool so the model can write Python that loops, branches, aggregates, and parallelizes tool work inside a sandbox.
+`CodeMode` wraps eligible tools into a single `run_code` tool so the model can write Python that loops,
+branches, aggregates, and parallelizes multiple tool calls inside a sandbox.
 
 Use it when the agent needs to call several tools, transform intermediate results, run concurrent
 tool work with `asyncio.gather`, or anywhere a simple Python script is more reliable than the model alone, such as for mathematics.
@@ -37,6 +37,8 @@ def convert_temp(fahrenheit: float) -> float:
 The model could generate code like:
 
 ```python {test="skip" lint="skip"}
+import asyncio
+
 paris, tokyo = await asyncio.gather(
     get_weather(city='Paris'),
     get_weather(city='Tokyo'),
@@ -46,7 +48,7 @@ tokyo_c = await convert_temp(fahrenheit=tokyo['temp_f'])
 {'paris': paris_c, 'tokyo': tokyo_c}
 ```
 
-This reduces four model round-trips to one.
+This performs four tool calls, across two dependent stages, inside one `run_code` invocation.
 
 ## Choose Which Tools Are Sandboxed
 
@@ -57,7 +59,7 @@ from pydantic_ai_harness import CodeMode
 
 CodeMode(tools='all')
 CodeMode(tools=['search', 'fetch'])
-CodeMode(tools=lambda ctx, td: td.name != 'dangerous_tool')
+CodeMode(tools=lambda ctx, td: td.name in {'search', 'fetch'})
 CodeMode(tools={'code_mode': True})
 ```
 
@@ -121,8 +123,17 @@ Key restrictions:
 - No third-party imports
 - No `import *`
 - Only a small stdlib subset is allowed: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`
-- No wall-clock or timing primitives: `asyncio.sleep`, `datetime.datetime.now()`, `datetime.date.today()`, and the `time` module are unavailable
-- Tools that need approval or deferred execution are excluded from the sandbox
+- No wall-clock or timing primitives by default: `datetime.datetime.now()` and `datetime.date.today()` require an `os_access` handler; `asyncio.sleep` and the `time` module are unavailable
+- Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
+- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+
+Leave `os_access` and `mount` unset unless the task requires host access, and grant only the resources
+the task needs. A mount defaults to copy-on-write `mode='overlay'`; use `mode='read-only'` to forbid
+writes or `mode='read-write'` only when sandbox writes must persist on the host.
+
+The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
+Wrapped tools retain their normal host and network access, so expose only tools with the authority and
+input validation appropriate for model-generated calls.
 
 When a generated example keeps failing, check these restrictions before changing the rest of the agent.
 
@@ -130,8 +141,12 @@ When a generated example keeps failing, check these restrictions before changing
 
 ```python {test="skip" lint="skip"}
 CodeMode(
-    tools: ToolSelector = 'all',   # 'all', list[str], callable, or dict
-    max_retries: int = 3,          # retries on sandbox execution errors
+    tools: ToolSelector = 'all',           # 'all', list[str], callable, or dict
+    max_retries: int = 3,                  # retries on sandbox execution errors
+    *,
+    os_access: CodeModeOS | None = None,   # host handler for env vars, clock, and file I/O
+    mount: CodeModeMount | None = None,    # host directories to share with the sandbox
+    dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
 ```
 
