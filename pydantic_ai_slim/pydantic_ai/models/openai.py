@@ -3624,6 +3624,13 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         if False:  # pragma: no cover
             yield cast(ModelResponseStreamEvent, None)
 
+    async def close_stream(self) -> None:
+        # No live connection to tear down: this wraps an already-retrieved `ModelResponse` (e.g. a
+        # cursor-less background resume). `cancel()` and the continuation composite's teardown call this,
+        # so it must no-op rather than inherit the base `NotImplementedError`; a server-side background
+        # job is cancelled via `cancel_suspended_response`, not here.
+        pass
+
     @property
     def model_name(self) -> str:
         # model_name is always set when _ModelResponseStreamedResponse is constructed

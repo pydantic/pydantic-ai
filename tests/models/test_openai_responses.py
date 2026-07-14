@@ -13654,3 +13654,44 @@ async def test_resume_without_background_setting_still_gets_retry_delay(allow_mo
 
     assert result.state == 'suspended'
     assert result.suspended_retry_delay == 7.0
+
+
+async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_requests: None):
+    """Cancelling a cursor-less background-resume stream is a clean no-op, not a `NotImplementedError`.
+
+    A suspended history without a `last_sequence_number` cursor resumes via a non-stream `retrieve()`
+    wrapped in a `_ModelResponseStreamedResponse` — there's no live SSE connection to stream. Its
+    `cancel()`/teardown (also driven by the continuation composite's `close_stream()`) must no-op rather
+    than inherit the base `StreamedResponse.close_stream()` that raises `NotImplementedError`: the
+    server-side job is cancelled via `cancel_suspended_response`, not by closing a connection that
+    doesn't exist. Unit-style: this connectionless wrapper isn't produced by a normal streamed request,
+    so no cassette exercises its teardown.
+    """
+    in_progress_response = response_message([])
+    in_progress_response.id = 'resp_bg_persisted'
+    in_progress_response.status = 'in_progress'
+    in_progress_response.background = True
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[in_progress_response]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_bg_persisted',
+        state='suspended',
+    )
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        # No terminal event has been consumed, so `_finished` is False and `cancel()` calls
+        # `close_stream()` — which must not raise on this connectionless wrapper.
+        await request_stream.cancel()
+        assert request_stream.cancelled
+
+    assert request_stream.cancelled
