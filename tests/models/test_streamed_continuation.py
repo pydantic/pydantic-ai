@@ -27,7 +27,7 @@ from pydantic_ai import Agent, capture_run_messages, set_agent_graph_sleep
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -42,7 +42,7 @@ from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameter
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
@@ -580,6 +580,55 @@ async def test_nonstream_max_continuations_cancels_job(monkeypatch: pytest.Monke
 
     assert len(model.cancelled) == 1
     assert model.cancelled[0].state == 'suspended'
+
+
+async def test_nonstream_usage_limit_mid_continuation_cancels_job() -> None:
+    """A token-limit trip on a still-suspended merged response cancels the job before raising, so it doesn't leak.
+
+    The provisional usage check between non-streamed continuation segments sits outside the request's
+    cancel guard; without cancelling here, hitting the limit mid-chain would leave the background job
+    running (billing, unresumable, uncancellable). Mirrors the streamed composite's
+    `test_check_usage_error_cancels_suspended_job`.
+    """
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('paused')], state='suspended', usage=RequestUsage(input_tokens=1, output_tokens=100)
+        )
+
+    model = _RecordingCancelModel(FunctionModel(fn))
+    agent = Agent(model)
+
+    # First segment alone is 100 output tokens; the merge with the second trips the 150 limit.
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run('go', usage_limits=UsageLimits(output_tokens_limit=150))
+
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].state == 'suspended'
+
+
+async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> None:
+    """A token-limit trip on an already-`'complete'` final merge raises without cancelling anything.
+
+    The cancel guard is scoped to `state == 'suspended'`: once the chain resolves to a completed response
+    there's no live server-side job to tear down, so hitting the limit on that final merge must just
+    propagate — cancelling a finished job would be spurious (and for OpenAI a 400)."""
+    calls = 0
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        state: Literal['suspended', 'complete'] = 'suspended' if calls == 1 else 'complete'
+        return ModelResponse(parts=[TextPart('x')], state=state, usage=RequestUsage(input_tokens=1, output_tokens=100))
+
+    model = _RecordingCancelModel(FunctionModel(fn))
+    agent = Agent(model)
+
+    # The second (final) segment completes the turn; the merged 200 output tokens then trips the 150 limit.
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run('go', usage_limits=UsageLimits(output_tokens_limit=150))
+
+    assert model.cancelled == []
 
 
 async def test_error_on_first_streamed_segment_propagates() -> None:

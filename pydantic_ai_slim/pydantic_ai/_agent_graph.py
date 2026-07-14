@@ -1107,7 +1107,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         response = merge_responses(response, new_response)
                         # Enforce token limits early against a provisional total so a runaway
                         # continuation can't blow the budget; the total is committed once later.
-                        self._check_continuation_usage(ctx, response.usage)
+                        try:
+                            self._check_continuation_usage(ctx, response.usage)
+                        except BaseException:
+                            # The limit tripped on a still-suspended merge: cancel the live
+                            # server-side job before propagating so it doesn't leak (mirrors the
+                            # request-failure guard above and the streamed composite's check).
+                            if response.state == 'suspended':
+                                await cancel_job(response)
+                            raise
                     _handler_response = response
 
         request_context = ModelRequestContext(
