@@ -55,6 +55,8 @@ Pydantic AI is meant to be a light-weight library that any Python developer who 
 
 As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated. This preference is about shaping designs, new public APIs, and extension points -- it is not a license to widen a bug fix beyond the defect you reproduced (see "Requirements of all contributions").
 
+Relatedly, we prefer to adopt provider improvements silently. When a provider ships a new API capability that improves performance or output quality on an operation we already support, prefer making it the internal default wherever the model or provider supports it, so users get the benefit for free without opting in -- for example, defaulting Gemini's `VALIDATED` function-calling mode on the models that support it, since it improves schema adherence without rewriting schemas or otherwise changing observable behavior. Hold back only when it isn't clearly the better choice, or when it carries a tradeoff that could break users' production apps -- an observable behavior change or a backwards-compatibility regression, which the [version policy](docs/version-policy.md) governs. A backwards-compatible, purely-better default is welcome and needs no opt-in.
+
 # Requirements of all contributions
 
 All changes need to:
