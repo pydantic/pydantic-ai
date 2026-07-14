@@ -9682,7 +9682,8 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
                 yield streamed_response
 
     async def event_stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
-        async for _ in events:  # pragma: no cover - handler never runs on the cancelled path
+        # The model absorbs the cancel and completes, so the run completes and the handler does run.
+        async for _ in events:
             pass
 
     agent = Agent(SwallowOneCancelModel(TestModel()))
