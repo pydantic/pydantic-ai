@@ -111,7 +111,9 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(dataclasses.asdict(self).values())
+        values = dataclasses.asdict(self)
+        details = values.pop('details')
+        return any(values.values()) or any(details.values())
 
 
 @dataclass(repr=False, kw_only=True)
