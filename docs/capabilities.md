@@ -1847,6 +1847,12 @@ Capabilities that implement [Agent Skills](https://agentskills.io) support help 
 
 * [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
 
+### Data & Analytics
+
+Capabilities for querying and analyzing structured data help agents answer questions over files and databases:
+
+* [`pydantic-ai-chdb`](https://github.com/chdb-io/pydantic-ai-chdb) - `ChDBCapability` gives agents analytical SQL over local files (Parquet/CSV/JSON), object storage, and remote databases with [chDB](https://clickhouse.com/docs/en/chdb), the in-process ClickHouse engine — no server, connection string, or credentials. Registers `run_select_query` (read-only ClickHouse SQL with parameter binding), `list_databases`, `list_tables`, `describe_table`, `get_sample_data`, `list_functions`, and `attach_file` (writable sessions) tools plus schema-first instructions. Sessions default to the engine-level `readonly=2` setting with capped results, and typed engine errors are mapped to `ModelRetry` so the model can correct its queries. Also available as a lower-level toolset via `ChDBCapability(...).get_toolset()`.
+
 To add your package to this page, open a pull request.
 
 ## Publishing capabilities
