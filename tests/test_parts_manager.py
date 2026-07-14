@@ -216,6 +216,7 @@ def test_thinking_content_with_callable_metadata_stays_buffered():
 
 @pytest.mark.parametrize('size', [8_192, 16_384])
 def test_incomplete_tool_call_string_arguments_are_buffered(size: int):
+    """Cover buffered argument assembly that provider cassettes cannot express."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
     for _ in range(size):
@@ -247,6 +248,7 @@ def test_incomplete_tool_call_string_arguments_are_buffered(size: int):
 
 
 def test_tool_call_provider_details_snapshot_isolated_from_buffered_arguments():
+    """Ensure a prior public event snapshot cannot mutate buffered manager state."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     start_event = manager.handle_tool_call_delta(
         vendor_part_id='tool',
@@ -265,6 +267,7 @@ def test_tool_call_provider_details_snapshot_isolated_from_buffered_arguments():
 
 
 def test_tool_call_promotes_after_buffered_arguments_are_materialized():
+    """Cover typed promotion after arguments become complete across fragments."""
     manager = ModelResponsePartsManager(
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='load_capability', tool_kind='capability-load')]
