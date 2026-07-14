@@ -78,32 +78,33 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 
 ```python {title="deferred_hooks_capability.py"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.capabilities import Hooks
 
-approval_hooks = Hooks(
-    id='approval-hooks',
-    description='Use when a workflow needs approval before destructive actions.',
+tracing_hooks = Hooks(
+    id='workflow-tracing',
+    description='Use when a workflow needs step-level tracing and metrics.',
     defer_loading=True,
 )
 
 
-@approval_hooks.on.before_tool_execute
-async def require_approval(
-    ctx: RunContext[None],
+@tracing_hooks.on.before_tool_execute
+async def trace_tool(
+    ctx: RunContext,
     *,
-    call: ToolCallPart,
+    call,
     tool_def: ToolDefinition,
-    args: ValidatedToolArgs,
-) -> ValidatedToolArgs:
-    # Runs only after the model loads `approval-hooks`.
-    return args
+    args,
+) -> dict:
+    # Runs only after the model loads `workflow-tracing`.
+    return {'traced': True, 'tool': tool_def.name}
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
+agent = Agent('openai-responses:gpt-5.4', capabilities=[tracing_hooks])
 ```
 
 You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
+
+A deferred `before_tool_execute` hook cannot act as a mandatory gate for tools that remain callable while the capability is unloaded — once the model guesses a tool name, normal dispatch reaches the tool body. For authoritative approval before execution, use [`requires_approval=True`][pydantic_ai.tools.Tool.requires_approval] with [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset] — see [Human-in-the-loop tool approval](deferred-tools.md#human-in-the-loop-tool-approval).
 
 If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
 
