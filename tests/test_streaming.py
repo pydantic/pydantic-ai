@@ -390,9 +390,11 @@ def test_sync_stream_bridge_call_propagates_keyboard_interrupt():
 
 
 def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
-    """A stale loop-stop callback cannot mask an interrupt when no stream pump is active.
+    """An interrupt after call completion propagates and leaves the event loop reusable.
 
-    VCR cannot control event-loop callback ordering or inject a synchronous interrupt.
+    Callback ordering is deterministic: completing the call queues `run_until_complete()`'s stop callback,
+    then the already-queued interrupt escapes before that stop callback runs. Shutdown must consume the stale
+    callback so it cannot stop the next unrelated loop drive. VCR cannot control this in-process ordering.
     """
     cleanup_complete = False
 
@@ -421,29 +423,33 @@ def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
     assert exc_info.value is original_error
     assert cleanup_complete
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
+    # A leftover stop callback would stop this drive before `sleep(0)` completes and raise `RuntimeError`.
     assert loop.run_until_complete(asyncio.sleep(0)) is None
 
 
-def test_sync_stream_bridge_task_drain_propagates_unexpected_runtime_error(monkeypatch: pytest.MonkeyPatch):
-    """Task draining only retries asyncio's early-stop error, not unrelated runtime failures.
+def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch: pytest.MonkeyPatch):
+    """Task draining tolerates multiple early stops without depending on their exception text.
 
-    VCR cannot replace the local event-loop driver or observe its pending cleanup tasks.
+    VCR cannot replace the local event-loop driver or inject stale stop callbacks.
     """
     loop = asyncio.new_event_loop()
     task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    calls = 0
 
-    def fail(_awaitable: Awaitable[object]) -> object:
-        raise RuntimeError('other')
+    def stop_twice(awaitable: Awaitable[object]) -> object:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise RuntimeError(f'custom loop early stop {calls}')
+        return original_run_until_complete(awaitable)
 
     with monkeypatch.context() as context:
-        context.setattr(loop, 'run_until_complete', fail)
-        with pytest.raises(RuntimeError, match='other'):
-            _run_task_to_completion(loop, task)
+        context.setattr(loop, 'run_until_complete', stop_twice)
+        _run_task_to_completion(loop, task)
 
-    pending = asyncio.all_tasks(loop)
-    for pending_task in pending:
-        pending_task.cancel()
-    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    assert calls == 3
+    assert task.done()
     loop.close()
 
 

@@ -236,7 +236,7 @@ def model_request_stream_sync(
 
     This is the synchronous version of [`model_request_stream`][pydantic_ai.direct.model_request_stream].
     It drives the asynchronous stream on the caller's event loop while providing a synchronous iterator interface.
-    The returned context manager must be used and closed on the thread where its `with` block is entered.
+    The returned context manager must be used and closed on the thread where the synchronous stream is created.
 
     ```py {title="model_request_stream_sync_example.py"}
 

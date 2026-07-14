@@ -77,15 +77,15 @@ async def _wait_for_task(task: asyncio.Task[None]) -> None:
 
 
 def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[None]) -> None:
-    """Drive a task and consume a stale `run_until_complete()` stop callback if one is queued."""
+    """Drive a task to completion despite stale `run_until_complete()` stop callbacks."""
     waiter = loop.create_task(_wait_for_task(task))
     try:
-        try:
-            loop.run_until_complete(waiter)
-        except RuntimeError as exc:
-            if str(exc) != 'Event loop stopped before Future completed.':
-                raise
-            loop.run_until_complete(waiter)
+        while not waiter.done():
+            try:
+                loop.run_until_complete(waiter)
+            except RuntimeError:
+                if loop.is_closed() or waiter.done():
+                    raise
     except BaseException:
         with suppress(BaseException):
             loop.run_until_complete(waiter)
