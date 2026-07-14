@@ -1738,6 +1738,9 @@ def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'den
     `tool_kind` does — losing it would change how the return serializes to the provider (e.g. a
     native error channel) and break prompt-cache prefix stability. Below 0.1.11 there is no
     carrier, so the outcome silently degrades to `'success'`.
+
+    Not VCR-backed: this pins local adapter serialization (including the exact wire payload)
+    and makes no model request.
     """
     original: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='c1', args='{}')]),
@@ -1770,10 +1773,22 @@ def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'den
     old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
     old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
     assert 'encrypted_value' not in old_tool_msg.model_fields_set
+    old_reloaded = AGUIAdapter.load_messages(old_msgs)
+    old_return = next(
+        part
+        for message in old_reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert old_return.outcome == 'success'
 
 
 def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
-    """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier."""
+    """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
     original: list[ModelMessage] = [
         ModelResponse(
             parts=[
@@ -1797,7 +1812,10 @@ def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
 
 
 def test_load_forged_encrypted_outcome_stays_success() -> None:
-    """An unrecognized client-supplied outcome claim is ignored and loads as a successful return."""
+    """An unrecognized client-supplied outcome claim is ignored and loads as a successful return.
+
+    Not VCR-backed: this pins local handling of untrusted client input and makes no model request.
+    """
     loaded = AGUIAdapter.load_messages(
         [
             AssistantMessage(
