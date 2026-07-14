@@ -13,7 +13,7 @@ from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModelName
+    from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.google import GoogleModelName
@@ -30,6 +30,7 @@ if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = None
 
@@ -77,16 +78,32 @@ _PROVIDER_TO_MODEL_NAMES = {
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
+    'anthropic': DEPRECATED_ANTHROPIC_MODELS,
     'openai': DEPRECATED_OPENAI_MODELS,
     'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
+# Confirmed against the native OpenAI API: these succeed through Chat Completions but return
+# HTTP 404 `Model not found` through Responses.
+_OPENAI_CHAT_ONLY_MODEL_NAMES = frozenset(
+    {
+        'gpt-3.5-turbo-16k',
+        'gpt-4o-mini-search-preview',
+        'gpt-4o-mini-search-preview-2025-03-11',
+        'gpt-4o-search-preview',
+        'gpt-4o-search-preview-2025-03-11',
+    }
+)
+
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
+        'gateway/anthropic:claude-mythos-5',
+        'gateway/anthropic:claude-mythos-preview',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
         'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
@@ -153,13 +170,10 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
-        'gateway/groq:qwen/qwen3-32b',
         'gateway/groq:whisper-large-v3',
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
         'gateway/openai:codex-mini-latest',
-        'gateway/openai:computer-use-preview',
-        'gateway/openai:computer-use-preview-2025-03-11',
         'gateway/openai:gpt-3.5-turbo-0301',
         'gateway/openai:gpt-3.5-turbo-0613',
         'gateway/openai:gpt-3.5-turbo-16k-0613',
@@ -177,28 +191,17 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'gateway/openai:gpt-5-codex',
-        'gateway/openai:gpt-5-pro',
-        'gateway/openai:gpt-5-pro-2025-10-06',
-        'gateway/openai:gpt-5.1-codex',
-        'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:gpt-5.1-mini',
-        'gateway/openai:gpt-5.2-pro',
-        'gateway/openai:gpt-5.2-pro-2025-12-11',
-        'gateway/openai:gpt-5.3-chat-latest',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
         'gateway/openai:o1-preview',
         'gateway/openai:o1-preview-2024-09-12',
-        'gateway/openai:o1-pro',
-        'gateway/openai:o1-pro-2025-03-19',
         'gateway/openai:o3-deep-research',
         'gateway/openai:o3-deep-research-2025-06-26',
-        'gateway/openai:o3-pro',
-        'gateway/openai:o3-pro-2025-06-10',
         'gateway/openai:o4-mini-deep-research',
         'gateway/openai:o4-mini-deep-research-2025-06-26',
     }
+    | {f'gateway/openai:{model_name}' for model_name in _OPENAI_CHAT_ONLY_MODEL_NAMES}
 )
 
 
@@ -219,6 +222,7 @@ def test_known_model_names():  # pragma: lax no cover
         for provider, model_names in _PROVIDER_TO_MODEL_NAMES.items()
         for n in get_model_names(model_names)
         if not is_deprecated(provider, n)
+        if provider != 'openai' or n not in _OPENAI_CHAT_ONLY_MODEL_NAMES
     ]
 
     cerebras_names = get_cerebras_model_names()

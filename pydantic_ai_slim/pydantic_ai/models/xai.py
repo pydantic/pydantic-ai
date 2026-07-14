@@ -98,8 +98,13 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel
-"""Possible xAI model names."""
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest']
+"""Possible xAI model names.
+
+`grok-4.5`/`grok-4.5-latest` are bridged with a local `Literal` because `xai_sdk`'s `ChatModel` doesn't
+list them yet (as of 1.17.0). Drop the literal once the `xai-sdk` floor is bumped past the release that
+adds them to `ChatModel`.
+"""
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
 # `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still

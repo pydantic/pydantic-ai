@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -2882,6 +2883,14 @@ def test_map_content_concatenates_text_chunks() -> None:
     assert thinking == []
 
 
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_map_content_handles_reference_chunk() -> None:
     """Test that _map_content does not fail when encountering a MistralReferenceChunk."""
     content: list[MistralContentChunk] = [
@@ -2932,3 +2941,28 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
+    neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
+    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty response from the API payload.
+    """
+    completions = [
+        completion_message(MistralAssistantMessage(content=None, role='assistant')),
+        completion_message(MistralAssistantMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockMistralAI.create_mock(completions)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the payload (no assistant message with neither content nor
+    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
+    # self-correct.
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert not any(message.role == 'assistant' for message in second_call_messages)
+    assert [message.role for message in second_call_messages] == ['user', 'user']

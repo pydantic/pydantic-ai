@@ -10,6 +10,10 @@ GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
+# Grok 4.5 accepts `low`/`medium`/`high` but rejects `none` (unlike Grok 4.3), so it always reasons.
+# Verified against the xAI API: `reasoning_effort='none'` returns 400 `This model does not support
+# 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
+_GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
@@ -27,6 +31,15 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-4-fast-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-3',
+    )
+)
+_GROK_45_REASONING_MODELS = frozenset(
+    (
+        'grok-4.5',
+        'grok-4.5-latest',
+        # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
+        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+        'grok-build-latest',
     )
 )
 
@@ -78,6 +91,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     if model_name in _GROK_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS
+    elif model_name in _GROK_45_REASONING_MODELS:
+        grok_reasoning_efforts = _GROK_45_REASONING_EFFORTS
     elif model_name.startswith('grok-3-mini'):
         grok_reasoning_efforts = _GROK_BASIC_REASONING_EFFORTS
     else:

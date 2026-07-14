@@ -14,7 +14,7 @@ from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPa
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
@@ -25,7 +25,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -99,10 +99,11 @@ def test_agent_flag(
 
 def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
     env.remove('OPENAI_API_KEY')
+    env.remove('OPENAI_ADMIN_KEY')
     test_agent = Agent()
     create_test_module(custom_agent=test_agent)
 
-    msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
+    msg = r'Missing credentials\. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable\.'
     with pytest.raises(OpenAIError, match=msg):
         cli(['--agent', 'test_module:custom_agent', 'hello'])
 
@@ -205,6 +206,10 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         inp.send_text('hello\n')
         inp.send_text('/markdown\n')
         inp.send_text('/cp\n')
+        # a second agent turn, so `/usage` proves the session accumulator sums across the `run_chat` loop
+        inp.send_text('hello again\n')
+        inp.send_text('/usage\n')
+        inp.send_text('/usage --json\n')
         inp.send_text('/exit\n')
         session = PromptSession[Any](input=inp, output=DummyOutput())
         m = mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
@@ -219,6 +224,15 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
                 '',
                 'goodbye',
                 'Copied last output to clipboard.',
+                IsStr(regex=r'goodbye *clai usage \(session total\)'),
+                '',
+                'Turns:      2',
+                IsStr(regex=r'Tokens: .*'),
+                IsStr(regex=r'  Input: .*'),
+                IsStr(regex=r'  Output: .*'),
+                'Requests:   2',
+                'Tool calls: 0',
+                IsStr(regex=r'\{"turns": 2, .*"requests": 2, "tool_calls": 0\}'),
                 'Exiting…',
             ]
         )
@@ -287,6 +301,136 @@ def test_handle_slash_command_other():
     assert io.getvalue() == snapshot('Unknown command `/foobar`\n')
 
 
+def test_format_usage():
+    usage = RunUsage(input_tokens=1521, output_tokens=326, requests=1)
+    assert format_usage(usage, 1) == snapshot("""\
+clai usage (session total)
+
+Turns:      1
+Tokens:     1,847
+  Input:    1,521
+  Output:   326
+Requests:   1
+Tool calls: 0\
+""")
+
+
+def test_format_usage_json():
+    usage = RunUsage(input_tokens=1521, output_tokens=326, requests=1, tool_calls=2)
+    assert format_usage(usage, 3, as_json=True) == snapshot(
+        '{"turns": 3, "input_tokens": 1521, "output_tokens": 326, "total_tokens": 1847, "requests": 1, "tool_calls": 2}'
+    )
+
+
+def test_handle_slash_command_usage():
+    usage = RunUsage(input_tokens=51, output_tokens=1, requests=1)
+    io = StringIO()
+    assert handle_slash_command('/usage', [], False, Console(file=io), 'default', usage=usage, turns=1) == (None, False)
+    assert io.getvalue() == snapshot("""\
+clai usage (session total)
+
+Turns:      1
+Tokens:     52
+  Input:    51
+  Output:   1
+Requests:   1
+Tool calls: 0
+""")
+
+
+def test_handle_slash_command_usage_json():
+    usage = RunUsage(input_tokens=51, output_tokens=1, requests=1)
+    io = StringIO()
+    # Spaces are replaced with `-` upstream, so `/usage --json` arrives as `/usage---json`.
+    assert handle_slash_command('/usage---json', [], False, Console(file=io), 'default', usage=usage, turns=1) == (
+        None,
+        False,
+    )
+    assert io.getvalue() == snapshot(
+        '{"turns": 1, "input_tokens": 51, "output_tokens": 1, "total_tokens": 52, "requests": 1, "tool_calls": 0}\n'
+    )
+
+
+def test_handle_slash_command_usage_no_session():
+    # With no session usage threaded through, fall back to an empty RunUsage rather than erroring.
+    io = StringIO()
+    assert handle_slash_command('/usage', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot("""\
+clai usage (session total)
+
+Turns:      0
+Tokens:     0
+  Input:    0
+  Output:   0
+Requests:   0
+Tool calls: 0
+""")
+
+
+def test_handle_slash_command_usage_unknown_option():
+    io = StringIO()
+    assert handle_slash_command('/usage---foo', [], False, Console(file=io), 'default', usage=RunUsage(), turns=0) == (
+        None,
+        False,
+    )
+    assert io.getvalue() == snapshot('Unknown `/usage` option `/usage---foo`\n')
+
+
+def test_handle_slash_command_usage_not_a_flag():
+    # Without a separator, `/usagejson` is an unknown command, not a silently-accepted `--json` request.
+    io = StringIO()
+    assert handle_slash_command('/usagejson', [], False, Console(file=io), 'default', usage=RunUsage(), turns=0) == (
+        None,
+        False,
+    )
+    assert io.getvalue() == snapshot('Unknown command `/usagejson`\n')
+
+
+@pytest.mark.anyio
+async def test_ask_agent_accumulates_usage(env: TestEnv):
+    # `ask_agent` increments the shared session usage on both the streaming and non-streaming paths,
+    # including tool calls, and threading a turn's history into the next must not re-count prior usage.
+    env.set('OPENAI_API_KEY', 'test')
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def get_number() -> int:
+        return 42
+
+    session_usage = RunUsage()
+    console = Console(file=StringIO())
+
+    # streaming turn
+    messages = await ask_agent(agent, 'first', True, console, 'default', usage=session_usage)
+    # non-streaming turn, threading the prior turn's history back in as `run_chat` does
+    await ask_agent(agent, 'second', False, console, 'default', messages=messages, usage=session_usage)
+
+    # Usage is the sum of both runs: the first turn calls the tool (2 requests, 1 tool call), the second
+    # replays that history without re-calling it (1 request). Prior usage is not re-counted from history.
+    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
+
+
+@pytest.mark.anyio
+async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
+    # A turn that makes a billed request and then raises must still be counted, so a later `/usage`
+    # does not under-report tokens that were actually spent. The merge happens in `ask_agent`'s `finally`.
+    env.set('OPENAI_API_KEY', 'test')
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def boom() -> int:
+        raise RuntimeError('boom')
+
+    session_usage = RunUsage()
+    console = Console(file=StringIO())
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await ask_agent(agent, 'go', False, console, 'default', usage=session_usage)
+
+    # The model request that produced the failing tool call was billed, so it is reflected in the total.
+    assert session_usage == snapshot(RunUsage(input_tokens=51, output_tokens=2, requests=1))
+
+
 def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -320,6 +464,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -338,6 +483,7 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -360,6 +506,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -381,6 +528,7 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        model=None,
         model_settings=None,
         usage_limits=None,
     )
@@ -735,8 +883,29 @@ def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+    )
+
+
+def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    cli_agent.to_cli_sync(model='test')
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model='test',
+        model_settings=None,
+        usage_limits=None,
     )
 
 
@@ -758,9 +927,68 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
     )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    await cli_agent.to_cli(model='test')
+
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=None,
+        model='test',
+        model_settings=None,
+        usage_limits=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
+    from pydantic_ai._cli import ask_agent
+
+    result = mocker.Mock()
+    result.output = 'hello'
+    result.all_messages.return_value = []
+
+    agent = mocker.Mock()
+    agent.run = mocker.AsyncMock(return_value=result)
+
+    model_settings = ModelSettings(temperature=0)
+    usage_limits = UsageLimits(request_limit=5)
+
+    messages = await ask_agent(
+        agent,
+        'Hello',
+        stream=False,
+        console=Console(file=StringIO()),
+        code_theme='monokai',
+        model='test',
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+    )
+
+    agent.run.assert_awaited_once_with(
+        'Hello',
+        message_history=None,
+        deps=None,
+        model='test',
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+        usage=IsInstance(RunUsage),
+    )
+    assert messages == []
 
 
 def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):

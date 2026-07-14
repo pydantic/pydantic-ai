@@ -25,7 +25,7 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.6-sol')
 ...
 ```
 
@@ -37,7 +37,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.6-sol')
 agent = Agent(model)
 ...
 ```
@@ -125,6 +125,24 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+
+### Reasoning mode
+
+Models that support it (currently the GPT-5.6 family) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
+
+Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.6-sol')
+settings = OpenAIResponsesModelSettings(openai_reasoning_mode='pro')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+The setting is ignored on models that don't support reasoning mode, per [`OpenAIModelProfile.openai_responses_supports_reasoning_mode`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_mode].
 
 ### Native tools
 
@@ -472,6 +490,9 @@ agent = Agent(model)
 ...
 ```
 
+!!! note "Document input is not supported"
+    The DashScope compatible-mode Chat Completions API does not accept document content parts, so passing a [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] or document [`BinaryContent`][pydantic_ai.messages.BinaryContent] to an [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] backed by [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] raises a `UserError`.
+
 ### Ollama
 
 See [Ollama](ollama.md) for dedicated Ollama documentation, including structured output and Ollama Cloud limitations.
@@ -533,6 +554,20 @@ agent = Agent(model)
 #### Using Azure with the Responses API
 
 Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. This is particularly recommended when working with document inputs ([`DocumentUrl`][pydantic_ai.DocumentUrl] and [`BinaryContent`][pydantic_ai.BinaryContent]), as Azure's Chat Completions API does not support these input types.
+
+Use the `azure-responses:` prefix to select the Responses API by name (the `azure:` prefix uses the Chat Completions API):
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('azure-responses:gpt-5.2')
+...
+```
+
+!!! note
+    Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, the web search built-in tool is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
+
+Or initialise the model and provider directly:
 
 ??? example "Document processing with Azure using Responses API"
     ```python

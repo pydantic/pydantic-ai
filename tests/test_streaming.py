@@ -58,7 +58,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse
-from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -1568,6 +1568,59 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    @pytest.mark.parametrize('output_mode', ['native', 'prompted'])
+    async def test_early_strategy_prefers_structured_text_output_over_tool_calls(self, output_mode: str):
+        """Under 'early', valid native/prompted output text streamed alongside function tool calls is the
+        final result, so the function tools are skipped — matching the non-streaming behavior."""
+        tool_called: list[str] = []
+
+        async def sf(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield '{"value": "final"}'
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        output_type = NativeOutput(OutputType) if output_mode == 'native' else PromptedOutput(OutputType)
+        agent = Agent(FunctionModel(stream_function=sf), output_type=output_type, end_strategy='early')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test early structured output') as result:
+            output = await result.get_output()
+            messages = result.all_messages()
+
+        assert output == OutputType(value='final')
+        assert tool_called == []
+        assert isinstance(messages[-1], ModelRequest)
+        skipped = messages[-1].parts[0]
+        assert isinstance(skipped, ToolReturnPart)
+        assert skipped.tool_name == 'regular_tool'
+        assert skipped.content == 'Tool not executed - a final result was already processed.'
+
+    async def test_non_early_strategy_runs_tools_alongside_structured_text_output(self):
+        """Under 'graceful', function tools streamed alongside structured text output still run. (In streaming
+        the text output is committed the instant it streams, so it remains the final result — unlike the
+        non-streaming graceful case, which continues the run and ends on the post-tool output.)"""
+        tool_called: list[str] = []
+
+        async def sf(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield '{"value": "final"}'
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=NativeOutput(OutputType), end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test graceful structured output') as result:
+            output = await result.get_output()
+
+        assert output == OutputType(value='final')
+        assert tool_called == ['regular_tool']
 
     async def test_early_strategy_does_not_call_additional_output_tools(self):
         """Test that 'early' strategy does not execute additional output tool functions."""
