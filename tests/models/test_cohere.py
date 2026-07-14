@@ -232,6 +232,33 @@ async def test_request_usage_without_tokens(allow_model_requests: None):
     )
 
 
+async def test_request_usage_with_partial_tokens(allow_model_requests: None):
+    """The mock pins optional token fields, which a VCR response cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            tokens=cohere.UsageTokens(input_tokens=4),
+            billed_units=cohere.UsageBilledUnits(input_tokens=3),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=4,
+            details={'input_tokens': 3},
+        )
+    )
+
+
 async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None):
     """Top-level `usage.cached_tokens` surfaces as first-class `cache_read_tokens` via the genai-prices tokens flavor.
 
