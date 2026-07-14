@@ -10864,7 +10864,7 @@ async def test_raise_content_filter_error_capability_with_partial_content():
     agent = Agent(model, capabilities=[RaiseContentFilterError()])
 
     with pytest.raises(
-        ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
     ) as exc_info:
         await agent.run('Trigger filter')
 
