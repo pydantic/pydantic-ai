@@ -132,7 +132,7 @@ async def test_openai_chat_prompt_cache_options_without_marker(
 
 
 async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
-    """Each marker attaches to its own preceding block; OpenAI writes up to four explicit breakpoints."""
+    """Each marker attaches to its own block; OpenAI writes the latest three (implicit mode) or four (explicit)."""
     mock_client = MockOpenAI.create_mock(chat_completion())
     model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
 
@@ -409,7 +409,7 @@ async def test_openai_responses_prompt_cache_options_without_breakpoint_support(
 
 
 async def test_openai_responses_multiple_cache_points(allow_model_requests: None):
-    """Each marker attaches to its own preceding block; OpenAI writes up to four explicit breakpoints."""
+    """Each marker attaches to its own block; OpenAI writes the latest three (implicit mode) or four (explicit)."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
 
