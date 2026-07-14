@@ -329,6 +329,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
+        if (
+            messages
+            and isinstance(last_message := messages[-1], _messages.ModelRequest)
+            and last_message.state == 'interrupted'
+        ):
+            # A trailing request interrupted during tool execution means the last response's
+            # still-unanswered calls will never be executed, so they are closed out with
+            # synthesized returns. A 'complete' trailing request (e.g. from a run that ended in
+            # `DeferredToolRequests`) is left alone: its response's open calls may still receive
+            # `deferred_tool_results`.
+            messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
+
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
 
@@ -379,9 +391,15 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
-                    raise exceptions.UserError(
-                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-                    )
+                    if last_message.state == 'interrupted':
+                        # The response was cut off (e.g. a cancelled stream), so its tool calls
+                        # will never be executed; close them out with synthesized returns instead
+                        # of refusing the new prompt.
+                        messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
+                    else:
+                        raise exceptions.UserError(
+                            'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+                        )
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -1023,7 +1041,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
         #
         # Run a first pass so `prepare_messages` sees a normalized history.
-        messages = _clean_message_history(messages)
+        # The history is definitively being sent to the model at this point, so even the last
+        # response's dangling tool calls (e.g. left by a history processor) can be repaired.
+        messages = _clean_message_history(messages, repair_last_response=True)
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
@@ -1041,7 +1061,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # messages are merged. The default `prepare_messages` returns the input list
         # unchanged, so the identity check skips the redundant second pass.
         if prepared is not messages:
-            messages = _clean_message_history(prepared)
+            messages = _clean_message_history(prepared, repair_last_response=True)
         else:
             messages = prepared
 
@@ -1842,8 +1862,216 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     )
 
 
-def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages."""
+SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
+"""Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
+
+_SYNTHESIZED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
+
+
+def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
+    """Find tool calls that will never receive a result, keyed by the index of their response.
+
+    Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
+    *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
+    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
+    not already answered) at that point. An out-of-place result — one preceding its call, a
+    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call.
+    """
+    open_calls: dict[str, tuple[int, _messages.ToolCallPart]] = {}
+    dangling_by_response: dict[int, list[_messages.ToolCallPart]] = {}
+    for index, message in enumerate(messages):
+        if isinstance(message, _messages.ModelResponse):
+            for part in message.parts:
+                if isinstance(part, _messages.ToolCallPart):
+                    if shadowed := open_calls.get(part.tool_call_id):
+                        # A new call reusing the ID of an open call means the open call can no
+                        # longer be answered: any later result answers the new call instead.
+                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
+                    open_calls[part.tool_call_id] = (index, part)
+        elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
+            for part in message.parts:
+                if _is_tool_result_part(part):
+                    open_calls.pop(part.tool_call_id, None)
+    for response_index, call in open_calls.values():
+        dangling_by_response.setdefault(response_index, []).append(call)
+    return dangling_by_response
+
+
+def _insert_synthesized_returns(
+    request: _messages.ModelRequest, synthesized: list[_messages.ToolReturnPart]
+) -> _messages.ModelRequest:
+    """Insert synthesized returns after the request's existing tool results (if any).
+
+    They go ahead of user-facing parts — including a plain (non-tool-bound) `RetryPromptPart`,
+    which renders as user text — matching where providers expect tool results.
+    """
+    insert_at = next(
+        (
+            part_index + 1
+            for part_index in range(len(request.parts) - 1, -1, -1)
+            if _is_tool_result_part(request.parts[part_index])
+        ),
+        0,
+    )
+    return replace(request, parts=[*request.parts[:insert_at], *synthesized, *request.parts[insert_at:]])
+
+
+def _is_tool_result_part(
+    part: _messages.ModelRequestPart | _messages.ModelResponsePart,
+) -> TypeGuard[_messages.ToolReturnPart | _messages.RetryPromptPart]:
+    """Whether a part is a regular (locally-executed) tool result answering a `ToolCallPart`.
+
+    A `RetryPromptPart` with no `tool_name` is validation feedback rendered as a plain user message,
+    not a tool result, so it doesn't need (or have) a matching tool call. `NativeToolReturnPart` (a
+    sibling `BaseToolReturnPart` subclass) is intentionally excluded: native/builtin results are
+    co-located with their call in one `ModelResponse` and shaped by each model's own serializer, so
+    the pipeline leaves them alone.
+    """
+    return isinstance(part, _messages.ToolReturnPart) or (
+        isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None
+    )
+
+
+def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """REMOVE regular tool results whose call is missing.
+
+    A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
+    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` is "orphaned".
+    Providers reject a tool result without a matching tool call (Anthropic rejects a `tool_result`
+    with no `tool_use`; OpenAI Responses raises `No tool call found for function call output`).
+    Orphans arise from context eviction dropping the response that made the call, from a result
+    placed before its call in a hand-built history, or from adapter round-trips.
+
+    This operates only on regular, locally-executed tool call/result pairing across message
+    boundaries. Native/builtin parts (`NativeToolCallPart`/`NativeToolReturnPart`) are left untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer,
+    and a native result can even arrive in a *later* response (e.g. Anthropic tool search), so the
+    core pipeline must not treat them as droppable.
+
+    Removal, not reordering: a result that precedes its call could in principle be moved after it,
+    but that crosses message boundaries and reorders content, so the fundamentally-invalid result is
+    dropped instead (its now-unanswered call is later synthesized a result by
+    `_repair_dangling_tool_calls`). If dropping empties an interior `ModelRequest` the request is
+    dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
+    on a request. Returns the input unchanged when there are no orphans.
+    """
+    seen_call_ids: set[str] = set()
+    repaired: list[_messages.ModelMessage] = []
+    changed = False
+    for index, message in enumerate(messages):
+        for part in message.parts:
+            if isinstance(part, _messages.ToolCallPart):
+                seen_call_ids.add(part.tool_call_id)
+        kept_parts = [
+            part
+            for part in message.parts
+            if not (_is_tool_result_part(part) and part.tool_call_id not in seen_call_ids)
+        ]
+        if len(kept_parts) == len(message.parts):
+            repaired.append(message)
+            continue
+        changed = True
+        if kept_parts or (isinstance(message, _messages.ModelRequest) and index == len(messages) - 1):
+            repaired.append(replace(message, parts=kept_parts))
+        # else: interior emptied `ModelRequest` — drop the message
+    return repaired if changed else messages
+
+
+def _repair_dangling_tool_calls(
+    messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
+) -> list[_messages.ModelMessage]:
+    """Repair tool calls that are missing a matching result ("dangling" tool calls).
+
+    A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
+    `ToolCallPart`s with no matching `ToolReturnPart`/`RetryPromptPart` in a later `ModelRequest`.
+    Providers reject histories with dangling tool calls, so before a request is sent, every dangling
+    tool call gets a synthesized `ToolReturnPart` — marked with `SYNTHESIZED_TOOL_RETURN_METADATA_KEY`
+    in its `metadata` — inserted after the existing tool returns of the immediately following
+    `ModelRequest`, or as a new `ModelRequest` when no request follows.
+
+    This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
+    kept verbatim and closed out like any other dangling call, never removed. Malformed args are
+    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict`), as
+    the tool-call retry flow relies on — and removing the call would disturb the response's shape,
+    e.g. leaving a thinking-only response whose signature was computed over a turn that included
+    the call.
+
+    The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
+    are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
+    trailing unparsable-args call is left for local args validation to turn into a retry prompt.
+
+    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
+    response and not already answered) at that point. An out-of-place result — one preceding its
+    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call; such orphaned results themselves are not repaired.
+
+    The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
+    response they repair and contain no wall-clock or random data, so repairing the same history
+    twice (or on every run) yields the same output and never churns provider prompt-cache prefixes.
+    If there is nothing to repair, the input list is returned unchanged. Repair is silent — like
+    the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
+    mechanism for inspecting what was synthesized.
+    """
+    dangling_by_response = _dangling_tool_calls_by_response(messages)
+    if not repair_last_response:
+        last_response_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if isinstance(messages[index], _messages.ModelResponse)
+            ),
+            None,
+        )
+        if last_response_index is not None:
+            dangling_by_response.pop(last_response_index, None)
+    if not dangling_by_response:
+        return messages
+
+    repaired: list[_messages.ModelMessage] = []
+    synthesized: list[_messages.ToolReturnPart] = []
+    for index, message in enumerate(messages):
+        if isinstance(message, _messages.ModelResponse):
+            if synthesized:
+                # The dangling calls of the previous response are followed by another response,
+                # so the synthesized returns need a new request in between.
+                repaired.append(_messages.ModelRequest(parts=synthesized))
+                synthesized = []
+
+            if dangling := dangling_by_response.get(index):
+                for call in dangling:
+                    synthesized.append(
+                        _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content=_SYNTHESIZED_TOOL_RETURN_CONTENT,
+                            tool_call_id=call.tool_call_id,
+                            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+                            timestamp=message.timestamp,
+                            outcome='interrupted',
+                        )
+                    )
+            repaired.append(message)
+        elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
+            if synthesized:
+                message = _insert_synthesized_returns(message, synthesized)
+                synthesized = []
+            repaired.append(message)
+
+    if synthesized:
+        repaired.append(_messages.ModelRequest(parts=synthesized))
+
+    return repaired
+
+
+def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """Normalize the history's shape by merging consecutive same-role messages into one.
+
+    Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
+    synthetic `ModelResponse`s) that providers expect as a single turn, and within a merged request
+    hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
+    the repair passes have settled call/result pairing, so it operates on a valid history and never
+    separates a result from the call it answers.
+    """
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -1879,9 +2107,6 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            # Interrupted responses are preserved as-is. Stream cancellation can
-            # leave incomplete tool calls, but filtering or synthesizing tool
-            # returns is a separate run-resumption semantics decision.
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)
@@ -1898,3 +2123,32 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _clean_message_history(
+    messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
+) -> list[_messages.ModelMessage]:
+    """Make the message history provider-valid and normalize its shape, out of the box.
+
+    An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes over regular,
+    locally-executed tool call/result pairing across message boundaries. Following the principle
+    "massage the history however we can to make the model API accept it, and drop only what's
+    fundamentally unsendable", each pass ADDs (synthesizes) or REMOVEs content, never silently
+    dropping anything a provider could accept. Native/builtin parts are left entirely untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer
+    (which handles their own dangling/empty-id cases), and a native result can even arrive in a
+    later response, so the core pipeline must not touch them. Ordering matters:
+
+    1. `_drop_orphaned_tool_results` (REMOVE) — first, so an orphaned result can't survive into the
+       merge (which would hoist it to the front of a request) and so dropping it can expose a call
+       that then needs a synthesized result in pass 2.
+    2. `_repair_dangling_tool_calls` (ADD synthesized results) — the matching-graph repair; runs
+       before the merge changes message boundaries. Frontier-gated by `repair_last_response` so
+       the last response's still-answerable calls are left alone.
+    3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
+       never separates a result from its call.
+    """
+    messages = _drop_orphaned_tool_results(messages)
+    messages = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
+    messages = _merge_consecutive_messages(messages)
+    return messages
