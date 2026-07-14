@@ -283,7 +283,7 @@ async def test_openai_responses_prompt_cache_options_without_breakpoint_support(
 )
 async def test_openrouter_responses_unsupported_prompt_cache_options_omitted(
     allow_model_requests: None,
-    options: OpenAIPromptCacheOptions,
+    options: 'OpenAIPromptCacheOptions',
 ):
     """OpenRouter accepts request-level options only when `mode='explicit'`."""
     response = response_message(
