@@ -2335,7 +2335,10 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
             return ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='id1')
         elif primary_calls == 2:
             raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
-        return ModelResponse(parts=[TextPart('full answer')], provider_response_id='id2')
+        # Carry pre-existing metadata so the replace marker merges into it without clobbering.
+        return ModelResponse(
+            parts=[TextPart('full answer')], provider_response_id='id2', metadata={'provider_key': 'v'}
+        )
 
     def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise AssertionError('fallback should not be called')  # pragma: no cover
@@ -2351,8 +2354,10 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     # The fresh turn replaces the abandoned suspended one, with no duplicated parts.
     assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
     # The transient replace marker is popped after being honored, so it doesn't persist into history
-    # where it would wrongly force a later legitimate `pause_turn` continuation to replace.
+    # where it would wrongly force a later legitimate `pause_turn` continuation to replace — while the
+    # response's own pre-existing metadata is preserved.
     assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
+    assert (response_msg.metadata or {}).get('provider_key') == 'v'
 
 
 async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:

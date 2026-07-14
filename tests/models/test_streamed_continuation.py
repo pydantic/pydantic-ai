@@ -1008,6 +1008,43 @@ async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:
     assert model.cancelled[0].provider_response_id == 'job1'
 
 
+async def test_iter_node_stream_early_break_records_suspended() -> None:
+    """Breaking out of a `ModelRequestNode` stream via `agent.iter` mid-suspended-segment detaches.
+
+    Unlike the `run_stream` early break (which records via the composite's own detach path), exiting a
+    `node.stream(...)` context sends `GeneratorExit` into the graph's model-request stream, where
+    `_resolve_interrupted_stream_state` records the trailing response as resumable `'suspended'` and leaves
+    the server-side job alive — the graph-level detach branch.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2
+            ),
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    with capture_run_messages() as messages:
+        async with agent.iter('go') as run:
+            node = run.next_node
+            while not isinstance(node, End):
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:  # pragma: no branch
+                            break  # walk away mid suspended segment, without cancelling
+                    break  # stop driving the run
+                node = await run.next(node)
+
+    assert model.cancelled == []  # detach left the job alive
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].state == 'suspended'  # resumable
+    assert messages[-1].provider_response_id == 'job1'
+
+
 async def test_cancel_through_wrapper_model_delegates() -> None:
     """Cancelling a continuation on a `WrapperModel` forwards `cancel_suspended_response` to the wrapped model."""
     inner = _ScriptedModel(
