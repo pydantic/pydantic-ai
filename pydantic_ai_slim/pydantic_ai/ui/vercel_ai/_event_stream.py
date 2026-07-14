@@ -336,7 +336,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
         elif part.outcome == 'failed':
-            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
+            yield ToolOutputErrorChunk(
+                tool_call_id=part.tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
+            )
         else:
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
@@ -402,12 +404,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_details=invalidated_part.provider_details,
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response() if isinstance(part, RetryPromptPart) else part.model_response_str(),
+                error_text=part.model_response()
+                if isinstance(part, RetryPromptPart)
+                else part.model_response_str(wrap_if_error=False),
             )
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
+            yield ToolOutputErrorChunk(
+                tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
+            )
         else:
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 

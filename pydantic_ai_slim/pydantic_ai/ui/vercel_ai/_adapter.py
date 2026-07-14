@@ -725,16 +725,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(),
+                                    reason=builtin_return.model_response_str(wrap_if_error=False),
                                 ),
                             )
                         )
                     elif (
                         builtin_return.outcome == 'failed'
-                        or builtin_return.model_response_object().get('is_error') is True
+                        or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
-                        response_obj = builtin_return.model_response_object()
-                        error_text = response_obj.get('error_text', builtin_return.model_response_str())
+                        response_obj = builtin_return.model_response_object(wrap_if_error=False)
+                        error_text = response_obj.get(
+                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
+                        )
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -827,7 +829,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(),
+                            reason=tool_result.model_response_str(wrap_if_error=False),
                         ),
                     )
                 )
@@ -837,7 +839,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(),
+                        error_text=tool_result.model_response_str(wrap_if_error=False),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )

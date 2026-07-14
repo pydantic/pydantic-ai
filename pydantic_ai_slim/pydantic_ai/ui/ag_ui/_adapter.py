@@ -665,7 +665,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
-                        error=part.model_response_str() if part.outcome in ('failed', 'denied') else None,
+                        error=part.model_response_str(wrap_if_error=False)
+                        if part.outcome in ('failed', 'denied')
+                        else None,
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
@@ -774,7 +776,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
-                            error=builtin_return.model_response_str()
+                            error=builtin_return.model_response_str(wrap_if_error=False)
                             if builtin_return.outcome in ('failed', 'denied')
                             else None,
                             **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),

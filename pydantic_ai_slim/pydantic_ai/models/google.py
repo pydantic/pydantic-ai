@@ -1104,9 +1104,9 @@ class GoogleModel(Model[Client]):
             # plain string — folding file-reference strings in (as the success branch does under
             # `output`) pollutes the message. A hand-constructed failed return with files still
             # sends the file parts below; we just don't anchor them inside the error payload.
-            response = {'error': part.model_response_str()}
+            response = {'error': part.model_response_str(wrap_if_error=False)}
         else:
-            response = part.model_response_object()
+            response = part.model_response_object(wrap_if_error=False)
             if fallback_refs:
                 response = {'output': [response, *fallback_refs]}
 

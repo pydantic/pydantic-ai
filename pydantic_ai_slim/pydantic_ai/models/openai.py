@@ -1493,8 +1493,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 tool_text, tool_file_content = part.model_response_str_and_user_content()
-                if part.outcome == 'failed':
-                    tool_text = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -3144,11 +3142,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Iterates content directly to preserve order of mixed file/data content.
         """
         if not part.files:
-            return (
-                part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
-                if part.outcome == 'failed'
-                else part.model_response_str()
-            )
+            return part.model_response_str()
 
         output: list[
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
@@ -3158,7 +3152,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             output.append(
                 ResponseInputTextContentParam(
                     type='input_text',
-                    text=part._failed_wire_content(),  # pyright: ignore[reportPrivateUsage]
+                    text=part.model_response_str(),
                 )
             )
             content_items = part.files

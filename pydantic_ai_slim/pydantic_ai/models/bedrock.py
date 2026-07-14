@@ -1066,8 +1066,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         failed_without_status = part.outcome == 'failed' and not supports_tool_result_status
                         tool_result_content: list[Any] = []
                         if failed_without_status:
-                            failed_content = part._failed_wire_content()  # pyright: ignore[reportPrivateUsage]
-                            tool_result_content.append({'text': failed_content})
+                            tool_result_content.append({'text': part.model_response_str()})
                         colocated_media_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (

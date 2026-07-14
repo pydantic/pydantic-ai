@@ -380,7 +380,7 @@ class Instrumentation(AbstractCapability[Any]):
                 raise
             except ToolFailedError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
-                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str())
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise

@@ -351,8 +351,8 @@ class ToolFailedError(Exception):
     def __init__(self, tool_failed: ToolReturnPart):
         self.tool_failed = tool_failed
         # `content` may be non-`str` (a structured object or multimodal sequence), so stringify it
-        # the same way the failed result is rendered to the model.
-        super().__init__(tool_failed.model_response_str())
+        # without the model-facing error wrapper in the human-readable exception message.
+        super().__init__(tool_failed.model_response_str(wrap_if_error=False))
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_failed,)

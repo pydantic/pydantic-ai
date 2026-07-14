@@ -1359,28 +1359,40 @@ class BaseToolReturnPart:
                 result.append(tool_return_ta.dump_python(item, mode='json'))
         return result
 
-    def model_response_str(self) -> str:
+    def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
 
         This excludes multimodal files - use `.files` to get those separately.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         value, _ = self._unwrap_data()
         if value is None:
-            return ''
-        if isinstance(value, str):
-            return value
-        return tool_return_ta.dump_json(value).decode()
+            response = ''
+        elif isinstance(value, str):
+            response = value
+        else:
+            response = tool_return_ta.dump_json(value).decode()
 
-    def _failed_wire_content(self) -> str:
-        """Return JSON-text failure framing for providers without a native error channel."""
-        return tool_return_ta.dump_json({'error': self.model_response_str()}).decode()
+        if wrap_if_error and self.outcome == 'failed':
+            return tool_return_ta.dump_json({'error': response}).decode()
+        return response
 
-    def model_response_object(self) -> dict[str, Any]:
+    def model_response_object(self, *, wrap_if_error: bool = True) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
+        if wrap_if_error and self.outcome == 'failed':
+            return {'error': self.model_response_str(wrap_if_error=False)}
+
         value, _ = self._unwrap_data()
         if value is None:
             return {}
@@ -1413,16 +1425,20 @@ class BaseToolReturnPart:
             return cast('list[Any]', content)
         return None
 
-    def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
+    def model_response_str_and_user_content(self, *, wrap_if_error: bool = True) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
         returned file content list ('This is file {id}:' followed by the file).
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         _, files, was_list = self._split_content()
         if not files:
-            return self.model_response_str(), []
+            return self.model_response_str(wrap_if_error=wrap_if_error), []
 
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
@@ -1435,6 +1451,8 @@ class BaseToolReturnPart:
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
+        if wrap_if_error and self.outcome == 'failed':
+            return self.model_response_str(), file_content
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
         # Safe: when was_list is False, content is either scalar data (→ str item) or a single

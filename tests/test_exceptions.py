@@ -161,11 +161,11 @@ def test_tool_failed_error_pickle_round_trip():
 
 
 def test_tool_failed_error_non_str_content():
-    """ToolFailedError stringifies non-`str` content the same way the failed result is rendered to the model."""
+    """ToolFailedError stringifies non-`str` content without the model-facing error wrapper."""
     part = ToolReturnPart(content={'code': 42, 'reason': 'disk full'}, tool_name='my_tool', outcome='failed')
     exc = ToolFailedError(part)
 
-    assert str(exc) == part.model_response_str()
+    assert str(exc) == part.model_response_str(wrap_if_error=False)
     restored = pickle.loads(pickle.dumps(exc))
     assert restored.tool_failed.content == {'code': 42, 'reason': 'disk full'}
     assert str(restored) == str(exc)
