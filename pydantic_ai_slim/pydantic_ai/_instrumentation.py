@@ -254,7 +254,7 @@ def open_model_request_span(
         **model_attributes(model),
         **get_agent_run_baggage_attributes(),
     }
-    json_schema_properties: dict[str, Any] = {}
+    json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(model_request_parameters_attributes(prepared_parameters))
         json_schema_properties['model_request_parameters'] = {'type': 'object'}
