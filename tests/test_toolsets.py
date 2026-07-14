@@ -1511,9 +1511,13 @@ async def test_renamed_toolset_name_collision():
     toolset = FunctionToolset(tools=[Tool(a), Tool(b)])
     ctx = build_run_context(None)
 
-    # Renaming `a` to `b` collides with the existing `b`.
+    # Renaming `a` to `b`: the unchanged `b` then lands on the taken name.
     with pytest.raises(UserError, match=re.escape("Tool name conflicts with previously renamed tool: 'b'.")):
         await toolset.renamed({'b': 'a'}).get_tools(ctx)
+
+    # Renaming `b` to `a`: the renamed tool lands on the existing `a`.
+    with pytest.raises(UserError, match=re.escape("Renaming tool 'b' to 'a' conflicts with existing tool.")):
+        await toolset.renamed({'a': 'b'}).get_tools(ctx)
 
     # A genuine swap is not a collision and must preserve both tools.
     swapped = await toolset.renamed({'b': 'a', 'a': 'b'}).get_tools(ctx)
