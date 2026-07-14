@@ -964,6 +964,28 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
         assert result.usage.output_tokens == len(stream)
 
 
+@pytest.mark.parametrize(
+    'output_type, json_value, expected',
+    [
+        pytest.param(float, '20', 20.0, id='number-accepts-integer'),
+        pytest.param(int, '1.0', 1, id='integer-accepts-zero-fraction'),
+    ],
+)
+async def test_stream_result_type_numeric_json(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    json_value: str,
+    expected: int | float,
+) -> None:
+    stream = [text_chunk(f'{{"response":{json_value}}}'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
     """This test tests the primitif result with the pydantic ai format model response"""
 
@@ -2136,6 +2158,81 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             },
             True,
         ),
+        (
+            'Number accepts integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20},
+            True,
+        ),
+        (
+            'Number accepts float',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20.5},
+            True,
+        ),
+        (
+            'Number rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Integer accepts float with zero fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.0},
+            True,
+        ),
+        (
+            'Integer rejects float with fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.5},
+            False,
+        ),
+        (
+            'Integer rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Boolean accepts booleans',
+            {
+                'required': ['true_value', 'false_value'],
+                'properties': {
+                    'true_value': {'type': 'boolean'},
+                    'false_value': {'type': 'boolean'},
+                },
+            },
+            {'true_value': True, 'false_value': False},
+            True,
+        ),
+        (
+            'Boolean rejects integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'boolean'}}},
+            {'value': 1},
+            False,
+        ),
+        (
+            'Nested number accepts integer',
+            {
+                'required': ['outer'],
+                'properties': {
+                    'outer': {
+                        'type': 'object',
+                        'required': ['inner'],
+                        'properties': {'inner': {'type': 'number'}},
+                    }
+                },
+            },
+            {'outer': {'inner': 20}},
+            True,
+        ),
+        (
+            'Array of number accepts integers',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, 2, 3]},
+            True,
+        ),
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
@@ -2966,83 +3063,3 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
     assert [message.role for message in second_call_messages] == ['user', 'user']
-
-
-def test_validate_required_json_schema_number_integer_value():
-    """A required `number` field must accept an integer-valued JSON number.
-
-    `pydantic_core.from_json` parses fraction-less numbers as Python `int`, but
-    JSON-Schema `number` spans both `int` and `float`. The validator previously
-    used `isinstance(value, float)`, rejecting valid integer-valued `number`
-    fields in streamed structured output.
-    """
-    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 20}, schema) is True  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_number_float_value():
-    """A required `number` field must accept a float value."""
-    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 20.5}, schema) is True  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_number_boolean_rejected():
-    """A required `number` field must reject a boolean.
-
-    `bool` subclasses `int`, so a bare `isinstance(value, int)` would wrongly
-    accept it for `number`/`integer` fields.
-    """
-    schema = {'properties': {'value': {'type': 'number'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_integer_value():
-    """A required `integer` field must accept an int value."""
-    schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 42}, schema) is True  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_integer_boolean_rejected():
-    """A required `integer` field must reject a boolean (bool subclasses int)."""
-    schema = {'properties': {'value': {'type': 'integer'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is False  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_boolean_value():
-    """A required `boolean` field must accept a bool and reject non-bool values."""
-    schema = {'properties': {'value': {'type': 'boolean'}}, 'required': ['value']}
-    assert MistralStreamedResponse._validate_required_json_schema({'value': True}, schema) is True  # pyright: ignore[reportPrivateUsage]
-    assert MistralStreamedResponse._validate_required_json_schema({'value': False}, schema) is True  # pyright: ignore[reportPrivateUsage]
-    assert MistralStreamedResponse._validate_required_json_schema({'value': 1}, schema) is False  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_nested_number_integer():
-    """A nested object with a `number` field holding an integer must validate.
-
-    The validator recurses into nested objects, so the same `number`-as-`int`
-    bug applied to nested fields.
-    """
-    schema = {
-        'properties': {
-            'outer': {
-                'type': 'object',
-                'properties': {'inner': {'type': 'number'}},
-                'required': ['inner'],
-            }
-        },
-        'required': ['outer'],
-    }
-    assert MistralStreamedResponse._validate_required_json_schema({'outer': {'inner': 20}}, schema) is True  # pyright: ignore[reportPrivateUsage]
-
-
-def test_validate_required_json_schema_array_number_integer_elements():
-    """An array of `number` items with integer elements must validate.
-
-    The array items path used the same `isinstance(item, float)` check, so
-    integer-valued `number` array elements were rejected.
-    """
-    schema = {
-        'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}},
-        'required': ['values'],
-    }
-    assert MistralStreamedResponse._validate_required_json_schema({'values': [1, 2, 3]}, schema) is True  # pyright: ignore[reportPrivateUsage]

@@ -851,19 +851,13 @@ SIMPLE_JSON_TYPE_MAPPING = {
 
 
 def _matches_json_type(value: Any, json_type: str) -> bool:
-    """Check whether a parsed JSON value matches a JSON-Schema type.
-
-    JSON has a single `number` type, and `pydantic_core.from_json` parses
-    fraction-less numbers as Python `int`, so `number` must accept both `int` and
-    `float`. Because `bool` subclasses `int`, it is explicitly excluded from
-    `number` and `integer`.
-    """
+    """Check whether a parsed JSON value matches a JSON Schema type."""
     if json_type == 'number':
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if json_type == 'integer':
-        return isinstance(value, int) and not isinstance(value, bool)
-    if json_type == 'boolean':
-        return isinstance(value, bool)
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            isinstance(value, float) and value.is_integer()
+        )
     return isinstance(value, VALID_JSON_TYPE_MAPPING[json_type])
 
 
