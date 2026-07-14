@@ -623,15 +623,16 @@ def search(*, query: str, ignored: str | None = None) -> Any:
     """
     Args:
         query: Terms to search for.
-            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00\\ud800
+            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00\\\\ud800
     """
     ...\
 ''')
     function = ast.parse(rendered).body[0]
     assert isinstance(function, ast.FunctionDef)
     assert ast.get_docstring(function) == (
-        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0\ud800'
+        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0\\ud800'
     )
+    compile(rendered, '<rendered>', 'exec')
 
 
 # =============================================================================
