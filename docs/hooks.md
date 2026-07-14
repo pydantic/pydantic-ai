@@ -76,32 +76,35 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 
 [`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
 
-```python {title="deferred_hooks_capability.py"}
+```python {title="deferred_hooks_capability.py" lint="skip"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import ToolCallPart
 
-approval_hooks = Hooks(
-    id='approval-hooks',
-    description='Use when a workflow needs approval before destructive actions.',
+tool_metrics = Hooks(
+    id='tool-metrics',
+    description='Useful when the user wants instrumentation for tool calls.',
     defer_loading=True,
 )
 
 
-@approval_hooks.on.before_tool_execute
-async def require_approval(
+@tool_metrics.on.before_tool_execute
+async def log_tool_call(
     ctx: RunContext[None],
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
     args: ValidatedToolArgs,
 ) -> ValidatedToolArgs:
-    # Runs only after the model loads `approval-hooks`.
+    # Runs only after the model loads `tool-metrics`.
+    print(f'Calling tool {tool_def.name!r}')
     return args
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
+agent = Agent('openai-responses:gpt-5.4', capabilities=[tool_metrics])
 ```
+
+On-demand hooks are for observability or lightweight helpers that can safely run only when explicitly loaded. They are not a replacement for controls that must always run, such as human-in-the-loop approval. For those, use [`Tool`][pydantic_ai.tools.Tool] with `requires_approval=True`, raise/return [`ApprovalRequired`][pydantic_ai.ApprovalRequired], or add an [`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset] — see [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) and [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 
 You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
 
