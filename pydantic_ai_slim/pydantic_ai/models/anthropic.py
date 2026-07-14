@@ -592,14 +592,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         try:
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            return self._process_response(response, model_request_parameters)
+            return self._process_response(response, model_request_parameters, model_settings)
         except ValueError as e:
             if 'Streaming is required' in str(e):
                 # Anthropic SDK requires streaming for high max_tokens; fall back transparently
                 # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
                 stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
                 async with stream:
-                    streamed_response = await self._process_streamed_response(stream, model_request_parameters)
+                    streamed_response = await self._process_streamed_response(
+                        stream, model_request_parameters, model_settings
+                    )
                     async for _ in streamed_response:
                         pass
                     return streamed_response.get()
@@ -635,11 +637,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._messages_create(
-            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
-        )
+        model_settings = cast(AnthropicModelSettings, model_settings or {})
+        response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response:
-            yield await self._process_streamed_response(response, model_request_parameters)
+            yield await self._process_streamed_response(response, model_request_parameters, model_settings)
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1025,19 +1026,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
     def _process_response(  # noqa: C901
-        self, response: BetaMessage, model_request_parameters: ModelRequestParameters
+        self,
+        response: BetaMessage,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         builtin_tool_calls: dict[str, NativeToolCallPart] = {}
-        enabled_native_tool_kinds = self._get_enabled_native_tool_kinds(model_request_parameters)
+        enabled_server_tool_names = self._get_enabled_server_tool_names(model_request_parameters, model_settings)
+        server_tool_result_ids = {
+            item.tool_use_id
+            for item in response.content
+            if isinstance(
+                item,
+                BetaWebSearchToolResultBlock
+                | BetaWebFetchToolResultBlock
+                | BetaCodeExecutionToolResultBlock
+                | BetaBashCodeExecutionToolResultBlock
+                | BetaTextEditorCodeExecutionToolResultBlock
+                | BetaToolSearchToolResultBlock,
+            )
+        }
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
-                call_part = _map_server_tool_use_block(item, self.system)
-                if call_part.tool_name not in enabled_native_tool_kinds:
+                if item.name not in enabled_server_tool_names and item.id not in server_tool_result_ids:
                     continue
+                call_part = _map_server_tool_use_block(item, self.system)
                 builtin_tool_calls[call_part.tool_call_id] = call_part
                 items.append(call_part)
             elif isinstance(item, BetaWebSearchToolResultBlock):
@@ -1103,21 +1120,36 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details=provider_details,
         )
 
-    def _get_enabled_native_tool_kinds(self, model_request_parameters: ModelRequestParameters) -> frozenset[str]:
-        enabled_native_tool_kinds = {
-            tool.kind
-            for tool in model_request_parameters.native_tools
-            if not isinstance(tool, ToolSearchTool) or tool.strategy != 'custom'
-        }
-        # The 20260209 web tools run dynamic filters through an implicit code execution tool.
+    def _get_enabled_server_tool_names(
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+    ) -> frozenset[str]:
+        """Wire names that may legitimately appear in a `server_tool_use` block for this request.
+
+        Derived from the same `_add_native_tools` call that builds the request payload, so the
+        filter can't drift from what is actually sent to the API.
+        """
+        native_tools, _, _ = self._add_native_tools([], model_request_parameters, model_settings)
+        # `BetaMCPToolsetParam` is the only union member without a `name`, and `_add_native_tools`
+        # never emits it into `tools` (MCP servers are returned separately).
+        enabled_server_tool_names = {tool['name'] for tool in native_tools if 'name' in tool}  # pragma: no branch
+        # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
+        enabled_server_tool_names.discard('memory')
+
+        implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
+        if 'code_execution' in enabled_server_tool_names:
+            enabled_server_tool_names.update(implicit_code_execution_names)
+        # The 20260209 web tools provision code execution for dynamic filtering server-side.
         if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
             isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
         ):
-            enabled_native_tool_kinds.add(CodeExecutionTool.kind)
-        return frozenset(enabled_native_tool_kinds)
+            enabled_server_tool_names.update(implicit_code_execution_names)
+        return frozenset(enabled_server_tool_names)
 
     async def _process_streamed_response(
-        self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
+        self,
+        response: AsyncStream[BetaRawMessageStreamEvent],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
     ) -> StreamedResponse:
         peekable_response: _utils.PeekableAsyncStream[
             BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
@@ -1142,7 +1174,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _enabled_native_tool_kinds=self._get_enabled_native_tool_kinds(model_request_parameters),
+            _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
         )
 
     def _get_code_execution_tool_version(
@@ -2391,7 +2423,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
     _provider_name: str
     _provider_url: str
-    _enabled_native_tool_kinds: frozenset[str] = field(default_factory=lambda: frozenset[str]())
+    _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -2446,10 +2478,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     elif isinstance(current_block, BetaServerToolUseBlock):
-                        call_part = _map_server_tool_use_block(current_block, self.provider_name)
-                        if call_part.tool_name not in self._enabled_native_tool_kinds:
+                        if current_block.name not in self._enabled_server_tool_names:
+                            # Unlike non-streaming, this cannot pre-scan later result blocks, so a gap in the
+                            # enabled-name set would leave their return part orphaned. Result presence is only
+                            # advisory: newer web tools can omit paired blocks with `response_inclusion: "excluded"`,
+                            # which pydantic-ai does not currently send.
                             ignored_server_tool_use_indices.add(event.index)
                             continue
+                        call_part = _map_server_tool_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
                         # In streaming, the block's `input` is empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
