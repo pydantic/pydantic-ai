@@ -5286,6 +5286,52 @@ async def test_stream_cancel_with_natural_drain_reports_interrupted():
     assert stream.get().state == 'interrupted'
 
 
+async def test_stream_cancel_outranks_incomplete_state_hint():
+    """A cancelled stream reports `'interrupted'` even when it stamped `state='incomplete'` mid-iteration.
+
+    OpenAI Responses stamps `state='incomplete'` on every `in_progress` event. That in-flight hint must
+    not outrank an explicit `cancel()` in `get()`, or a cancelled foreground stream would report
+    `'incomplete'` instead of `'interrupted'` — a regression of the cancellation-state feature that a VCR
+    test can't catch, since it hinges on `get()`'s internal state precedence rather than the request body.
+    """
+
+    @dataclass
+    class _InProgressStream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for _ in range(2):
+                self.state = 'incomplete'  # mirror OpenAI Responses stamping on each `in_progress` event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                    yield event
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'in-progress'
+
+        @property
+        def provider_name(self) -> str | None:
+            return 'in-progress'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _InProgressStream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
+
+
 async def test_completed_streamed_response_cancel_noop():
     response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
     streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)

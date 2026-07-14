@@ -870,9 +870,15 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self.state != 'complete':
-            state: ModelResponseState = self.state
-        elif self._finished:
+        # `'suspended'` is the one state a provider stamps that `get()` can't otherwise derive, so it wins.
+        # A finished iteration only means `'complete'` if the provider didn't leave an explicit `'incomplete'`
+        # hint (e.g. a foreground OpenAI Responses stream that EOF'd without a terminal event). An explicit
+        # `cancel()` outranks that in-flight `'incomplete'` hint, so a cancelled foreground stream reports
+        # `'interrupted'` rather than `'incomplete'`.
+        state: ModelResponseState
+        if self.state == 'suspended':
+            state = 'suspended'
+        elif self._finished and self.state != 'incomplete':
             state = 'complete'
         elif self._cancelled:
             state = 'interrupted'
