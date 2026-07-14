@@ -27,11 +27,11 @@ Never trust marketing names, news articles, or guesses. Hit the provider's model
 | OpenAI    | `curl -s https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"` |
 | Anthropic | `curl -s https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"` |
 | xAI       | `curl -s https://api.x.ai/v1/models -H "Authorization: Bearer $XAI_API_KEY"` |
-| Google    | `curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GOOGLE_API_KEY"` |
+| Google    | `curl -s https://generativelanguage.googleapis.com/v1beta/models -H "x-goog-api-key: $GOOGLE_API_KEY"` |
 | Groq      | `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"` |
-| Bedrock   | `aws bedrock list-foundation-models --region us-east-1` |
+| Bedrock   | `aws bedrock list-foundation-models --region "$AWS_REGION"` |
 
-Load credentials from the repo-root `.env` with `source .env && <cmd>`. List **every** id the provider exposes for this release — base, dated snapshot, `-pro`, `-mini`, `-nano`, `-codex`, `-chat-latest`. Add only what actually exists; do not extrapolate sibling variants.
+Load credentials from the repo-root `.env` with `source .env && <cmd>`. `list-foundation-models` is region-scoped, so query the region your models are actually deployed in (not a hard-coded default). List **every** id the provider exposes for this release — base, dated snapshot, `-pro`, `-mini`, `-nano`, `-codex`, `-chat-latest`. Add only what actually exists; do not extrapolate sibling variants.
 
 If the user-given id is **not** in the listing, stop and confirm with the user before proceeding.
 
@@ -73,9 +73,9 @@ For OpenAI:
 uv run python -c "from openai.types.chat_model import ChatModel; from typing import get_args; print([m for m in get_args(ChatModel) if '<new-version>' in m])"
 ```
 
-For Anthropic, check `anthropic.types.model.Model` similarly.
+Anthropic and xAI do **not** follow this OpenAI flow — the repo bridges their SDK lag with a local `Literal` and lands green immediately, no split. See the SDK-lag bridge notes in their landmine sections below (Anthropic checks `ModelParam`, not `Model`).
 
-If the SDK doesn't yet list the new id, **the literals PR cannot land green on CI**. Surface this to the user with the choice:
+If a provider with no bridge (e.g. OpenAI) doesn't yet list the new id, **the literals PR cannot land green on CI**. Surface this to the user with the choice:
 
 1. **Split the PR** — land the profile/handler change now (capability flip is harmless without `KnownModelName` literals because runtime accepts plain strings). Open a separate draft PR for the literals; promote it once the SDK ships and the pin is bumped.
 2. **Hold the whole PR** — wait for SDK release, bump pin, refresh snapshots with `pytest --inline-snapshot=fix`, push.
