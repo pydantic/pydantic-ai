@@ -190,7 +190,7 @@ async def test_openai_responses_cache_point_and_options(
     mock_client = MockOpenAIResponses.create_mock(c)
     if provider_name == 'openai':
         model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
-    elif provider_name == 'openrouter':
+    else:
         model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
