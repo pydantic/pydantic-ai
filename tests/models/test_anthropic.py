@@ -11886,10 +11886,10 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
     )
 
 
-async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
-    """Test that exceeding the default max continuations (50) raises UnexpectedModelBehavior."""
+async def test_pause_turn_exceeds_max_generation_continuations(allow_model_requests: None):
+    """Test that exceeding the default generation-continuation limit raises `UnexpectedModelBehavior`."""
     responses: list[BetaMessage | Exception] = []
-    for i in range(51):
+    for i in range(11):
         c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
         c.stop_reason = 'pause_turn'
         # Distinct ids so each pause accumulates (real `pause_turn` behavior), hitting the accumulate cap
@@ -11901,7 +11901,7 @@ async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 50 times'):
+    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 10 times'):
         await agent.run('test prompt', usage_limits=UsageLimits(request_limit=None))
 
 

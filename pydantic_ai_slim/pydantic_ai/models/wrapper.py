@@ -129,6 +129,9 @@ class WrapperModel(Model):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         return await self.wrapped.cancel_suspended_response(response)
 
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return self.wrapped.continuation_delay(response)
+
     @asynccontextmanager
     async def request_stream(
         self,

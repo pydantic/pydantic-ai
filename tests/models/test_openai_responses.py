@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -49,7 +50,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -64,7 +65,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI, omit
+    from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
     from openai.types.responses import (
         ResponseCreatedEvent,
@@ -11853,7 +11854,7 @@ async def test_cancel_suspended_response_only_cancels_background_jobs(allow_mode
 
     Unit-style guard test: `responses.cancel` 400s on a non-background response, so the guard must
     reliably tell them apart. It keys off the explicit `provider_details['background']` marker (stamped
-    from the API's own `response.background` field), not the `suspended_retry_delay` poll interval — so
+    from the API's own `response.background` field), not the continuation poll interval — so
     a normal interrupted streamed response that happens to carry a delay is left untouched.
     """
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
@@ -11861,13 +11862,11 @@ async def test_cancel_suspended_response_only_cancels_background_jobs(allow_mode
     cancel_ids = cast(MockOpenAIResponses, mock_client).cancel_ids
 
     # A normal streamed response interrupted by `cancel()` (no background marker) must NOT be cancelled,
-    # even if it happens to carry a `suspended_retry_delay`.
     await model.cancel_suspended_response(
         ModelResponse(
             parts=[],
             provider_name='openai',
             provider_response_id='resp_normal',
-            suspended_retry_delay=1.0,
             state='interrupted',
         )
     )
@@ -12900,7 +12899,6 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                 provider_details={'timestamp': IsDatetime(), 'background': True, 'finish_reason': 'completed'},
                 provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
                 finish_reason='stop',
-                suspended_retry_delay=1.0,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -12940,7 +12938,7 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
     async def continue_stream() -> tuple[ModelResponse, str]:
         async with model.request_stream(
             messages=[original_request, suspended_response],
-            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
             model_request_parameters=ModelRequestParameters(),
         ) as continuation_stream:
             async for _ in continuation_stream:
@@ -13004,7 +13002,7 @@ async def test_background_mode_streaming_starting_after_vcr(
     async def continue_stream() -> tuple[ModelResponse, str]:
         async with model.request_stream(
             messages=[original_request, suspended_response],
-            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
             model_request_parameters=ModelRequestParameters(),
         ) as continuation_stream:
             async for _ in continuation_stream:
@@ -13069,7 +13067,7 @@ async def test_background_mode_streaming_without_starting_after_vcr(
     async def continue_stream() -> tuple[ModelResponse, str]:
         async with model.request_stream(
             messages=[original_request, suspended_response],
-            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
             model_request_parameters=ModelRequestParameters(),
         ) as continuation_stream:
             return continuation_stream.get(), continuation_stream.state
@@ -13109,7 +13107,7 @@ async def test_background_queued_then_completed(allow_model_requests: None):
 
     result = await agent.run(
         'What is the meaning of life?',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
     assert result.output == 'The answer is 42.'
     assert result.all_messages() == snapshot(
@@ -13148,7 +13146,7 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
 
     result = await agent.run(
         'Hello',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
     assert result.output == 'Done!'
     assert result.all_messages() == snapshot(
@@ -13183,21 +13181,21 @@ async def test_background_passes_parameter(allow_model_requests: None):
 
     await agent.run(
         'test',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
 
     kwargs = get_mock_responses_kwargs(mock_client)
     assert kwargs[0]['background'] is True
 
 
-async def test_background_max_continuations(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+async def test_background_max_polls(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Background mode: a job that never leaves `in_progress` eventually trips the replace-poll backstop.
 
     Re-polling one background job is a `merge_mode` *replace* re-suspension, so it's bounded by the far
-    larger `MAX_REPLACE_CONTINUATIONS` backstop (not the small `MAX_CONTINUATIONS` accumulate cap), which
-    is why a legitimately long job isn't killed after ~50 polls. Patch the backstop small to exercise it.
+    larger `MAX_BACKGROUND_POLLS` backstop (not the small `MAX_GENERATION_CONTINUATIONS` cap), which
+    is why a legitimately long job isn't killed after 10 generation continuations. Patch it small here.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_REPLACE_CONTINUATIONS', 3)
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_BACKGROUND_POLLS', 3)
     retrieve_response = _text_response('still working...', status='in_progress', background=True)
 
     mock_client = MockOpenAIResponses(
@@ -13211,7 +13209,7 @@ async def test_background_max_continuations(allow_model_requests: None, monkeypa
     with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
         await agent.run(
             'test',
-            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
             usage_limits=UsageLimits(request_limit=None),
         )
 
@@ -13231,7 +13229,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
 
     result = await agent.run(
         'test',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
     )
     assert result.output == 'final'
     assert result.all_messages() == snapshot(
@@ -13286,7 +13284,7 @@ async def test_background_request_stream_uses_non_stream_retrieve_without_sequen
             ModelRequest(parts=[UserPromptPart(content='test')]),
             initial_response,
         ],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
         assert request_stream.state == 'suspended'
@@ -13328,7 +13326,7 @@ async def test_background_streaming_passes_starting_after(allow_model_requests: 
             ModelRequest(parts=[UserPromptPart(content='test')]),
             initial_response,
         ],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
         assert [event async for event in request_stream] == []
@@ -13384,7 +13382,7 @@ async def test_background_streaming_continuation_without_created_event(allow_mod
             ModelRequest(parts=[UserPromptPart(content='test')]),
             initial_response,
         ],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
         # A resumed stream (no `response.created` event) starts 'suspended': we only got here because
@@ -13609,7 +13607,7 @@ async def test_resumed_stream_without_terminal_event_stays_suspended(allow_model
 
     async with model.request_stream(
         messages=[ModelRequest(parts=[UserPromptPart(content='test')]), initial_response],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
         assert request_stream.state == 'suspended'
@@ -13648,12 +13646,40 @@ async def test_resume_without_background_setting_still_gets_retry_delay(allow_mo
     result = await model.request(
         messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
         # No `openai_background=True` here: mirrors a persisted suspended history resumed by a fresh run.
-        model_settings=OpenAIResponsesModelSettings(openai_background_poll_interval=7.0),
+        model_settings=OpenAIResponsesModelSettings(),
         model_request_parameters=ModelRequestParameters(),
     )
 
     assert result.state == 'suspended'
-    assert result.suspended_retry_delay == 7.0
+    assert model.continuation_delay(result) == 2.0
+
+
+async def test_resume_expired_suspended_response(allow_model_requests: None):
+    """A 404 while resuming persisted suspended history raises the typed expiry error."""
+    error = APIStatusError(
+        'not found',
+        response=httpx.Response(status_code=404, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        body={'error': {'message': 'Response not found'}},
+    )
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_expired',
+        state='suspended',
+    )
+
+    with pytest.raises(
+        SuspendedResponseExpired,
+        match="The suspended response 'resp_expired' could not be resumed because its server-side job is no longer available",
+    ):
+        await model.request(
+            messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
 
 
 async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_requests: None):
@@ -13685,7 +13711,7 @@ async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_re
 
     async with model.request_stream(
         messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
         model_request_parameters=ModelRequestParameters(),
     ) as request_stream:
         assert request_stream.state == 'suspended'

@@ -2309,14 +2309,6 @@ class ModelResponse:
       Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
     """
 
-    suspended_retry_delay: float | None = None
-    """Seconds to wait before retrying a suspended response.
-
-    Only meaningful when `state == 'suspended'`. `None` means retry immediately.
-    Set by providers that return in-progress responses, e.g. OpenAI background mode.
-    Durable execution frameworks can intercept the wait via `set_agent_graph_sleep`.
-    """
-
     @property
     def text(self) -> str | None:
         """Get the text in the response."""

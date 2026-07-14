@@ -45,8 +45,8 @@ from .exceptions import ToolRetryError
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
 # marker, not a within-package one, so the private-usage check doesn't apply here.
 from .models._continuation import (
-    MAX_CONTINUATIONS,
-    MAX_REPLACE_CONTINUATIONS,
+    MAX_BACKGROUND_POLLS,
+    MAX_GENERATION_CONTINUATIONS,
     MergeMode,
     _ContinuationStreamedResponse,
     cancel_suspended_job,
@@ -77,7 +77,6 @@ __all__ = (
     'CallToolsNode',
     'build_run_context',
     'capture_run_messages',
-    'set_agent_graph_sleep',
     'HistoryProcessor',
     'resolve_conversation_id',
     'process_tool_calls',
@@ -141,13 +140,13 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
 
     Example:
     ```python
-    from pydantic_ai import set_agent_graph_sleep
+    from pydantic_ai import Agent
 
 
     async def durable_sleep(seconds: float) -> None:
         ...  # e.g. `await workflow.sleep(seconds)` under Temporal
 
-    with set_agent_graph_sleep(durable_sleep):
+    with Agent.using_sleep(durable_sleep):
         ...
     ```
     """
@@ -822,8 +821,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_settings=req_ctx.model_settings,
                     base_messages=req_ctx.messages,
                     run_context=run_context,
-                    max_continuations=MAX_CONTINUATIONS,
-                    max_replace_continuations=MAX_REPLACE_CONTINUATIONS,
+                    max_generation_continuations=MAX_GENERATION_CONTINUATIONS,
+                    max_background_polls=MAX_BACKGROUND_POLLS,
                     sleep_func=_agent_graph_sleep,
                     check_usage=lambda continuation_usage: self._check_continuation_usage(ctx, continuation_usage),
                     initial_suspended_response=self._resume_suspended,
@@ -1037,10 +1036,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
             # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
             # `pause_turn`, a model change, or a `FallbackModel` replace directive) keeps the small
-            # `MAX_CONTINUATIONS` cap against an unbounded model, while only a *same-id* re-suspension
+            # `MAX_GENERATION_CONTINUATIONS` cap against an unbounded model, while only a *same-id* re-suspension
             # re-polling one background job (OpenAI background mode, same `provider_response_id`) gets the
-            # far more generous `MAX_REPLACE_CONTINUATIONS` backstop so a legitimately long job isn't killed
-            # after ~50 polls.
+            # far more generous `MAX_BACKGROUND_POLLS` backstop so a legitimately long job isn't killed.
             accumulate_count = 0
             replace_count = 0
             # Mode of the merge that produced the current suspended `response`. A chain is homogeneous in
@@ -1056,23 +1054,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         job_id = response.provider_response_id
                         if last_mode == 'replace-same-id':
                             replace_count += 1
-                            over_limit = replace_count > MAX_REPLACE_CONTINUATIONS
+                            over_limit = replace_count > MAX_BACKGROUND_POLLS
                             limit_message = (
                                 f'Model response for job {job_id!r} remained suspended after polling the maximum '
-                                f'of {MAX_REPLACE_CONTINUATIONS} times'
+                                f'of {MAX_BACKGROUND_POLLS} times'
                             )
                         else:
                             accumulate_count += 1
-                            over_limit = accumulate_count > MAX_CONTINUATIONS
+                            over_limit = accumulate_count > MAX_GENERATION_CONTINUATIONS
                             limit_message = (
                                 f'Model response {job_id!r} was suspended more than the maximum of '
-                                f'{MAX_CONTINUATIONS} times'
+                                f'{MAX_GENERATION_CONTINUATIONS} times'
                             )
                         if over_limit:
                             # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
                             await cancel_job(response)
                             raise exceptions.UnexpectedModelBehavior(limit_message)
-                        if delay := response.suspended_retry_delay:
+                        if delay := req_ctx.model.continuation_delay(response):
                             try:
                                 await _agent_graph_sleep(delay)
                             except BaseException:

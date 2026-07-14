@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent, capture_run_messages, set_agent_graph_sleep
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
@@ -61,7 +61,6 @@ class _StreamSegment:
     provider_response_id: str
     input_tokens: int
     output_tokens: int
-    suspended_retry_delay: float | None = None
 
 
 @dataclass
@@ -76,7 +75,6 @@ class _ScriptedStreamedResponse(StreamedResponse):
         # reindexable event, mirroring a real provider stream that knows its id from the start.
         self.provider_response_id = segment.provider_response_id
         self.state = segment.state
-        self.suspended_retry_delay = segment.suspended_retry_delay
         self._usage = RequestUsage(input_tokens=segment.input_tokens, output_tokens=segment.output_tokens)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -152,6 +150,11 @@ class _ScriptedModel(Model):
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        if (response.provider_details or {}).get('background'):
+            return 0.5
+        return None
 
 
 def _suspended(*, texts: list[str], provider_response_id: str, input_tokens: int, output_tokens: int) -> ModelResponse:
@@ -393,7 +396,6 @@ async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
                 provider_response_id='r1',
                 input_tokens=5,
                 output_tokens=2,
-                suspended_retry_delay=0.0,
             ),
             _StreamSegment(texts=['c'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4),
         ]
@@ -540,6 +542,11 @@ class _RecordingCancelModel(WrapperModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
 
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        if (response.provider_details or {}).get('background'):
+            return 0.5
+        return None
+
 
 async def test_nonstream_cancel_during_retry_sleep_cancels_job() -> None:
     """A cancellation during the inter-poll retry sleep cancels the suspended job and propagates the error.
@@ -550,7 +557,7 @@ async def test_nonstream_cancel_during_retry_sleep_cancels_job() -> None:
     """
 
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=0.5)
+        return ModelResponse(parts=[TextPart('paused')], state='suspended', provider_details={'background': True})
 
     model = _RecordingCancelModel(FunctionModel(fn))
     agent = Agent(model)
@@ -558,16 +565,16 @@ async def test_nonstream_cancel_during_retry_sleep_cancels_job() -> None:
     async def _cancel_during_sleep(delay: float) -> None:
         raise asyncio.CancelledError
 
-    with pytest.raises(asyncio.CancelledError), set_agent_graph_sleep(_cancel_during_sleep):
+    with pytest.raises(asyncio.CancelledError), Agent.using_sleep(_cancel_during_sleep):
         await agent.run('go')
 
     assert len(model.cancelled) == 1
     assert model.cancelled[0].state == 'suspended'
 
 
-async def test_nonstream_max_continuations_cancels_job(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_nonstream_max_generation_continuations_cancels_job(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hitting the max-continuations limit cancels the still-suspended job before raising, so it doesn't leak."""
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 2)
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 2)
 
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('paused')], state='suspended')
@@ -753,14 +760,16 @@ async def test_streaming_wrap_error_propagates() -> None:
 
 
 @pytest.mark.parametrize('stream', [False, True])
-async def test_background_poll_survives_past_max_continuations(stream: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A replace-style (same-id) background poll chain isn't killed by the small `MAX_CONTINUATIONS` cap.
+async def test_background_poll_survives_past_max_generation_continuations(
+    stream: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replace-style (same-id) background poll chain isn't killed by `MAX_GENERATION_CONTINUATIONS`.
 
     Each poll of a still-pending background job re-fetches the *same* job (shared `provider_response_id`),
     so it must not count against the accumulate ceiling that guards a runaway `pause_turn` model — a
     healthy background job that legitimately runs long has to be allowed to finish.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 3)
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 3)
 
     poll_count = 8  # far past the strict cap of 3
     if stream:
@@ -874,14 +883,14 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
 
 
 async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-streamed *model-change* replace chain is bound by the strict `MAX_CONTINUATIONS`, not the backstop.
+    """A model-change replace chain is bound by `MAX_GENERATION_CONTINUATIONS`, not the poll backstop.
 
     Each suspended segment reports a different `model_name`, so the merge *replaces* — but as *fresh*
     generation, not a same-id re-poll of one background job. It must therefore count against the strict
     cap (the runaway guard) rather than inherit the generous same-id backstop, and cancel the still-live
     job before raising.
     """
-    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 2)
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_GENERATION_CONTINUATIONS', 2)
 
     def _suspended_model_change(model_name: str, provider_response_id: str) -> ModelResponse:
         return ModelResponse(
@@ -894,7 +903,7 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkey
         )
 
     # Three fresh suspensions under different models — past the strict cap of 2, which the generous same-id
-    # backstop (10_000) would otherwise let sail through.
+    # background-poll backstop (1000) would otherwise let sail through.
     model = _ScriptedModel(
         responses=[
             _suspended_model_change('m1', 'r1'),
@@ -1124,7 +1133,6 @@ async def test_cancel_through_wrapper_model_delegates() -> None:
                 provider_response_id='r1',
                 input_tokens=5,
                 output_tokens=2,
-                suspended_retry_delay=0.0,
             ),
             _StreamSegment(texts=['c'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4),
         ]

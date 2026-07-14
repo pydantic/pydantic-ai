@@ -51,7 +51,6 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
-    set_agent_graph_sleep,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._output import (
@@ -7853,7 +7852,6 @@ def test_binary_content_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'state': 'complete',
-                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
@@ -7928,7 +7926,6 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'response',
                 'finish_reason': None,
                 'state': 'complete',
-                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
@@ -8009,7 +8006,6 @@ def test_image_url_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'state': 'complete',
-                'suspended_retry_delay': None,
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
@@ -13200,6 +13196,12 @@ def test_continuation_merges_parts_and_usage_across_response_ids() -> None:
     assert merged.usage == RequestUsage(input_tokens=18, output_tokens=7)
 
 
+class _DelayFunctionModel(FunctionModel):
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        delay = (response.provider_details or {}).get('continuation_delay')
+        return delay if isinstance(delay, float) else None
+
+
 def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
     """When no custom sleep is registered, the continuation loop uses asyncio.sleep."""
     call_count = 0
@@ -13209,10 +13211,12 @@ def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch)
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=0.01)
+            return ModelResponse(
+                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': 0.01}
+            )
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(model_fn))
+    agent = Agent(_DelayFunctionModel(model_fn))
 
     original_sleep = asyncio.sleep
 
@@ -13227,7 +13231,7 @@ def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_agent_graph_sleep_custom_function() -> None:
-    """A custom sleep function registered via set_agent_graph_sleep is used instead of asyncio.sleep."""
+    """A custom sleep function registered via `Agent.using_sleep` is used instead of `asyncio.sleep`."""
     call_count = 0
     custom_delays: list[float] = []
 
@@ -13235,15 +13239,17 @@ def test_agent_graph_sleep_custom_function() -> None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=5.0)
+            return ModelResponse(
+                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': 5.0}
+            )
         return ModelResponse(parts=[TextPart('done')])
 
     async def custom_sleep(delay: float) -> None:
         custom_delays.append(delay)
 
-    agent = Agent(FunctionModel(model_fn))
+    agent = Agent(_DelayFunctionModel(model_fn))
 
-    with set_agent_graph_sleep(custom_sleep):
+    with Agent.using_sleep(custom_sleep):
         result = agent.run_sync('test')
 
     assert 'done' in result.output
@@ -13253,11 +13259,12 @@ def test_agent_graph_sleep_custom_function() -> None:
 @dataclass
 class _SuspendingStreamModel(Model):
     """Wraps a `FunctionModel` and, per streaming call, forces its streamed response into a
-    scripted `state`/`suspended_retry_delay` so the continuation composite drives real segments."""
+    scripted `state`/continuation delay so the continuation composite drives real segments."""
 
     _inner: FunctionModel
     _states: list[tuple[Literal['suspended', 'complete'], float | None]]
     _call: int = 0
+    _delay: float | None = None
 
     @asynccontextmanager
     async def request_stream(
@@ -13273,8 +13280,11 @@ class _SuspendingStreamModel(Model):
             messages, model_settings, model_request_parameters, run_context
         ) as streamed_response:
             streamed_response.state = state
-            streamed_response.suspended_retry_delay = delay
+            self._delay = delay
             yield streamed_response
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return self._delay
 
     async def request(
         self,
@@ -13294,7 +13304,7 @@ class _SuspendingStreamModel(Model):
 
 
 async def test_agent_graph_sleep_streaming_with_delay() -> None:
-    """Streaming continuation path also uses the pluggable sleep when suspended_retry_delay is set."""
+    """Streaming continuation path also uses the pluggable sleep when a continuation delay is set."""
     custom_delays: list[float] = []
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -13312,7 +13322,7 @@ async def test_agent_graph_sleep_streaming_with_delay() -> None:
     assert model.system == inner.system
     agent = Agent(model)
 
-    with set_agent_graph_sleep(custom_sleep):
+    with Agent.using_sleep(custom_sleep):
         async with agent.iter('test') as run:
             node = run.next_node
             while not isinstance(node, End):

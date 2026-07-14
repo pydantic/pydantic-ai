@@ -48,8 +48,8 @@ from ..usage import RequestUsage
 from . import Model, StreamedResponse
 
 __all__ = [
-    'MAX_CONTINUATIONS',
-    'MAX_REPLACE_CONTINUATIONS',
+    'MAX_BACKGROUND_POLLS',
+    'MAX_GENERATION_CONTINUATIONS',
     'MergeMode',
     'cancel_suspended_job',
     'merge_mode',
@@ -67,7 +67,7 @@ __all__ = [
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
-MAX_CONTINUATIONS = 50
+MAX_GENERATION_CONTINUATIONS = 10
 """Maximum number of *fresh-generation* continuation segments for a single model turn.
 
 Applies to every re-suspension that produces genuinely new generation: an *accumulate* (Anthropic
@@ -78,18 +78,18 @@ leaves the `'suspended'` state, endlessly emitting new segments; exceeding it ra
 
 Only a *same-id* re-suspension — re-polling a single long-running job under the same
 `provider_response_id` (OpenAI background mode) — is bounded by the far more generous
-[`MAX_REPLACE_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_REPLACE_CONTINUATIONS] instead,
-so a healthy background job that legitimately runs for minutes isn't killed after ~50 polls.
+[`MAX_BACKGROUND_POLLS`][pydantic_ai.models._continuation.MAX_BACKGROUND_POLLS] instead,
+so a healthy background job that legitimately runs for minutes isn't killed after ~10 continuations.
 """
 
-MAX_REPLACE_CONTINUATIONS = 10_000
+MAX_BACKGROUND_POLLS = 1000
 """Backstop for *same-id* continuation polling of a single background job.
 
 A same-id re-suspension re-fetches one long-running job under the same `provider_response_id`
 (OpenAI background mode), so — unlike a fresh-generation re-suspension (see
-[`MAX_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_CONTINUATIONS]) — it carries no risk of an
+[`MAX_GENERATION_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_GENERATION_CONTINUATIONS]) — it carries no risk of an
 unbounded model spawning endless new segments: it's the *same* job, and legitimate background jobs run
-for minutes (hundreds of polls at a ~1s interval). The real bounds here are the run's usage limits and
+for minutes (hundreds of polls at a ~2s interval). The real bounds here are the run's usage limits and
 explicit cancellation, which already work; this large ceiling is only a last-resort safety net against a
 provider stuck returning `'suspended'` for the same id forever (which usage limits wouldn't catch, since
 a pending poll adds no tokens). Exceeding it raises
@@ -102,11 +102,11 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 - `'replace-same-id'`: both responses share a `provider_response_id` — a passive re-poll of one
   long-running job (OpenAI background `retrieve`, which returns the full response so far). Replaces
   wholesale, and — being the *same* job rather than fresh generation — is bounded by the generous
-  [`MAX_REPLACE_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_REPLACE_CONTINUATIONS] ceiling.
+  [`MAX_BACKGROUND_POLLS`][pydantic_ai.models._continuation.MAX_BACKGROUND_POLLS] ceiling.
 - `'replace-new'`: the response supersedes the suspended turn with *fresh* generation — the model
   changed (accumulating parts from different models is always wrong) or a `FallbackModel` stamped the
   `replace_previous_response` marker after a rewind-and-restart. Replaces wholesale, but counts against
-  the strict [`MAX_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_CONTINUATIONS] ceiling, since a
+  the strict [`MAX_GENERATION_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_GENERATION_CONTINUATIONS] ceiling, since a
   chain of fresh suspensions is the exact runaway that cap guards against.
 - `'accumulate'`: appends new parts onto the prior response (Anthropic `pause_turn`). Strict ceiling.
 """
@@ -247,13 +247,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
     model_settings: ModelSettings | None
     base_messages: list[ModelMessage]
     run_context: RunContext[Any] | None
-    max_continuations: int
+    max_generation_continuations: int
     sleep_func: Callable[[float], Awaitable[None]]
     check_usage: Callable[[RequestUsage], None]
     initial_suspended_response: ModelResponse | None = None
     # Ceiling for *replace*-style (single-job background poll) re-suspensions, kept separate from
-    # `max_continuations` (which bounds accumulate-style re-suspensions). See `MAX_REPLACE_CONTINUATIONS`.
-    max_replace_continuations: int = MAX_REPLACE_CONTINUATIONS
+    # `max_generation_continuations` (which bounds fresh-generation re-suspensions). See `MAX_BACKGROUND_POLLS`.
+    max_background_polls: int = MAX_BACKGROUND_POLLS
     # Entered around each segment's `model.request_stream(...)`. The agent graph passes a factory
     # that re-attaches the ambient context (e.g. the OTel `chat` span opened by `wrap_model_request`
     # in a separate task) so span updates driven by `get_current_span()` land on the right span even
@@ -336,26 +336,27 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """Count a suspended re-issue against its ceiling (same-id poll vs everything else), raising if exceeded.
 
         Only a `'replace-same-id'` re-suspension — a passive re-poll of one long-running background job —
-        gets the generous `max_replace_continuations` ceiling. A model-change or `FallbackModel`-directed
-        replace is *fresh* generation, not the same job, so it counts against the strict `max_continuations`
+        gets the generous `max_background_polls` ceiling. A model-change or `FallbackModel`-directed
+        replace is *fresh* generation, not the same job, so it counts against the strict `max_generation_continuations`
         cap alongside accumulate re-suspensions — otherwise a chain of fresh suspensions is the exact
         runaway the strict cap guards against. The first re-issue has no prior merge to classify
         (`last_mode is None`) so it counts as strict, harmless since both ceilings allow at least one.
-        See `MAX_REPLACE_CONTINUATIONS`. Returns the updated `(accumulate_count, replace_count)`.
+        See `MAX_BACKGROUND_POLLS`. Returns the updated `(accumulate_count, replace_count)`.
         """
         job_id = response.provider_response_id
         if last_mode == 'replace-same-id':
             replace_count += 1
-            if replace_count > self.max_replace_continuations:
+            if replace_count > self.max_background_polls:
                 raise UnexpectedModelBehavior(
                     f'Model response for job {job_id!r} remained suspended after polling the maximum of '
-                    f'{self.max_replace_continuations} times'
+                    f'{self.max_background_polls} times'
                 )
         else:
             accumulate_count += 1
-            if accumulate_count > self.max_continuations:
+            if accumulate_count > self.max_generation_continuations:
                 raise UnexpectedModelBehavior(
-                    f'Model response {job_id!r} was suspended more than the maximum of {self.max_continuations} times'
+                    f'Model response {job_id!r} was suspended more than the maximum of '
+                    f'{self.max_generation_continuations} times'
                 )
         return accumulate_count, replace_count
 
@@ -363,11 +364,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
         # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
         # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
-        # so it keeps the small `max_continuations` cap; only a *same-id* re-suspension (OpenAI background
+        # so it keeps the small `max_generation_continuations` cap; only a *same-id* re-suspension (OpenAI background
         # poll) re-fetches one long-running job under the same `provider_response_id`, so a healthy job
         # that legitimately runs for minutes must not be killed by the small cap — it gets the far more
-        # generous `max_replace_continuations` backstop. Mirrors the non-streaming continuation loop in
-        # `_agent_graph`. See `MAX_REPLACE_CONTINUATIONS`.
+        # generous `max_background_polls` backstop. Mirrors the non-streaming continuation loop in
+        # `_agent_graph`. See `MAX_BACKGROUND_POLLS`.
         accumulate_count = 0
         replace_count = 0
         # Mode of the merge that produced the current suspended `response`, used to pick its ceiling. A
@@ -390,7 +391,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     accumulate_count, replace_count = self._count_continuation(
                         response, last_mode, accumulate_count, replace_count
                     )
-                    if delay := response.suspended_retry_delay:
+                    if delay := self.model.continuation_delay(response):
                         await self.sleep_func(delay)
                         # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
                         # already tore down the server-side job; don't open the next sub-stream, which

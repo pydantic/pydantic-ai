@@ -299,6 +299,15 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         return None
 
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        """Seconds to wait before continuing a suspended response, or `None` to continue immediately.
+
+        Called between the segments of a suspended turn. `None` by default (e.g. Anthropic `pause_turn`
+        continues immediately); a model that polls a server-side job (e.g. OpenAI background mode)
+        overrides this to return a poll interval so the graph doesn't busy-poll.
+        """
+        return None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.
 
@@ -693,8 +702,6 @@ class StreamedResponse(ABC):
     finish_reason: FinishReason | None = field(default=None, init=False)
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
-    suspended_retry_delay: float | None = field(default=None, init=False)
-    """Seconds the graph should wait before retrying a suspended response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -895,7 +902,6 @@ class StreamedResponse(ABC):
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
             state=state,
-            suspended_retry_delay=self.suspended_retry_delay,
             metadata=self.metadata,
         )
 

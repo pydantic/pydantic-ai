@@ -11,7 +11,6 @@ from .agent import (
     ModelRequestNode,
     UserPromptNode,
     capture_run_messages,
-    set_agent_graph_sleep,
 )
 from .agent.spec import AgentSpec
 from .capabilities import AgentCapability, CapabilityFunc
@@ -174,7 +173,6 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
-    'set_agent_graph_sleep',
     'InstrumentationSettings',
     # embeddings
     'Embedder',

@@ -523,10 +523,6 @@ On a model that doesn't support forcing:
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; use `tool_choice='auto'` instead.
 - A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, with the available tools filtered to the requested set so the model can still only pick from them. Filtering the tool definitions invalidates Anthropic's prompt cache, since the cached prefix includes the tool array.
 
-## Paused turns
-
-During long server-side tool use (such as web search), Anthropic may pause a turn and return early with `stop_reason='pause_turn'`, expecting you to send the paused turn back to resume it. Pydantic AI handles this automatically: it continues the turn transparently and stitches all the segments into a single [`ModelResponse`][pydantic_ai.messages.ModelResponse], so you don't need to do anything. This works for both [`agent.run`][pydantic_ai.agent.AbstractAgent.run] and [`agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] — when streaming, the activity across the pause arrives as one continuous stream.
-
 ## Message Compaction
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.

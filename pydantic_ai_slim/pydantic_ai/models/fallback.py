@@ -402,6 +402,14 @@ class FallbackModel(Model):
             with suppress(Exception):
                 await model.cancel_suspended_response(response)
 
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        if pinned := self._pinned_continuation_model(response):
+            return pinned.continuation_delay(response)
+        for model in self.models:
+            if (delay := model.continuation_delay(response)) is not None:
+                return delay
+        return None
+
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')

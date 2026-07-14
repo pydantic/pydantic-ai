@@ -63,7 +63,7 @@ def _response(
     output_tokens: int,
     model_name: str = 'fake',
     metadata: dict[str, Any] | None = None,
-    suspended_retry_delay: float | None = None,
+    provider_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content=p) for p in parts],
@@ -74,7 +74,7 @@ def _response(
         state=state,  # type: ignore[arg-type]
         timestamp=_TIMESTAMP,
         metadata=metadata,
-        suspended_retry_delay=suspended_retry_delay,
+        provider_details=provider_details,
     )
 
 
@@ -165,6 +165,11 @@ class _FakeModel(Model):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         self.cancelled.append(response)
 
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        if (response.provider_details or {}).get('background'):
+            return 0.5
+        return None
+
 
 async def _no_sleep(delay: float) -> None:  # pragma: no cover - scripted responses have no delay
     return None
@@ -173,8 +178,8 @@ async def _no_sleep(delay: float) -> None:  # pragma: no cover - scripted respon
 def _composite(
     model: _FakeModel,
     *,
-    max_continuations: int = 50,
-    max_replace_continuations: int = 10_000,
+    max_generation_continuations: int = 10,
+    max_background_polls: int = 1000,
     sleep_func: Callable[[float], Awaitable[None]] = _no_sleep,
     check_usage: Callable[[RequestUsage], None] = lambda usage: None,
 ) -> _ContinuationStreamedResponse:
@@ -184,8 +189,8 @@ def _composite(
         model_settings=None,
         base_messages=[],
         run_context=None,
-        max_continuations=max_continuations,
-        max_replace_continuations=max_replace_continuations,
+        max_generation_continuations=max_generation_continuations,
+        max_background_polls=max_background_polls,
         sleep_func=sleep_func,
         check_usage=check_usage,
     )
@@ -757,8 +762,8 @@ async def test_aclose_reraises_unexpected_runtime_error() -> None:
         await stream.aclose()
 
 
-async def test_exceeding_max_continuations_raises() -> None:
-    """A model that stays suspended past `max_continuations` raises `UnexpectedModelBehavior`."""
+async def test_exceeding_max_generation_continuations_raises() -> None:
+    """A model past `max_generation_continuations` raises `UnexpectedModelBehavior`."""
     model = _FakeModel(
         [
             _Segment(
@@ -775,19 +780,19 @@ async def test_exceeding_max_continuations_raises() -> None:
             ),
         ]
     )
-    stream = _composite(model, max_continuations=1)
+    stream = _composite(model, max_generation_continuations=1)
 
     with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum'):
         async for _ in stream:
             pass
 
 
-async def test_replace_poll_chain_runs_past_max_continuations() -> None:
-    """A *replace*-style (same-id) background poll chain is bounded by `max_replace_continuations`, not
-    the small `max_continuations` cap, so a healthy long-running background job isn't killed after ~50 polls."""
+async def test_replace_poll_chain_runs_past_max_generation_continuations() -> None:
+    """A same-id background poll chain is bounded by `max_background_polls`, not
+    `max_generation_continuations`, so a healthy long-running job isn't killed after 10 continuations."""
     # Eight same-id polls, far past the strict cap of 2, then completion.
     model = _FakeModel(_poll_segments(count=8, provider_response_id='job1'))
-    stream = _composite(model, max_continuations=2, max_replace_continuations=10_000)
+    stream = _composite(model, max_generation_continuations=2, max_background_polls=1000)
 
     events = [event async for event in stream]
 
@@ -804,7 +809,7 @@ async def test_replace_poll_chain_runs_past_max_continuations() -> None:
 async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
     """The replace backstop still exists: a job stuck returning the same suspended id forever eventually raises.
 
-    Usage limits wouldn't catch this (a pending poll adds no tokens), so `max_replace_continuations` is
+    Usage limits wouldn't catch this (a pending poll adds no tokens), so `max_background_polls` is
     the last-resort guard against a provider wedged on one `provider_response_id`.
     """
     # Never completes: every poll stays suspended under the same id.
@@ -819,7 +824,7 @@ async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
             for _ in range(10)
         ]
     )
-    stream = _composite(model, max_continuations=2, max_replace_continuations=3)
+    stream = _composite(model, max_generation_continuations=2, max_background_polls=3)
 
     with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum'):
         async for _ in stream:
@@ -831,10 +836,10 @@ async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
 
 
 async def test_model_change_replace_chain_counts_against_strict_ceiling() -> None:
-    """A *model-change* replace chain counts against the strict `max_continuations`, not the generous backstop.
+    """A model-change replace chain counts against `max_generation_continuations`, not the generous backstop.
 
     A replace caused by a model change (or a `FallbackModel` directive) is *fresh* generation, not a
-    passive re-poll of one background job, so it must not inherit the generous `max_replace_continuations`
+    passive re-poll of one background job, so it must not inherit the generous `max_background_polls`
     ceiling — that would be the exact runaway (different models endlessly returning fresh suspensions) the
     strict cap guards against. Only a *same-id* replace gets the generous backstop.
     """
@@ -876,8 +881,8 @@ async def test_model_change_replace_chain_counts_against_strict_ceiling() -> Non
         ]
     )
     # A generous replace ceiling that a same-id poll chain would sail past — but a model-change chain must
-    # be bound by the strict `max_continuations=2` instead and raise, naming the current job id.
-    stream = _composite(model, max_continuations=2, max_replace_continuations=10_000)
+    # be bound by the strict `max_generation_continuations=2` instead and raise, naming the current job id.
+    stream = _composite(model, max_generation_continuations=2, max_background_polls=1000)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):
         async for _ in stream:
@@ -1105,7 +1110,7 @@ async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:
                     state='suspended',
                     input_tokens=1,
                     output_tokens=1,
-                    suspended_retry_delay=0.5,
+                    provider_details={'background': True},
                 ),
             ),
             _Segment(

@@ -333,10 +333,10 @@ agent = Agent(model, model_settings=settings)
 
 When the response comes back still pending (`'queued'` or `'in_progress'`), Pydantic AI continues it to completion transparently, so you don't need to do anything. This works for both [`agent.run`][pydantic_ai.agent.AbstractAgent.run] and [`agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream], and the result is stitched into a single [`ModelResponse`][pydantic_ai.messages.ModelResponse] — when streaming, live token activity is surfaced as it's generated and arrives as one continuous stream.
 
-Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion every [`openai_background_poll_interval`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background_poll_interval] seconds (default: `1.0`).
+Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion at a fixed interval.
 
 !!! note
-    If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Abandoning or cancelling the run cancels the server-side background job.
+    If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
 
 ## Chat Completions API
 
