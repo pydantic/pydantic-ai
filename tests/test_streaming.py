@@ -453,6 +453,30 @@ def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch:
     loop.close()
 
 
+def test_sync_stream_bridge_task_drain_propagates_error_after_completion(monkeypatch: pytest.MonkeyPatch):
+    """A loop-driver error after the waiter completes is propagated instead of retried.
+
+    VCR cannot replace the local event-loop driver or exercise this defensive cleanup branch.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    error = RuntimeError('loop driver failed after completing the waiter')
+
+    def finish_then_fail(awaitable: Awaitable[object]) -> object:
+        original_run_until_complete(awaitable)
+        raise error
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', finish_then_fail)
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_task_to_completion(loop, task)
+
+    assert exc_info.value is error
+    assert task.done()
+    loop.close()
+
+
 def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
     """A stale loop-stop callback cannot let owner cleanup overtake a cancelled stream pump.
 
