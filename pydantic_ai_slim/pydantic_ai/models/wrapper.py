@@ -25,8 +25,17 @@ class CompletedStreamedResponse(StreamedResponse):
     is returned.
     """
 
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
-        super().__init__(model_request_parameters)
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        *,
+        model_response_events_handled: bool = False,
+    ):
+        super().__init__(
+            model_request_parameters,
+            _emit_model_response_events=not model_response_events_handled,
+        )
         self.response = response
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

@@ -36,6 +36,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -5704,6 +5706,16 @@ async def test_google_streaming_tool_call_thought_signature(
     )
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -5724,6 +5736,29 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_country',
+                            args={},
+                            tool_call_id=IsStr(),
+                            provider_name='google',
+                            provider_details={'thought_signature': IsStr()},
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=29, output_tokens=212, details={'thoughts_tokens': 202, 'text_prompt_tokens': 29}
+                    ),
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_country',
@@ -5742,15 +5777,35 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
-            PartStartEvent(index=0, part=TextPart(content='The capital of Mexico')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(
-                index=0,
-                delta=TextPartDelta(content_delta=' is Mexico City.'),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    state='incomplete',
+                )
             ),
-            PartEndEvent(
+            PartStartEvent(
                 index=0,
-                part=TextPart(content='The capital of Mexico is Mexico City.'),
+                part=TextPart(content='The capital of Mexico'),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is Mexico City.')),
+            PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(input_tokens=257, output_tokens=8, details={'text_prompt_tokens': 257}),
+                    model_name='gemini-3-pro-preview',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                )
             ),
         ]
     )

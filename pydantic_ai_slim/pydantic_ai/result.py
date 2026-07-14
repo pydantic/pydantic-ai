@@ -59,6 +59,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _agent_event_stream_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
 
@@ -383,6 +384,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     return
 
             yield event
+
+    def iter_events(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s for event handlers and UI adapters."""
+        if self._agent_event_stream_iterator is None:
+            self._agent_event_stream_iterator = self._raw_stream_response._iter_with_model_response_events(  # pyright: ignore[reportPrivateUsage]
+                self
+            )
+
+        return self._agent_event_stream_iterator
 
 
 @dataclass(init=False)

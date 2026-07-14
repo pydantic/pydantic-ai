@@ -80,10 +80,16 @@ class PrefectModel(WrapperModel):
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
                         'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await event_stream_handler(ctx, streamed_response)
+                    response_events = streamed_response._iter_with_model_response_events(  # pyright: ignore[reportPrivateUsage]
+                        streamed_response
+                    )
+                    await event_stream_handler(ctx, response_events)
+                    stream = response_events
+                else:
+                    stream = streamed_response
 
                 # Consume the entire stream
-                async for _ in streamed_response:
+                async for _ in stream:
                     pass
             response = streamed_response.get()
             _stamp_response_provenance(response, messages)
@@ -127,7 +133,12 @@ class PrefectModel(WrapperModel):
                 return
 
         # If in a flow, consume the stream in a task and return the final response
+        model_response_events_handled = self._get_event_stream_handler() is not None
         response = await self._wrapped_request_stream.with_options(
             name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(
+            model_request_parameters,
+            response,
+            model_response_events_handled=model_response_events_handled,
+        )

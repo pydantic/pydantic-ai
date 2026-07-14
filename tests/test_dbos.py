@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -356,6 +357,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
+                                            content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                        ),
+                                        BasicSpan(
                                             content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
@@ -372,6 +376,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         ),
                                         BasicSpan(
                                             content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": "call_3rqTYrA6H21AYUaRGP4F66oq", "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": "call_Xw9XMKBJU48kAAd78WgIswDx", "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMEUDb1vVwsROQUCZTgG6A6vtWo", "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
                                         ),
                                     ],
                                 )
@@ -431,6 +438,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
+                                            content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                        ),
+                                        BasicSpan(
                                             content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
@@ -453,6 +463,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"response": {"parts": [{"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": "call_Vz0Sie91Ap56nH0ThKGrZXT7", "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 423, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 15, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMJC4uUHgeJ4A0e8jM8wufrmdxX", "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
                                         ),
                                     ],
                                 )
@@ -484,6 +497,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     content='complex_agent__model.request_stream',
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                        ),
                                         BasicSpan(
                                             content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                         ),
@@ -613,6 +629,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(
                                             content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
                                         ),
+                                        BasicSpan(
+                                            content='{"response": {"parts": [{"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": "call_4kc6691zCzjPnOuEtbEGUvz2", "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 448, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 49, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMMrEA9QLIX25pFjKjoRdNkO0nN", "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
+                                        ),
                                     ],
                                 )
                             ],
@@ -656,9 +675,6 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert step_names[0] == 'runtime_handler_stream_agent__model.request_stream'
-    # The per-run handler fires live, nested inside the model-request step (delivering the streamed
-    # events asserted below). It is no longer invoked a second time at the graph level against the
-    # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
     assert 'runtime_event_stream_handler' not in step_names
 
     exported_event_messages = [
@@ -668,7 +684,20 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
         and attributes.get('logfire.msg') == 'runtime_event'
         and isinstance((event := attributes.get('event')), str)
     ]
-    assert exported_event_messages != []
+    exported_events = [json.loads(event) for event in exported_event_messages]
+    assert [event['event_kind'] for event in exported_events] == [
+        'model_response_start',
+        'part_start',
+        'final_result',
+        'part_delta',
+        'part_end',
+        'model_response_end',
+    ]
+    assert exported_events[0]['response']['state'] == 'incomplete'
+    assert exported_events[0]['response']['parts'] == []
+    assert exported_events[-1]['response']['state'] == 'complete'
+    assert exported_events[-1]['response']['parts'][0]['content'] == 'Hello world'
+    assert exported_events[-1]['response']['parts'][0]['part_kind'] == 'text'
 
 
 async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:

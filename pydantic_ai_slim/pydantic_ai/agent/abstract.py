@@ -527,7 +527,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                            native_stream = stream.iter_events() if isinstance(stream, AgentStream) else stream
+                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(
+                                run_ctx, stream=native_stream
+                            )
                             if _handler is not None:
                                 await _handler(run_ctx, wrapped)
                             # If the handler returns normally, drain whatever it left unconsumed so the
@@ -876,8 +879,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         final_result_event = None
 
                         async def stream_to_final(
-                            stream: AgentStream,
-                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                            stream: AsyncIterable[_messages.AgentStreamEvent],
+                        ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -885,7 +888,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result_event = event
                                     break
 
-                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
+                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream.iter_events()))
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
                         # Drain after the handler (same as the `run()` path) so the response is fully
@@ -1243,11 +1246,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             print(collected)
             '''
             [
+                ModelResponseStartEvent(
+                    response=ModelResponse(
+                        parts=[],
+                        usage=RequestUsage(input_tokens=50),
+                        model_name='gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                        state='incomplete',
+                    )
+                ),
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
                 PartEndEvent(
                     index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
+                ModelResponseEndEvent(
+                    response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris. ')],
+                        usage=RequestUsage(input_tokens=50, output_tokens=7),
+                        model_name='gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                    )
                 ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')

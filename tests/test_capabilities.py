@@ -73,6 +73,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -6019,6 +6021,41 @@ class TestStreamingHooks:
         async with agent.run_stream('hello') as stream:
             output = await stream.get_output()
         assert output == 'skipped in stream'
+
+    async def test_skip_model_request_streaming_lifecycle_events(self):
+        @dataclass
+        class SkipCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped in stream')]))
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[SkipCap()],
+        )
+        events: list[AgentStreamEvent] = []
+
+        async def event_stream_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            del ctx
+            events.extend([event async for event in stream])
+
+        result = await agent.run('hello', event_stream_handler=event_stream_handler)
+
+        assert result.output == 'skipped in stream'
+        lifecycle_events = [
+            event for event in events if isinstance(event, (ModelResponseStartEvent, ModelResponseEndEvent))
+        ]
+        assert len(lifecycle_events) == 2
+        start_event, end_event = lifecycle_events
+        assert isinstance(start_event, ModelResponseStartEvent)
+        assert start_event.response.parts == [TextPart(content='skipped in stream')]
+        assert start_event.response.state == 'complete'
+        assert isinstance(end_event, ModelResponseEndEvent)
+        assert end_event.response.parts == [TextPart(content='skipped in stream')]
+        assert end_event.response.state == 'complete'
 
     async def test_skip_model_request_from_wrap_model_request(self):
         """SkipModelRequest raised inside wrap_model_request is handled in non-streaming."""
@@ -12039,11 +12076,29 @@ class TestModelRetryFromHooks:
 
         cap = ShortCircuitRetryCap()
         agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
-        async with agent.run_stream('hello') as streamed:
-            result = await streamed.get_output()
-        assert result == 'good response'
+        events: list[AgentStreamEvent] = []
+
+        async def event_stream_handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            del ctx
+            events.extend([event async for event in stream])
+
+        result = await agent.run('hello', event_stream_handler=event_stream_handler)
+        assert result.output == 'good response'
         assert cap.call_count == 2
-        assert streamed.all_messages() == snapshot(
+        lifecycle_events = [
+            event for event in events if isinstance(event, (ModelResponseStartEvent, ModelResponseEndEvent))
+        ]
+        assert len(lifecycle_events) == 2
+        start_event, end_event = lifecycle_events
+        assert isinstance(start_event, ModelResponseStartEvent)
+        assert start_event.response.parts == []
+        assert start_event.response.usage == RequestUsage(input_tokens=50)
+        assert start_event.response.state == 'incomplete'
+        assert isinstance(end_event, ModelResponseEndEvent)
+        assert end_event.response.parts == [TextPart(content='good response')]
+        assert end_event.response.usage == RequestUsage(input_tokens=50, output_tokens=2)
+        assert end_event.response.state == 'complete'
+        assert result.all_messages() == snapshot(
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],

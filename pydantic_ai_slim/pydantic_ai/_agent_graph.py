@@ -578,11 +578,11 @@ async def _prepare_request_parameters(
 
 @dataclasses.dataclass
 class _SkipStreamedResponse(models.StreamedResponse):
-    """Minimal StreamedResponse for SkipModelRequest — yields no events.
+    """Minimal `StreamedResponse` for `SkipModelRequest`; yields no part events.
 
-    These properties implement the StreamedResponse ABC but are never accessed:
-    the streaming skip path always resolves via the _run_result shortcut in
-    StreamedRunResult, so the AgentStream wrapping this response is discarded.
+    `get()` returns the skipped response so `AgentStream.iter_events()` can
+    emit the lifecycle start/end events around it. The remaining ABC properties
+    are implemented for completeness but the skip paths do not access them.
     """
 
     _response: _messages.ModelResponse = field(repr=False)
@@ -612,7 +612,7 @@ class _SkipStreamedResponse(models.StreamedResponse):
         return
         yield  # pragma: no cover
 
-    def get(self) -> _messages.ModelResponse:  # pragma: no cover
+    def get(self) -> _messages.ModelResponse:
         return self._response
 
 
@@ -770,6 +770,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 dummy_sr = _SkipStreamedResponse(
                     model_request_parameters=model_request_parameters,
                     _response=_messages.ModelResponse(parts=[]),
+                    _emit_model_response_events=False,
                 )
                 yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
                 return

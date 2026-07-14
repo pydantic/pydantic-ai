@@ -30,6 +30,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettings,
     MultiModalContent,
     OutputToolCallEvent,
@@ -421,12 +423,22 @@ async def test_complex_agent_run_in_workflow(
                     pass
             _normalize_json_spans(child)
 
-    def _strip_volatile_fields(obj: dict[str, Any]) -> None:
-        for k, v in obj.items():
-            if k in ('tool_call_id', 'timestamp'):
-                obj[k] = None
-            elif isinstance(v, dict):
-                _strip_volatile_fields(cast(dict[str, Any], v))
+    def _strip_volatile_fields(obj: Any) -> None:
+        if isinstance(obj, list):
+            items = cast(list[Any], obj)
+            for item in items:
+                _strip_volatile_fields(item)
+            return
+
+        if not isinstance(obj, dict):
+            return
+
+        data = cast(dict[str, Any], obj)
+        for key, value in data.items():
+            if key in ('tool_call_id', 'timestamp', 'provider_response_id'):
+                data[key] = None
+            else:
+                _strip_volatile_fields(value)
 
     assert root_span is not None
     _normalize_json_spans(root_span)
@@ -459,6 +471,9 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
+                                                    content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -475,6 +490,9 @@ async def test_complex_agent_run_in_workflow(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": null, "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
                                                 ),
                                             ],
                                         )
@@ -564,6 +582,9 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
+                                                    content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -586,6 +607,9 @@ async def test_complex_agent_run_in_workflow(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"response": {"parts": [{"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 423, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 15, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": null, "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
                                                 ),
                                             ],
                                         )
@@ -644,6 +668,9 @@ async def test_complex_agent_run_in_workflow(
                                             content='RunActivity:agent__complex_agent__model_request_stream',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
+                                                BasicSpan(
+                                                    content='{"response": {"parts": [], "usage": {"input_tokens": 0, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": null, "provider_response_id": null, "finish_reason": null, "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_response_start"}'
+                                                ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
                                                 ),
@@ -772,6 +799,9 @@ async def test_complex_agent_run_in_workflow(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"response": {"parts": [{"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 448, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 49, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": null, "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
                                                 ),
                                             ],
                                         )
@@ -1014,6 +1044,16 @@ async def test_complex_agent_run(allow_model_requests: None):
     )
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
@@ -1040,6 +1080,33 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
                 ),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                        ToolCallPart(
+                            tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=364,
+                        output_tokens=40,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
                 args_valid=True,
@@ -1064,6 +1131,16 @@ async def test_complex_agent_run(allow_model_requests: None):
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
                     timestamp=IsDatetime(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    state='incomplete',
                 )
             ),
             PartStartEvent(
@@ -1094,6 +1171,34 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
                 ),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather',
+                            args='{"city":"Mexico City"}',
+                            tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=423,
+                        output_tokens=15,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
@@ -1106,6 +1211,16 @@ async def test_complex_agent_run(allow_model_requests: None):
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
                     timestamp=IsDatetime(),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    state='incomplete',
                 )
             ),
             PartStartEvent(
@@ -1279,6 +1394,34 @@ async def test_complex_agent_run(allow_model_requests: None):
                     args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                            tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=448,
+                        output_tokens=62,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                )
             ),
             OutputToolCallEvent(
                 part=ToolCallPart(
@@ -1935,6 +2078,16 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
@@ -1945,6 +2098,28 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(
+                        input_tokens=14,
+                        output_tokens=8,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
         ]
     )

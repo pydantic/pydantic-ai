@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 import warnings
@@ -7,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,6 +25,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -286,6 +289,20 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
+    def _normalize_response_timestamps(span: BasicSpan) -> None:
+        for child in span.children:
+            if child.content.startswith('{"response":'):
+                data: dict[str, Any] = json.loads(child.content)
+                response: dict[str, Any] = data['response']
+                response['timestamp'] = None
+                if isinstance(provider_details := response.get('provider_details'), dict):
+                    provider_details['timestamp'] = None
+                child.content = json.dumps(data, separators=(',', ':'))
+            _normalize_response_timestamps(child)
+
+    assert root_span is not None
+    _normalize_response_timestamps(root_span)
+
     assert root_span == snapshot(
         BasicSpan(
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -308,6 +325,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
+                                                    content='{"response":{"parts":[],"usage":{"input_tokens":0,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":0,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":null,"provider_response_id":null,"finish_reason":null,"run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -315,6 +335,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"response":{"parts":[{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"}],"usage":{"input_tokens":398,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":10,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":{"timestamp":null,"finish_reason":"tool_calls"},"provider_response_id":"chatcmpl-CMKAtIAKW1eiFzDAZmCcrbvHgyoSw","finish_reason":"tool_call","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_response_end"}'
                                                 ),
                                             ],
                                         )
@@ -352,6 +375,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
+                                                    content='{"response":{"parts":[],"usage":{"input_tokens":0,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":0,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":null,"provider_response_id":null,"finish_reason":null,"run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -380,6 +406,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"response":{"parts":[{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"}],"usage":{"input_tokens":417,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":44,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":{"timestamp":null,"finish_reason":"tool_calls"},"provider_response_id":"chatcmpl-CMKAuuvC6E26nL6HLZzTrysEvC8Ln","finish_reason":"tool_call","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_response_end"}'
                                                 ),
                                             ],
                                         )
@@ -450,6 +479,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             content=IsStr(regex=r'Model Request \(Streaming\): gpt-4o-\w+'),
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
+                                                BasicSpan(
+                                                    content='{"response":{"parts":[],"usage":{"input_tokens":0,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":0,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":null,"provider_response_id":null,"finish_reason":null,"run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_response_start"}'
+                                                ),
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
@@ -579,6 +611,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
+                                                BasicSpan(
+                                                    content='{"response":{"parts":[{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"}],"usage":{"input_tokens":481,"cache_write_tokens":0,"cache_read_tokens":0,"output_tokens":49,"input_audio_tokens":0,"cache_audio_read_tokens":0,"output_audio_tokens":0,"details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0}},"model_name":"gpt-4o-2024-08-06","timestamp":null,"kind":"response","provider_name":"openai","provider_url":"https://api.openai.com/v1/","provider_details":{"timestamp":null,"finish_reason":"tool_calls"},"provider_response_id":"chatcmpl-CMKAvMbnOLyW5XeC6KvbEQWnTGlKj","finish_reason":"tool_call","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_response_end"}'
+                                                ),
                                             ],
                                         )
                                     ],
@@ -648,12 +683,27 @@ async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
     result = await run_agent()
     assert result.output == snapshot('Hello world')
 
-    exported_messages = [
-        attributes['logfire.msg']
+    exported_events = [
+        event
         for span in capfire.exporter.exported_spans_as_dict()
-        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
     ]
-    assert exported_messages != []
+    parsed_events = [json.loads(event) for event in exported_events]
+    assert [event['event_kind'] for event in parsed_events] == [
+        'model_response_start',
+        'part_start',
+        'final_result',
+        'part_delta',
+        'part_end',
+        'model_response_end',
+    ]
+    assert parsed_events[0]['response']['state'] == 'incomplete'
+    assert parsed_events[0]['response']['parts'] == []
+    assert parsed_events[-1]['response']['state'] == 'complete'
+    assert parsed_events[-1]['response']['parts'][0]['content'] == 'Hello world'
+    assert parsed_events[-1]['response']['parts'][0]['part_kind'] == 'text'
 
 
 async def test_event_stream_handler_property_outside_flow() -> None:
@@ -768,6 +818,16 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    state='incomplete',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
@@ -778,6 +838,28 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(
+                        input_tokens=14,
+                        output_tokens=8,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa',
+                    finish_reason='stop',
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
         ]
     )

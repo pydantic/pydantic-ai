@@ -16,6 +16,8 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -161,7 +163,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                if isinstance(event, PartStartEvent):
+                if isinstance(event, (ModelResponseStartEvent, PartStartEvent)):
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, ToolCallEvent):
@@ -266,6 +268,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         This method dispatches to specific `handle_*` methods based on event type:
 
+        - [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] -> `handle_model_response_start`
+        - [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] -> `handle_model_response_end`
         - [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] -> [`handle_part_start()`][pydantic_ai.ui.UIEventStream.handle_part_start]
         - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
         - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
@@ -280,6 +284,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         If you need specific behavior for all events, make sure you call the super method.
         """
         match event:
+            case ModelResponseStartEvent():
+                async for e in self.handle_model_response_start(event):
+                    yield e
+            case ModelResponseEndEvent():
+                async for e in self.handle_model_response_end(event):
+                    yield e
             case PartStartEvent():
                 async for e in self.handle_part_start(event):
                     yield e
@@ -309,6 +319,16 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case _:
                 pass
+
+    async def handle_model_response_start(self, event: ModelResponseStartEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseStartEvent`."""
+        return
+        yield  # Make this an async generator
+
+    async def handle_model_response_end(self, event: ModelResponseEndEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseEndEvent`."""
+        return
+        yield  # Make this an async generator
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a `PartStartEvent`.

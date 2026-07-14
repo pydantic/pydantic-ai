@@ -34,6 +34,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -1424,6 +1426,16 @@ Want me to tailor\
                 'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
             },
             {
+                'type': 'data-usage',
+                'data': {
+                    'input_tokens': 33151,
+                    'cache_read_tokens': 4352,
+                    'output_tokens': 3367,
+                    'details': {'reasoning_tokens': 2624},
+                },
+                'transient': True,
+            },
+            {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
@@ -1761,6 +1773,7 @@ async def test_run_stream_builtin_tool_call():
                 'id': IsStr(),
             },
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 47}, 'transient': True},
             {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
@@ -1816,7 +1829,7 @@ async def test_run_stream_tool_call():
             ),
         ],
     )
-    adapter = VercelAIAdapter(agent, request)
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
@@ -1829,6 +1842,7 @@ async def test_run_stream_tool_call():
             {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
             {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 7}, 'transient': True},
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
@@ -1856,6 +1870,7 @@ async def test_run_stream_tool_call():
                 'id': IsStr(),
             },
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 27}, 'transient': True},
             {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
@@ -2967,6 +2982,7 @@ async def test_tool_approval_request_emission():
             {'type': 'start-step'},
             {'type': 'tool-input-start', 'toolCallId': 'delete_1', 'toolName': 'delete_file'},
             {'type': 'tool-input-delta', 'toolCallId': 'delete_1', 'inputTextDelta': '{"path": "test.txt"}'},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 5}, 'transient': True},
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'delete_1',
@@ -3154,6 +3170,7 @@ async def test_tool_output_denied_chunk_emission():
             },
             {'type': 'text-delta', 'delta': 'The file deletion was cancelled as requested.', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 8}, 'transient': True},
             {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
@@ -3478,6 +3495,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
             {'type': 'text-start', 'id': IsStr()},
             {'type': 'text-delta', 'delta': 'File deleted successfully.', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 4}, 'transient': True},
             {
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
@@ -3672,6 +3690,7 @@ async def test_dispatch_request_with_tool_approval():
             {'type': 'start-step'},
             {'type': 'tool-input-start', 'toolCallId': 'delete_1', 'toolName': 'delete_file'},
             {'type': 'tool-input-delta', 'toolCallId': 'delete_1', 'inputTextDelta': '{"path": "test.txt"}'},
+            {'type': 'data-usage', 'data': {'input_tokens': 50, 'output_tokens': 5}, 'transient': True},
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'delete_1',
@@ -8752,6 +8771,193 @@ async def test_event_stream_function_tool_return_error():
             '[DONE]',
         ]
     )
+
+
+@pytest.mark.parametrize('sdk_version', [6, 7])
+async def test_event_stream_usage_chunk_emitted_for_non_empty_usage(sdk_version: Literal[6, 7]):
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=40),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(
+                    input_tokens=40,
+                    cache_read_tokens=8,
+                    output_tokens=12,
+                    details={'reasoning_tokens': 5},
+                ),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=sdk_version)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {
+            'type': 'data-usage',
+            'data': {
+                'input_tokens': 40,
+                'cache_read_tokens': 8,
+                'output_tokens': 12,
+                'details': {'reasoning_tokens': 5},
+            },
+            'transient': True,
+        },
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
+
+
+async def test_sdk_version_5_does_not_emit_usage_chunk():
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=40),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(
+                    input_tokens=40,
+                    cache_read_tokens=8,
+                    output_tokens=12,
+                    details={'reasoning_tokens': 5},
+                ),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
+
+
+async def test_event_stream_usage_chunk_skipped_for_empty_usage():
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(parts=[], usage=RequestUsage(), model_name='test', provider_name='test')
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(parts=[], usage=RequestUsage(), model_name='test', provider_name='test')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
+
+
+async def test_event_stream_usage_chunk_details_only():
+    async def event_generator():
+        yield ModelResponseStartEvent(
+            response=ModelResponse(parts=[], usage=RequestUsage(), model_name='test', provider_name='test')
+        )
+        yield ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(details={'reasoning_tokens': 5}),
+                model_name='test',
+                provider_name='test',
+            )
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Report usage')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == [
+        {'type': 'start'},
+        {'type': 'start-step'},
+        {
+            'type': 'data-usage',
+            'data': {'details': {'reasoning_tokens': 5}},
+            'transient': True,
+        },
+        {'type': 'finish-step'},
+        {'type': 'finish'},
+        '[DONE]',
+    ]
 
 
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
