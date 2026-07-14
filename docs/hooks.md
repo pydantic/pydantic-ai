@@ -101,7 +101,7 @@ agent = Agent('openai-responses:gpt-5.4', capabilities=[request_logging_hooks])
 
 Pydantic AI skips hooks owned by a deferred `Hooks` instance until its capability is loaded.
 
-Use on-demand hooks for optional behavior that only applies after the capability is loaded. For human-in-the-loop tool approval, use the [approval mechanisms](deferred-tools.md#human-in-the-loop-tool-approval) designed for that purpose.
+Use on-demand hooks for optional behavior that only applies after the capability is loaded. For human-in-the-loop tool approval, pass [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) when registering a tool, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] for conditional approval, or wrap a toolset with [`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset].
 
 ## Hook types
 
