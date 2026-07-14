@@ -2316,22 +2316,15 @@ async def test_fallback_cancel_suspended_response_without_pin_delegates_to_all_m
     assert recorder.cancelled == [response]
 
 
-@pytest.mark.xfail(
-    reason='Bug C: after a fallback rewind, a same-model fresh turn is merged as `accumulate`, '
-    'duplicating the abandoned suspended parts. The fix needs a replace signal in '
-    '`merge_responses`/`merge_mode` and cannot live in `fallback.py` (see PR discussion).',
-    strict=True,
-)
 async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     """A pinned continuation fails (fallback-eligible), FallbackModel rewinds and retries the chain,
     and the SAME model returns a fresh, complete turn (new `provider_response_id`, same `model_name`).
 
-    The graph's continuation loop then merges the stale suspended response with the fresh complete one.
-    `merge_mode` sees same-model + different-id (indistinguishable from an Anthropic `pause_turn`
-    continuation) and picks `'accumulate'`, so the stale `'partial'` part is duplicated ahead of the
-    fresh full response. The correct behavior is to replace: the fresh turn should stand alone. This
-    can't be signalled cleanly from `fallback.py`, so it's pinned here as a known bug pending a
-    `merge_mode` design decision.
+    Without a signal, the graph's continuation loop would merge the stale suspended response with the
+    fresh one as an `'accumulate'` — `merge_mode` sees same-model + different-id, indistinguishable from
+    an Anthropic `pause_turn` — duplicating the stale `'partial'` part ahead of the fresh response.
+    `FallbackModel` stamps a `replace_previous_response` marker on the first response produced after the
+    rewind, so the merge treats it as a replace and the fresh turn stands alone.
     """
     primary_calls = 0
 
@@ -2355,8 +2348,67 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
 
     response_msg = result.all_messages()[1]
     assert isinstance(response_msg, ModelResponse)
-    # Correct behavior: the fresh turn replaces the abandoned suspended one, with no duplicated parts.
+    # The fresh turn replaces the abandoned suspended one, with no duplicated parts.
     assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
+    # The transient replace marker is popped after being honored, so it doesn't persist into history
+    # where it would wrongly force a later legitimate `pause_turn` continuation to replace.
+    assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
+
+
+async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:
+    """Streaming counterpart of the rewind-restart de-duplication.
+
+    A pinned streaming continuation fails, `FallbackModel` rewinds, and the SAME model streams a fresh
+    complete turn. The `replace_previous_response` marker must land on the stream's `metadata` *before*
+    the composite reindexes its first part — `_segment_offset` resolves the replace-vs-accumulate
+    decision on the first reindexable event. A late stamp would leave that decision as `'accumulate'`,
+    reindexing the fresh `'full answer'` part after the stale `'partial'` one and duplicating it; with
+    the marker set before the yield, the fresh segment reuses the abandoned turn's index space and
+    replaces it, so the stitched response holds only the fresh part.
+    """
+    primary_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            yield 'partial'
+        elif primary_calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+            yield ''  # pragma: no cover
+        else:
+            yield 'full answer'
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise AssertionError('fallback should not be called')  # pragma: no cover
+        yield ''  # pragma: no cover
+
+    # Initial request suspends (pinning primary); the pinned continuation fails and rewinds; the chain
+    # retry of the same primary streams a fresh complete turn.
+    primary_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'),
+        _stream_state=['suspended', 'complete'],
+    )
+    fallback_model = _ContinuationModel(_inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'))
+    agent = Agent(FallbackModel(primary_model, fallback_model))
+
+    async with agent.iter('test') as run:
+        node = run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
+            node = await run.next(node)
+
+    assert run.result is not None
+    response_msg = run.result.all_messages()[1]
+    assert isinstance(response_msg, ModelResponse)
+    # The fresh segment replaced the abandoned suspended one: only the fresh part, correctly indexed.
+    assert [getattr(p, 'content', None) for p in response_msg.parts] == ['full answer']
+    # The transient replace marker is popped after being honored, so it doesn't persist into history.
+    assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
+    assert primary_calls == 3
 
 
 async def test_fallback_cancel_suspended_response_resolves_pin_regardless_of_state() -> None:

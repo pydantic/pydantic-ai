@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
+# Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
+# (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
+# than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
+_REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
 ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
 """A sync or async callable that decides whether an exception should trigger fallback."""
@@ -230,6 +234,10 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
+        # Set once a pinned continuation fails and we rewind to the chain: the first successful response
+        # the chain then produces is fresh generation superseding the stale suspended turn, so it must
+        # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
+        rewound = False
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -249,6 +257,7 @@ class FallbackModel(Model):
                 with suppress(Exception):
                     await pinned.cancel_suspended_response(suspended_response)
                 messages = _rewind_messages(messages)
+                rewound = True
                 exceptions.append(exc)
                 # Fall through to normal chain below
             else:
@@ -273,6 +282,10 @@ class FallbackModel(Model):
                 rejected_responses.append(response)
                 continue
 
+            # After a rewind, the first successful response is fresh generation that supersedes the
+            # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
+            if rewound:
+                _stamp_replace_previous(response)
             if response.state == 'suspended':
                 _stamp_continuation(response, model)
             self._set_span_attributes(model, prepared_parameters)
@@ -296,6 +309,8 @@ class FallbackModel(Model):
         and the normal fallback chain is tried. Mid-stream failures still propagate.
         """
         exceptions: list[Exception] = []
+        # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
+        rewound = False
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -317,6 +332,7 @@ class FallbackModel(Model):
                     with suppress(Exception):
                         await pinned.cancel_suspended_response(suspended_response)
                     messages = _rewind_messages(messages)
+                    rewound = True
                     exceptions.append(exc)
                     # Fall through to normal chain below
                 else:
@@ -343,6 +359,14 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
+                # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
+                # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
+                # this must land on `metadata` *before* `yield`: the streamed composite resolves
+                # `_segment_offset` (via `merge_mode`) on the first reindexable event, so a late stamp
+                # would reindex against a stale `'accumulate'` verdict and misplace the parts. That this
+                # stream supersedes the suspended turn is known the moment the rewound chain is entered.
+                if rewound:
+                    _stamp_replace_previous(streamed_response)
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
                 # Stamp after `yield` (see the pinned path above): `state` is only final once the
@@ -434,6 +458,24 @@ def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model
         response.metadata = {}
     pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
     pydantic_ai_meta[_FALLBACK_MODEL_ID_KEY] = model.model_id
+
+
+def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:
+    """Stamp the `replace_previous_response` marker so a fresh post-rewind turn supersedes the stale one.
+
+    After a pinned continuation fails and `FallbackModel` rewinds and retries the chain, the first
+    successful response is genuinely fresh generation, but may carry the same `model_name` as the
+    abandoned suspended turn (only the `provider_response_id` differs). Without this marker
+    `merge_mode` would classify the merge as an `accumulate` — same model, different id, indistinguishable
+    from an Anthropic `pause_turn` — and duplicate the abandoned suspended parts ahead of the fresh turn.
+    The marker (merged into the shared `__pydantic_ai__` namespace, alongside any continuation pin) tells
+    the merge to `'replace-new'`; it's transient and popped after being honored so it can't persist into
+    history. See `pydantic_ai.models._continuation`.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    pydantic_ai_meta[_REPLACE_PREVIOUS_RESPONSE_KEY] = True
 
 
 def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
