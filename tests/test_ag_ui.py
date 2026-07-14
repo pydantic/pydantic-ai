@@ -1730,6 +1730,68 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
     assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
 
 
+def test_dump_load_roundtrip_interrupted_tool_return() -> None:
+    """A synthesized interrupted return keeps `outcome='interrupted'` through dump/load on >= 0.1.11.
+
+    `ToolMessage` has no outcome slot (`'failed'`/`'denied'` map to `error`, `'success'` is the
+    default), so the claim rides the `encrypted_value` carrier like `tool_kind` does — and below
+    0.1.11 there is no carrier, so the outcome silently degrades to `'success'`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='c1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='c1',
+                    content='The tool call was interrupted before a result was produced.',
+                    outcome='interrupted',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_msg.encrypted_value == '{"pydantic_ai": {"outcome": "interrupted"}}'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'interrupted'
+
+    old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
+    assert 'encrypted_value' not in old_tool_msg.model_fields_set
+
+
+def test_load_forged_encrypted_outcome_stays_success() -> None:
+    """Only `'interrupted'` ever rides the carrier; any other client-supplied outcome claim is ignored."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[ToolCall(id='c1', function=FunctionCall(name='my_tool', arguments='{}'))],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='c1',
+                content='done',
+                encrypted_value='{"pydantic_ai": {"outcome": "failed"}}',
+            ),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert isinstance(return_part, ToolReturnPart)
+    assert return_part.outcome == 'success'
+
+
 def test_load_tool_kind_falls_back_to_call_claim() -> None:
     """A ToolMessage without its own `encrypted_value` narrows via the paired call's claim.
 

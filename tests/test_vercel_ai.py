@@ -8755,7 +8755,8 @@ async def test_event_stream_function_tool_return_error():
 
 
 async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
-    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error.
+    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error,
+    and the outcome claim in the metadata channel survives a dump/load round-trip.
 
     Not VCR-backed: this pins local adapter serialization and makes no model request.
     """
@@ -8790,12 +8791,25 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
                 'input': {'x': 1},
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
-                'call_provider_metadata': None,
+                'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
                 'preliminary': None,
                 'approval': None,
             }
         ]
     )
+
+    # Round-trip: the metadata claim restores the interrupted outcome on load instead of
+    # upgrading it to 'success'.
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'interrupted'
+    assert reloaded_return.tool_kind is None
 
 
 async def test_event_stream_function_tool_return_interrupted_is_neutral():
