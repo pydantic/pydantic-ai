@@ -592,7 +592,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         try:
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            return self._process_response(response)
+            return self._process_response(response, model_request_parameters)
         except ValueError as e:
             if 'Streaming is required' in str(e):
                 # Anthropic SDK requires streaming for high max_tokens; fall back transparently
@@ -1024,15 +1024,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=model_settings.get('extra_body'),
             )
 
-    def _process_response(self, response: BetaMessage) -> ModelResponse:  # noqa: C901
+    def _process_response(  # noqa: C901
+        self, response: BetaMessage, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         builtin_tool_calls: dict[str, NativeToolCallPart] = {}
+        enabled_native_tool_kinds = self._get_enabled_native_tool_kinds(model_request_parameters)
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
                 call_part = _map_server_tool_use_block(item, self.system)
+                if call_part.tool_name not in enabled_native_tool_kinds:
+                    continue
                 builtin_tool_calls[call_part.tool_call_id] = call_part
                 items.append(call_part)
             elif isinstance(item, BetaWebSearchToolResultBlock):
@@ -1098,6 +1103,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details=provider_details,
         )
 
+    def _get_enabled_native_tool_kinds(self, model_request_parameters: ModelRequestParameters) -> frozenset[str]:
+        enabled_native_tool_kinds = {
+            tool.kind
+            for tool in model_request_parameters.native_tools
+            if not isinstance(tool, ToolSearchTool) or tool.strategy != 'custom'
+        }
+        # The 20260209 web tools run dynamic filters through an implicit code execution tool.
+        if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
+            isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
+        ):
+            enabled_native_tool_kinds.add(CodeExecutionTool.kind)
+        return frozenset(enabled_native_tool_kinds)
+
     async def _process_streamed_response(
         self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
@@ -1124,6 +1142,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _enabled_native_tool_kinds=self._get_enabled_native_tool_kinds(model_request_parameters),
         )
 
     def _get_code_execution_tool_version(
@@ -2372,11 +2391,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
     _provider_name: str
     _provider_url: str
+    _enabled_native_tool_kinds: frozenset[str] = field(default_factory=lambda: frozenset[str]())
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
             current_block: BetaContentBlock | None = None
+            ignored_server_tool_use_indices: set[int] = set()
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
@@ -2426,6 +2447,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                             yield maybe_event
                     elif isinstance(current_block, BetaServerToolUseBlock):
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
+                        if call_part.tool_name not in self._enabled_native_tool_kinds:
+                            ignored_server_tool_use_indices.add(event.index)
+                            continue
                         builtin_tool_calls[call_part.tool_call_id] = call_part
                         # In streaming, the block's `input` is empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
@@ -2501,6 +2525,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockDeltaEvent):
+                    if event.index in ignored_server_tool_use_indices:
+                        continue
                     if isinstance(event.delta, BetaTextDelta):
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=event.delta.text
@@ -2557,7 +2583,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['container_id'] = event.delta.container.id
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if isinstance(current_block, BetaMCPToolUseBlock):
+                    if event.index in ignored_server_tool_use_indices:
+                        ignored_server_tool_use_indices.remove(event.index)
+                    elif isinstance(current_block, BetaMCPToolUseBlock):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=event.index,
                             args='}',
