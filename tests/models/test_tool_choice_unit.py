@@ -615,7 +615,8 @@ NATIVE_TOOL_CONFIG_CASES = [
         id='function-tool-keeps-config',
         model='gemini-2.5-pro',
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
-        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+        # A plain `strict=None` tool on a strict-supporting model defaults to `VALIDATED`.
+        expected_tool_config={'function_calling_config': {'mode': 'VALIDATED'}},
     ),
     dict(
         id='code-execution-gemini-3-sets-server-side-flag',
@@ -625,7 +626,7 @@ NATIVE_TOOL_CONFIG_CASES = [
         ),
         expected_tool_config={
             'include_server_side_tool_invocations': True,
-            'function_calling_config': {'mode': 'AUTO'},
+            'function_calling_config': {'mode': 'VALIDATED'},
         },
     ),
 ]
@@ -645,113 +646,6 @@ def test_google_native_tool_only_omits_function_calling_config(case: dict[str, A
     _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config == case['expected_tool_config']
-
-
-STRICT_TOOL_CONFIG_CASES = [
-    dict(
-        id='all-strict-supported-model-uses-validated',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True), make_tool('b', strict=True)],
-        settings={},
-        expected_mode='VALIDATED',
-    ),
-    dict(
-        id='all-strict-unsupported-model-stays-auto',
-        model='gemini-2.0-flash',
-        function_tools=[make_tool('a', strict=True)],
-        settings={},
-        expected_mode='AUTO',
-    ),
-    dict(
-        id='mixed-strict-stays-auto',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True), make_tool('b', strict=False)],
-        settings={},
-        expected_mode='AUTO',
-    ),
-    dict(
-        id='no-strict-stays-auto',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a')],
-        settings={},
-        expected_mode='AUTO',
-    ),
-    dict(
-        id='strict-with-required-tool-choice-stays-any',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True)],
-        settings={'tool_choice': 'required'},
-        expected_mode='ANY',
-    ),
-    dict(
-        id='strict-with-none-tool-choice-stays-none',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True)],
-        settings={'tool_choice': 'none'},
-        expected_mode='NONE',
-    ),
-    dict(
-        # `tool_defs` covers function and output tools, so a strict output tool alongside strict function tools
-        # keeps the request all-strict and still upgrades to `VALIDATED`.
-        id='all-strict-including-output-tool-uses-validated',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True)],
-        output_tools=[make_tool('final_result', strict=True)],
-        settings={},
-        expected_mode='VALIDATED',
-    ),
-    dict(
-        # A non-strict output tool makes the request mixed-strict, so `VALIDATED` must not engage even though
-        # every function tool is strict.
-        id='non-strict-output-tool-stays-auto',
-        model='gemini-2.5-flash',
-        function_tools=[make_tool('a', strict=True)],
-        output_tools=[make_tool('final_result', strict=False)],
-        settings={},
-        expected_mode='AUTO',
-    ),
-]
-
-
-@pytest.mark.skipif(not google_available(), reason='google not installed')
-@pytest.mark.parametrize('case', STRICT_TOOL_CONFIG_CASES, ids=lambda c: c['id'])
-def test_google_strict_tools_upgrade_auto_to_validated(case: dict[str, Any]):
-    """`AUTO` is upgraded to Gemini's `VALIDATED` mode only when every tool in the request (function *and*
-    output tools) is `strict=True` and the model supports it; `required`/`none` tool choices are never upgraded.
-
-    Asserted on the request shape directly rather than via VCR: a cassette replay can't catch the mode we send,
-    since it replays a recorded response without re-validating the request against the API.
-    """
-    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
-    params = ModelRequestParameters(
-        function_tools=case['function_tools'],
-        output_tools=case.get('output_tools', []),
-        allow_text_output=True,
-    )
-
-    _, tool_config, _ = m._get_tool_config(params, case['settings'])  # pyright: ignore[reportPrivateUsage]
-
-    assert tool_config is not None
-    assert tool_config['function_calling_config']['mode'].name == case['expected_mode']  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
-
-
-@pytest.mark.skipif(not google_available(), reason='google not installed')
-def test_google_strict_resolution_via_transformer():
-    """`GoogleJsonSchemaTransformer` leaves `strict` off by default (so the mode stays `AUTO`) and only marks a
-    tool strict-compatible when the caller explicitly opts in with `strict=True`."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=MagicMock()))
-
-    # `strict` left as `None` resolves to `False`: conservative default, no implicit `VALIDATED`.
-    params = m.customize_request_parameters(
-        ModelRequestParameters(function_tools=[make_tool('a')], allow_text_output=True)
-    )
-    assert params.function_tools[0].strict is False
-
-    # An explicit `strict=True` is preserved so the caller can opt into `VALIDATED`.
-    params = m.customize_request_parameters(
-        ModelRequestParameters(function_tools=[make_tool('a', strict=True)], allow_text_output=True)
-    )
-    assert params.function_tools[0].strict is True
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')

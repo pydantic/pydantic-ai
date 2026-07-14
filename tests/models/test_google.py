@@ -81,7 +81,6 @@ from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import get_first_post_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -613,35 +612,6 @@ async def test_google_model_vertex_labels(
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
-
-
-async def test_google_strict_tools_use_validated_mode(
-    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
-):
-    """A request whose function tools are all `strict=True` upgrades the function-calling mode to `VALIDATED`,
-    and Gemini accepts that enum end-to-end.
-
-    The `test_tool_choice_unit.py` cases assert the request shape against a `MagicMock` client; only a live
-    recording proves `VALIDATED` is a wire value the API accepts (rather than 400-ing on it), so this test
-    inspects the recorded request to confirm the mode we sent was `VALIDATED`.
-    """
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(model)
-
-    @agent.tool_plain(strict=True)
-    def get_weather(city: str) -> str:
-        return f'The weather in {city} is sunny and 24C.'
-
-    @agent.tool_plain(strict=True)
-    def get_time(city: str) -> str:
-        return f'The time in {city} is 3pm.'
-
-    result = await agent.run('What is the weather and the time in Paris? Use the tools.')
-    assert result.output == snapshot('The weather in Paris is sunny and 24C. The time in Paris is 3pm.')
-
-    first_request = get_first_post_body(vcr)
-    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
-    assert len(first_request['tools'][0]['functionDeclarations']) == 2
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):

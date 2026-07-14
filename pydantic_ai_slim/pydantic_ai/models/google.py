@@ -705,13 +705,14 @@ class GoogleModel(Model[Client]):
         # are function tools.
         if tool_defs:
             mode = function_calling_config_modes[tool_choice_mode]
-            # `VALIDATED` is `AUTO` with API-side schema enforcement (see #5366). Opt into it only when every
-            # tool in the request (`tool_defs` spans function and output tools) is `strict=True` and the model
-            # supports it. Only `AUTO` is upgraded; `ANY`/`NONE` have different semantics.
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see #5366); it needs no schema rewrites,
+            # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
+            # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
+            # have different semantics.
             if (
                 mode == FunctionCallingConfigMode.AUTO
                 and self.profile.get('google_supports_strict_tool_definition', False)
-                and all(tool_def.strict is True for tool_def in tool_defs.values())
+                and not any(tool_def.strict is False for tool_def in tool_defs.values())
             ):
                 mode = FunctionCallingConfigMode.VALIDATED
             function_calling_config: FunctionCallingConfigDict = {'mode': mode}

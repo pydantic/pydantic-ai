@@ -153,7 +153,7 @@ Please note that validation of the tool arguments will not be performed, and thi
 
 ## Strict Mode {#strict-mode}
 
-Some providers support a *strict* mode for tool calls, where the API itself enforces that the model's tool-call arguments match the tool's JSON schema, rejecting malformed or hallucinated calls at the API layer instead of letting them reach your code. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
+Some providers support a *strict* mode for tool calls that constrains the model so its tool-call arguments always conform to the tool's JSON schema. Rather than letting the model generate arguments freely and validating them after the fact, the provider restricts generation so that out-of-schema arguments aren't produced in the first place. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
 
 ```python
 from pydantic_ai import Agent
@@ -166,22 +166,24 @@ def get_weather(city: str) -> str:
     return f'The weather in {city} is sunny.'
 ```
 
-Strict mode is currently supported by **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models. Each provider enforces it differently:
+Because strict mode guarantees the arguments match the schema exactly, not every schema can be represented under it: some providers require every property to be listed in `required` and objects to set `additionalProperties: false`. A schema that can't be represented this way may be transformed lossily or have the flag ignored for that tool — which is why `strict=True` is best read as a request to *force* strict mode wherever the provider can honor it.
 
-| Provider | Mechanism |
+Strict mode is currently supported by **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models. How each provider applies it differs:
+
+| Provider | Behavior |
 |---|---|
-| OpenAI | `strict: true` on the tool definition (constrained decoding). |
-| Anthropic | `strict: true` on the tool definition. |
-| Bedrock | `strict: true` on the tool spec, on supported models. |
-| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), used when every tool in the request has `strict=True`, on Gemini 2.5 and newer. It behaves like the default mode but the API enforces the declared schema. |
+| OpenAI | Strict tool definitions. Enabled automatically when the tool's schema is strict-compatible; `strict=True` forces it. |
+| Anthropic | Strict tool definitions. Off unless you opt in with `strict=True`. |
+| Bedrock | Strict tool spec, on supported models. Off unless you opt in with `strict=True`. |
+| Google (Gemini) | Gemini's [`VALIDATED` function-calling mode](https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config), which ensures the model adheres to the declared schema. On **Gemini 2.5 and newer it is enabled by default** — `VALIDATED` needs no schema changes, so it's a free improvement — and you can opt a tool out with `strict=False`. `VALIDATED` is a preview Gemini feature. |
 
 ### Strictness values
 
 The `strict` flag is a `bool | None`:
 
-- `True` — force strict mode. Strict schemas impose restrictions (for example, OpenAI requires every property to be listed in `required` and sets `additionalProperties: false` so no extra properties are allowed), so a schema that can't be represented strictly may be transformed lossily, or the flag may be ignored on providers that can't honor it for that schema.
-- `False` — never use strict mode.
-- `None` (**default**) — infer per provider from the tool's JSON schema. OpenAI enables strict when the schema is strict-compatible; Anthropic, Bedrock, and Google leave it off unless you explicitly opt in with `strict=True`, since their strict/`VALIDATED` modes are opt-in.
+- `True` — force strict mode wherever the provider supports it for the tool's schema.
+- `False` — never use strict mode for the tool. On Google, this opts the tool out of `VALIDATED`.
+- `None` (**default**) — decide per provider: OpenAI enables strict when the schema is strict-compatible; Google defaults to `VALIDATED` on supported models; Anthropic and Bedrock leave it off unless you explicitly opt in with `strict=True`.
 
 To turn strict mode on for many tools at once, use [agent-wide dynamic tools](#prepare-tools) to set `strict=True` on each [`ToolDefinition`][pydantic_ai.tools.ToolDefinition].
 

@@ -105,9 +105,11 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
 
     def walk(self) -> JsonSchema:
         schema = super().walk()
-        # Unlike OpenAI/Anthropic, Gemini's `VALIDATED` mode needs no schema rewrites; we still only enable it
-        # on an explicit `strict=True` opt-in rather than by default, since it's a preview feature.
-        self.is_strict_compatible = self.strict is True
+        # Gemini's `VALIDATED` mode enforces the declared schema with no rewrites (unlike OpenAI/Anthropic
+        # strict), so every schema is compatible. Keeping `is_strict_compatible` at `True` lets a `strict=None`
+        # tool resolve as VALIDATED-eligible: `GoogleModel._get_tool_config` defaults supported models to
+        # `VALIDATED` and a caller opts out per tool with `strict=False`.
+        self.is_strict_compatible = True
         return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
