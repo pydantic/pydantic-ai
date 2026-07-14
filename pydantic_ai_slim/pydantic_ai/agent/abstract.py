@@ -1063,12 +1063,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Run the agent with a user prompt in sync streaming mode.
 
         This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream],
-        running all of the agent's async work on a dedicated event loop thread.
+        running all of the agent's async work on the caller's event loop while keeping context-manager and
+        iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
-        context manager and should be used with a `with` block so the stream and event loop thread are
-        cleaned up when you're done.
+        context manager and should be used and closed on the thread where it was created. Use a `with` block
+        so the stream is cleaned up when you're done.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
