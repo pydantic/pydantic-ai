@@ -2283,6 +2283,19 @@ class ModelResponse:
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
+
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     state: ModelResponseState = 'complete'
     """The state of this response, indicating whether it is final or requires further action.
 
@@ -2303,19 +2316,6 @@ class ModelResponse:
     Set by providers that return in-progress responses, e.g. OpenAI background mode.
     Durable execution frameworks can intercept the wait via `set_agent_graph_sleep`.
     """
-
-    run_id: str | None = None
-    """The unique identifier of the agent run in which this message originated."""
-
-    conversation_id: str | None = None
-    """The unique identifier of the conversation this message belongs to.
-
-    A conversation spans potentially multiple agent runs that share message history.
-    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
-    """
-
-    metadata: dict[str, Any] | None = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @property
     def text(self) -> str | None:
