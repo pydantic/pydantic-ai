@@ -977,6 +977,7 @@ async def test_stream_result_type_numeric_json(
     json_value: str,
     expected: int | float,
 ) -> None:
+    """Use mock chunks because a live model cannot reliably emit the exact numeric spellings this regression requires."""
     stream = [text_chunk(f'{{"response":{json_value}}}'), chunk([])]
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
