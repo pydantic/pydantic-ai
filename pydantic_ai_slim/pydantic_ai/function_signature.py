@@ -95,6 +95,7 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
     text = text.strip().replace('\\', '\\\\').replace('\0', '\\x00').replace('"""', '\\"\\"\\"')
+    text = ''.join(f'\\u{ord(char):04x}' if '\ud800' <= char <= '\udfff' else char for char in text)
     description_lines = text.splitlines()
     if len(description_lines) > 1:
         lines = [f'{indent}"""']

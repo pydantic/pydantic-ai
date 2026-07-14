@@ -610,7 +610,7 @@ async def multiply(*, left: float, right: float) -> float:
             'properties': {
                 'query': {
                     'type': 'string',
-                    'description': 'Terms to search for.\r\nUse `"""exact"""` text or C:\\queries.\0',
+                    'description': 'Terms to search for.\r\nUse `"""exact"""` text or C:\\queries.\0\ud800',
                 },
                 'ignored': {'type': 'string', 'description': '   '},
             },
@@ -623,14 +623,14 @@ def search(*, query: str, ignored: str | None = None) -> Any:
     """
     Args:
         query: Terms to search for.
-            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00
+            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.\\x00\\ud800
     """
     ...\
 ''')
     function = ast.parse(rendered).body[0]
     assert isinstance(function, ast.FunctionDef)
     assert ast.get_docstring(function) == (
-        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0'
+        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.\0\ud800'
     )
 
 
