@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import typing
 from enum import Enum
 from typing import Optional, Union
@@ -609,21 +610,28 @@ async def multiply(*, left: float, right: float) -> float:
             'properties': {
                 'query': {
                     'type': 'string',
-                    'description': 'Terms to search for.\nUse quoted text to match an exact phrase.',
-                }
+                    'description': 'Terms to search for.\r\nUse `"""exact"""` text or C:\\queries.',
+                },
+                'ignored': {'type': 'string', 'description': '   '},
             },
             'required': ['query'],
         },
     )
-    assert schema_tool.render_signature('...') == snapshot('''\
-def search(*, query: str) -> Any:
+    rendered = schema_tool.render_signature('...')
+    assert rendered == snapshot('''\
+def search(*, query: str, ignored: str | None = None) -> Any:
     """
     Args:
         query: Terms to search for.
-            Use quoted text to match an exact phrase.
+            Use `\\\"\\\"\\\"exact\\\"\\\"\\\"` text or C:\\\\queries.
     """
     ...\
 ''')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == (
+        'Args:\n    query: Terms to search for.\n        Use `"""exact"""` text or C:\\queries.'
+    )
 
 
 # =============================================================================

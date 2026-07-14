@@ -94,10 +94,11 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 
 def _render_description(text: str, indent: str = '') -> list[str]:
     """Render a description as a list of indented docstring lines."""
-    text = text.strip()
-    if '\n' in text:
+    text = text.strip().replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
+    description_lines = text.splitlines()
+    if len(description_lines) > 1:
         lines = [f'{indent}"""']
-        for line in text.split('\n'):
+        for line in description_lines:
             lines.append(f'{indent}{line}' if line.strip() else '')
         lines.append(f'{indent}"""')
         return lines
@@ -287,8 +288,9 @@ class FunctionSignature:
 
         param_description_lines: list[str] = []
         for param in self.params.values():
-            if param.description:
-                param_description = param.description.strip().replace('\n', '\n        ')
+            param_description = (param.description or '').strip()
+            if param_description:
+                param_description = '\n        '.join(param_description.splitlines())
                 param_description_lines.append(f'    {param.name}: {param_description}')
         if param_description_lines:
             args_description = '\n'.join(['Args:', *param_description_lines])
