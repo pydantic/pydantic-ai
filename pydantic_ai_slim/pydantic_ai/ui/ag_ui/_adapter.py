@@ -475,13 +475,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
-                    # An `'interrupted'` outcome claim (a synthesized interrupted return would
-                    # otherwise reload as `'success'`) also keeps the return untyped.
+                    # A non-success outcome claim (the return would otherwise reload as `'success'`,
+                    # changing how it serializes to the provider) also keeps the return untyped.
                     tool_kind = None
-                    outcome: Literal['success', 'interrupted'] = 'success'
+                    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
                     if tool_msg.error is None:
-                        if use_encrypted_value and parse_encrypted_outcome(tool_msg.encrypted_value) is not None:
-                            outcome = 'interrupted'
+                        encrypted_outcome = (
+                            parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
+                        )
+                        if encrypted_outcome is not None:
+                            outcome = encrypted_outcome
                         else:
                             encrypted_tool_kind = (
                                 parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
@@ -498,6 +501,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                                 tool_kind=tool_kind,
+                                outcome=outcome,
                             )
                         )
                     else:
@@ -666,8 +670,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
-                # An `'interrupted'` outcome rides the `encrypted_value` carrier alongside `tool_kind`,
-                # since a `ToolMessage` has no other slot for it.
+                # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
+                # since a `ToolMessage` has no outcome slot.
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -783,7 +787,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
-                            **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
+                            **tool_kind_encrypted_value_kwargs(
+                                builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
+                            ),
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
@@ -843,9 +849,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
-        - `ToolReturnPart.outcome='failed'`/`'denied'` reload as `'success'` (`ToolMessage` has no
-          outcome slot); `'interrupted'` survives via the `encrypted_value` carrier from 0.1.11,
-          and is lost below that.
+        - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
+          carrier from 0.1.11 (`ToolMessage` has no outcome slot), and reloads as `'success'` below
+          that.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed

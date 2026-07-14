@@ -142,14 +142,16 @@ def tool_kind_encrypted_value(
     in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
     plain part if it doesn't validate.
 
-    An `'interrupted'` result outcome rides the same payload: it's the one outcome a `ToolMessage`
-    can't represent (`'failed'`/`'denied'` map to `error`, `'success'` is the default), so without
-    the claim a dump/load round-trip would upgrade a synthesized interrupted return to `'success'`.
+    A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
+    so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
+    `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
+    native error channel), that would silently change the request bytes and break the prompt-cache
+    prefix stability the repaired history is designed to keep.
     """
     payload: dict[str, str] = {}
     if tool_kind is not None:
         payload['tool_kind'] = tool_kind
-    if outcome == 'interrupted':
+    if outcome is not None and outcome != 'success':
         payload['outcome'] = outcome
     if not payload:
         return None
@@ -227,17 +229,20 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
 
 
-def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['interrupted'] | None:
-    """Read an `'interrupted'` outcome claim from the `pydantic_ai` namespace of an `encrypted_value` blob.
+def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'denied', 'interrupted'] | None:
+    """Read an outcome claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
 
-    Only `'interrupted'` is ever carried (the other outcomes are representable on the `ToolMessage`
-    itself), so any other client-supplied value reads as `None` and the result loads as a regular
+    Only non-`'success'` outcomes are ever carried (`'success'` is the default), so an absent or
+    unrecognized client-supplied value reads as `None` and the result loads as a regular
     successful return.
     """
     namespaced = _parse_encrypted_namespace(encrypted_value)
     if namespaced is None:
         return None
-    return 'interrupted' if namespaced.get('outcome') == 'interrupted' else None
+    outcome = namespaced.get('outcome')
+    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
+        return outcome
+    return None
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

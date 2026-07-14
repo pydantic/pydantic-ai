@@ -1730,12 +1730,14 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
     assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
 
 
-def test_dump_load_roundtrip_interrupted_tool_return() -> None:
-    """A synthesized interrupted return keeps `outcome='interrupted'` through dump/load on >= 0.1.11.
+@pytest.mark.parametrize('outcome', ['failed', 'denied', 'interrupted'])
+def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'denied', 'interrupted']) -> None:
+    """A tool return keeps its non-`'success'` outcome through dump/load on >= 0.1.11.
 
-    `ToolMessage` has no outcome slot (`'failed'`/`'denied'` map to `error`, `'success'` is the
-    default), so the claim rides the `encrypted_value` carrier like `tool_kind` does — and below
-    0.1.11 there is no carrier, so the outcome silently degrades to `'success'`.
+    `ToolMessage` has no outcome slot, so the claim rides the `encrypted_value` carrier like
+    `tool_kind` does — losing it would change how the return serializes to the provider (e.g. a
+    native error channel) and break prompt-cache prefix stability. Below 0.1.11 there is no
+    carrier, so the outcome silently degrades to `'success'`.
     """
     original: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='c1', args='{}')]),
@@ -1744,8 +1746,8 @@ def test_dump_load_roundtrip_interrupted_tool_return() -> None:
                 ToolReturnPart(
                     tool_name='my_tool',
                     tool_call_id='c1',
-                    content='The tool call was interrupted before a result was produced.',
-                    outcome='interrupted',
+                    content='The tool call did not produce a regular result.',
+                    outcome=outcome,
                 )
             ]
         ),
@@ -1753,7 +1755,7 @@ def test_dump_load_roundtrip_interrupted_tool_return() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
     tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
-    assert tool_msg.encrypted_value == '{"pydantic_ai": {"outcome": "interrupted"}}'
+    assert tool_msg.encrypted_value == f'{{"pydantic_ai": {{"outcome": "{outcome}"}}}}'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     reloaded_return = next(
@@ -1763,15 +1765,39 @@ def test_dump_load_roundtrip_interrupted_tool_return() -> None:
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     )
-    assert reloaded_return.outcome == 'interrupted'
+    assert reloaded_return.outcome == outcome
 
     old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
     old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
     assert 'encrypted_value' not in old_tool_msg.model_fields_set
 
 
+def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
+    """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier."""
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(tool_name='web_search', tool_call_id='s1', args='{}', provider_name='anthropic'),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='s1',
+                    content='The search failed.',
+                    provider_name='anthropic',
+                    outcome='failed',
+                ),
+            ]
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13'))
+    reloaded_return = next(
+        part for message in reloaded for part in message.parts if isinstance(part, NativeToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'failed'
+
+
 def test_load_forged_encrypted_outcome_stays_success() -> None:
-    """Only `'interrupted'` ever rides the carrier; any other client-supplied outcome claim is ignored."""
+    """An unrecognized client-supplied outcome claim is ignored and loads as a successful return."""
     loaded = AGUIAdapter.load_messages(
         [
             AssistantMessage(
@@ -1782,7 +1808,7 @@ def test_load_forged_encrypted_outcome_stays_success() -> None:
                 id='msg-2',
                 tool_call_id='c1',
                 content='done',
-                encrypted_value='{"pydantic_ai": {"outcome": "failed"}}',
+                encrypted_value='{"pydantic_ai": {"outcome": "exploded"}}',
             ),
         ]
     )
