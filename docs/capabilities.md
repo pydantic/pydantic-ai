@@ -524,19 +524,6 @@ print(result.output)
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
 
-### RaiseContentFilterError
-
-[`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] opts into treating any model response with `finish_reason='content_filter'` as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the provider returns partial text or refusal text:
-
-```python {title="raise_content_filter_error.py"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import RaiseContentFilterError
-
-agent = Agent('openai-responses:gpt-5.4', capabilities=[RaiseContentFilterError()])
-```
-
-By default, Pydantic AI only raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when a `content_filter` response is *empty*: if the provider returns partial text or refusal text alongside `finish_reason='content_filter'`, that text becomes ordinary agent output and no error is raised. This capability extends the check to *every* `content_filter` response, so partial and refusal text raise too. When it raises, the full [`ModelResponse`][pydantic_ai.messages.ModelResponse] is serialized into [`ContentFilterError.body`][pydantic_ai.exceptions.UnexpectedModelBehavior.body] so the partial text remains inspectable.
-
 ### Compaction
 
 Provider-specific compaction capabilities manage conversation context size by compacting older messages into summaries:
@@ -929,6 +916,19 @@ assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is No
 _(This example is complete, it can be run "as is")_
 
 The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
+
+### RaiseContentFilterError
+
+[`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] opts into treating any model response with `finish_reason='content_filter'` as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the provider returns partial text or refusal text:
+
+```python {title="raise_content_filter_error.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import RaiseContentFilterError
+
+agent = Agent('openai-responses:gpt-5.4', capabilities=[RaiseContentFilterError()])
+```
+
+By default, Pydantic AI only raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] when a `content_filter` response is *empty*: if the provider returns partial text or refusal text alongside `finish_reason='content_filter'`, that text becomes ordinary agent output and no error is raised. This capability extends the check to *every* `content_filter` response, so partial and refusal text raise too. When it raises, the full [`ModelResponse`][pydantic_ai.messages.ModelResponse] is serialized into [`ContentFilterError.body`][pydantic_ai.exceptions.UnexpectedModelBehavior.body] so the partial text remains inspectable.
 
 ### ReinjectSystemPrompt
 
