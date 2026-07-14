@@ -98,6 +98,26 @@ Important hook families:
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 
+## Show the Model Per-Request Context Without Persisting It
+
+From `before_model_request`, edits to `request_context.messages` are persisted into history. For notices the model should see but that must NOT persist (budget lines, staleness warnings, "you are being evaluated" notes), call `request_context.add_ephemeral_part(content)` instead.
+
+```python
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def staleness(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+    request_context.add_ephemeral_part('<system-reminder>src/foo.py changed on disk; re-read it.</system-reminder>')
+    return request_context
+```
+
+Ephemeral parts are appended after the latest user message (behind a `CachePoint`), reach the provider for that one request, and never enter `result.all_messages()`, so history stays byte-identical and the prompt-cache prefix stays warm. This is the blessed alternative to hand-rolling `wrap_model_request` + tail-append + `CachePoint`. Two ephemeral channels: instructions (`get_instructions`) for standing guidance delivered as system instructions; ephemeral parts for contextual notices delivered next to the conversation. Never fake this by appending synthetic parts to `message_history`.
+
 ## Build a Custom Capability
 
 Subclass `AbstractCapability` when the user wants reusable behavior that combines tools, hooks, instructions, or model settings into one package.

@@ -143,6 +143,26 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
+#### Ephemeral per-request context
+
+Edits to `request_context.messages` from `before_model_request` are **persisted**: they become part of the run's message history and are visible in [`result.all_messages()`][pydantic_ai.run.AgentRunResult.all_messages]. That's the right channel for durable changes (history processing, injecting a message that should stick).
+
+For per-request notices that the model should *see but that should not persist* — a token-budget line, a staleness warning, a "you are being evaluated" note — use [`request_context.add_ephemeral_part(content)`][pydantic_ai.models.ModelRequestContext.add_ephemeral_part] instead:
+
+```python {test="skip" lint="skip"}
+@hooks.on.before_model_request
+async def budget_notice(ctx, request_context):
+    request_context.add_ephemeral_part(f'<system-reminder>Token budget: {remaining()} left.</system-reminder>')
+    return request_context
+```
+
+Ephemeral parts are appended to the tail of the outgoing request (after the latest user message), so the model reads them as context sitting next to the conversation rather than as standing instructions. They reach the provider for that one request only: they are never written to the message history, so `result.all_messages()` stays byte-identical and the prompt-cache prefix is never invalidated (a [`CachePoint`][pydantic_ai.messages.CachePoint] is placed in front of the ephemeral tail, so the stable conversation prefix stays cacheable and only the small notice is re-read each turn). Multiple contributors render in composition order.
+
+Frame the content with your own delimiter (e.g. a `<system-reminder>` tag) so the model reads it as an out-of-band notice rather than user speech. Because the parts do not persist, an unchanged condition re-emits its notice every request — that's intended: the signal is "still true now", not "told you once".
+
+!!! note "Two ephemeral channels"
+    Both [instructions](agent.md#instructions) and ephemeral parts are rebuilt per request and never stored in history, but they land in different places: instructions are **standing guidance** delivered as system-level instructions, while ephemeral parts are **contextual notices** delivered next to the latest message. Reach for instructions when the content is stable guidance about *how to behave*; reach for ephemeral parts when it's a transient fact about *the current state of the world*. Never hand-append synthetic notices to `request_context.messages` (or `message_history`) to fake this — that persists them into user-owned history and busts the cache prefix.
+
 ### Tool validation hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |

@@ -66,6 +66,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
+    CachePoint,
     FilePart,
     ImageUrl,
     LoadCapabilityCallPart,
@@ -21208,6 +21209,199 @@ def test_dynamic_capability_rejects_wrapper_fields() -> None:
 
     with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
         DynamicCapability(capability_func=factory, defer_loading=True)
+
+
+# endregion
+
+
+# region ephemeral parts
+
+
+@dataclass
+class _EphemeralNotice(AbstractCapability[Any]):
+    """Test capability that contributes one ephemeral part per request via `before_model_request`."""
+
+    note: str = 'hello'
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.add_ephemeral_part(self.note)
+        return request_context
+
+
+def _last_request(messages: list[ModelMessage]) -> ModelRequest:
+    return next(m for m in reversed(messages) if isinstance(m, ModelRequest))
+
+
+# These are `FunctionModel` unit tests rather than VCR cassette tests on purpose: they pin the *internal
+# outgoing-request payload shape* (where the `CachePoint` sits, the ephemeral tail's structure, and the
+# byte-stability of the cacheable prefix) by capturing the exact `list[ModelMessage]` the model was handed.
+# A cassette records the serialized wire request but not this pre-serialization structure or the
+# history-vs-outgoing split, so it could not reliably catch a regression that moves the `CachePoint` or
+# leaks an ephemeral part into persisted history.
+
+
+async def test_ephemeral_part_reaches_provider_but_not_history() -> None:
+    """An ephemeral part is appended (behind a `CachePoint`) to the outgoing request, but never persisted."""
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_EphemeralNotice(note='<reminder>stale</reminder>')])
+    result = await agent.run('hi')
+
+    # (a) The content reached the provider: the last request the model saw ends with an ephemeral
+    # `UserPromptPart` carrying a `CachePoint` in front of the contributed text.
+    sent = _last_request(seen[0])
+    assert sent.parts[-1] == UserPromptPart(
+        content=[CachePoint(ttl='5m'), '<reminder>stale</reminder>'], timestamp=IsDatetime()
+    )
+
+    # (b) Stored history is byte-unchanged: no ephemeral part, no `CachePoint`, just the user's own prompt.
+    stored = _last_request(result.all_messages())
+    assert stored.parts == snapshot([UserPromptPart(content='hi', timestamp=IsDatetime())])
+    assert not any(
+        isinstance(part, UserPromptPart) and not isinstance(part.content, str) and CachePoint() in part.content
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_ephemeral_parts_multi_contributor_ordering() -> None:
+    """Parts from multiple capabilities render in contribution (composition) order."""
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[_EphemeralNotice(note='first'), _EphemeralNotice(note='second')],
+    )
+    await agent.run('hi')
+
+    sent = _last_request(seen[0])
+    assert sent.parts[-1] == UserPromptPart(content=[CachePoint(ttl='5m'), 'first', 'second'], timestamp=IsDatetime())
+
+
+async def test_ephemeral_part_via_hooks_and_non_str_content() -> None:
+    """The `Hooks.on.before_model_request` seam works and `add_ephemeral_part` accepts any `UserContent`."""
+    seen: list[list[ModelMessage]] = []
+    image = ImageUrl(url='https://example.com/x.png')
+
+    hooks = Hooks()
+
+    @hooks.on.before_model_request
+    async def add(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        request_context.add_ephemeral_part('label:')
+        request_context.add_ephemeral_part(image)
+        return request_context
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[hooks]).run('hi')
+
+    sent = _last_request(seen[0])
+    assert sent.parts[-1] == UserPromptPart(content=[CachePoint(ttl='5m'), 'label:', image], timestamp=IsDatetime())
+    # Still not persisted.
+    assert _last_request(result.all_messages()).parts == snapshot(
+        [UserPromptPart(content='hi', timestamp=IsDatetime())]
+    )
+
+
+async def test_ephemeral_part_streaming() -> None:
+    """Ephemeral parts also reach the provider on the `run_stream` path and stay out of history."""
+    seen: list[list[ModelMessage]] = []
+
+    async def stream_fn(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'streamed'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[_EphemeralNotice(note='ctx')])
+    async with agent.run_stream('hi') as stream:
+        output = await stream.get_output()
+        messages = stream.all_messages()
+
+    assert output == 'streamed'
+    sent = _last_request(seen[0])
+    assert sent.parts[-1] == UserPromptPart(content=[CachePoint(ttl='5m'), 'ctx'], timestamp=IsDatetime())
+    assert _last_request(messages).parts == snapshot([UserPromptPart(content='hi', timestamp=IsDatetime())])
+
+
+async def test_no_ephemeral_parts_leaves_request_untouched() -> None:
+    """With no contributions, the outgoing request is unchanged: no extra part, no `CachePoint`, zero overhead."""
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    # A capability that hooks the request but contributes nothing.
+    agent = Agent(FunctionModel(model_fn), capabilities=[_RecordingCapability(label='noop')])
+    await agent.run('hi')
+
+    sent = _last_request(seen[0])
+    assert sent.parts == snapshot([UserPromptPart(content='hi', timestamp=IsDatetime())])
+
+
+async def test_ephemeral_part_keeps_cacheable_region_stable_across_requests() -> None:
+    """Across two consecutive requests sharing the same history, the messages *before* the ephemeral
+    `CachePoint` are byte-identical -- so the cacheable prefix is stable and only the ephemeral tail is
+    re-read each turn (per the `AGENTS.md` prompt-cache-stability rule). This is a `FunctionModel` unit
+    test rather than a VCR test because it asserts the byte-identity of the pre-`CachePoint` region across
+    two outgoing requests, which a cassette (one recorded request) cannot pin.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_EphemeralNotice(note='ctx')])
+    result = await agent.run('hi')
+    # Second request continues the conversation so the shared prefix grows the same way each turn.
+    await agent.run('again', message_history=result.all_messages())
+
+    def strip_ephemeral_tail(last: ModelRequest) -> ModelRequest:
+        # Drop the trailing ephemeral `UserPromptPart` (the one carrying the `CachePoint` + contributed
+        # content) so what remains is exactly the region a cache-supporting provider keeps stable.
+        assert last.parts and isinstance(last.parts[-1], UserPromptPart)
+        content = last.parts[-1].content
+        assert isinstance(content, list) and content and isinstance(content[0], CachePoint)
+        return replace(last, parts=last.parts[:-1])
+
+    # The cacheable region of request 1 (its 'hi' `ModelRequest` minus the ephemeral tail) must reappear
+    # byte-identical as the corresponding leading messages of request 2 -- the ephemeral tail never enters
+    # history, so a per-request injection that moved with history length would break this equality.
+    first = seen[0]
+    second = seen[1]
+    assert isinstance(first[-1], ModelRequest)
+    cacheable_first = [*first[:-1], strip_ephemeral_tail(first[-1])]
+    assert second[: len(cacheable_first)] == cacheable_first
+
+
+def test_add_ephemeral_part_rejected_outside_before_model_request() -> None:
+    """`add_ephemeral_part` raises on a context that doesn't accept ephemeral parts -- i.e. the ones the
+    framework hands to `wrap_model_request`/`after_model_request`/`on_model_request_error`, which run after
+    the outgoing messages are finalized so added parts would be silently dropped. Only the
+    `before_model_request` context sets `_accepts_ephemeral_parts=True`. Direct unit test of the guard (not
+    a VCR test): it pins the pre-request guard, which a cassette cannot observe.
+    """
+    # Default `_accepts_ephemeral_parts=False`, mirroring every context except `before_model_request`.
+    request_context = ModelRequestContext(
+        model=FunctionModel(lambda m, i: make_text_response('unused')),
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    with pytest.raises(UserError, match='can only be called from `before_model_request`'):
+        request_context.add_ephemeral_part('too late')
 
 
 # endregion
