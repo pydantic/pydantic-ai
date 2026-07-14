@@ -49,10 +49,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
 
-The model does not receive the refund instructions, and `refund_status` is not callable yet. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
+The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
 1. **Request 1.** The model sees the catalog above and the user's prompt. It calls the `load_capability` tool with `id='refunds'`.
-2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result, and registers `refund_status` for the next request.
+2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
 Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
@@ -1805,7 +1805,7 @@ print(f'Output: {result.output}')
 
 ## Pydantic AI Harness
 
-[**Pydantic AI Harness**](harness/overview.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](harness/overview.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
+[**Pydantic AI Harness**](https://pydantic.dev/docs/ai/harness/) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Third-party capabilities
 
@@ -1846,6 +1846,12 @@ Capabilities for filesystem access and sandboxed code execution help agents work
 Capabilities that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
 
 * [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+
+### Data & Analytics
+
+Capabilities for querying and analyzing structured data help agents answer questions over files and databases:
+
+* [`pydantic-ai-chdb`](https://github.com/chdb-io/pydantic-ai-chdb) - `ChDBCapability` gives agents analytical SQL over local files (Parquet/CSV/JSON), object storage, and remote databases with [chDB](https://clickhouse.com/docs/en/chdb), the in-process ClickHouse engine — the engine itself needs no server or connection string to run (remote sources are reached via ClickHouse table functions, which take their own credentials). Registers `run_select_query` (read-only ClickHouse SQL with parameter binding), `list_databases`, `list_tables`, `describe_table`, `get_sample_data`, `list_functions`, and `attach_file` (opt-in writable sessions) tools plus schema-first instructions. Sessions default to the engine-level `readonly=2` setting with capped results, and typed engine errors are mapped to [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can correct its queries. Works with [agent specs](agent-spec.md) out of the box, so it can be loaded via [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] / [`Agent.from_spec`][pydantic_ai.Agent.from_spec]. Also available as a lower-level [toolset](toolsets.md) via [`ChDBCapability(...).get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset].
 
 To add your package to this page, open a pull request.
 
