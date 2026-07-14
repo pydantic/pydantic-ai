@@ -461,15 +461,24 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """Index at which the current segment's parts begin in the stitched stream.
 
         Shares [`merge_mode`][pydantic_ai.models._continuation.merge_mode]'s decision so reindexing
-        matches the eventual merge: a segment that *replaces* the prior response — same
-        `provider_response_id`, a model change, or a `FallbackModel` `replace_previous_response` directive —
-        reuses the replaced segment's index space, while one that *accumulates* appends after all prior parts.
+        matches the eventual merge:
+
+        - `'accumulate'` appends after all prior parts (offset = number of prior parts).
+        - `'replace-same-id'` (a background job re-polled under the same `provider_response_id`) re-emits
+          the *same* parts in the *same* index space, so it reuses the replaced segment's offset.
+        - `'replace-new'` (a model change, or a `FallbackModel` `replace_previous_response` directive)
+          supersedes the whole prior response — `merge_responses` keeps only the new parts, indexed from
+          0 — so its events must start at offset 0 too, or the live event indices would drift past the
+          final response's (e.g. after one or more accumulated segments).
         """
         if response is None:
             return 0
-        if merge_mode(response, sub.get()) != 'accumulate':
-            return last_segment_offset
-        return len(response.parts)
+        mode = merge_mode(response, sub.get())
+        if mode == 'accumulate':
+            return len(response.parts)
+        if mode == 'replace-new':
+            return 0
+        return last_segment_offset
 
     def _reindex(self, event: ModelResponseStreamEvent, offset: int) -> ModelResponseStreamEvent:
         if offset and isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent)):

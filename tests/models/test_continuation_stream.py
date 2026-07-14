@@ -441,6 +441,52 @@ async def test_model_change_replaces_indices() -> None:
     assert merged.state == 'complete'
 
 
+async def test_replace_new_after_accumulation_reindexes_from_zero() -> None:
+    """A `replace-new` segment following *multiple* accumulate segments emits its parts from index 0.
+
+    `merge_responses` drops all prior parts on a replace, so the merged response indexes the replacing
+    segment's parts from 0. Its streamed events must match: reusing the *last* segment's offset (which is
+    non-zero once at least two segments accumulated) would drift the live event indices past the final
+    response's. A single prior segment can't catch this because the offset is still 0 — two are needed.
+    """
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'x')),
+                response=_response(
+                    parts=['x'],
+                    provider_response_id='r3',
+                    state='complete',
+                    input_tokens=1,
+                    output_tokens=1,
+                    model_name='other',
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    events = [event async for event in stream]
+
+    # Two accumulates put the second part at offset 1; the replacing third segment resets to offset 0
+    # (not 1), matching the merged response that keeps only its part at index 0.
+    assert _part_start_indices(events) == [0, 1, 0]
+
+    merged = stream.get()
+    assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['x']
+
+
 async def test_get_state_transitions_incomplete_then_complete() -> None:
     """`get()` reports `incomplete` while a segment is in flight and `complete` once the loop exits."""
     model = _FakeModel(
