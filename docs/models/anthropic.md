@@ -103,7 +103,7 @@ agent = Agent(model, model_settings=settings)
 
 ### Service tier
 
-Anthropic supports controlling the [service tier](https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput) to manage latency and throughput.
+Anthropic supports controlling the [service tier](https://platform.claude.com/docs/en/api/service-tiers) to manage latency and throughput.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier] field. `anthropic_service_tier` takes precedence over the unified field when both are set, and accepts Anthropic's native values (`'auto'` or `'standard_only'`).
 
 The unified field maps as follows for Anthropic:
