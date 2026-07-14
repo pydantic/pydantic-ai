@@ -8,11 +8,11 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import openai_model_profile, openai_prompt_cache_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_prompt_cache_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
@@ -38,6 +38,19 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return merge_profile(openai_model_profile(model_name), openai_prompt_cache_profile(model_name))
+
+    def _customize_model_profile(self, model_name: str, profile: ModelProfile) -> ModelProfile:
+        if isinstance(self.client, AsyncAzureOpenAI):
+            return merge_profile(
+                profile,
+                OpenAIModelProfile(
+                    openai_chat_prompt_cache_breakpoint_types=frozenset(),
+                    openai_responses_prompt_cache_breakpoint_types=frozenset(),
+                    openai_chat_prompt_cache_supported_modes=frozenset(),
+                    openai_responses_prompt_cache_supported_modes=frozenset(),
+                ),
+            )
+        return profile
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

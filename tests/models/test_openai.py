@@ -4466,17 +4466,10 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
 
 # These adapter-level tests use mocked SDK clients because they pin exact request kwargs and
 # pre-request validation; recordings cannot reliably assert omitted kwargs or a request that is never sent.
-@pytest.mark.parametrize('provider_name', ['openai', 'azure'])
-async def test_openai_chat_cache_point_and_options(
-    allow_model_requests: None, provider_name: Literal['openai', 'azure']
-):
+async def test_openai_chat_cache_point_and_options(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    if provider_name == 'openai':
-        provider = OpenAIProvider(openai_client=mock_client)
-    else:
-        provider = AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
-    model = OpenAIChatModel('gpt-5.6-sol', provider=provider)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
     result = await Agent(model, model_settings=settings).run(
@@ -4599,10 +4592,22 @@ async def test_openai_prompt_cache_options_not_sent_to_openrouter_chat(allow_mod
     assert 'prompt_cache_options' not in create.call_args.kwargs
 
 
-async def test_openai_prompt_cache_options_sent_to_azure_client_in_openai_provider(
-    allow_model_requests: None,
-):
-    """The documented custom-client path must retain Azure cache-field pass-through."""
+async def test_azure_chat_prompt_cache_fields_are_omitted(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+
+    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['messages'] == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Stable context.'}, {'type': 'text', 'text': 'Use it.'}]}
+    ]
+
+
+async def test_azure_chat_prompt_cache_fields_are_omitted_with_openai_provider(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
     async with AsyncAzureOpenAI(
         azure_endpoint='https://example-resource.openai.azure.com',
@@ -4614,37 +4619,13 @@ async def test_openai_prompt_cache_options_sent_to_azure_client_in_openai_provid
         model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=client))
         settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-        result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+        await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
-    assert result.output == 'response'
-    assert create.await_count == 1
     request = create.call_args.kwargs
-    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
-    assert request['messages'] == [
-        {
-            'role': 'user',
-            'content': [
-                {
-                    'type': 'text',
-                    'text': 'Stable context.',
-                    'prompt_cache_breakpoint': {'mode': 'explicit'},
-                },
-                {'type': 'text', 'text': 'Use it.'},
-            ],
-        }
-    ]
-
-
-async def test_azure_chat_prompt_cache_fields_are_opt_in(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    model = OpenAIChatModel('gpt-5.6-sol', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
-
-    await Agent(model).run('No cache configuration.')
-
-    request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'prompt_cache_options' not in request
-    assert request['messages'] == [{'role': 'user', 'content': 'No cache configuration.'}]
+    assert request['messages'] == [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Stable context.'}, {'type': 'text', 'text': 'Use it.'}]}
+    ]
 
 
 async def test_openai_prompt_cache_options_not_sent_to_unsupported_chat_model(allow_model_requests: None):

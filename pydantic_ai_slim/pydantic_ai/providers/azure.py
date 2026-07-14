@@ -16,12 +16,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import (
-    OpenAIJsonSchemaTransformer,
-    OpenAIModelProfile,
-    openai_model_profile,
-    openai_prompt_cache_profile,
-)
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -77,18 +72,12 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     profile_func(model_name),
                 )
                 break
-        cache_profile = None
         if base is None:
             # OpenAI models are unprefixed.
             base = openai_model_profile(model_name)
-            cache_profile = openai_prompt_cache_profile(model_name)
 
         # Azure Chat Completions API doesn't support document input.
-        return merge_profile(
-            base,
-            cache_profile,
-            OpenAIModelProfile(openai_chat_supports_document_input=False),
-        )
+        return merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

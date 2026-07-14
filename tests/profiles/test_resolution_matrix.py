@@ -365,14 +365,10 @@ def test_azure_gpt_5_6_capabilities(model_name: str):
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
-    assert profile.get('openai_chat_prompt_cache_breakpoint_types') == frozenset(
-        {'file', 'image_url', 'input_audio', 'text'}
-    )
-    assert profile.get('openai_responses_prompt_cache_breakpoint_types') == frozenset(
-        {'input_file', 'input_image', 'input_text'}
-    )
-    assert profile.get('openai_chat_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
-    assert profile.get('openai_responses_prompt_cache_supported_modes') == frozenset({'implicit', 'explicit'})
+    assert not profile.get('openai_chat_prompt_cache_breakpoint_types')
+    assert not profile.get('openai_responses_prompt_cache_breakpoint_types')
+    assert not profile.get('openai_chat_prompt_cache_supported_modes')
+    assert not profile.get('openai_responses_prompt_cache_supported_modes')
 
 
 def test_openai_gpt_4o():

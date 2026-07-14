@@ -587,6 +587,9 @@ class Model(ABC, Generic[InterfaceClient]):
         provider_profile: ModelProfile = {}
         if (provider := self.provider) is not None:
             provider_profile = provider.model_profile(self.model_name) or {}
+            provider_profile = provider._customize_model_profile(  # pyright: ignore[reportPrivateUsage]
+                self.model_name, provider_profile
+            )
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: user override
