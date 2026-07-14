@@ -817,9 +817,9 @@ class MistralStreamedResponse(StreamedResponse):
                 if not isinstance(json_dict[param], list):
                     return False
                 for item in json_dict[param]:
-                    if not isinstance(item, VALID_JSON_TYPE_MAPPING[param_items_type]):
+                    if not _matches_json_type(item, param_items_type):
                         return False
-            elif param_type and not isinstance(json_dict[param], VALID_JSON_TYPE_MAPPING[param_type]):
+            elif param_type and not _matches_json_type(json_dict[param], param_type):
                 return False
 
             if isinstance(json_dict[param], dict) and 'properties' in param_schema:
@@ -828,6 +828,23 @@ class MistralStreamedResponse(StreamedResponse):
                     return False
 
         return True
+
+
+def _matches_json_type(value: Any, json_type: str) -> bool:
+    """Check whether a Python value parsed from JSON matches a JSON Schema type.
+
+    JSON has a single `number` type, and `pydantic_core.from_json` (like `json.loads`) parses a
+    fraction-less number such as `20` to a Python `int`, so a `number` field must accept both `int`
+    and `float`. Python's `bool` is a subclass of `int`, so it is excluded from the numeric types to
+    avoid accepting a JSON boolean for an `integer` or `number` field.
+    """
+    if json_type == 'number':
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif json_type == 'integer':
+        return isinstance(value, int) and not isinstance(value, bool)
+    elif json_type == 'boolean':
+        return isinstance(value, bool)
+    return isinstance(value, VALID_JSON_TYPE_MAPPING[json_type])
 
 
 VALID_JSON_TYPE_MAPPING: dict[str, Any] = {

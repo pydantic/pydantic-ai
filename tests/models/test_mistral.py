@@ -75,6 +75,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.tools import ToolDefinition
 
     MockChatCompletion = MistralChatCompletionResponse | Exception
     MockCompletionEvent = MistralCompletionEvent | Exception
@@ -2136,11 +2137,79 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             },
             True,
         ),
+        (
+            'Number accepts JSON int (fraction-less number is parsed as Python int)',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20},
+            True,
+        ),
+        (
+            'Number accepts float',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20.5},
+            True,
+        ),
+        (
+            'Integer rejects bool',
+            {'required': ['age'], 'properties': {'age': {'type': 'integer'}}},
+            {'age': True},
+            False,
+        ),
+        (
+            'Number rejects bool',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Nested number accepts int',
+            {
+                'required': ['user'],
+                'properties': {
+                    'user': {
+                        'type': 'object',
+                        'required': ['score'],
+                        'properties': {'score': {'type': 'number'}},
+                    }
+                },
+            },
+            {'user': {'score': 20}},
+            True,
+        ),
+        (
+            'Array of number accepts ints',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, 2.5, 3]},
+            True,
+        ),
+        (
+            'Array of integer rejects bool item',
+            {'required': ['counts'], 'properties': {'counts': {'type': 'array', 'items': {'type': 'integer'}}}},
+            {'counts': [1, True, 3]},
+            False,
+        ),
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
     result = MistralStreamedResponse._validate_required_json_schema(data, schema)  # pyright: ignore[reportPrivateUsage]
     assert result == expected, f'{desc} — expected {expected}, got {result}'
+
+
+def test_try_get_output_tool_from_text_number_accepts_int() -> None:
+    tool = ToolDefinition(
+        name='final_result',
+        parameters_json_schema={
+            'type': 'object',
+            'required': ['value'],
+            'properties': {'value': {'type': 'number'}},
+        },
+    )
+    part = MistralStreamedResponse._try_get_output_tool_from_text(  # pyright: ignore[reportPrivateUsage]
+        '{"value": 20}', {'final_result': tool}
+    )
+    assert isinstance(part, ToolCallPart)
+    assert part.tool_name == 'final_result'
+    assert part.args_as_dict() == {'value': 20}
 
 
 @pytest.mark.vcr()
