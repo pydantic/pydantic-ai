@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
@@ -879,46 +880,31 @@ async def test_bedrock_stream_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
     """Mocked because synthetic stream metadata is needed to isolate the internal usage mapping."""
-
-    class BedrockStream:
-        def __init__(self, events: list[Any]):
-            self._events = iter(events)
-
-        def __iter__(self) -> BedrockStream:
-            return self
-
-        def __next__(self) -> Any:
-            return next(self._events)
-
-        def close(self) -> None:
-            pass
-
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
 
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+        yield {
+            'metadata': {
+                'usage': {
+                    'inputTokens': 13,
+                    'outputTokens': 5,
+                    'totalTokens': 1529,
+                    'cacheReadInputTokens': 1504,
+                    'cacheWriteInputTokens': 7,
+                    'cacheDetails': [],
+                    'futureBillableTokens': 11,
+                }
+            }
+        }
+
     mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
     mock_converse_stream.return_value = {
-        'stream': BedrockStream(
-            [
-                {'messageStart': {'role': 'assistant'}},
-                {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}},
-                {'contentBlockStop': {'contentBlockIndex': 0}},
-                {'messageStop': {'stopReason': 'end_turn'}},
-                {
-                    'metadata': {
-                        'usage': {
-                            'inputTokens': 13,
-                            'outputTokens': 5,
-                            'totalTokens': 1529,
-                            'cacheReadInputTokens': 1504,
-                            'cacheWriteInputTokens': 7,
-                            'cacheDetails': [],
-                            'futureBillableTokens': 11,
-                        }
-                    }
-                },
-            ]
-        ),
+        'stream': _stream(),
         'ResponseMetadata': {'RequestId': 'stub'},
     }
 
