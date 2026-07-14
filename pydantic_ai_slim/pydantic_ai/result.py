@@ -882,7 +882,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return self._bridge.call_with_otel_context(self._streamed_run_result.get_output)
+        return self._bridge.call(self._streamed_run_result.get_output)
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -920,7 +920,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return self._bridge.call_with_otel_context(
+        return self._bridge.call(
             lambda: self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial),
         )
 

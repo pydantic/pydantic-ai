@@ -20,7 +20,6 @@ import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, suppress
 from contextvars import Context, copy_context
-from dataclasses import dataclass
 from threading import get_ident
 from types import TracebackType
 from typing import Generic
@@ -39,12 +38,13 @@ _ExcInfo = tuple[type[BaseException] | None, BaseException | None, TracebackType
 
 
 def _is_awaitable(value: T | Awaitable[T]) -> TypeIs[Awaitable[T]]:
+    """Narrow an optionally awaitable result without losing its generic return type."""
     return inspect.isawaitable(value)
 
 
 async def _hold_context_manager(
     cm: AbstractAsyncContextManager[StreamT],
-    ready: asyncio.Future[tuple[StreamT, Context]],
+    entered: asyncio.Future[tuple[StreamT, Context]],
     exit_requested: asyncio.Future[_ExcInfo],
 ) -> None:
     """Enter and exit `cm` in one task, remaining parked while sync code uses the yielded stream."""
@@ -53,13 +53,15 @@ async def _hold_context_manager(
     except (KeyboardInterrupt, SystemExit):
         # Futures deliberately do not stop `run_until_complete()` for these exceptions because tasks
         # normally re-raise them directly from the event loop. Preserve that behavior instead of
-        # forwarding them through `ready`, which would leave the loop running indefinitely.
+        # forwarding them through `entered`, which would leave the loop running indefinitely.
         raise
     except BaseException as exc:
-        ready.set_exception(exc)
+        entered.set_exception(exc)
         return
 
-    ready.set_result((stream, copy_context()))
+    # Context changes made by `__aenter__()` stay in this owner task, so return its snapshot alongside
+    # the stream for child call and pump tasks to inherit.
+    entered.set_result((stream, copy_context()))
     try:
         exc_info = await exit_requested
     except BaseException as exc:
@@ -70,7 +72,7 @@ async def _hold_context_manager(
 
 
 async def _wait_for_task(task: asyncio.Task[None]) -> None:
-    """Wait for a task without propagating its result, then remain pending for one extra loop turn."""
+    """Wait for a task, then yield once so queued loop-stop callbacks run before this waiter completes."""
     if not task.done():
         await asyncio.wait((task,))
     await asyncio.sleep(0)
@@ -84,6 +86,8 @@ def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[
             try:
                 loop.run_until_complete(waiter)
             except RuntimeError:
+                # `_wait_for_task()` cannot raise `RuntimeError`, so a pending waiter on an open loop
+                # means a queued stop callback ended this drive before the waiter completed.
                 if loop.is_closed() or waiter.done():
                     raise
     except BaseException:
@@ -103,9 +107,10 @@ def _shutdown_loop(
     exc_info: _ExcInfo,
 ) -> None:
     """Tell the owner task to exit the stream context manager, then drive its cleanup to completion."""
-    for task in tuple(pump_tasks):
+    tasks = tuple(pump_tasks)
+    for task in tasks:
         task.cancel()
-    for task in tuple(pump_tasks):
+    for task in tasks:
         with suppress(BaseException):
             _run_task_to_completion(loop, task)
     pump_tasks.clear()
@@ -149,32 +154,25 @@ def _finalize_loop(
     def request_exit() -> None:
         loop.create_task(_request_exit(owner_task, exit_requested, pump_tasks))
 
-    if loop.is_running() or get_ident() != owner_thread_id:
-        with suppress(RuntimeError):
-            loop.call_soon_threadsafe(request_exit)
-        return
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        with suppress(BaseException):
-            _shutdown_loop(loop, owner_task, exit_requested, pump_tasks, (None, None, None))
-    else:
-        # Another event loop is running in this thread, so the owner loop cannot be driven synchronously.
-        with suppress(RuntimeError):
-            loop.call_soon_threadsafe(request_exit)
+    if get_ident() == owner_thread_id and not loop.is_running():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            with suppress(BaseException):
+                _shutdown_loop(loop, owner_task, exit_requested, pump_tasks, (None, None, None))
+            return
+
+    # The owner loop is running, this is a foreign thread, or another loop is active in this thread.
+    with suppress(RuntimeError):
+        loop.call_soon_threadsafe(request_exit)
 
 
-@dataclass(frozen=True, slots=True)
-class _Received(Generic[T]):
-    value: T
-
-
-async def _receive_one(receive_stream: anyio.streams.memory.MemoryObjectReceiveStream[T]) -> _Received[T] | None:
+async def _receive_one(receive_stream: anyio.streams.memory.MemoryObjectReceiveStream[T]) -> T | _utils.Unset:
     """Receive one item without leaking `EndOfStream` through an asyncio task traceback."""
     try:
-        return _Received(await receive_stream.receive())
+        return await receive_stream.receive()
     except anyio.EndOfStream:
-        return None
+        return _utils.UNSET
 
 
 class SyncStreamBridge(Generic[StreamT]):
@@ -211,20 +209,20 @@ class SyncStreamBridge(Generic[StreamT]):
 
         loop = _utils.get_event_loop()
         caller_context = copy_context()
-        ready = loop.create_future()
-        exit_requested = loop.create_future()
-        owner_task = loop.create_task(_hold_context_manager(cm, ready, exit_requested))
+        entered: asyncio.Future[tuple[StreamT, Context]] = loop.create_future()
+        exit_requested: asyncio.Future[_ExcInfo] = loop.create_future()
+        owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested))
         try:
-            stream, run_context = loop.run_until_complete(ready)
+            stream, run_context = loop.run_until_complete(entered)
         except BaseException:
             if not owner_task.done():
                 owner_task.cancel()
             with suppress(BaseException):
                 _run_task_to_completion(loop, owner_task)
-            # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `ready`.
+            # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `entered`.
             # Retrieve it so the abandoned future cannot report an unhandled exception later.
             with suppress(BaseException):
-                ready.result()
+                entered.result()
             raise
 
         self.stream = stream
@@ -308,10 +306,6 @@ class SyncStreamBridge(Generic[StreamT]):
             self.shutdown((type(exc), exc, exc.__traceback__))
             raise
 
-    def call_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
-        """Like [`call`][pydantic_ai._sync_stream.SyncStreamBridge.call]; the task context propagates the run span."""
-        return self.call(func)
-
     @staticmethod
     async def _pump_to_stream(
         make_aiter: Callable[[], AsyncIterator[T]], send_stream: anyio.streams.memory.MemoryObjectSendStream[T]
@@ -367,9 +361,9 @@ class SyncStreamBridge(Generic[StreamT]):
         try:
             while True:
                 received = self.call(_receive_one, receive_stream)
-                if received is None:
+                if not _utils.is_set(received):
                     break
-                yield received.value
+                yield received
             # Stream exhausted normally: surface any error raised inside the pump task.
             self._run(pump_task)
         except GeneratorExit:

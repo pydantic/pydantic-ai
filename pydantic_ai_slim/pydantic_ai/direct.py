@@ -334,6 +334,8 @@ class StreamedResponseSync:
     def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
         """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         bridge = self._ensure_bridge()
+        # The pump task retains this factory until it exits. Capture the stream rather than the bridge
+        # to avoid a reference cycle that would delay the bridge's finalizer.
         stream = bridge.stream
         return bridge.stream_sync(lambda: aiter(stream))
 
