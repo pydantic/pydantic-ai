@@ -249,7 +249,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if self.tool_call_results is not None:
             # The resume path must supply a result for every eligible call from the original response,
             # including `'unknown'` (hallucinated) ones, using the `'skip'` sentinel for any call that
-            # was already handled in a prior step. The check below relies on that convention.
+            # was already handled in a prior step. Non-eligible `'output'` calls settled in the original
+            # step also arrive as `'skip'` entries (from their retry/status parts in the trailing
+            # request), so results may cover more than the eligible calls but never more than the
+            # response's calls. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
             eligible_calls = [
                 call
@@ -283,21 +286,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.output_indices = [i for i in range(len(self.tool_calls)) if self.is_executable_output(i)]
         self.schema = self.ctx.deps.output_schema
 
-    def is_executable_output(self, index: int) -> bool:
-        if self.call_kinds[index] != 'output':
-            return False
+    def _is_resume_eligible(self, index: int) -> bool:
         # On resume, calls without a supplied result were executed in a previous step; skip.
-        if self.tool_call_results is not None and self.tool_calls[index].tool_call_id not in self.calls_to_run_results:
-            return False
-        return True
+        return self.tool_call_results is None or self.tool_calls[index].tool_call_id in self.calls_to_run_results
+
+    def is_executable_output(self, index: int) -> bool:
+        return self.call_kinds[index] == 'output' and self._is_resume_eligible(index)
 
     def is_executable_function(self, index: int) -> bool:
-        if self.call_kinds[index] not in self.executable_function_kinds:
-            return False
-        # On resume, calls without a supplied result were executed in a previous step; skip.
-        if self.tool_call_results is not None and self.tool_calls[index].tool_call_id not in self.calls_to_run_results:
-            return False
-        return True
+        return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
     async def run(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""

@@ -1596,6 +1596,11 @@ def test_tool_raises_approval_required():
 
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
+    """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
+    which requires an exact parallel batch of an invalid output tool call and an approval-required
+    call that a live model wouldn't reliably produce (https://github.com/pydantic/pydantic-ai/issues/6486).
+    """
+
     class MyOutput(BaseModel):
         value: int
 
