@@ -68,6 +68,8 @@ async def _hold_context_manager(
         if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
             raise
     else:
+        # The synchronous wrappers do not support exception suppression, and the context managers used here
+        # do not suppress.
         await cm.__aexit__(*exit_info)
 
 
@@ -86,9 +88,9 @@ def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[
             try:
                 loop.run_until_complete(waiter)
             except RuntimeError:
-                # `_wait_for_task()` cannot raise `RuntimeError`, so a pending waiter on an open loop
-                # means a queued stop callback ended this drive before the waiter completed.
-                if loop.is_closed() or waiter.done():
+                # `_wait_for_task()` cannot raise `RuntimeError`, so retry only while its waiter remains
+                # pending and this thread can still drive the loop.
+                if loop.is_closed() or loop.is_running() or waiter.done():
                     raise
     except BaseException:
         # Interrupts and other base exceptions must not strand either task. Finish best-effort cleanup,
@@ -330,6 +332,8 @@ class SyncStreamBridge(Generic[StreamT]):
 
     def stream_sync(self, make_aiter: Callable[[], AsyncIterator[T]]) -> Iterator[T]:
         """Synchronously iterate the items produced by `make_aiter()` on the bridge's event loop."""
+        if not self._finalizer.alive:
+            raise RuntimeError('This synchronous stream is already closed.')
         self._check_owner_thread()
         send_stream, receive_stream = anyio.create_memory_object_stream[T](max_buffer_size=0)
         pump_task = self._task_context().run(self._loop.create_task, self._pump_to_stream(make_aiter, send_stream))

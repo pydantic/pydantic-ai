@@ -389,6 +389,30 @@ def test_sync_stream_bridge_call_propagates_keyboard_interrupt():
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
 
 
+def test_sync_stream_bridge_rejects_streaming_after_shutdown_before_creating_pump(monkeypatch: pytest.MonkeyPatch):
+    """A closed bridge rejects iteration without creating another loop-bound task.
+
+    VCR cannot inspect the bridge's in-process task lifecycle.
+    """
+
+    @asynccontextmanager
+    async def stream_context() -> AsyncGenerator[object]:
+        yield object()
+
+    async def source() -> AsyncIterator[object]:
+        yield object()
+
+    bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
+    bridge.shutdown()
+    task_context = MagicMock(side_effect=AssertionError('must not create a pump task'))
+    monkeypatch.setattr(bridge, '_task_context', task_context)
+
+    with pytest.raises(RuntimeError, match='already closed'):
+        next(bridge.stream_sync(source))
+
+    task_context.assert_not_called()
+
+
 def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
     """An interrupt after call completion propagates and leaves the event loop reusable.
 
@@ -474,6 +498,33 @@ def test_sync_stream_bridge_task_drain_propagates_error_after_completion(monkeyp
 
     assert exc_info.value is error
     assert task.done()
+    loop.close()
+
+
+def test_sync_stream_bridge_task_drain_propagates_error_while_loop_is_running(monkeypatch: pytest.MonkeyPatch):
+    """A persistent loop-driver error is propagated instead of retried indefinitely.
+
+    VCR cannot replace the local event-loop driver or simulate another thread driving its loop.
+    """
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(asyncio.sleep(0))
+    original_run_until_complete = loop.run_until_complete
+    error = RuntimeError('event loop is already running')
+
+    def fail_to_drive_loop(awaitable: Awaitable[object]) -> object:
+        raise error
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, 'run_until_complete', fail_to_drive_loop)
+        context.setattr(loop, 'is_running', lambda: True)
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_task_to_completion(loop, task)
+
+    assert exc_info.value is error
+    pending_tasks = asyncio.all_tasks(loop)
+    for pending_task in pending_tasks:
+        pending_task.cancel()
+    original_run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
     loop.close()
 
 
