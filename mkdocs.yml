@@ -31,6 +31,7 @@ nav:
       - Models & Providers:
           - Overview: models/overview.md
           - models/openai.md
+          - models/codex.md
           - models/anthropic.md
           - models/google.md
           - models/xai.md
@@ -148,6 +149,7 @@ nav:
   - API Reference:
       - pydantic_ai:
           - api/agent.md
+          - api/auth.md
           - api/native_tools.md
           - api/capabilities.md
           - api/common_tools.md

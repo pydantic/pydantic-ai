@@ -5550,6 +5550,7 @@ name = "pydantic-ai-slim"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "filelock" },
     { name = "genai-prices" },
     { name = "griffelib" },
     { name = "httpx" },
@@ -5672,6 +5673,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0" },
+    { name = "filelock", specifier = ">=3.20.3" },
     { name = "genai-prices", specifier = ">=0.0.70" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },

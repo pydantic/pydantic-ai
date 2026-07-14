@@ -100,10 +100,11 @@ Model strings use the `"provider:model-name"` format.
 Examples:
 
 - `openai:gpt-5.2`
+- `codex:gpt-5.5`
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
 
-Use a model instance instead of a string when the user needs provider-specific constructor arguments.
+`codex:` uses ChatGPT subscription credentials created by `clai auth login codex` or supplied through `CodexProvider`; do not recommend `OPENAI_API_KEY` for it. Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
 ## Run Methods and Streaming
 

@@ -3,6 +3,7 @@
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:
 
 * [OpenAI](openai.md)
+* [Codex subscriptions](codex.md)
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
 * [xAI](xai.md)

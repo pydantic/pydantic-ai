@@ -46,6 +46,7 @@
         "slug": "models/overview"
       },
       "models/openai",
+      "models/codex",
       "models/anthropic",
       "models/google",
       "models/xai",
@@ -380,6 +381,7 @@
         "label": "pydantic_ai",
         "items": [
           "api/agent",
+          "api/auth",
           "api/native_tools",
           "api/capabilities",
           "api/common_tools",

@@ -1899,17 +1899,29 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        model_settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        if self.profile.get('openai_responses_requires_stream', False):
+            response = await self._responses_create(messages, True, model_settings, model_request_parameters)
+
+            # Handle ModelResponse
+            if isinstance(response, ModelResponse):  # pragma: no cover
+                return response
+
+            async with response:
+                streamed_response = await self._process_streamed_response(
+                    response, model_settings, model_request_parameters
+                )
+                async for _ in streamed_response:
+                    pass
+                return streamed_response.get()
+
+        response = await self._responses_create(messages, False, model_settings, model_request_parameters)
 
         # Handle ModelResponse
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(
-            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        return self._process_response(response, model_settings, model_request_parameters)
 
     async def count_tokens(
         self,
@@ -2350,7 +2362,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     service_tier=_resolve_openai_service_tier(model_settings),
                     conversation=request_params.conversation,
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=model_settings.get('openai_store', OMIT),
+                    store=(
+                        False
+                        if profile.get('openai_responses_requires_store_false', False)
+                        else model_settings.get('openai_store', OMIT)
+                    ),
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),

@@ -30,21 +30,47 @@ clai
 
 <!-- clai/README.md links here for full docs -->
 
-You'll need to set an environment variable depending on the provider you intend to use.
-
-E.g. if you're using OpenAI, set the `OPENAI_API_KEY` environment variable:
+Most providers use an environment variable. For example, OpenAI Platform models use `OPENAI_API_KEY`:
 
 ```bash
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Then running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Providers with managed authentication use `clai auth` instead. See [Codex subscription authentication](#codex-subscription-authentication) below.
+
+Running `clai` starts an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
+
+### Codex subscription authentication
+
+A ChatGPT Codex subscription uses managed sign-in instead of `OPENAI_API_KEY`. Sign in through a browser, then select a `codex:` model:
+
+```bash
+clai auth login codex
+clai --model codex:gpt-5.5
+```
+
+For remote or headless environments, use device authorization:
+
+```bash
+clai auth login codex --method device
+```
+
+You can inspect or manage the same credentials without displaying secrets:
+
+```bash
+clai auth status codex
+clai auth status codex --json
+clai auth refresh codex
+clai auth logout codex
+```
+
+See the Codex provider guide for [storage security](models/codex.md#credential-storage-and-security), [application-owned credential sources](models/codex.md#application-owned-credentials-and-persistence), [subscription billing](models/codex.md#codex-and-openai-platform-differences), and [model availability](models/codex.md#sign-in).
 
 ### CLI Options
 
