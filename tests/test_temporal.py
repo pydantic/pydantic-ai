@@ -1397,6 +1397,10 @@ async def test_capability_contributed_toolset_id_from_capability():
     function toolset or MCP server can be used under Temporal instead of tripping the
     'leaves need a unique id' error at construction.
 
+    This isn't a VCR test: it inspects the constructed toolset tree and registered Temporal activity
+    names during local agent construction, before any model or MCP request, so there's no network
+    round-trip to record.
+
     Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
     """
 
