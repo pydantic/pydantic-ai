@@ -4305,6 +4305,62 @@ async def test_temporal_model_cancel_suspended_response_outside_workflow():
     assert cancelled == [response]
 
 
+# Module-level so the `@workflow.defn` below can bind to it (mirrors `simple_temporal_agent`). The
+# activity records into this list; since activities always run outside the workflow sandbox in the
+# worker process, the workflow can dispatch the teardown while the assertion still observes it here.
+model_cancel_calls: list[ModelResponse] = []
+
+
+class CancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        model_cancel_calls.append(response)
+
+
+cancel_temporal_model = TemporalModel(
+    CancelRecordingModel(),
+    activity_name_prefix='cancel_suspended',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=type(None),
+)
+
+
+@workflow.defn
+class CancelSuspendedResponseWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        # In-workflow, `cancel_suspended_response` must dispatch the provider teardown to the
+        # `model_cancel_suspended_response` activity rather than make the raw HTTP call in the sandbox.
+        await cancel_temporal_model.cancel_suspended_response(response)
+
+
+async def test_temporal_model_cancel_suspended_response_in_workflow(client: Client):
+    """Inside a workflow, `cancel_suspended_response` tears the server-side job down via an activity.
+
+    Counterpart to `test_temporal_model_cancel_suspended_response_outside_workflow`: it drives the
+    in-workflow override -> `workflow.execute_activity` -> activity-body path end to end, proving the
+    wrapped model's cancel actually runs and that the `ModelResponse` argument survives serialization
+    across both the workflow and activity boundaries.
+    """
+    model_cancel_calls.clear()
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelSuspendedResponseWorkflow],
+        activities=cancel_temporal_model.temporal_activities,
+    ):
+        await client.execute_workflow(
+            CancelSuspendedResponseWorkflow.run,
+            args=[response],
+            id=CancelSuspendedResponseWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    # The teardown ran in the activity worker against the wrapped model, with the response faithfully
+    # round-tripped through both serialization boundaries.
+    assert model_cancel_calls == [response]
+
+
 async def test_temporal_model_request_stream_outside_workflow():
     """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
 
