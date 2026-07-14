@@ -235,7 +235,8 @@ def model_request_stream_sync(
     """Make a streamed synchronous request to a model.
 
     This is the synchronous version of [`model_request_stream`][pydantic_ai.direct.model_request_stream].
-    It uses threading to run the asynchronous stream in the background while providing a synchronous iterator interface.
+    It drives the asynchronous stream on the caller's event loop while providing a synchronous iterator interface.
+    The returned context manager must be used and closed on the thread where the synchronous stream is created.
 
     ```py {title="model_request_stream_sync_example.py"}
 
@@ -302,14 +303,14 @@ def _prepare_model(
 
 @dataclass
 class StreamedResponseSync:
-    """Synchronous wrapper for an async streaming response, running the whole stream on a dedicated event-loop thread.
+    """Synchronous wrapper for an async streaming response, running the whole stream on the caller's event loop.
 
-    The stream runs on an [`anyio` blocking portal][anyio.from_thread.BlockingPortal] (see
-    [`SyncStreamBridge`][pydantic_ai._sync_stream.SyncStreamBridge]) rather than pumping a shared event loop
-    from a background thread, so exiting the `with` block cancels the underlying request promptly and closes
-    the connection instead of waiting for the whole response to arrive.
+    The stream uses [`SyncStreamBridge`][pydantic_ai._sync_stream.SyncStreamBridge] to keep context-manager
+    and iterator lifecycles in stable tasks. Exiting the `with` block cancels the underlying request promptly
+    and closes the connection instead of waiting for the whole response to arrive.
 
-    This class must be used as a context manager with the `with` statement.
+    This class must be used as a context manager with the `with` statement. The synchronous stream is created
+    when the `with` block is entered and must be used and closed on that thread.
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
@@ -333,7 +334,10 @@ class StreamedResponseSync:
     def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
         """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         bridge = self._ensure_bridge()
-        return bridge.stream_sync(lambda: aiter(bridge.stream))
+        # The pump task retains this factory until it exits. Capture the stream rather than the bridge
+        # to avoid a reference cycle that would delay the bridge's finalizer.
+        stream = bridge.stream
+        return bridge.stream_sync(lambda: aiter(stream))
 
     def __repr__(self) -> str:
         if self._bridge is not None:

@@ -209,6 +209,11 @@ def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
+    """The streamed tool-input JSON preserves SDK model serialization order.
+
+    OpenAI SDK 2.45 emits the `type` key before `query`; the ordering-only snapshot update is a
+    consequence of the minimum SDK version required for GPT-5.6 request fields.
+    """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -447,7 +452,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OpenTelemetry FastAPI instrumentation capture request and response body"}',
             },
             {
                 'type': 'tool-input-available',
@@ -508,7 +513,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -566,7 +571,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -624,7 +629,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY"}',
             },
             {
                 'type': 'tool-input-available',
@@ -801,7 +806,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_PYTHON_LOG_CORRELATION environment variable"}',
             },
             {
                 'type': 'tool-input-available',
