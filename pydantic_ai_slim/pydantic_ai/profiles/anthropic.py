@@ -12,8 +12,59 @@ from ..native_tools import (
 from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+
+
+class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
+    """Strips JSON Schema keywords that the Anthropic API does not accept.
+
+    The Anthropic tool-calling and structured-output APIs reject schemas that
+    contain validation-only keywords such as ``minimum``/``maximum``,
+    ``minLength``/``maxLength``, or ``pattern``.  Pydantic generates these
+    keywords for constrained types (e.g. ``Annotated[int, Gt(0)]``), causing
+    400 errors at request time.
+
+    This transformer silently removes the unsupported keywords so that
+    pydantic-generated schemas work out of the box.  The model still receives
+    the correct *type* information; only the server-side validation hints are
+    dropped.
+
+    References
+    ----------
+    https://github.com/pydantic/pydantic-ai/issues/6471
+    https://docs.anthropic.com/en/docs/build-with-claude/tool-use/implementing-tool-use
+    """
+
+    #: Keywords the Anthropic API does not accept in tool/output schemas.
+    _UNSUPPORTED_KEYWORDS: frozenset[str] = frozenset(
+        {
+            'minimum',
+            'maximum',
+            'exclusiveMinimum',
+            'exclusiveMaximum',
+            'multipleOf',
+            'minLength',
+            'maxLength',
+            'pattern',
+            'minItems',
+            'maxItems',
+            'minContains',
+            'maxContains',
+            'minProperties',
+            'maxProperties',
+            'contentEncoding',
+            'contentMediaType',
+            'contentSchema',
+        }
+    )
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        """Remove unsupported constraint keywords from a single schema node."""
+        for key in self._UNSUPPORTED_KEYWORDS:
+            schema.pop(key, None)
+        return schema
 """Native tool types Anthropic generally supports across the model line. Mirrors
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
@@ -142,12 +193,12 @@ to preserve `xhigh` instead of downshifting.
 def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
     """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
 
-    Shared between the direct Anthropic path and any provider that translates to the
+    Shared between mthe direct Anthropic path and any provider that translates to the
     Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
     Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
     base mapping, while letting the `xhigh` passthrough decision live in one place.
     """
-    if level == 'xhigh' and supports_xhigh:
+    if level == 'xhigh' and supports_xhigh:                                 
         return 'xhigh'
     return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
@@ -255,11 +306,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         )
     )
     supported_native_tools = (
-        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
+        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPCI_BASE_BUILTINS
     )
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
+        json_schema_transformer=AnthropicJsonSchemaTransformer,
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
@@ -282,7 +334,7 @@ def _code_execution_tool_versions(
 ) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
     versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
     default_version: AnthropicCodeExecutionToolVersion = '20250825'
-    if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
+    if model_name.startswith(_ANTHROPCIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
         default_version = '20260120'
         versions = (*versions, default_version)
     return default_version, versions
