@@ -199,11 +199,19 @@ def test_content_delta_keeps_previous_provider_details_snapshot_isolated(part_ki
     assert manager.get_parts()[0].provider_details == {'stable': 1}
 
 
-def test_thinking_content_with_callable_metadata_stays_buffered(mocker: MockerFixture):
+def test_thinking_content_with_callable_metadata_stays_buffered(monkeypatch):
     """The combined callable/content path is not produced by current provider cassettes."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     next(manager.handle_thinking_delta(vendor_part_id='part', content='a', provider_details={'count': 0}))
-    materialize_spy = mocker.spy(manager, '_materialize_part')
+    materialize_calls = 0
+    original_materialize = manager._materialize_part
+
+    def track_materialize(part_index: int):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        return original_materialize(part_index)
+
+    monkeypatch.setattr(manager, '_materialize_part', track_materialize)
 
     def increment(details: dict[str, Any] | None) -> dict[str, Any]:
         return {'count': (details or {}).get('count', 0) + 1}
@@ -211,23 +219,38 @@ def test_thinking_content_with_callable_metadata_stays_buffered(mocker: MockerFi
     for _ in range(2_048):
         next(manager.handle_thinking_delta(vendor_part_id='part', content='b', provider_details=increment))
 
-    assert materialize_spy.call_count == 0
+    assert materialize_calls == 0
     assert manager.get_parts() == [ThinkingPart('a' + 'b' * 2_048, provider_details={'count': 2_048})]
 
 
 @pytest.mark.parametrize('size', [8_192, 16_384])
-def test_incomplete_tool_call_string_arguments_are_buffered(mocker: MockerFixture, size: int):
+def test_incomplete_tool_call_string_arguments_are_buffered(monkeypatch, size: int):
     """Private apply/materialization counts cannot be asserted through a provider cassette."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    apply_spy = mocker.spy(ToolCallPartDelta, 'apply')
-    materialize_spy = mocker.spy(manager, '_materialize_part')
+    apply_calls = 0
+    original_apply = ToolCallPartDelta.apply
+    materialize_calls = 0
+    original_materialize = manager._materialize_part
+
+    def track_apply(self: ToolCallPartDelta, part: Any) -> Any:
+        nonlocal apply_calls
+        apply_calls += 1
+        return original_apply(self, part)
+
+    def track_materialize(part_index: int):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        return original_materialize(part_index)
+
+    monkeypatch.setattr(ToolCallPartDelta, 'apply', track_apply)
+    monkeypatch.setattr(manager, '_materialize_part', track_materialize)
 
     for _ in range(size):
         assert manager.handle_tool_call_delta(vendor_part_id='tool', args='x') is None
         assert manager.get_parts() == []
 
-    assert apply_spy.call_count == 0
-    assert materialize_spy.call_count == 0
+    assert apply_calls == 0
+    assert materialize_calls == 0
     assert (
         manager.handle_tool_call_delta(
             vendor_part_id='tool',
@@ -237,7 +260,7 @@ def test_incomplete_tool_call_string_arguments_are_buffered(mocker: MockerFixtur
         )
         is None
     )
-    assert apply_spy.call_count == 1
+    assert apply_calls == 1
 
     event = manager.handle_tool_call_delta(
         vendor_part_id='tool', tool_name='tool', provider_name='provider', provider_details={'second': True}
@@ -250,7 +273,7 @@ def test_incomplete_tool_call_string_arguments_are_buffered(mocker: MockerFixtur
         provider_name='provider',
         provider_details={'first': True, 'second': True},
     )
-    assert apply_spy.call_count == 2
+    assert apply_calls == 2
     assert manager.get_parts() == [event.part]
 
 
