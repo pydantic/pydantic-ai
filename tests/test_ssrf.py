@@ -931,7 +931,7 @@ class TestSafeDownload:
     ) -> None:
         """`safe_download` translates `httpx2.HTTPStatusError` raised by `raise_for_status()` into a
         compat class catchable as both `httpx.HTTPStatusError` and `httpx2.HTTPStatusError`, emitting a
-        deprecation warning for the legacy `httpx` catch. Drops the `httpx` parent in v2.
+        deprecation warning for the legacy `httpx` catch. Drops the `httpx` parent in v3.
         """
         import httpx as httpx_legacy
 

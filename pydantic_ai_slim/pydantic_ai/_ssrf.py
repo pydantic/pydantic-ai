@@ -23,11 +23,10 @@ from .models import get_user_agent
 __all__ = ['safe_download']
 
 
-# `safe_download` raises these on HTTP errors. They subclass both `httpx2.*` (raised by the
-# underlying client) and the legacy `httpx.*` so existing `except httpx.HTTPStatusError` blocks
-# around ImageUrl/DocumentUrl downloads keep matching; the httpx base is dropped in v2. Attributes
-# are set directly because `httpx` and `httpx2` have incompatible base `__init__` signatures, and
-# the pyright suppressions acknowledge that these only ever hold `httpx2` objects.
+# Deprecation ramp for the httpx -> httpx2 switch: these subclass both `httpx2.*` and legacy
+# `httpx.*` so existing `except httpx.*` blocks keep matching while users migrate their catches to
+# `httpx2`. The `httpx` base is dropped in v3. Attributes are set directly because the two bases
+# have incompatible `__init__` signatures.
 
 
 class _SafeDownloadHTTPStatusError(  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
@@ -51,7 +50,7 @@ def _warn_legacy_httpx_catch() -> None:
     warnings.warn(
         'Pydantic AI now downloads URLs with `httpx2`. These errors remain catchable as '
         '`httpx.HTTPStatusError` / `httpx.RequestError` for backward compatibility, but that will be '
-        'removed in Pydantic AI v2 — catch the `httpx2` equivalents instead.',
+        'removed in Pydantic AI v3 — catch the `httpx2` equivalents instead.',
         PydanticAIDeprecationWarning,
         stacklevel=2,
     )
@@ -526,7 +525,7 @@ async def safe_download(
                 or too many redirects occur.
         httpx2.HTTPStatusError: If the response has an error status code. Also catchable as
                 `httpx.HTTPStatusError` (the compat class subclasses both), but that base is
-                deprecated and dropped in Pydantic AI v2; migrate `except` blocks to `httpx2`.
+                deprecated and dropped in Pydantic AI v3; migrate `except` blocks to `httpx2`.
     """
     current_url = url
     redirects_followed = 0
