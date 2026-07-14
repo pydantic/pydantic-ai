@@ -13,6 +13,7 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -31,13 +32,18 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_responses
+from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_mode, merge_responses
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 pytestmark = pytest.mark.anyio
 
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+# The exact framework-protocol keys the `FallbackModel` side stamps and this module honors. Spelled out
+# here (rather than imported as module privates) since the test pins the wire contract itself.
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
 
 @dataclass
@@ -776,6 +782,138 @@ async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
     # A stuck poll still gets its server-side job cancelled before the raise, so it doesn't leak.
     assert len(model.cancelled) == 1
     assert model.cancelled[0].provider_response_id == 'job1'
+
+
+async def test_model_change_replace_chain_counts_against_strict_ceiling() -> None:
+    """A *model-change* replace chain counts against the strict `max_continuations`, not the generous backstop.
+
+    A replace caused by a model change (or a `FallbackModel` directive) is *fresh* generation, not a
+    passive re-poll of one background job, so it must not inherit the generous `max_replace_continuations`
+    ceiling — that would be the exact runaway (different models endlessly returning fresh suspensions) the
+    strict cap guards against. Only a *same-id* replace gets the generous backstop.
+    """
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'],
+                    provider_response_id='r1',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    model_name='m1',
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'],
+                    provider_response_id='r2',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    model_name='m2',
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'c')),
+                response=_response(
+                    parts=['c'],
+                    provider_response_id='r3',
+                    state='suspended',
+                    input_tokens=1,
+                    output_tokens=1,
+                    model_name='m3',
+                ),
+            ),
+        ]
+    )
+    # A generous replace ceiling that a same-id poll chain would sail past — but a model-change chain must
+    # be bound by the strict `max_continuations=2` instead and raise, naming the current job id.
+    stream = _composite(model, max_continuations=2, max_replace_continuations=10_000)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):
+        async for _ in stream:
+            pass
+
+
+def test_replace_previous_marker_forces_replace_and_is_stripped() -> None:
+    """A `new` response carrying the `FallbackModel` `replace_previous_response` marker merges as *replace*.
+
+    The marker (`metadata['__pydantic_ai__']['replace_previous_response']`) means "this response supersedes
+    the suspended turn, do not accumulate" — even when neither the id nor the model would otherwise signal a
+    replace. It's transient: honored as a replace, then popped so it can't persist into history and wrongly
+    force a later legitimate `pause_turn` continuation to replace. Other `__pydantic_ai__` keys survive.
+    """
+    existing = ModelResponse(parts=[TextPart('partial')], provider_response_id='r1')
+    # Same model, fresh id → would normally *accumulate*; the marker flips it to replace.
+    marked = ModelResponse(
+        parts=[TextPart('fresh')],
+        provider_response_id='r2',
+        metadata={
+            _PYDANTIC_AI_METADATA_KEY: {_REPLACE_PREVIOUS_RESPONSE_KEY: True, 'fallback_model_id': 'inner'},
+        },
+    )
+
+    assert merge_mode(existing, marked) == 'replace-new'
+
+    merged = merge_responses(existing, marked)
+    # Replaced, not accumulated: the prior 'partial' part is gone.
+    assert [p.content for p in merged.parts if isinstance(p, TextPart)] == ['fresh']
+    # The marker was popped, but the sibling continuation pin under the same namespace survives.
+    assert merged.metadata == {_PYDANTIC_AI_METADATA_KEY: {'fallback_model_id': 'inner'}}
+
+    # A follow-up merge of the stripped result must not still see a replace directive.
+    assert merge_mode(merged, ModelResponse(parts=[TextPart('more')], provider_response_id='r3')) == 'accumulate'
+
+
+async def test_cancel_teardown_survives_scope_cancellation() -> None:
+    """A cancellation injected while parked in the cancel-teardown still runs the job cancel to completion.
+
+    When a workflow/task cancellation is what tears the run down, awaiting the (activity-wrapped) job cancel
+    from inside the cancelled scope would otherwise raise `CancelledError` before the cancel runs, leaking the
+    server-side job. The shielded teardown must let the cancel finish before the cancellation propagates.
+    """
+
+    class _SlowCancelModel(_FakeModel):
+        def __init__(self, segments: list[_Segment]) -> None:
+            super().__init__(segments)
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.completed = False
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            self.started.set()
+            await self.release.wait()  # park mid-teardown so the outer scope can be cancelled
+            self.cancelled.append(response)
+            self.completed = True
+
+    model = _SlowCancelModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+    await iterator.__anext__()  # first (suspended) segment in flight
+
+    close_task = asyncio.ensure_future(stream.close_stream())
+    await model.started.wait()  # teardown has begun and is parked inside the shielded cancel
+    close_task.cancel()  # inject the scope cancellation mid-teardown
+    model.release.set()  # let the shielded cancel finish
+
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    # Despite the injected cancel, the server-side job cancel ran to completion (no leak).
+    assert model.completed
+    assert [r.provider_response_id for r in model.cancelled] == ['r1']
 
 
 async def test_detach_records_suspended_when_job_pending() -> None:

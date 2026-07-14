@@ -49,6 +49,7 @@ from .models._continuation import (
     MAX_REPLACE_CONTINUATIONS,
     MergeMode,
     _ContinuationStreamedResponse,
+    cancel_suspended_job,
     merge_mode,
     merge_responses,
 )
@@ -167,6 +168,29 @@ async def _cancel_task(task: Task[Any]) -> None:
         # Called while another stream error is already propagating; await only
         # to finish cleanup and retrieve the task exception, not replace it.
         pass
+
+
+async def _resolve_interrupted_stream_state(
+    model: models.Model,
+    stream_error: BaseException,
+    partial: _messages.ModelResponse,
+) -> _messages.ModelResponseState:
+    """State to record for a streamed turn the consumer stopped, cancelling a leaked job when appropriate.
+
+    The composite treats every `aclose()` (which the handler teardown triggers) as a *detach*, so
+    `partial.state` is `'suspended'` whenever the last segment is a still-pending job — regardless of
+    *why* the consumer stopped. Only the graph knows why, from `stream_error`'s type:
+
+    - `GeneratorExit` is a walk-away detach (the consumer broke out of `run_stream`/`stream_text`). Mirror
+      the non-streaming detach: keep `'suspended'` so the run is resumable, and leave the job alive.
+    - any other exception is a genuine downstream failure. Mirror the non-streaming cancel-on-error policy:
+      force `'interrupted'` (non-resumable) and best-effort cancel the still-live job so it doesn't leak.
+    """
+    if isinstance(stream_error, GeneratorExit) and partial.state == 'suspended':
+        return 'suspended'
+    if partial.state == 'suspended':
+        await cancel_suspended_job(model, partial)
+    return 'interrupted'
 
 
 NEW_CONVERSATION: Literal['new'] = 'new'
@@ -903,15 +927,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if stream_error is not None:
                 await _cancel_task(wrap_task)
                 # Capture the partial response so `capture_run_messages` and `all_messages()`
-                # include what was streamed before the interruption. State is forced to
-                # 'interrupted' since the run did not complete normally — `sr._cancelled`
-                # may be False here (downstream exception rather than explicit cancel).
+                # include what was streamed before the interruption.
                 # We append directly rather than via `_append_response` to skip the usage-limit
                 # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                 if agent_stream_holder:  # pragma: no branch
+                    partial = agent_stream_holder[0].response
+                    recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
                     partial_response = replace(
-                        agent_stream_holder[0].response,
-                        state='interrupted',
+                        partial,
+                        state=recorded_state,
                         run_id=ctx.state.run_id,
                         conversation_id=ctx.state.conversation_id,
                     )
@@ -984,14 +1008,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
 
-            async def cancel_suspended_job(suspended: _messages.ModelResponse) -> None:
+            async def cancel_job(suspended: _messages.ModelResponse) -> None:
                 # Best-effort teardown of the server-side suspended/background job so it doesn't leak.
                 # A failing cancel (e.g. a transport error from the provider's cancel call) must not
                 # replace the exception that aborted the run — callers re-raise the original after this.
-                try:
-                    await req_ctx.model.cancel_suspended_response(suspended)
-                except Exception:
-                    pass
+                # Shielded so the teardown completes even when a workflow/task cancellation is what
+                # aborted the run (awaiting the cancel from a cancelled scope would otherwise skip it).
+                await cancel_suspended_job(req_ctx.model, suspended)
 
             # Loop over any suspended → complete continuation segments (Anthropic `pause_turn`,
             # OpenAI background mode), echoing each suspended response back and merging the
@@ -1000,16 +1023,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # the final response. Continuations are not separate request steps, so usage is
             # committed exactly once by `_finish_handling` → `_append_response`.
             # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
-            # streamed composite in `_continuation`: an *accumulate* re-suspension (Anthropic `pause_turn`,
-            # new `provider_response_id` + new parts each time) keeps the small `MAX_CONTINUATIONS` cap
-            # against an unbounded model, while a *replace* re-suspension re-polling one background job
-            # (OpenAI background mode, same `provider_response_id`) gets the far more generous
-            # `MAX_REPLACE_CONTINUATIONS` backstop so a legitimately long job isn't killed after ~50 polls.
+            # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
+            # `pause_turn`, a model change, or a `FallbackModel` replace directive) keeps the small
+            # `MAX_CONTINUATIONS` cap against an unbounded model, while only a *same-id* re-suspension
+            # re-polling one background job (OpenAI background mode, same `provider_response_id`) gets the
+            # far more generous `MAX_REPLACE_CONTINUATIONS` backstop so a legitimately long job isn't killed
+            # after ~50 polls.
             accumulate_count = 0
             replace_count = 0
             # Mode of the merge that produced the current suspended `response`. A chain is homogeneous in
             # practice, so the previous merge's mode reliably classifies the next re-issue; the first
-            # re-issue (`last_mode is None`) counts as accumulate, harmless since both ceilings allow ≥1.
+            # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
             last_mode: MergeMode | None = None
             response = self._resume_suspended
             with set_current_run_context(run_context):
@@ -1017,22 +1041,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if response is None:
                         messages = req_ctx.messages
                     elif response.state == 'suspended':
-                        if last_mode == 'replace':
+                        job_id = response.provider_response_id
+                        if last_mode == 'replace-same-id':
                             replace_count += 1
                             over_limit = replace_count > MAX_REPLACE_CONTINUATIONS
                             limit_message = (
-                                f'Model response remained suspended after polling the maximum of '
-                                f'{MAX_REPLACE_CONTINUATIONS} times'
+                                f'Model response for job {job_id!r} remained suspended after polling the maximum '
+                                f'of {MAX_REPLACE_CONTINUATIONS} times'
                             )
                         else:
                             accumulate_count += 1
                             over_limit = accumulate_count > MAX_CONTINUATIONS
                             limit_message = (
-                                f'Model response was suspended more than the maximum of {MAX_CONTINUATIONS} times'
+                                f'Model response {job_id!r} was suspended more than the maximum of '
+                                f'{MAX_CONTINUATIONS} times'
                             )
                         if over_limit:
                             # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
-                            await cancel_suspended_job(response)
+                            await cancel_job(response)
                             raise exceptions.UnexpectedModelBehavior(limit_message)
                         if delay := response.suspended_retry_delay:
                             try:
@@ -1041,7 +1067,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                                 # A `CancelledError` (or any error) raised while parked in the inter-poll
                                 # sleep sits outside the request's cancel guard below, so cancel the job
                                 # here too before propagating.
-                                await cancel_suspended_job(response)
+                                await cancel_job(response)
                                 raise
                         messages = [*req_ctx.messages, response]
                     else:
@@ -1056,7 +1082,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
                         # suspended/background job before letting any of them propagate so it doesn't leak.
                         if response is not None:
-                            await cancel_suspended_job(response)
+                            await cancel_job(response)
                         raise
 
                     new_response = _narrow_tool_call_parts(new_response, req_ctx.model_request_parameters)
@@ -1500,6 +1526,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                if self.model_response.state == 'suspended':
+                    # A suspended turn is not a completed response to handle: its partial parts could
+                    # match an output schema and end the run on mid-turn output while the provider's
+                    # server-side job keeps running. This is reachable when a consumer detaches a
+                    # streamed background run under `agent.iter` and then keeps driving the graph, handing
+                    # this node the suspended response. Symmetric with `UserPromptNode`'s suspended guard.
+                    raise exceptions.UserError(
+                        'Cannot handle a suspended model response as a completed turn. '
+                        'Resume it by running the agent with this message history and no new prompt.'
+                    )
+
                 is_empty = not self.model_response.parts
                 is_thinking_only = not is_empty and all(
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts

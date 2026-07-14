@@ -22,9 +22,10 @@ deterministically under durable executors (e.g. Temporal).
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -50,30 +51,42 @@ __all__ = [
     'MAX_CONTINUATIONS',
     'MAX_REPLACE_CONTINUATIONS',
     'MergeMode',
+    'cancel_suspended_job',
     'merge_mode',
     'merge_responses',
     '_ContinuationStreamedResponse',
 ]
 
-MAX_CONTINUATIONS = 50
-"""Maximum number of *accumulate*-style continuation segments for a single model turn.
+# Framework-protocol markers a model may stamp on a continuation response's `metadata`, namespaced
+# under `__pydantic_ai__` so they never collide with a provider's own metadata. `FallbackModel` sets
+# `replace_previous_response` on the fresh response it produces after a rewind-and-restart to signal
+# "this response supersedes the suspended turn, do not accumulate onto it" — categorically different
+# from a same-`provider_response_id` background poll. The `FallbackModel` side must use these exact
+# keys. The marker is transient: `merge_responses` honors it as a replace, then pops it so it can't
+# persist into history and wrongly force a later legitimate `pause_turn` continuation to replace.
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
-Applies to re-suspensions that accumulate — each producing a new `provider_response_id` and
-appending genuinely new parts (Anthropic `pause_turn`). This is the guard against a model that
-never leaves the `'suspended'` state, endlessly emitting new segments; exceeding it raises
+MAX_CONTINUATIONS = 50
+"""Maximum number of *fresh-generation* continuation segments for a single model turn.
+
+Applies to every re-suspension that produces genuinely new generation: an *accumulate* (Anthropic
+`pause_turn`, appending new parts under a new `provider_response_id`), a model change, or a
+`FallbackModel` `replace_previous_response` directive. This is the guard against a model that never
+leaves the `'suspended'` state, endlessly emitting new segments; exceeding it raises
 [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 
-*Replace*-style re-suspensions — re-polling a single long-running job under the same
-`provider_response_id` (OpenAI background mode) — are bounded by the far more generous
+Only a *same-id* re-suspension — re-polling a single long-running job under the same
+`provider_response_id` (OpenAI background mode) — is bounded by the far more generous
 [`MAX_REPLACE_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_REPLACE_CONTINUATIONS] instead,
 so a healthy background job that legitimately runs for minutes isn't killed after ~50 polls.
 """
 
 MAX_REPLACE_CONTINUATIONS = 10_000
-"""Backstop for *replace*-style continuation polling of a single background job.
+"""Backstop for *same-id* continuation polling of a single background job.
 
-A replace-style re-suspension re-fetches one long-running job under the same `provider_response_id`
-(OpenAI background mode), so — unlike an accumulate-style re-suspension (see
+A same-id re-suspension re-fetches one long-running job under the same `provider_response_id`
+(OpenAI background mode), so — unlike a fresh-generation re-suspension (see
 [`MAX_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_CONTINUATIONS]) — it carries no risk of an
 unbounded model spawning endless new segments: it's the *same* job, and legitimate background jobs run
 for minutes (hundreds of polls at a ~1s interval). The real bounds here are the run's usage limits and
@@ -83,7 +96,20 @@ a pending poll adds no tokens). Exceeding it raises
 [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 """
 
-MergeMode = Literal['replace', 'accumulate']
+MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
+"""How a continuation response folds into the one it continues.
+
+- `'replace-same-id'`: both responses share a `provider_response_id` — a passive re-poll of one
+  long-running job (OpenAI background `retrieve`, which returns the full response so far). Replaces
+  wholesale, and — being the *same* job rather than fresh generation — is bounded by the generous
+  [`MAX_REPLACE_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_REPLACE_CONTINUATIONS] ceiling.
+- `'replace-new'`: the response supersedes the suspended turn with *fresh* generation — the model
+  changed (accumulating parts from different models is always wrong) or a `FallbackModel` stamped the
+  `replace_previous_response` marker after a rewind-and-restart. Replaces wholesale, but counts against
+  the strict [`MAX_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_CONTINUATIONS] ceiling, since a
+  chain of fresh suspensions is the exact runaway that cap guards against.
+- `'accumulate'`: appends new parts onto the prior response (Anthropic `pause_turn`). Strict ceiling.
+"""
 
 # Deterministic fallback for `timestamp` before any segment has streamed. This is
 # never reached in practice (a segment is always in flight or finalized by the time
@@ -91,32 +117,63 @@ MergeMode = Literal['replace', 'accumulate']
 _FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
 
 
-def merge_mode(existing: ModelResponse, new: ModelResponse) -> MergeMode:
-    """Whether `new` replaces `existing` wholesale or accumulates onto it.
+def _has_replace_marker(response: ModelResponse) -> bool:
+    """Whether `response` carries the `FallbackModel` `replace_previous_response` directive."""
+    metadata = response.metadata
+    if not _utils.is_str_dict(metadata):
+        return False
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    return bool(_utils.is_str_dict(namespace) and namespace.get(_REPLACE_PREVIOUS_RESPONSE_KEY))
 
-    `'replace'` when both responses share a `provider_response_id` (e.g. an OpenAI
-    background `retrieve`, which returns the full response so far) or when the model
-    changed between them (accumulating parts from different models is always wrong).
-    `'accumulate'` otherwise (e.g. Anthropic `pause_turn`, which appends new parts).
+
+def _strip_replace_marker(metadata: Any) -> dict[str, Any] | None:
+    """Return `metadata` without the transient `replace_previous_response` marker (other keys intact).
+
+    Copies before mutating so the caller's dicts (including the shared `__pydantic_ai__` namespace,
+    which also holds the `FallbackModel` continuation pin) aren't touched.
     """
+    if not _utils.is_str_dict(metadata):
+        return metadata
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    if not (_utils.is_str_dict(namespace) and _REPLACE_PREVIOUS_RESPONSE_KEY in namespace):
+        return metadata
+    namespace = {k: v for k, v in namespace.items() if k != _REPLACE_PREVIOUS_RESPONSE_KEY}
+    metadata = {**metadata}
+    if namespace:
+        metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    else:
+        del metadata[_PYDANTIC_AI_METADATA_KEY]
+    return metadata
+
+
+def merge_mode(existing: ModelResponse, new: ModelResponse) -> MergeMode:
+    """Classify how `new` folds into `existing` — see [`MergeMode`][pydantic_ai.models._continuation.MergeMode].
+
+    The single decision path shared by [`merge_responses`][pydantic_ai.models._continuation.merge_responses],
+    the continuation-count ceilings, and the streamed composite's part-index reindexing.
+    """
+    # A `FallbackModel` rewind-and-restart marks its fresh response as superseding the suspended turn;
+    # honor that first, since such a response may otherwise look like an accumulate.
+    if _has_replace_marker(new):
+        return 'replace-new'
     if existing.provider_response_id and existing.provider_response_id == new.provider_response_id:
-        return 'replace'
+        return 'replace-same-id'
     if existing.model_name and new.model_name and existing.model_name != new.model_name:
-        return 'replace'
+        return 'replace-new'
     return 'accumulate'
 
 
 def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelResponse:
     """Merge a continuation response into the one it continues.
 
-    If same `provider_response_id`, replace entirely with the new response.
-    If the model changed between responses, replace entirely (incompatible responses should not be merged).
-    Otherwise, accumulate parts, sum usage, and use other fields from the new response.
+    On any `'replace-*'` mode (same `provider_response_id`, a model change, or a `FallbackModel`
+    `replace_previous_response` directive), replace entirely with the new response. Otherwise
+    accumulate parts, sum usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
     so turn-scoped data a later segment omits isn't lost — see below.
     """
-    if merge_mode(existing, new) == 'replace':
+    if merge_mode(existing, new) != 'accumulate':
         merged = new
     else:
         # Same model, different response → accumulate parts and sum usage.
@@ -141,7 +198,36 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+
+    # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
+    # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`
+    # continuation to replace rather than accumulate. Other `__pydantic_ai__` keys (the continuation
+    # pin) survive.
+    stripped = _strip_replace_marker(merged.metadata)
+    if stripped is not merged.metadata:
+        merged = replace(merged, metadata=stripped)
     return merged
+
+
+async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
+    """Best-effort teardown of a server-side suspended/background job that survives cancellation.
+
+    When the trigger is a workflow/task cancellation (e.g. Temporal), awaiting the (activity-wrapped)
+    cancel from inside an already-cancelled scope would raise `CancelledError` before the cancel runs,
+    silently leaking the job. Shield the cancel so it completes before the cancellation propagates;
+    Temporal's workflow loop respects `asyncio.shield`. Any error from the cancel itself is swallowed —
+    a failing teardown must not replace the error (or cancellation) that aborted the run.
+    """
+    job = asyncio.ensure_future(model.cancel_suspended_response(response))
+    try:
+        await asyncio.shield(job)
+    except asyncio.CancelledError:
+        # Our scope was cancelled mid-teardown; let the shielded cancel finish before propagating.
+        with suppress(Exception):
+            await job
+        raise
+    except Exception:
+        pass
 
 
 @dataclass
@@ -245,41 +331,47 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 self._finished = True
 
     def _count_continuation(
-        self, last_mode: MergeMode | None, accumulate_count: int, replace_count: int
+        self, response: ModelResponse, last_mode: MergeMode | None, accumulate_count: int, replace_count: int
     ) -> tuple[int, int]:
-        """Count a suspended re-issue against its ceiling (replace vs accumulate), raising if exceeded.
+        """Count a suspended re-issue against its ceiling (same-id poll vs everything else), raising if exceeded.
 
-        The first re-issue has no prior merge to classify (`last_mode is None`) so it counts as
-        accumulate — the strict ceiling — which is harmless since both ceilings allow at least one.
+        Only a `'replace-same-id'` re-suspension — a passive re-poll of one long-running background job —
+        gets the generous `max_replace_continuations` ceiling. A model-change or `FallbackModel`-directed
+        replace is *fresh* generation, not the same job, so it counts against the strict `max_continuations`
+        cap alongside accumulate re-suspensions — otherwise a chain of fresh suspensions is the exact
+        runaway the strict cap guards against. The first re-issue has no prior merge to classify
+        (`last_mode is None`) so it counts as strict, harmless since both ceilings allow at least one.
         See `MAX_REPLACE_CONTINUATIONS`. Returns the updated `(accumulate_count, replace_count)`.
         """
-        if last_mode == 'replace':
+        job_id = response.provider_response_id
+        if last_mode == 'replace-same-id':
             replace_count += 1
             if replace_count > self.max_replace_continuations:
                 raise UnexpectedModelBehavior(
-                    f'Model response remained suspended after polling the maximum of '
+                    f'Model response for job {job_id!r} remained suspended after polling the maximum of '
                     f'{self.max_replace_continuations} times'
                 )
         else:
             accumulate_count += 1
             if accumulate_count > self.max_continuations:
                 raise UnexpectedModelBehavior(
-                    f'Model response was suspended more than the maximum of {self.max_continuations} times'
+                    f'Model response {job_id!r} was suspended more than the maximum of {self.max_continuations} times'
                 )
         return accumulate_count, replace_count
 
     async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
-        # drives reindexing): an *accumulate* re-suspension (Anthropic `pause_turn`) appends genuinely
-        # new parts each poll and risks an unbounded model, so it keeps the small `max_continuations`
-        # cap; a *replace* re-suspension (OpenAI background poll) re-fetches one long-running job under
-        # the same `provider_response_id`, so a healthy job that legitimately runs for minutes must not
-        # be killed by the small cap — it gets the far more generous `max_replace_continuations` backstop.
-        # Mirrors the non-streaming continuation loop in `_agent_graph`. See `MAX_REPLACE_CONTINUATIONS`.
+        # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
+        # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
+        # so it keeps the small `max_continuations` cap; only a *same-id* re-suspension (OpenAI background
+        # poll) re-fetches one long-running job under the same `provider_response_id`, so a healthy job
+        # that legitimately runs for minutes must not be killed by the small cap — it gets the far more
+        # generous `max_replace_continuations` backstop. Mirrors the non-streaming continuation loop in
+        # `_agent_graph`. See `MAX_REPLACE_CONTINUATIONS`.
         accumulate_count = 0
         replace_count = 0
         # Mode of the merge that produced the current suspended `response`, used to pick its ceiling. A
-        # continuation chain is homogeneous in practice (a poll chain is all-replace, a `pause_turn` chain
+        # continuation chain is homogeneous in practice (a poll chain is all same-id, a `pause_turn` chain
         # all-accumulate), so the previous merge's mode reliably classifies the next re-issue.
         last_mode: MergeMode | None = None
         response = self.initial_suspended_response
@@ -296,7 +388,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     messages = self.base_messages
                 elif response.state == 'suspended':
                     accumulate_count, replace_count = self._count_continuation(
-                        last_mode, accumulate_count, replace_count
+                        response, last_mode, accumulate_count, replace_count
                     )
                     if delay := response.suspended_retry_delay:
                         await self.sleep_func(delay)
@@ -361,27 +453,21 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # job (which history would otherwise record as unresumable and uncancellable). Skip when a
             # deliberate `cancel()`/`close_stream()` is already tearing things down — it cancels itself.
             if response is not None and response.state == 'suspended' and not (self._cancelled or self._stopped):
-                try:
-                    await self.model.cancel_suspended_response(response)
-                except Exception:
-                    pass
+                await cancel_suspended_job(self.model, response)
             raise
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
         """Index at which the current segment's parts begin in the stitched stream.
 
-        Mirrors [`merge_mode`][pydantic_ai.models._continuation.merge_mode]: a segment that *replaces*
-        the prior response — because it shares its `provider_response_id`, or because the model changed —
+        Shares [`merge_mode`][pydantic_ai.models._continuation.merge_mode]'s decision so reindexing
+        matches the eventual merge: a segment that *replaces* the prior response — same
+        `provider_response_id`, a model change, or a `FallbackModel` `replace_previous_response` directive —
         reuses the replaced segment's index space, while one that *accumulates* appends after all prior parts.
         """
         if response is None:
             return 0
-        same_response = (
-            bool(response.provider_response_id) and response.provider_response_id == sub.provider_response_id
-        )
-        changed_model = bool(response.model_name) and bool(sub.model_name) and response.model_name != sub.model_name
-        if same_response or changed_model:
+        if merge_mode(response, sub.get()) != 'accumulate':
             return last_segment_offset
         return len(response.parts)
 
@@ -448,8 +534,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 await self._current_sub.close_stream()
         finally:
             # Cancel the server-side job even if tearing down the sub-stream connection raised,
-            # so a failed connection teardown can't leave the background job running.
-            await self.model.cancel_suspended_response(self.get())
+            # so a failed connection teardown can't leave the background job running. Shielded so the
+            # cancel completes even when the run is being torn down by a workflow/task cancellation.
+            await cancel_suspended_job(self.model, self.get())
 
     async def aclose(self) -> None:
         """Tear down the in-flight sub-stream (its HTTP connection) without cancelling any job.

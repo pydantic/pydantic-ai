@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent, set_agent_graph_sleep
+from pydantic_ai import Agent, capture_run_messages, set_agent_graph_sleep
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
@@ -821,6 +821,191 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
     assert len(new_messages) == snapshot(1)
     assert isinstance(new_messages[-1], ModelResponse)
     assert new_messages[-1].state == 'complete'
+
+
+async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-streamed *model-change* replace chain is bound by the strict `MAX_CONTINUATIONS`, not the backstop.
+
+    Each suspended segment reports a different `model_name`, so the merge *replaces* — but as *fresh*
+    generation, not a same-id re-poll of one background job. It must therefore count against the strict
+    cap (the runaway guard) rather than inherit the generous same-id backstop, and cancel the still-live
+    job before raising.
+    """
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_CONTINUATIONS', 2)
+
+    def _suspended_model_change(model_name: str, provider_response_id: str) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('x')],
+            model_name=model_name,
+            provider_response_id=provider_response_id,
+            usage=RequestUsage(input_tokens=1, output_tokens=1),
+            state='suspended',
+            timestamp=_TIMESTAMP,
+        )
+
+    # Three fresh suspensions under different models — past the strict cap of 2, which the generous same-id
+    # backstop (10_000) would otherwise let sail through.
+    model = _ScriptedModel(
+        responses=[
+            _suspended_model_change('m1', 'r1'),
+            _suspended_model_change('m2', 'r2'),
+            _suspended_model_change('m3', 'r3'),
+        ]
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):
+        await agent.run('go')
+
+    # The still-suspended job was cancelled before the raise, so it doesn't leak.
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'r3'
+
+
+async def test_call_tools_node_rejects_suspended_response() -> None:
+    """Driving `CallToolsNode` with a suspended response raises `UserError` instead of finalizing on partial output.
+
+    After a streamed background run is detached under `agent.iter`, the trailing suspended response is
+    persisted and `ModelRequestNode.run()` hands it to a `CallToolsNode`. A user who keeps driving the
+    graph would otherwise have `CallToolsNode` treat the partial text as completed output — ending the run
+    on a mid-turn answer while the server-side job keeps running. The guard rejects it, symmetric with
+    `UserPromptNode`'s suspended guard.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    async with agent.iter('go') as run:
+        user_prompt_node = run.next_node
+        assert not isinstance(user_prompt_node, End)
+        node = await run.next(user_prompt_node)  # UserPromptNode → ModelRequestNode
+        assert Agent.is_model_request_node(node)
+        async with node.stream(run.ctx) as stream:
+            iterator = stream.__aiter__()
+            await iterator.__anext__()  # first (suspended) background segment now in flight
+            # Detach: stop iterating WITHOUT cancelling.
+        assert stream.response.state == 'suspended'
+
+        # Keep driving: `ModelRequestNode.run()` returns a `CallToolsNode` holding the suspended response.
+        call_tools_node = await run.next(node)
+        assert Agent.is_call_tools_node(call_tools_node)
+        with pytest.raises(UserError, match='suspended model response'):
+            await run.next(call_tools_node)
+
+
+async def test_run_stream_background_output_is_complete() -> None:
+    """`run_stream` over a suspended→complete background job yields the COMPLETE output, not the partial.
+
+    The suspended first segment streams partial text (and its own recognized `FinalResultEvent`), but the
+    turn's final output is the terminal segment's — `run_stream`'s `get_output()` drains the whole chain
+    before validating, so it never finalizes the run on the mid-turn partial.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial'], state='suspended', provider_response_id='job1', input_tokens=1, output_tokens=1
+            ),
+            # Same id → the terminal segment *replaces* the partial with the full answer.
+            _StreamSegment(
+                texts=['complete answer'],
+                state='complete',
+                provider_response_id='job1',
+                input_tokens=1,
+                output_tokens=1,
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    async with agent.run_stream('go') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('complete answer')
+    assert model.request_stream_calls == 2  # it polled the job to completion, not stopped on the partial
+
+
+async def test_run_stream_early_break_records_suspended_and_resumes() -> None:
+    """Walking away from a streamed background job (`run_stream` break, no `cancel()`) keeps it resumable.
+
+    Exiting `run_stream` after an early break sends `GeneratorExit` into the model-request stream. Only the
+    graph can tell that apart from a genuine downstream failure: it records the trailing response as
+    resumable `'suspended'` (not `'interrupted'`) and leaves the server-side job alive, mirroring the
+    non-streaming detach. Feeding the persisted history to a fresh run issues the continuation.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2
+            ),
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    with capture_run_messages() as messages:
+        async with agent.run_stream('go') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break  # walk away mid background job WITHOUT cancelling
+
+    # Detaching left the server-side job alive (no cancel) and requested no further poll.
+    assert model.cancelled == []
+    assert model.request_stream_calls == 1
+    # The persisted trailing response is a resumable suspended response.
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].state == 'suspended'
+    assert messages[-1].provider_response_id == 'job1'
+
+    # Resume: feed the persisted suspended history to a fresh run; it issues the continuation.
+    resume_model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    async with Agent(resume_model).run_stream(message_history=messages) as result:
+        output = await result.get_output()
+    assert 'done' in output
+    assert resume_model.request_stream_calls == 1
+
+
+async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:
+    """A genuine downstream error during `run_stream` interrupts the turn and cancels the still-live job.
+
+    Unlike a walk-away detach, an exception raised by the consumer is a real failure: the graph records the
+    trailing response as non-resumable `'interrupted'` and best-effort cancels the server-side job so it
+    doesn't leak, mirroring the non-streaming cancel-on-error policy.
+    """
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2
+            ),
+            _StreamSegment(
+                texts=['done'], state='complete', provider_response_id='job1', input_tokens=8, output_tokens=6
+            ),
+        ]
+    )
+    agent = Agent(model)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(ValueError, match='downstream boom'):
+            async with agent.run_stream('go') as result:
+                async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                    raise ValueError('downstream boom')
+
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].state == 'interrupted'  # non-resumable
+    # The still-live background job was cancelled best-effort so it doesn't leak.
+    assert len(model.cancelled) == 1
+    assert model.cancelled[0].provider_response_id == 'job1'
 
 
 async def test_cancel_through_wrapper_model_delegates() -> None:
