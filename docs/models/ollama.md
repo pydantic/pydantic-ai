@@ -98,7 +98,7 @@ agent = Agent(model, output_type=NativeOutput(CityLocation))
 
 ## Disabling streaming
 
-Some open-weight models mangle tool calls when their responses are streamed. If you hit this but still need a streaming interface (for example when serving an agent over [AG-UI](../ui/ag-ui.md) or [Vercel AI](../ui/vercel-ai.md)), set [`openai_disable_streaming`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_disable_streaming]. The model then fetches each response with a regular non-streamed request and replays it as a single chunk, so streaming consumers keep receiving the events they expect:
+Some open-weight models mangle tool calls when their responses are streamed. If you hit this but still need a streaming interface (for example when serving an agent over [AG-UI](../ui/ag-ui.md) or [Vercel AI](../ui/vercel-ai.md)), set [`openai_disable_streaming`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_disable_streaming]. The model then fetches each response with a regular non-streamed request and replays its parts as whole events, so streaming consumers keep receiving the events they expect:
 
 ```python
 from pydantic_ai import Agent
@@ -112,3 +112,5 @@ model = OllamaModel(
 agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
 ...
 ```
+
+Because the whole response is generated before anything is emitted, consumers see no incremental output, and the same applies to any other model served over the Chat Completions API (for example via vLLM).

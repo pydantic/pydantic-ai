@@ -614,11 +614,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Force `OpenAIChatModel.request_stream()` to make a non-streamed request under the hood.
 
     When `True`, `request_stream()` fetches the complete response via a regular non-streamed request
-    and emits it as a single chunk, instead of streaming incremental deltas from the API.
+    and then emits each part of it whole, instead of streaming incremental deltas from the API.
 
     This is useful for open-weight models served via vLLM or Ollama that mangle tool calls when
     streaming, while still letting streaming protocols like AG-UI and Vercel AI receive the events
-    (text, tool calls, etc.) they need.
+    (text, tool calls, etc.) they need. Note that nothing is emitted until the whole response has
+    been generated, so consumers see no incremental output and token limits are only enforced
+    afterwards.
 
     This setting only applies to the Chat Completions API; it is ignored by `OpenAIResponsesModel`.
     """
