@@ -30,7 +30,7 @@ def _replace_run_context(
     """Replace RunContext objects with a dict containing only hashable fields."""
     for key, value in inputs.items():
         if isinstance(value, RunContext):
-            inputs[key] = {
+            projected: dict[str, Any] = {
                 'retries': value.retries,
                 'tool_call_id': value.tool_call_id,
                 'tool_name': value.tool_name,
@@ -53,6 +53,15 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
             }
+            # The run's sandbox must fork the key: a tool that executes commands in
+            # `ctx.sandbox` produces different results in different environments, so two runs
+            # identical except for their sandbox must not share a cache entry. The handle is
+            # live in-process for Prefect tasks; only its stable identity is hashed —
+            # provider-qualified, since `sandbox_id` is only unique within a provider. Added
+            # only when a sandbox is present so no-sandbox runs keep their pre-existing keys.
+            if value.sandbox is not None:
+                projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
+            inputs[key] = projected
 
     return inputs
 

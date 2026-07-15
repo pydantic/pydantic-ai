@@ -25,6 +25,7 @@ nav:
           - output.md
           - capabilities.md
           - Hooks: hooks.md
+          - Sandboxes: sandbox.md
           - Agent Specs: agent-spec.md
           - message-history.md
           - direct.md
@@ -187,6 +188,8 @@ nav:
           - api/result.md
           - api/retries.md
           - api/run.md
+          - api/sandbox.md
+          - api/local_sandbox.md
           - api/settings.md
           - api/tools.md
           - api/toolsets.md
@@ -399,6 +402,7 @@ plugins:
           - extensibility.md
           - hooks.md
           - multi-agent-applications.md
+          - sandbox.md
           - thinking.md
           - third-party-tools.md
           - tools-advanced.md

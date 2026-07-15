@@ -4,6 +4,8 @@ from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, overload
 
+from typing_extensions import TypedDict
+
 from .. import (
     _instructions,
     _utils,
@@ -16,6 +18,7 @@ from .._template import TemplateStr
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
+from ..sandbox import Sandbox
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
@@ -25,11 +28,26 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRetries, EventStreamHandler, RunOutputDataT
+from .abstract import (
+    AbstractAgent,
+    AgentMetadata,
+    AgentModelSettings,
+    AgentRetries,
+    EventStreamHandler,
+    RunOutputDataT,
+)
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
     from .spec import AgentSpec
+
+
+class _SandboxKwargs(TypedDict, total=False):
+    sandbox: Sandbox
+
+
+def _sandbox_kwargs(sandbox: Sandbox | None) -> _SandboxKwargs:
+    return {'sandbox': sandbox} if sandbox is not None else {}
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -129,6 +147,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -152,6 +171,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -175,6 +195,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -262,6 +283,11 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
+                capability would contribute via
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
+                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -285,6 +311,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             capabilities=capabilities,
             spec=spec,
+            **_sandbox_kwargs(sandbox),
         ) as run:
             yield run
 

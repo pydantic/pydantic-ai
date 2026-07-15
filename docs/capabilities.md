@@ -1169,6 +1169,7 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | [Instructions](agent.md#instructions) (static strings, [template strings](agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | [Model settings](agent.md#model-run-settings) dict, or a callable for per-step settings |
+| [`get_sandbox()`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] | [`Sandbox`][pydantic_ai.sandbox.Sandbox] ` \| None` | A [sandbox](sandbox.md) to attach to the run — async and per-run, invoked at most once and only if this capability is selected |
 
 ### Hooking into the lifecycle
 

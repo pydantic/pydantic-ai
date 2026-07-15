@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -40,6 +41,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1147,6 +1149,58 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
             'Hello',
             toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')],
         )
+
+
+class FakeRunSandbox:
+    """Minimal stand-in for a live sandbox handle; the rejection fires before any protocol member is touched."""
+
+    provider = 'fake'
+    sandbox_id = 'fake-sandbox'
+
+
+class SandboxContributingCapability(AbstractCapability[Any]):
+    async def get_sandbox(self, ctx: RunContext[Any]) -> Sandbox | None:
+        return None  # pragma: no cover
+
+
+def make_sandbox_capability(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+    return SandboxContributingCapability()
+
+
+_SANDBOX_REJECTION_MESSAGE = (
+    'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
+    'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
+    'serializable reference on `deps` instead.'
+)
+
+
+async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS):
+    # Rejected before `dbos_wrapped_run_workflow` is entered, i.e. before its arguments are pickled.
+    with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
+        await simple_dbos_agent.run('Hello', sandbox=cast(Sandbox, FakeRunSandbox()))
+
+
+async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
+    # Rejected before `dbos_wrapped_run_sync_workflow` is entered, i.e. before its arguments are pickled.
+    with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
+        simple_dbos_agent.run_sync('Hello', sandbox=cast(Sandbox, FakeRunSandbox()))
+
+
+async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
+    static_agent = DBOSAgent(
+        Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])
+    )
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await static_agent.run('Hello')
+
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await simple_dbos_agent.run('Hello', capabilities=[make_sandbox_capability, SandboxContributingCapability()])
+
+    dynamic_agent = DBOSAgent(Agent(TestModel(), name='dbos_dynamic_sandbox', capabilities=[make_sandbox_capability]))
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await dynamic_agent.run('Hello')
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await asyncio.to_thread(dynamic_agent.run_sync, 'Hello')
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):

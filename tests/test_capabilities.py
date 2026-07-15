@@ -101,7 +101,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import resolve_capability_id
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
@@ -5277,6 +5277,40 @@ class TestRunHooks:
                 pass
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered via iter'
+
+    async def test_toolset_enter_failure_unwinds_wrap_run(self):
+        """A toolset `__aenter__` failure must not strand the wrap chain: `wrap_run` frames
+        unwind (releasing any resources they hold across the run) instead of parking on a
+        run body that never starts, and no wrap task is left permanently pending."""
+        released: list[str] = []
+
+        @dataclass
+        class HoldingCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                released.append('acquired')
+                try:
+                    return await handler()
+                finally:
+                    released.append('released')
+
+        class ExplodingToolset(WrapperToolset[Any]):
+            async def __aenter__(self) -> Any:
+                raise RuntimeError('toolset entry failed')
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            toolsets=[ExplodingToolset(wrapped=FunctionToolset())],
+            capabilities=[HoldingCap()],
+        )
+        with pytest.raises(RuntimeError, match='toolset entry failed'):
+            await agent.run('hello')
+
+        assert released == ['acquired', 'released']
+        await asyncio.sleep(0)
+        pending_wrap_tasks = [
+            t for t in asyncio.all_tasks() if not t.done() and 'wrap_run' in (t.get_coro().__qualname__ or '')
+        ]
+        assert not pending_wrap_tasks, f'the wrap task must not be left pending: {pending_wrap_tasks}'
 
 
 class TestModelRequestHooks:

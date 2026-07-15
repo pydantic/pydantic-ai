@@ -25,6 +25,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.sandbox import Sandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -225,6 +226,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -249,6 +251,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -272,6 +275,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -314,6 +318,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
+                stable `sandbox_id` participates in task cache keys.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -347,6 +355,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         # property. Forwarding it too would also invoke it at the graph level (against the
                         # empty, already-consumed stream) on top of the in-task invocation.
                         capabilities=capabilities,
+                        sandbox=sandbox,
                         spec=spec,
                     )
                     return result
@@ -376,6 +385,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -400,6 +410,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -423,6 +434,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -464,6 +476,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
+                stable `sandbox_id` participates in task cache keys.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -499,6 +515,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             # forwarding it too would invoke it again at the graph level against the empty,
                             # already-consumed stream on top of the in-task invocation.
                             capabilities=capabilities,
+                            sandbox=sandbox,
                             spec=spec,
                         )
                     )
@@ -529,6 +546,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -553,6 +571,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -577,6 +596,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -616,6 +636,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
+                stable `sandbox_id` participates in task cache keys.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -645,6 +669,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
         ) as result:
             yield result
@@ -669,6 +694,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
 
@@ -692,6 +718,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[
         AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
@@ -716,6 +743,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -775,6 +803,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
+                stable `sandbox_id` participates in task cache keys.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -810,6 +842,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
             ) as events:
                 yield events
@@ -836,6 +869,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -859,6 +893,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -882,6 +917,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        sandbox: Sandbox | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
@@ -970,6 +1006,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
+                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. The caller owns its lifecycle: create it
+                before the run and tear it down after. The handle stays live in-process for Prefect tasks; its
+                stable `sandbox_id` participates in task cache keys.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -998,6 +1038,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=None,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
                 **_deprecated_kwargs,
             ) as run:

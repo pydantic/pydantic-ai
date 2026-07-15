@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandbox import Sandbox
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -213,6 +214,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
+    @property
+    def has_get_sandbox(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides get_sandbox."""
+        return type(self).get_sandbox is not AbstractCapability.get_sandbox
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -319,6 +325,44 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> Sandbox | None:
+        """Return a [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, or `None`.
+
+        Unlike the sync `get_*` value collectors, this is an async, per-run *acquisition*
+        hook: it is called at most once per run, only if this capability is selected, from
+        inside the run body — after every capability's
+        [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] has entered and
+        before [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] fires.
+        It is never called when a sandbox was passed to the run method directly, and never
+        for a losing capability when several contribute — so it is the right place to create
+        a sandbox: only the winner pays the cost.
+
+        When multiple capabilities override this hook, the one **latest in the resolved
+        capability chain** is consulted first and its non-`None` result wins (with no
+        ordering constraints in play, that is the last-registered capability); earlier
+        capabilities are only consulted if it returns `None`. Because a silently shadowed
+        sandbox is a debugging trap, an agent whose resolved chain contains more than one
+        override of this hook emits a `UserWarning` naming this rule at run time.
+        This hook cannot be combined with
+        [`defer_loading=True`][pydantic_ai.capabilities.AbstractCapability.defer_loading]:
+        sandbox acquisition must be active for the whole run so `wrap_run` can bracket its
+        teardown. The agent rejects that combination during capability validation.
+
+        The capability owns the lifecycle of whatever it returns. For a per-run sandbox,
+        create it here (typically on an `AsyncExitStack` stored on the per-run instance
+        returned by [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]) and
+        tear it down in your `wrap_run`'s `finally` block — `wrap_run` has already entered
+        when this hook runs, so the bracket is guaranteed. For a warm sandbox shared across
+        runs, just return the long-lived handle. The framework never creates, enters, or
+        destroys sandboxes; it clears a capability-contributed sandbox from
+        [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] when the run body
+        finishes, before `after_run`/`on_run_error` and toolset `__aexit__` run. That
+        clearing also precedes your own `wrap_run`'s `finally`, so don't reach for
+        `ctx.sandbox` at teardown — keep your own reference to what you return here (the
+        exit-stack pattern above does this naturally).
         """
         return None
 
