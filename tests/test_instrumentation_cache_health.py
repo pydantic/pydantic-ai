@@ -14,16 +14,14 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage
 
-try:
+from .conftest import try_import
+
+with try_import() as otel_sdk_imports_successful:
     from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-except ImportError:  # pragma: lax no cover
-    otel_sdk_installed = False
-else:
-    otel_sdk_installed = True
 
-pytestmark = pytest.mark.skipif(not otel_sdk_installed, reason='opentelemetry-sdk not installed')
+pytestmark = pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
 
 
 @dataclass(frozen=True)
