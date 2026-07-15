@@ -131,6 +131,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            timeout=self.timeout,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -748,10 +749,15 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = validated.call.tool_name
 
-        # All tool calls go from here and we can apply the fail_after right here as long as we know what the tool timeout is
+        # A tool's own timeout (which a toolset may have already resolved from its own default) takes
+        # precedence over the agent-level one. Applying it here rather than in `FunctionToolset` means
+        # every toolset is covered, including ones that implement `call_tool` themselves.
+        timeout = validated.tool.tool_def.timeout
+        if timeout is None:
+            timeout = self.timeout
 
         try:
-            with anyio.fail_after(self.timeout):
+            with anyio.fail_after(timeout):
                 tool_result = await self.toolset.call_tool(
                     name,
                     validated.validated_args,
@@ -765,7 +771,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
         except TimeoutError:
-            raise ModelRetry(f'Timed out after {self.timeout} seconds.') from None
+            raise ModelRetry(f'Timed out after {timeout} seconds.') from None
 
         usage.tool_calls += 1
 

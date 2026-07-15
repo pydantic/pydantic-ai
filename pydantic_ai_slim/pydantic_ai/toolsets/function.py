@@ -605,6 +605,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             if not tool_def:
                 continue
 
+            # The toolset-level timeout applies to tools that don't set their own. `ToolManager`
+            # reads the resolved value off the tool def and applies it around the call.
+            if tool_def.timeout is None:
+                tool_def = replace(tool_def, timeout=self.timeout)
+
             new_name = tool_def.name
             if new_name in tools:
                 if new_name != original_name:

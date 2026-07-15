@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import sys
 from collections import defaultdict
@@ -36,6 +35,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionPart,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import Tool, ToolDefinition
@@ -2292,10 +2293,6 @@ async def test_concurrent_runs_dont_share_state():
     """Multiple concurrent runs don't share state on stateful toolsets."""
     import asyncio
 
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
     call_counts: list[int] = []
 
     class CountingToolset(AbstractToolset):
@@ -2632,23 +2629,18 @@ def test_apply_walks_combined_and_wrapper_toolsets():
 
 
 async def test_toolset_timeout():
-    """Agent-level `tool_timeout` must be honored by non-`FunctionToolset` toolsets.
+    """Agent-level `tool_timeout` is honored by toolsets that implement `call_tool` themselves.
 
-    The timeout is currently implemented only in `FunctionToolset.call_tool`, so a toolset
-    that implements `call_tool` itself (like MCP or CodeMode) never times out. `SlowToolset`
-    stands in for those: it delegates `get_tools` to a wrapped `FunctionToolset` but runs the
-    call directly, bypassing that timeout. This is a regression test for that gap.
+    The timeout is applied by `ToolManager` around every tool call, so a toolset that runs the
+    call itself (like MCP or CodeMode) is covered too. `SlowToolset` stands in for those: it
+    delegates `get_tools` to a wrapped `FunctionToolset` but runs the call directly.
     """
-    from pydantic_ai.messages import ModelMessage
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     class SlowToolset(WrapperToolset[Any]):
         async def call_tool(
             self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
         ) -> Any:
-            # 1 second, but agent tool_timeout is 0.1s
-            # await anyio.sleep(1.0)
-            await asyncio.sleep(1.0)
+            await anyio.sleep(1.0)  # agent `tool_timeout` is 0.1s, so this is cancelled
             return 'done'  # pragma: no cover
 
     inner = FunctionToolset[None]()
@@ -2688,7 +2680,7 @@ async def test_toolset_timeout():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Tool slow_tool timed out',
+                        content='Timed out after 0.1 seconds.',
                         tool_name='slow_tool',
                         tool_call_id='call-1',
                         timestamp=IsDatetime(),
@@ -2700,7 +2692,7 @@ async def test_toolset_timeout():
             ),
             ModelResponse(
                 parts=[TextPart(content='Tool timed out, giving up')],
-                usage=RequestUsage(input_tokens=63, output_tokens=7),
+                usage=RequestUsage(input_tokens=65, output_tokens=7),
                 model_name='function:model_logic:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
