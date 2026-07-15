@@ -21,7 +21,7 @@ from collections.abc import (
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
@@ -399,24 +399,6 @@ def sync_anext(iterator: Iterator[T]) -> T:
         raise StopAsyncIteration() from e
 
 
-def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    try:
-        while True:
-            try:
-                yield run_until_complete(anext(async_iter))
-            except StopAsyncIteration:
-                break
-    finally:
-        # Close the underlying async iterator so its `async with`/`finally` blocks (which close
-        # model streams and HTTP connections) run even when the consumer breaks out early or is
-        # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
-        # stream is exhausted. The `stream_*` methods always return async generators at runtime even
-        # though they're typed as `AsyncIterator`, so this narrows to the closable case.
-        if isinstance(async_iter, AsyncGenerator):  # pragma: no branch
-            with suppress(BaseException):
-                run_until_complete(async_iter.aclose())
-
-
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -476,6 +458,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
+        # Serialize access to the underlying source so `aclose()` waits for any in-flight `__anext__`/
+        # `peek()` to finish before closing it. A debounced consumer (`group_by_temporal`) prefetches the
+        # next item in a background task, so the source generator can be mid-`anext` when the stream is
+        # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
+        # `RuntimeError: aclose(): asynchronous generator is already running`.
+        self._source_lock = anyio.Lock()
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -493,11 +481,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            self._buffer = await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            return UNSET
+        async with self._source_lock:
+            try:
+                self._buffer = await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                return UNSET
 
         return self._buffer
 
@@ -527,18 +516,22 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            return await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            raise
+        async with self._source_lock:
+            try:
+                return await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                raise
 
     async def aclose(self) -> None:
         self._exhausted = True
         value = self._source_iter if self._source_iter is not None else self.source
         aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
         if aclose is not None:
-            await aclose()
+            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
+            # release the source before closing it, so we don't close a generator that's still running.
+            async with self._source_lock:
+                await aclose()
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
@@ -546,10 +539,31 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
-    """Exclude fields with values equal to the field default."""
-    kv_pairs = (
-        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
-    )
+    """Exclude fields with values equal to the field default.
+
+    A field is shown when its value differs from an explicit `default`. Fields that are
+    required or that only have a `default_factory` have no plain default to compare against
+    here, so they are always shown (the `default_factory` is deliberately not called: some
+    factories are impure, e.g. `uuid7()` or `now_utc()`, and `repr()` must stay observational).
+
+    The comparison is guarded because a value whose `__ne__`/`__bool__` does not return a plain
+    `bool` (e.g. a numpy array or pandas `Series`/`DataFrame`) would otherwise make `repr()`
+    raise `ValueError`, which breaks logging and traceback formatting of the message history.
+    """
+
+    def include_field(f: Any) -> bool:
+        if not f.repr:
+            return False
+        if f.default is MISSING:
+            return True
+        try:
+            return bool(getattr(self, f.name) != f.default)
+        except Exception:
+            # `repr()` must never raise, regardless of how a field value implements `__ne__`/`__bool__`
+            # (e.g. numpy/pandas return non-bool comparisons), so the broad catch here is intentional.
+            return True
+
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 

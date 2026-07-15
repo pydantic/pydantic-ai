@@ -8,10 +8,11 @@ import importlib
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -21,6 +22,7 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    dataclasses_no_defaults_repr,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -237,45 +239,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
     bystander_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         loop.run_until_complete(bystander_task)
-
-
-def test_sync_async_iterator_closes_source():
-    """`sync_async_iterator` must close the underlying async iterator so its `async with`/`finally`
-    blocks (which close model streams and connections) run both when the stream is exhausted and when
-    the consumer breaks out early, rather than leaking until garbage collection."""
-    # Full exhaustion closes the source.
-    exhausted_closed: list[str] = []
-
-    async def finite() -> AsyncIterator[int]:
-        try:
-            for i in range(3):
-                yield i
-        finally:
-            exhausted_closed.append('closed')
-
-    assert list(utils_module.sync_async_iterator(finite())) == [0, 1, 2]
-    assert exhausted_closed == ['closed']
-
-    # Breaking out early (before exhaustion) closes the source too.
-    broken_closed: list[str] = []
-
-    async def infinite() -> AsyncIterator[int]:
-        try:
-            i = 0
-            while True:
-                yield i
-                i += 1
-        finally:
-            broken_closed.append('closed')
-
-    iterator = utils_module.sync_async_iterator(infinite())
-    collected = [next(iterator), next(iterator), next(iterator)]
-    # Tearing down the consumer's frame sends `GeneratorExit` into the sync iterator; do it explicitly
-    # here so the test is deterministic instead of relying on garbage collection.
-    cast('Generator[int, None, None]', iterator).close()
-
-    assert collected == [0, 1, 2]
-    assert broken_closed == ['closed']
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
@@ -962,3 +925,95 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+
+
+class _AmbiguousBool:
+    """Mimics the result of a numpy array comparison: its truth value is ambiguous."""
+
+    def __bool__(self) -> bool:
+        raise ValueError('The truth value of an array with more than one element is ambiguous.')
+
+
+class _ArrayLike:
+    """Mimics a numpy array: `!=` returns a value whose `bool()` raises, instead of a plain bool."""
+
+    def __ne__(self, other: object) -> Any:
+        return _AmbiguousBool()
+
+    def __repr__(self) -> str:
+        return 'ArrayLike()'
+
+
+@dataclass(repr=False)
+class _HasRequiredField:
+    content: Any
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class _HasDefaultField:
+    content: Any = None
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+class _CountingIntListFactory:
+    """A `default_factory` that records how many times it is called, to prove `repr()` never calls it."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[int]:
+        self.calls += 1
+        return []
+
+
+_items_factory = _CountingIntListFactory()
+
+
+@dataclass(repr=False)
+class _HasMixedFields:
+    required: int
+    flag: bool = False
+    items: list[int] = field(default_factory=_items_factory)
+
+    __repr__ = dataclasses_no_defaults_repr
+
+
+def test_dataclasses_no_defaults_repr_non_bool_ne():
+    """repr() must not raise when a field holds a value whose `!=` returns a non-bool (e.g. a numpy array).
+
+    Regression test for #6415: `repr()` of message parts crashed with `ValueError` when a field
+    such as `ToolReturnPart.content` held a numpy array. Covers both branches of the helper: a
+    required field (no default) and a field with an explicit default that holds such a value.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # Required field: value is always shown, and the ambiguous `!=` result must not be evaluated.
+    assert repr(_HasRequiredField(content=_ArrayLike())) == '_HasRequiredField(content=ArrayLike())'
+    # Explicit-default field holding the same value: the guarded comparison falls back to showing it.
+    assert repr(_HasDefaultField(content=_ArrayLike())) == '_HasDefaultField(content=ArrayLike())'
+
+
+def test_dataclasses_no_defaults_repr_omits_defaults():
+    """Fields equal to an explicit default are omitted; differing and factory-backed fields are shown.
+
+    Also asserts `repr()` never calls the `default_factory`: some factories are impure (e.g. `uuid7()`,
+    `now_utc()`), so materializing them during `repr()` would consume randomness/time or mutate state.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure
+    `dataclasses_no_defaults_repr` helper in memory and makes no model or network requests.
+    """
+    # `flag` equals its default and is omitted; `items` has only a `default_factory` so it is always shown.
+    instance = _HasMixedFields(required=1)
+    _items_factory.calls = 0  # reset the count incurred while constructing the instance above
+    assert repr(instance) == '_HasMixedFields(required=1, items=[])'
+    assert _items_factory.calls == 0  # repr must not invoke the default_factory
+
+    # `flag` differs from its default and is shown.
+    instance = _HasMixedFields(required=1, flag=True)
+    _items_factory.calls = 0
+    assert repr(instance) == '_HasMixedFields(required=1, flag=True, items=[])'
+    assert _items_factory.calls == 0

@@ -61,6 +61,72 @@ jobs:
             exit 0
           fi
 
+          # Author repo-role bypass. The webhook's `author_association` is unreliable — it
+          # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
+          # `dsfaccini`, a public org member with `maintain` role, came through as
+          # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
+          # the author's actual role on THIS repo via the API — the same `role_name` signal
+          # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
+          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
+          # an external contributor can never gain a bypass this way.
+          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_ROLE" in
+            triage | write | maintain | admin)
+              echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
+              exit 0
+              ;;
+            *)
+              echo "Author ${PR_AUTHOR} repo role: ${AUTHOR_ROLE}; continuing checks."
+              ;;
+          esac
+
+          # Private-membership bypass. The `author_association` in the webhook only
+          # reflects *public* org membership, so a private member of the org that
+          # owns this repo is reported as CONTRIBUTOR and misses the bypass above.
+          # Confirm real membership via the API, which sees private members when the
+          # token has `read:org` — the default `github.token` cannot, so this uses
+          # `ORG_READ_TOKEN` (an existing org-scoped secret). Fails open: if that
+          # token is unset or lacks the scope the API call errors and the existing
+          # policy applies unchanged, so no unlinked PR is ever wrongly kept open.
+          if [ -n "${ORG_READ_TOKEN:-}" ] && GH_TOKEN="$ORG_READ_TOKEN" gh api "orgs/${REPO%/*}/members/${PR_AUTHOR}" >/dev/null 2>&1; then
+            echo "Author ${PR_AUTHOR} is an org member (confirmed via API, incl. private membership); skipping checks."
+            exit 0
+          fi
+
+          # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
+          # relationship to the repo, so without this the guard re-closes a
+          # contributor PR every time a maintainer acts on it: reopening it, or
+          # editing its title/body (`reopened` and `edited` both re-run this
+          # workflow, so a reopen-only bypass gets undone by the next edit). When
+          # the person who triggered this run isn't the author, confirm they have
+          # triage-or-higher access on *this* repo and, if so, treat their action
+          # as a deliberate decision to keep the PR open and skip the checks.
+          #   - We read `role_name`, not the legacy `permission` (which collapses
+          #     triage into read), so a triager — who can legitimately reopen —
+          #     still counts.
+          #   - We require `sender != author` and a base-repo role because GitHub
+          #     also lets a collaborator on the contributor's *fork* reopen the PR;
+          #     `sender != author` alone isn't proof of base-repo trust.
+          #   - If the role can't be determined, err toward respecting the action:
+          #     this is a courtesy gate (trivially satisfied by linking any open
+          #     issue), not a security boundary, and a deliberate maintainer action
+          #     shouldn't be undone by a transient API hiccup.
+          # The author acting on their own PR (e.g. the `opened` event, where the
+          # sender is always the author) still gets checked, so the issue-link
+          # policy can't be bypassed this way.
+          if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
+            SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            case "$SENDER_ROLE" in
+              read | none)
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
+                ;;
+              *)
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}); a trusted collaborator acted on this PR, skipping checks."
+                exit 0
+                ;;
+            esac
+          fi
+
           # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
           # never auto-closed for duplication; instead a pydanty PR supersedes a
           # competing PR opened within WINDOW_SECONDS before it (see the loop below).
@@ -339,7 +405,12 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          # Read-only org-scoped token, used solely to confirm private org
+          # membership (see the private-membership bypass). Falls back to empty
+          # when unset, which the bypass handles by failing open.
+          ORG_READ_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          GITHUB_EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
