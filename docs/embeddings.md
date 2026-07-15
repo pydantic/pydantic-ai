@@ -91,43 +91,62 @@ The best embedding model depends on your language, domain, latency, deployment, 
 | To reduce index size                 | Any model with dimension control (see [Settings](#settings))                                                                                                                                                                                     |
 
 !!! tip "Switching models later"
-    Swapping a model changes the output dimension and the similarity distribution, so you'll need to re-embed (and re-index) your documents. Pick a model you're happy to stick with, or one that supports [dimension control](#settings) so you can tune the index size without changing models.
+    Switching models changes the embedding space and may change the output dimension, so you'll need to re-embed your documents and update the index. Pick a model you're happy to stick with, or one that supports [dimension control](#settings) so you can tune the index size without changing models.
 
 ## Using embeddings for RAG
 
-For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. Chunking, vector storage, retrieval tuning, and evaluation stay application-specific so you can choose the right libraries and infrastructure for your data.
+For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. The [RAG example](examples/rag.md) demonstrates vector storage, retrieval, and passing retrieved context to an agent using pre-split data.
 
-A typical RAG pipeline looks like this:
+If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]. The [supported model provider](builtin-tools.md#file-search-tool) handles chunking, embeddings, storage, and retrieval. The rest of this section covers building your own pipeline, where these choices stay application-specific.
 
-1. Split source documents into chunks.
+A typical custom RAG pipeline looks like this:
+
+1. Split source documents into chunks when needed.
 2. Embed the chunks with [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents].
 3. Store each vector with metadata such as source URL, title, heading, page number, and permissions.
 4. Embed the user's search text with [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query].
 5. Search a vector index for similar chunks.
 6. Optionally [rerank](#two-stage-retrieval-with-rerankers) the shortlist.
-7. Pass the retrieved text to the agent through a tool, as shown in the [RAG example](examples/rag.md).
+7. Pass the retrieved text to the agent through a tool.
 
 ### Chunking
 
-There is no universal chunk size. Start with the natural structure of your documents: headings, sections, paragraphs, pages, or records. Chunks should usually be large enough to answer a focused question, but small enough that unrelated ideas do not dilute the embedding. Keep source metadata with every chunk so the agent can cite or inspect the original document.
+Chunks are the units of source text that a retrieval index stores and returns. You do not need to split every document. Chunking is useful when:
 
-For deeper guidance, see Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation), which explains chunking tradeoffs and why retrieval changes should be evaluated, and the [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag), which walks through chunking, vector search, distances, reranking, and evaluation knobs.
+- you want to retrieve a relevant subsection instead of the full document;
+- a document is longer than the embedding model's maximum input length; or
+- a document contains enough independent facts or topics that one embedding may not represent them precisely.
+
+If none of these applies, embedding the whole document can be reasonable. There is no universally best chunking strategy or chunk size: the right choice depends on the embedding model, source format, domain, and the questions users ask.
+
+| Strategy | Useful starting point | Trade-off |
+|----------|-----------------------|-----------|
+| Document structure, such as headings, paragraphs, sentences, pages, or records | Clean, consistently structured sources | Cheap and preserves natural boundaries, but produces uneven chunk sizes. |
+| Fixed-size token windows | Unstructured text or strict model input limits | Simple and predictable, but can split related text. Overlap preserves boundary context at the cost of a larger index and duplicate results. |
+| Semantic splitting | Sources where topic boundaries matter more than layout | Can keep related ideas together, but adds ingestion work and depends on the model and threshold. |
+| LLM-assisted splitting | Irregular or domain-specific sources that require interpretation | Flexible, but adds the most latency and cost and requires validation of the chosen boundaries and source coverage. |
+
+For a first implementation, use natural document boundaries with a token limit, keep source metadata and a link or identifier for the full document with every chunk, and evaluate before adding a more expensive strategy. Chunks should be large enough to answer a focused question but small enough to avoid unrelated context.
+
+See Chroma's [chunking strategy evaluation](https://www.trychroma.com/research/evaluating-chunking) for a comparison of common strategies and reproducible evaluation code, and Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) for an end-to-end RAG evaluation workflow.
 
 ### Vector storage
 
-Pydantic AI does not prescribe a vector database. Use the storage layer that fits the rest of your application:
+Pydantic AI does not prescribe a vector database. Choose based on the index size, query and ingestion volume, metadata filtering and permission requirements, hybrid keyword search needs, availability requirements, and infrastructure you already operate:
 
-- SQLite, LanceDB, or FAISS for local prototypes and small indexes.
-- PostgreSQL with `pgvector` when Postgres is already your operational database.
-- Managed vector or search services when you need hosted scaling, access control, or operational support.
+- A local index or embedded database, such as FAISS, LanceDB, or SQLite with a vector extension, can suit prototypes and small indexes.
+- PostgreSQL with `pgvector` can suit applications that already use PostgreSQL.
+- A managed vector or search service can suit applications that need hosted scaling and operational support.
 
-Whichever store you choose, use the same embedding model and similarity assumptions for indexing and querying. Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag) gives a good introduction to vector databases, nearest-neighbor search, and similarity choices such as cosine similarity, dot product, and Euclidean distance.
+The index's vector dimension must match the embedding output dimension. Use a compatible model configuration when indexing and querying; matching dimensions alone do not make vectors compatible. If you change the embedding configuration, re-embed the documents and update or rebuild the index as required by your storage layer.
 
-### Model selection and evaluation
+Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag) introduces vector indexes, similarity choices, reranking, and other retrieval trade-offs.
 
-Public benchmarks are useful for narrowing the search, not for proving which model is best for your application. Use the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) to compare embedding models by task, language, model size, and score, then validate the shortlist on queries and documents that look like your production data.
+### Evaluation
 
-Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) shows how to evaluate a RAG system and compare changes to chunk size, embedding model, reranking, and generation settings. For open-source embedding deployment, see Hugging Face [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference), including its [supported models and hardware](https://huggingface.co/docs/text-embeddings-inference/supported_models).
+Chunking, the embedding model, similarity metric, number of retrieved chunks, and reranking all interact. Public benchmarks can narrow the candidates, but they cannot prove which complete pipeline works best for your application. Compare changes using queries and documents representative of production, checking both that relevant text is retrieved and that irrelevant text is kept out of the agent's context.
+
+Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) demonstrates how to build a synthetic evaluation set and evaluate generated answers.
 
 ## Providers
 
