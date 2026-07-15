@@ -101,9 +101,7 @@ def test_vllm_provider_pass_openai_client() -> None:
 def test_vllm_provider_openai_client_is_exclusive() -> None:
     openai_client = openai.AsyncOpenAI(base_url='http://localhost:8000/v1/', api_key='test')
     with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
-        VLLMProvider(  # type: ignore[call-overload]
-            openai_client=openai_client, base_url='http://localhost:8000/v1/'
-        )
+        VLLMProvider(openai_client=openai_client, base_url='http://localhost:8000/v1/')  # type: ignore[call-overload]
     with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `http_client`'):
         VLLMProvider(openai_client=openai_client, http_client=httpx.AsyncClient())  # type: ignore[call-overload]
     with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `api_key`'):
