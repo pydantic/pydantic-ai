@@ -165,7 +165,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Setting `openai_previous_response_id='auto'` makes tool-call continuations and retries send only their new input plus the latest response ID. The active WebSocket keeps that response in connection-local memory, so this incremental path works with `openai_store=False` and Zero Data Retention. If the connection closes, the in-memory state is lost; after reconnecting, send the full input context unless the response was stored.
+Setting [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] makes tool-call continuations and retries send only their new input plus the latest response ID. The active WebSocket keeps that response in connection-local memory, so this incremental path works with [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] and Zero Data Retention. If the connection closes, the in-memory state is lost; after reconnecting, send the full input context unless the response was stored.
 
 WebSocket mode has a few constraints:
 
@@ -202,7 +202,7 @@ WebSocket mode has a few constraints:
 - OpenAI closes WebSocket connections after 60 minutes. Re-enter `connect()` to get a new connection.
 - Cancelling or abandoning a streamed response mid-flight leaves the connection in an unknown state. Subsequent requests in that context raise [`UserError`][pydantic_ai.exceptions.UserError]. [`result.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] is not supported over WebSocket.
 - A provider `error` event raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and usually leaves the connection usable for another request. A `websocket_connection_limit_reached` error requires a new `connect()` context.
-- The `timeout`, `extra_headers`, and `extra_body` model settings apply to HTTP requests only and are ignored over WebSocket. Use `connect(extra_headers=...)` to set handshake headers.
+- The [`timeout`][pydantic_ai.settings.ModelSettings.timeout], [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers], and [`extra_body`][pydantic_ai.settings.ModelSettings.extra_body] model settings apply to HTTP requests only and are ignored over WebSocket. Use `connect(extra_headers=...)` to set handshake headers.
 - [`openai_background=True`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background] is not supported inside `connect()` and raises [`UserError`][pydantic_ai.exceptions.UserError]. Suspended background responses created earlier are resumed over HTTP.
 - Only the model instance that opened the connection uses it. Other models inside the context use HTTP.
 - WebSocket mode is not supported with [durable execution](../durable_execution/overview.md), including Temporal, DBOS, and Prefect.

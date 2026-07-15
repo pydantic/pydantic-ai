@@ -40,15 +40,15 @@ def _has_marker(decorator_list: list[ast.expr], marker_name: str) -> bool:
     return False
 
 
-def _has_module_vcr_marker(tree: ast.Module) -> bool:
-    """Check if the module has pytestmark = [..., pytest.mark.vcr, ...]."""
+def _has_module_marker(tree: ast.Module, marker_name: str) -> bool:
+    """Check if the module's `pytestmark` assignment contains a marker."""
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
             if not (isinstance(target, ast.Name) and target.id == 'pytestmark'):
                 continue
-            return 'vcr' in ast.dump(node.value)
+            return any(isinstance(value, ast.Attribute) and value.attr == marker_name for value in ast.walk(node.value))
     return False
 
 
@@ -59,7 +59,7 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
     except SyntaxError:
         return set()
 
-    module_has_vcr = _has_module_vcr_marker(tree)
+    module_has_cassette = _has_module_marker(tree, 'vcr') or _has_module_marker(tree, 'ws_cassette')
     cassette_names: set[str] = set()
 
     for node in ast.iter_child_nodes(tree):
@@ -67,22 +67,24 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
             if not node.name.startswith('test_'):
                 continue
             if (
-                module_has_vcr
+                module_has_cassette
                 or _has_marker(node.decorator_list, 'vcr')
                 or _has_marker(node.decorator_list, 'ws_cassette')
             ):
                 cassette_names.add(_sanitize_cassette_name(node.name))
 
         elif isinstance(node, ast.ClassDef):
-            class_has_vcr = _has_marker(node.decorator_list, 'vcr')
+            class_has_cassette = _has_marker(node.decorator_list, 'vcr') or _has_marker(
+                node.decorator_list, 'ws_cassette'
+            )
             for method in ast.iter_child_nodes(node):
                 if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 if not method.name.startswith('test_'):
                     continue
                 if (
-                    module_has_vcr
-                    or class_has_vcr
+                    module_has_cassette
+                    or class_has_cassette
                     or _has_marker(method.decorator_list, 'vcr')
                     or _has_marker(method.decorator_list, 'ws_cassette')
                 ):

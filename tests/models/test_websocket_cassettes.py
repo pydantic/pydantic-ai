@@ -1,4 +1,4 @@
-"""Tests for WebSocket cassette utilities."""
+"""Unit tests for cassette infrastructure, which cannot test itself and VCR cannot record WebSocket frames."""
 
 from __future__ import annotations as _annotations
 
@@ -173,6 +173,23 @@ async def test_replay_close_unblocks_receive_waiting_for_send() -> None:
 
     with pytest.raises(ConnectionClosedOK):
         await receive
+
+
+@pytest.mark.anyio
+async def test_replay_close_rejects_further_io() -> None:
+    cassette = WebSocketCassette(
+        interactions=[
+            CassetteInteraction(direction='sent', data={'type': 'response.create'}),
+            CassetteInteraction(direction='received', data={'type': 'response.completed'}),
+        ]
+    )
+    ws = ReplayWebSocket(cassette)
+    await ws.close()
+
+    with pytest.raises(ConnectionClosedOK):
+        await ws.send('{"type": "response.create"}')
+    with pytest.raises(ConnectionClosedOK):
+        await ws.recv()
 
 
 @pytest.mark.anyio

@@ -99,6 +99,8 @@ class ReplayWebSocket:
         self._closed = False
 
     async def send(self, message: str | bytes) -> None:
+        if self._closed:
+            raise ConnectionClosedOK(None, None)
         actual = json.loads(message.decode('utf-8') if isinstance(message, bytes) else message)
         if self._position >= len(self._interactions):
             raise AssertionError(f'Unexpected WebSocket send:\n{json.dumps(actual, indent=2, sort_keys=True)}')
@@ -127,11 +129,13 @@ class ReplayWebSocket:
         return self._position == len(self._interactions)
 
     async def recv(self, *, decode: bool | None = False) -> bytes:
+        if self._closed:
+            raise ConnectionClosedOK(None, None)
         while self._position < len(self._interactions) and self._interactions[self._position].direction == 'sent':
             self._advanced.clear()
+            await self._advanced.wait()
             if self._closed:
                 raise ConnectionClosedOK(None, None)
-            await self._advanced.wait()
 
         if self._position >= len(self._interactions):
             raise ConnectionClosedOK(None, None)

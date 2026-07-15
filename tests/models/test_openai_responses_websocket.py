@@ -1,4 +1,4 @@
-"""Tests for OpenAI Responses API WebSocket mode."""
+"""Unit tests use mocks because WebSocket guards, failures, lifecycle, and exact payloads need deterministic control."""
 
 from __future__ import annotations as _annotations
 
@@ -571,8 +571,9 @@ async def test_ws_error_event_raises_streaming(openai_ws_model: OpenAIResponsesM
                 pass  # pragma: no cover
 
 
-async def test_ws_error_event_leaves_connection_usable(openai_model: OpenAIResponsesModel) -> None:
-    error = _load_cassette('test_ws_error_event_raises.yaml')
+@pytest.mark.parametrize('stream', [False, True])
+async def test_ws_error_event_leaves_connection_usable(openai_model: OpenAIResponsesModel, stream: bool) -> None:
+    error = _load_cassette('test_ws_error_event_raises_streaming.yaml' if stream else 'test_ws_error_event_raises.yaml')
     success = _load_cassette('test_ws_simple_text_request.yaml')
     cassette = WebSocketCassette(interactions=[*error.interactions, *success.interactions])
 
@@ -582,21 +583,27 @@ async def test_ws_error_event_leaves_connection_usable(openai_model: OpenAIRespo
     agent = Agent(openai_model)
     with patch('websockets.asyncio.client.connect', fake_connect):
         async with openai_model.connect():
-            with pytest.raises(ModelHTTPError):
-                await agent.run('trigger an error')
+            if stream:
+                with pytest.raises(ModelAPIError, match='server had an error'):
+                    async with agent.run_stream('trigger an error'):
+                        pass  # pragma: no cover
+            else:
+                with pytest.raises(ModelHTTPError):
+                    await agent.run('trigger an error')
             result = await agent.run(_HELLO_PROMPT)
 
     assert 'hello' in result.output.lower()
 
 
 async def test_ws_connection_limit_error_requires_new_context(openai_model: OpenAIResponsesModel) -> None:
-    cassette = deepcopy(_load_cassette('test_ws_error_event_raises.yaml'))
-    error = cassette.interactions[-1].data['error']
+    error_cassette = deepcopy(_load_cassette('test_ws_error_event_raises.yaml'))
+    error = error_cassette.interactions[-1].data['error']
     error['code'] = 'websocket_connection_limit_reached'
     error['message'] = 'Create a new websocket connection to continue.'
+    cassettes = iter([error_cassette, _load_cassette('test_ws_simple_text_request.yaml')])
 
     def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
-        return ReplayConnect(ReplayWebSocket(cassette))
+        return ReplayConnect(ReplayWebSocket(next(cassettes)))
 
     agent = Agent(openai_model)
     with patch('websockets.asyncio.client.connect', fake_connect):
@@ -605,6 +612,11 @@ async def test_ws_connection_limit_error_requires_new_context(openai_model: Open
                 await agent.run('trigger an error')
             with pytest.raises(UserError, match=r'cancelled or failed|unknown state'):
                 await agent.run(_HELLO_PROMPT)
+
+        async with openai_model.connect():
+            result = await agent.run(_HELLO_PROMPT)
+
+    assert 'hello' in result.output.lower()
 
 
 @pytest.mark.parametrize('terminal_status', ['failed', 'incomplete'])
