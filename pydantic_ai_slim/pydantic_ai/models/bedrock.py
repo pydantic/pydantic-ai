@@ -27,6 +27,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 from pydantic_ai import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -1147,6 +1148,11 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
+                    elif isinstance(part, AgentMessagePart):
+                        flush_deferred_media()
+                        bedrock_messages.append(
+                            {'role': 'user', 'content': [{'text': f"[Agent '{part.agent_name}']: {part.content}"}]}
+                        )
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

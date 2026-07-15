@@ -39,6 +39,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -1529,6 +1530,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, AgentMessagePart):
+                yield chat.ChatCompletionUserMessageParam(
+                    role='user', content=f"[Agent '{part.agent_name}']: {part.content}"
+                )
             else:
                 assert_never(part)
         if file_content:
@@ -2760,6 +2765,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=part.model_response(),
                             )
                             openai_messages.append(item)
+                    elif isinstance(part, AgentMessagePart):
+                        openai_messages.append(
+                            Message(role='user', content=[{'type': 'input_text', 'text': f"[Agent '{part.agent_name}']: {part.content}"}])
+                        )
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):

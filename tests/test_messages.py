@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    AgentMessagePart,
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
@@ -1992,3 +1993,35 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_agent_message_part_roundtrip():
+    """AgentMessagePart serializes and deserializes through ModelMessagesTypeAdapter."""
+    part = AgentMessagePart(agent_name='researcher', content='Task complete.')
+    request = ModelRequest(parts=[part])
+    serialized = ModelMessagesTypeAdapter.dump_json([request])
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert deserialized[0].parts[0].agent_name == 'researcher'
+    assert deserialized[0].parts[0].content == 'Task complete.'
+    assert deserialized[0].parts[0].part_kind == 'agent-message'
+    assert deserialized[0].parts[0].message_type == 'result'
+
+
+def test_agent_message_part_otel():
+    """AgentMessagePart produces correct OTel message parts."""
+    settings = InstrumentationSettings()
+    part = AgentMessagePart(agent_name='helper', content='Done!')
+    otel_parts = part.otel_message_parts(settings)
+    assert len(otel_parts) == 1
+    assert otel_parts[0]['type'] == 'text'
+
+
+def test_enqueue_agent_message_part():
+    """AgentMessagePart is treated as a part-style item in _build_enqueue_messages."""
+    from pydantic_ai._enqueue import _build_enqueue_messages
+
+    part = AgentMessagePart(agent_name='worker', content='Result here')
+    messages = _build_enqueue_messages([part])
+    assert len(messages) == 1
+    assert isinstance(messages[0], ModelRequest)
+    assert messages[0].parts[0] is part

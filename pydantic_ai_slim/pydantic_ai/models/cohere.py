@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import ModelAPIError
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    AgentMessagePart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -382,6 +383,8 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, AgentMessagePart):
+                yield UserChatMessageV2(role='user', content=f"[Agent '{part.agent_name}']: {part.content}")
             else:
                 assert_never(part)
 

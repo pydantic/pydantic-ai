@@ -18,6 +18,7 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AgentMessagePart,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -624,7 +625,7 @@ class GroqModel(Model[AsyncGroq]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
@@ -633,6 +634,10 @@ class GroqModel(Model[AsyncGroq]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, AgentMessagePart):
+                yield chat.ChatCompletionUserMessageParam(
+                    role='user', content=f"[Agent '{part.agent_name}']: {part.content}"
+                )
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
