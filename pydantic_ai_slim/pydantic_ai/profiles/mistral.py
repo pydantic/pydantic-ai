@@ -2,22 +2,19 @@ from __future__ import annotations as _annotations
 
 from . import ModelProfile
 
-# Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`).
+# Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
+# the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
+# snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`) don't support reasoning and are
+# deliberately excluded; keep this set in sync with the ids reporting `capabilities.reasoning`
+# on the Mistral `/v1/models` API. The `-latest` aliases resolve to a reasoning model on the
+# public API; on private deployments they may point to an older non-reasoning snapshot.
 # See https://docs.mistral.ai/capabilities/reasoning/.
-#
-# These are the Mistral Small 4 and Medium 3.5 families, whose ids report `reasoning: true` on the
-# Mistral `/v1/models` API. Older `mistral-small-*` / `mistral-medium-*` snapshots (e.g.
-# `mistral-small-2506`, `mistral-medium-2505`) report `reasoning: false` and are deliberately
-# excluded. The `-latest` aliases resolve to a reasoning model on the public API; on private or
-# self-hosted deployments they may point to an older non-reasoning snapshot, in which case Mistral
-# ignores `reasoning_effort`.
 _ADJUSTABLE_REASONING_MODELS = frozenset(
     {
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
         'mistral-medium-3-5',
-        'mistral-medium-3.5',
         'mistral-medium-2604',
     }
 )

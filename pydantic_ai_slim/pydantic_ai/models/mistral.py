@@ -131,7 +131,7 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'tool_calls': 'tool_call',
 }
 
-MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
+_MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     True: 'high',
     False: 'none',
     'minimal': 'high',
@@ -576,7 +576,7 @@ class MistralModel(Model[Mistral]):
         thinking = model_request_parameters.thinking
         if thinking is None or self.profile.get('thinking_always_enabled', False):
             return UNSET
-        return MISTRAL_REASONING_EFFORT_MAP[thinking]
+        return _MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []

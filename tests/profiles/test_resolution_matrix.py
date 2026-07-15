@@ -385,6 +385,14 @@ def test_mistral_mistral_large():
     assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
 
 
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_small_latest():
+    """Small 4 / Medium 3.5 have adjustable reasoning: thinking is opt-in via
+    `reasoning_effort`, unlike always-on magistral."""
+    profile = MistralProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
+
+
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     profile = CohereProvider.model_profile('command-r-plus')
@@ -998,6 +1006,21 @@ def test_azure_mistral_prefix():
     )
 
 
+def test_azure_mistral_small_latest():
+    """The Azure route reuses the Mistral profile, so the adjustable-reasoning
+    flags surface here too."""
+    from pydantic_ai.providers.azure import AzureProvider
+
+    profile = AzureProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
 def test_azure_cohere_prefix():
     from pydantic_ai.providers.azure import AzureProvider
 
@@ -1255,6 +1278,27 @@ def test_litellm_openai_gpt():
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+        }
+    )
+
+
+def test_litellm_mistral_small_latest():
+    """LiteLLM's Mistral route keeps the OpenAI baseline (structured output, inline system
+    prompts) underneath the Mistral thinking flags; a bare non-None Mistral profile must not
+    displace it."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
         }
     )
 

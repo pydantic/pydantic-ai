@@ -34,6 +34,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -2963,6 +2964,11 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
 ## Reasoning effort
 #####################
 
+# These are kwarg-level unit tests rather than VCR tests: the cassette matcher isn't sensitive to
+# the request body, so a dropped or mis-mapped `reasoning_effort` would still replay green against
+# a recording. Asserting the SDK kwarg directly is what pins the mapping; the mistralai SDK omits
+# `UNSET` fields from the request body at serialization.
+
 
 @pytest.mark.parametrize(
     'thinking,expected',
@@ -2976,7 +2982,9 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
         pytest.param('xhigh', 'high', id='xhigh'),
     ],
 )
-async def test_reasoning_effort_with_unified_thinking(allow_model_requests: None, thinking: Any, expected: str) -> None:
+async def test_reasoning_effort_with_unified_thinking(
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+) -> None:
     """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
@@ -3048,3 +3056,40 @@ async def test_reasoning_effort_stream_not_sent_without_config(allow_model_reque
         text = await result.get_output()
     assert text == 'hello'
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) -> None:
+    """thinking=False maps to reasoning_effort='none' on the function-calling streaming path.
+
+    The tool-less streaming tests only hit the plain-stream call site of
+    `_stream_completions_create`; this pins the separate function-calling call site on
+    every request of a tool-call round trip.
+    """
+    streams = [
+        [
+            func_chunk(
+                [
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"loc_name": "London"}', name='get_location'),
+                        type='function',
+                    )
+                ],
+                finish_reason='tool_calls',
+            )
+        ],
+        [text_chunk('done', finish_reason='stop')],
+    ]
+    mock_client = MockMistralAI(stream=streams)
+    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        return json.dumps({'lat': 51, 'lng': 0})
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=False)) as result:
+        text = await result.get_output()
+    assert text == 'done'
+    assert len(mock_client.chat_completion_kwargs) == 2
+    assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
