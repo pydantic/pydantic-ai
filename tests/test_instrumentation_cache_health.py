@@ -5,9 +5,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai import Agent, CachePoint, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -16,6 +13,17 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage
+
+try:
+    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+except ImportError:  # pragma: lax no cover
+    otel_sdk_installed = False
+else:
+    otel_sdk_installed = True
+
+pytestmark = pytest.mark.skipif(not otel_sdk_installed, reason='opentelemetry-sdk not installed')
 
 
 @dataclass(frozen=True)
