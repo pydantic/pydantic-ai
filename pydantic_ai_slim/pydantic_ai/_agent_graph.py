@@ -903,7 +903,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
             # the handler is parked on `stream_done.wait()`. Setting stream_done lets
             # it exit so cancel_and_drain's gather can complete. Harmless no-op when
-            # the task was actually cancelled — it's already unwinding. See #6422.
+            # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
             raise

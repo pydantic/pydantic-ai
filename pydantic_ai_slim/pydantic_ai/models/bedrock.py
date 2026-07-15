@@ -1214,7 +1214,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
-        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
+        # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:

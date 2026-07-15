@@ -788,7 +788,7 @@ class ToolDefinition:
 
     unless_native: Annotated[
         str | None,
-        # Old names were `prefer_builtin` and (after the builtin → native rename in #5338)
+        # Old names were `prefer_builtin` and (after the builtin → native rename in https://github.com/pydantic/pydantic-ai/issues/5338)
         # `prefer_native`; keep accepting both for serialized-history backward compat.
         Field(validation_alias=AliasChoices('unless_native', 'prefer_native', 'prefer_builtin')),
     ] = None

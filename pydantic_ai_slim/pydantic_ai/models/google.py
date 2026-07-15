@@ -526,7 +526,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -1897,7 +1897,7 @@ def _metadata_as_usage(
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
-    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
     if existing_usage:
         details = {**existing_usage.details, **details}
