@@ -59,7 +59,14 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessEventStream, ProcessHistory, Toolset
+from pydantic_ai.capabilities import (
+    Instrumentation,
+    NativeTool,
+    ProcessEventStream,
+    ProcessHistory,
+    ResolveModelId,
+    Toolset,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -68,6 +75,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestContext,
     ModelRequestParameters,
+    ModelResolutionContext,
     create_async_http_client,
     infer_model,
     infer_model_profile,
@@ -5107,10 +5115,10 @@ def test_durability_requires_agent_name():
         Agent(_durability_fn_model, capabilities=[durability])
 
 
-def test_durability_requires_concrete_model():
-    """TemporalDurability raises UserError when agent has no concrete model."""
+def test_durability_requires_model():
+    """TemporalDurability raises UserError when the agent has no model at all."""
     durability = TemporalDurability()
-    with pytest.raises(UserError, match='concrete `model`'):
+    with pytest.raises(UserError, match='needs to have a `model`'):
         Agent(name='test', capabilities=[durability])
 
 
@@ -5240,7 +5248,7 @@ async def test_durability_runtime_registered_model_is_used(client: Client):
     assert output == 'alt-response'
 
 
-def test_durability_resolve_model_id_uses_models_registry():
+async def test_durability_resolve_model_id_uses_models_registry():
     """resolve_model_id maps a registered model-id string to its registered Model instance."""
     primary = FunctionModel(_durability_model_fn, model_name='primary')
     alt = FunctionModel(_durability_model_fn, model_name='alt')
@@ -5249,18 +5257,19 @@ def test_durability_resolve_model_id_uses_models_registry():
     agent = Agent(primary, name='resolve_registry_test', capabilities=[durability])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
+    resolution_ctx = ModelResolutionContext(agent=agent, deps=None)
 
     # String matches a registered model → returns that exact instance.
-    assert bound.resolve_model_id('alt', agent=agent) is alt
+    assert await bound.resolve_model_id('alt', resolution_ctx) is alt
 
     # String not in registry and no provider_factory → default infer_model path.
     # 'test' is the special string that always works without any provider config.
-    fallback = bound.resolve_model_id('test', agent=agent)
+    fallback = await bound.resolve_model_id('test', resolution_ctx)
     assert fallback is not None
     assert fallback.model_id == 'test:test'
 
 
-def test_durability_resolve_model_id_uses_provider_factory():
+async def test_durability_resolve_model_id_uses_provider_factory():
     """resolve_model_id with a provider_factory builds a Model from any provider:name string."""
 
     class _StubProvider:
@@ -5279,9 +5288,88 @@ def test_durability_resolve_model_id_uses_provider_factory():
     # String not in registry → resolve via the provider_factory + infer_model path.
     # 'test' is the special string mapped to TestModel by default infer_model;
     # the resulting Model has model_id 'test:test'.
-    resolved = bound.resolve_model_id('test', agent=agent)
+    resolved = await bound.resolve_model_id('test', ModelResolutionContext(agent=agent, deps=None))
     assert resolved is not None
     assert resolved.model_id == 'test:test'
+
+
+async def test_durability_default_string_registered_in_models_becomes_default():
+    """A `models=` key equal to the agent's raw default model string supplies the default instance.
+
+    The user explicitly mapped that string to an instance, so binding uses it as `'default'`
+    (rather than building an orphaned one via `infer_model`), and run-time resolution of the
+    default string returns the same instance — keeping the identity match that gives the
+    default the `model_id=None` fast path across the activity boundary.
+    """
+    custom = FunctionModel(_durability_model_fn, model_name='custom-default')
+    durability = TemporalDurability(models={'test': custom}, activity_config=BASE_ACTIVITY_CONFIG)
+    agent = Agent('test', name='default_collision_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    assert await bound.resolve_model_id('test', ModelResolutionContext(agent=agent, deps=None)) is custom
+    assert bound._find_model_id(custom) is None  # identity-matches 'default'  # pyright: ignore[reportPrivateUsage]
+
+
+# --- Deps-aware model resolution via the `ResolveModelId` capability ---
+
+
+def _tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+    """Resolve the 'tenant-model' alias to a model built from the run's deps.
+
+    Matches both the raw alias (workflow-side resolution of `run(model='tenant-model')`)
+    and the `'function:tenant-model'` round-trip string the activity re-resolves
+    (`_find_model_id` ships the resolved model's `model_id` across the boundary).
+    """
+    if 'tenant-model' not in model_id:
+        return None
+    tenant = ctx.deps
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=f'tenant:{tenant}')])
+
+    return FunctionModel(fn, model_name='tenant-model')
+
+
+_tenant_agent = Agent(
+    _rt_primary_model,
+    name='tenant_resolver_test',
+    deps_type=str,
+    capabilities=[ResolveModelId(_tenant_resolver), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class TenantModelWorkflow:
+    @workflow.run
+    async def run(self, tenant: str) -> str:
+        result = await _tenant_agent.run('hi', model='tenant-model', deps=tenant)
+        return result.output
+
+
+async def test_durability_resolve_model_id_capability_is_deps_aware(client: Client):
+    """A deps-aware `ResolveModelId` resolver rebuilds the model with the run's deps inside the activity.
+
+    The response content is produced by the model *inside* the model-request activity, so it
+    proves the activity re-ran the capability chain with the deserialized deps — not just that
+    the workflow-side resolution saw them.
+
+    The resolver is deliberately *synchronous*: workflow-side resolution runs before
+    `TemporalDurability.wrap_run`'s `disable_threads()` guard is active, so this also pins
+    that `ResolveModelId` invokes sync resolvers inline rather than via a thread executor
+    (which is unavailable inside the deterministic workflow sandbox and would hang).
+    """
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[TenantModelWorkflow], plugins=[AgentPlugin(_tenant_agent)]
+    ):
+        for tenant in ('acme', 'globex'):
+            output = await client.execute_workflow(
+                TenantModelWorkflow.run,
+                args=[tenant],
+                id=f'TenantModelWorkflow-{tenant}',
+                task_queue=TASK_QUEUE,
+            )
+            assert output == f'tenant:{tenant}'
 
 
 # --- Outer capability swaps `request_context.model` inside a workflow ---

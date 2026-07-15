@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict
@@ -27,7 +27,7 @@ from .. import _deferred_capabilities, _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
-from .._run_context import RunContext
+from .._run_context import RunContext, RunContextAgentDepsT
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
@@ -60,6 +60,9 @@ from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+
+if TYPE_CHECKING:
+    from ..agent.abstract import AbstractAgent
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._known_model_names import KnownModelName as KnownModelName
@@ -218,6 +221,23 @@ class ModelRequestContext:
     non-streaming one. Read-only from hooks: reassigning it doesn't change how the
     loop consumes the response.
     """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelResolutionContext(Generic[RunContextAgentDepsT]):
+    """Context passed to [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] hooks.
+
+    Model resolution happens at run setup, before a [`RunContext`][pydantic_ai.tools.RunContext]
+    exists (the run context carries the resolved model, so it can't be an input to resolving it).
+    This deliberately narrow context carries what *is* available at that point; new fields can be
+    added without breaking existing hook implementations.
+    """
+
+    agent: AbstractAgent[RunContextAgentDepsT, Any]
+    """The agent whose model is being resolved."""
+
+    deps: RunContextAgentDepsT
+    """The run's dependencies, as passed to `run()`/`iter()` (or the agent's default)."""
 
 
 class Model(ABC, Generic[InterfaceClient]):

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -362,28 +362,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def resolve_model_id(
+    async def resolve_model_id(
         self,
         model_id: KnownModelName | str,
-        *,
-        agent: AbstractAgent[AgentDepsT, Any],
+        ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
         """Resolve a model-name string to a `Model` instance, or return `None` to defer.
 
-        Called whenever the user supplies a model-name string for the agent's model:
-        at construction (`Agent('openai:gpt-5.2', capabilities=[...])`), per-run via
-        `agent.run(model=...)`, or via `agent.override(model=...)`. Pre-built `Model`
-        instances and `None` skip this hook entirely.
+        Called at run setup whenever a model-name string is in play — the agent's
+        default (`Agent('openai:gpt-5.2', capabilities=[...])`), a per-run value
+        (`agent.run(model=...)`), or an [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override]
+        value. Pre-built `Model` instances and `None` skip this hook entirely.
 
-        Use this to:
-
-        - Map known names to pre-configured `Model` instances (e.g. a shared client
-          registry).
-        - Build a `Model` via a custom [`Provider`][pydantic_ai.providers.Provider]
-          factory (forwarding to [`infer_model`][pydantic_ai.models.infer_model]
-          with `provider_factory=...`).
-        - Defer (`return None`) so the next capability — or the default
-          [`infer_model`][pydantic_ai.models.infer_model] flow — handles it.
+        The hook fires once the run's dependencies are available and receives them on
+        [`ctx.deps`][pydantic_ai.models.ModelResolutionContext.deps], so resolution can
+        be run-dependent — the flagship case being per-user provider authentication,
+        where credentials carried on `deps` configure the model's
+        [`Provider`][pydantic_ai.providers.Provider]
+        (forwarding to [`infer_model`][pydantic_ai.models.infer_model] with
+        `provider_factory=...`). Other uses: mapping aliases to pre-configured `Model`
+        instances, custom gateways, and model registries. Return `None` to defer to
+        the next capability — or the default [`infer_model`][pydantic_ai.models.infer_model]
+        flow.
 
         Per-request *swapping* of an already-resolved `Model` is a separate concern
         and lives in [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
@@ -399,10 +399,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         returned `None`. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
         handles the chaining.
 
-        The hook is synchronous (matching `get_toolset` / `get_wrapper_toolset`) and
-        runs outside of any agent run, so it doesn't receive a `RunContext`.
-        Per-run capabilities can't influence model resolution because resolution
-        happens before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run].
+        Model resolution happens before the run (and therefore
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]) exists, so the
+        hook receives the narrow [`ModelResolutionContext`][pydantic_ai.models.ModelResolutionContext]
+        rather than a `RunContext`, and per-run capability instances can't influence it.
+
+        Under durable execution (Temporal, DBOS, Prefect), the hook runs again inside
+        the activity/step/task to rebuild the model on the worker, so implementations
+        must be deterministic for a given `(model_id, deps)` and must not perform
+        external I/O — carry credentials and registry data on `deps` instead.
         """
         return None
 

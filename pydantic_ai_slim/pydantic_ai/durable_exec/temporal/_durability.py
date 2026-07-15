@@ -33,7 +33,14 @@ from pydantic_ai.durable_exec._utils import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, infer_model
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    infer_model,
+)
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -216,11 +223,24 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 'An agent needs to have a unique `name` in order to be used with Temporal. '
                 "The name will be used to identify the agent's activities within the workflow."
             )
-        if not isinstance(agent.model, Model):
+        if agent.model is None:
             raise UserError(
-                'An agent needs to have a concrete `model` in order to be used with Temporal, '
+                'An agent needs to have a `model` in order to be used with Temporal, '
                 'it cannot be set at agent run time.'
             )
+        if isinstance(agent.model, str):
+            # The agent's default stayed a string because a capability owns string
+            # resolution (`TemporalDurability` itself, at minimum — see `Agent.__init__`).
+            # Resolve it here the same way runtime strings are resolved, so the
+            # activities can register a concrete default model. A `models=` entry
+            # registered under the raw default string wins: the user explicitly mapped
+            # that string to an instance, so it *is* the default.
+            if agent.model in self._extra_models:
+                default_model = self._extra_models[agent.model]
+            else:
+                default_model = self._resolve_model_id(agent.model)
+        else:
+            default_model = agent.model
 
         bound = copy.copy(self)
         bound.name = agent.name
@@ -234,11 +254,16 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             bound._event_stream_handler = agent.event_stream_handler
 
         # Build model registry
-        bound._models_by_id = {'default': agent.model}
+        bound._models_by_id = {'default': default_model}
         for model_id, model_instance in bound._extra_models.items():
             if model_id == 'default':
                 raise UserError("Model ID 'default' is reserved for the agent's primary model.")
             bound._models_by_id[model_id] = model_instance
+        if isinstance(agent.model, str) and agent.model not in bound._models_by_id:
+            # Map the raw default string back to the registered default instance, so
+            # run-time resolution of the agent's default yields the same `Model` (and
+            # requests take the `model_id=None` fast path across the activity boundary).
+            bound._models_by_id[agent.model] = default_model
 
         # Snapshot the leaf capability classes registered with the agent so we can
         # detect runtime additions (which would bypass activity registration).
@@ -276,7 +301,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = self._resolve_model_id(params.model_id)
+            model_for_request = await self._resolve_model_for_activity(params.model_id, run_context)
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -293,7 +318,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = self._resolve_model_id(params.model_id)
+            model_for_request = await self._resolve_model_for_activity(params.model_id, run_context)
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -377,17 +402,16 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
     # --- Model resolution ---
 
-    def resolve_model_id(
+    async def resolve_model_id(
         self,
         model_id: KnownModelName | str,
-        *,
-        agent: AbstractAgent[AgentDepsT, Any],
+        ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
-        """Map a model-name string to a `Model` instance via the optional `provider_factory`.
+        """Map a model-name string to a `Model` instance via the `models=` registry or `provider_factory`.
 
-        Strings get resolved through the configured `provider_factory` (or the default
-        `infer_model`) so a workflow can accept arbitrary `agent.run(model='openai:gpt-5.2')`
-        values without pre-registering each one in `models=`.
+        Strings get resolved through the registry, then the configured `provider_factory`
+        (or the default `infer_model`), so a workflow can accept arbitrary
+        `agent.run(model='openai:gpt-5.2')` values without pre-registering each one in `models=`.
         """
         return self._resolve_model_id(model_id)
 
@@ -428,6 +452,28 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         if self._provider_factory is not None:
             return infer_model(model_id, provider_factory=self._provider_factory)
         return infer_model(model_id)
+
+    async def _resolve_model_for_activity(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
+        """Rebuild the `Model` for a request inside the activity, deps-aware.
+
+        Mirrors the workflow-side resolution in `Agent._resolve_model`: run the agent's
+        full `resolve_model_id` capability chain — deps-aware user capabilities like
+        `ResolveModelId` get first crack, and this capability's registry /
+        `provider_factory` resolution acts as the durable backstop — so a model whose
+        provider depends on the run's deps is rebuilt with the *actual* deps on the
+        worker rather than deps-blind.
+        """
+        if model_id is None:
+            return self._models_by_id['default']
+        agent = run_context.agent
+        root_capability = run_context.root_capability
+        if agent is not None and root_capability is not None:
+            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
+            resolved = await root_capability.resolve_model_id(model_id, resolution_ctx)
+            if resolved is not None:
+                return resolved
+            return infer_model(model_id)  # pragma: no cover - self always resolves strings via the chain
+        return self._resolve_model_id(model_id)  # pragma: no cover - deserialize_run_context always attaches both
 
     # --- Capability hooks ---
 

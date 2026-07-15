@@ -38,7 +38,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
@@ -128,13 +128,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def resolve_model_id(
+    async def resolve_model_id(
         self,
         model_id: KnownModelName | str,
-        *,
-        agent: AbstractAgent[AgentDepsT, Any],
+        ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
-        return self.wrapped.resolve_model_id(model_id, agent=agent)
+        return await self.wrapped.resolve_model_id(model_id, ctx)
 
     async def prepare_tools(
         self,

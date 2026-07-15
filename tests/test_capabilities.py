@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
+from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -39,6 +40,7 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
+    ResolveModelId,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -83,7 +85,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
@@ -11487,20 +11489,21 @@ async def test_wrapper_capability_delegates_resolve_model_id():
 
     @dataclass
     class ResolverCap(AbstractCapability[Any]):
-        def resolve_model_id(self, model_id: str, *, agent: Any) -> Any:
+        async def resolve_model_id(self, model_id: str, ctx: ModelResolutionContext[Any]) -> Any:
             return resolved if model_id == 'magic' else None
 
     wrapper = WrapperCapability(wrapped=ResolverCap())
     assert wrapper.has_resolve_model_id is True
 
     agent = Agent('test', capabilities=[wrapper])
-    assert wrapper.resolve_model_id('magic', agent=agent) is resolved
-    assert wrapper.resolve_model_id('other', agent=agent) is None
+    resolution_ctx = ModelResolutionContext(agent=agent, deps=None)
+    assert await wrapper.resolve_model_id('magic', resolution_ctx) is resolved
+    assert await wrapper.resolve_model_id('other', resolution_ctx) is None
 
     # Wrapping a capability without `resolve_model_id` is a no-op.
     plain_wrapper = WrapperCapability(wrapped=CustomCapability())
     assert plain_wrapper.has_resolve_model_id is False
-    assert plain_wrapper.resolve_model_id('any', agent=agent) is None
+    assert await plain_wrapper.resolve_model_id('any', resolution_ctx) is None
 
 
 async def test_wrapper_capability_delegates_model_request_hooks():
@@ -13952,7 +13955,7 @@ class _StringResolver(AbstractCapability[Any]):
 
     target: FunctionModel
 
-    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+    async def resolve_model_id(self, model_id: Any, ctx: ModelResolutionContext[Any]) -> Any:
         if model_id == 'magic-model':
             return self.target
         return None
@@ -13960,12 +13963,14 @@ class _StringResolver(AbstractCapability[Any]):
 
 @dataclass
 class _PassThroughResolver(AbstractCapability[Any]):
-    """Test capability that always defers."""
+    """Test capability that always defers, recording what it saw."""
 
     seen: list[Any] = field(default_factory=list[Any])
+    seen_deps: list[Any] = field(default_factory=list[Any])
 
-    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+    async def resolve_model_id(self, model_id: Any, ctx: ModelResolutionContext[Any]) -> Any:
         self.seen.append(model_id)
+        self.seen_deps.append(ctx.deps)
         return None
 
 
@@ -13989,14 +13994,15 @@ async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None
     assert cap.seen == ['test']
 
 
-def test_resolve_model_id_returns_none_for_unknown_string() -> None:
+async def test_resolve_model_id_returns_none_for_unknown_string() -> None:
     """A resolver that doesn't recognize the string returns None so the next layer can try."""
     target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
     cap = _StringResolver(target=target)
-    assert cap.resolve_model_id('different-string', agent=cast(Any, None)) is None
+    resolution_ctx = ModelResolutionContext(agent=cast(Any, None), deps=None)
+    assert await cap.resolve_model_id('different-string', resolution_ctx) is None
 
 
-def test_resolve_model_id_first_non_none_wins() -> None:
+async def test_resolve_model_id_first_non_none_wins() -> None:
     """When two capabilities declare resolve_model_id, the first one in the list wins.
 
     Composition is first-non-None-wins (not each-layer-wraps): only one capability
@@ -14011,7 +14017,7 @@ def test_resolve_model_id_first_non_none_wins() -> None:
     combined = CombinedCapability([first, second])
 
     agent = Agent(name='resolve_layered', capabilities=[first, second], defer_model_check=True)
-    result = combined.resolve_model_id('magic-model', agent=agent)
+    result = await combined.resolve_model_id('magic-model', ModelResolutionContext(agent=agent, deps=None))
     assert result is first_target
 
 
@@ -14039,20 +14045,126 @@ async def test_resolve_model_id_invoked_on_override() -> None:
     assert result.output == 'ok'
 
 
-def test_resolve_model_id_invoked_on_agent_default_string() -> None:
-    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at init.
+async def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at run setup.
 
     Capabilities with `resolve_model_id` need a shot at the default model string just
-    like they do for runtime overrides — otherwise things like `provider_factory` for
-    durability capabilities can't customize how the agent's primary model is built.
+    like they do for runtime overrides. The hook is deps-aware and only fires at run
+    setup, so the agent keeps the raw string at construction (like `defer_model_check`)
+    and resolution happens per run — under different deps, potentially to different models.
     """
     target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
     cap = _StringResolver(target=target)
 
     agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
 
-    # Capability's resolve_model_id ran at construction and the resolved Model is the default.
-    assert agent.model is target
+    # The default stays a string at construction; the hook can't run without deps.
+    assert agent.model == 'magic-model'
+
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+    # No memoization: the raw string is kept so per-run resolution keeps firing.
+    assert agent.model == 'magic-model'
+
+
+async def test_resolve_model_id_receives_deps() -> None:
+    """The hook receives the run's deps on `ctx.deps`, so resolution can be run-dependent."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_deps', deps_type=str, capabilities=[cap], defer_model_check=True)
+
+    await agent.run('hi', model='test', deps='user-credential')
+    assert cap.seen == ['test']
+    assert cap.seen_deps == ['user-credential']
+
+
+async def test_override_model_string_deferral_considers_override_capabilities() -> None:
+    """`override(model=str)`'s defer-vs-eager choice consults the effective root capability.
+
+    Neither the spec capability nor the agent chain implements `resolve_model_id` here, so
+    the string resolves eagerly via `infer_model` — checked against the spec-supplied root
+    when set in the same call, and against an already-active root override when nested.
+    """
+    agent = Agent(name='override_deferral_effective_root')
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}, model='test'):
+        result = await agent.run('hi')
+        assert result.output is not None
+
+    with agent.override(spec={'capabilities': [{'IncludeToolReturnSchemas': {}}]}):
+        with agent.override(model='test'):
+            result = await agent.run('hi')
+            assert result.output is not None
+
+
+async def test_resolve_model_id_uses_override_root_capability() -> None:
+    """A root-capability override (as set by `override(spec=...)`) owns model-string resolution.
+
+    Not a public-API test: no built-in spec-constructible capability implements
+    `resolve_model_id` yet, so this drives the `_override_root_capability` contextvar —
+    the exact seam `override(spec=...)` sets when a spec replaces the root — directly.
+    Pins that resolution honors the effective (replaced) root, and that the resolved
+    model doesn't get memoized onto `agent.model` past the override's scope.
+    """
+    chain_target = FunctionModel(_resolve_dummy_model_fn, model_name='agent-chain')
+    override_target = FunctionModel(_resolve_dummy_model_fn, model_name='override-root')
+
+    agent = Agent('magic-model', name='resolve_override_root', capabilities=[_StringResolver(target=chain_target)])
+
+    override_root = CombinedCapability[Any]([_StringResolver(target=override_target)])
+    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    try:
+        resolved = await agent._resolve_model(None, deps=None)  # pyright: ignore[reportPrivateUsage]
+        assert resolved is override_target
+        # No memoization under an override: the raw string default survives.
+        assert agent.model == 'magic-model'
+    finally:
+        agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
+
+    resolved = await agent._resolve_model(None, deps=None)  # pyright: ignore[reportPrivateUsage]
+    assert resolved is chain_target
+
+
+# --- ResolveModelId capability tests ---
+
+
+async def test_resolve_model_id_capability_sync_resolver() -> None:
+    """`ResolveModelId` wraps a sync resolver function that maps strings to models using deps."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='sync-resolved')
+    seen_deps: list[Any] = []
+
+    def resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+        seen_deps.append(ctx.deps)
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='resolve_cap_sync', deps_type=str, capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', deps='credential')
+    assert result.output == 'ok'
+    assert seen_deps == ['credential']
+
+
+async def test_resolve_model_id_capability_async_resolver() -> None:
+    """`ResolveModelId` also accepts an async resolver function."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='async-resolved')
+
+    async def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent(name='resolve_cap_async', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_capability_defers_to_infer_model() -> None:
+    """A `ResolveModelId` resolver returning None falls back to the default `infer_model` flow."""
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> None:
+        return None
+
+    agent = Agent(name='resolve_cap_defer', capabilities=[ResolveModelId(resolver)])
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
 
 
 # ===== Pending Message Queue Tests =====

@@ -35,7 +35,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -212,11 +212,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    def resolve_model_id(
+    async def resolve_model_id(
         self,
         model_id: KnownModelName | str,
-        *,
-        agent: AbstractAgent[AgentDepsT, Any],
+        ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
         # First-non-None wins, in user-supplied order: the first capability in the
         # `capabilities=[...]` list gets first crack at a string and any later
@@ -224,7 +223,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # Per-request *wrapping* of a resolved Model is a separate concern handled
         # by `before_model_request`, so each-layer-wraps semantics aren't needed.
         for capability in self.capabilities:
-            result = capability.resolve_model_id(model_id, agent=agent)
+            result = await capability.resolve_model_id(model_id, ctx)
             if result is not None:
                 return result
         return None

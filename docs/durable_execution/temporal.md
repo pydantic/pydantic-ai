@@ -218,7 +218,7 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a concrete model set when it's created.
 
-Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys loaded at startup), you can pass a `provider_factory` to the capability, which receives the provider name and returns a [`Provider`][pydantic_ai.providers.Provider]. Because `resolve_model_id` runs outside any active run, the factory doesn't receive a [`RunContext`][pydantic_ai.tools.RunContext] — close over your config at construction time.
+Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys loaded at startup), you can pass a `provider_factory` to the capability, which receives the provider name and returns a [`Provider`][pydantic_ai.providers.Provider]. For *run-dependent* provider configuration — e.g. per-user credentials carried on the run's `deps` — use the general [`ResolveModelId`](../capabilities.md#resolvemodelid) capability instead.
 
 Here's an example showing how to pre-register and use multiple models:
 

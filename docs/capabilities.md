@@ -488,6 +488,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](deferred-tools.md#resolving-deferred-calls-with-a-handler) inline with a handler function | — |
 | [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](message-history.md#processing-message-history) | — |
 | [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards agent stream events to a handler function | — |
+| [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] | Resolves model-name strings to `Model` instances using the run's `deps` — see [ResolveModelId](#resolvemodelid) | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
@@ -948,6 +949,45 @@ _(This example is complete, it can be run "as is")_
 
 The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
 
+### ResolveModelId
+
+[`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] customizes how model-name strings are resolved to [`Model`][pydantic_ai.models.Model] instances. The resolver function is called at run setup for any string in play — the agent's default model, `run(model=...)`, or `override(model=...)` — with a [`ModelResolutionContext`][pydantic_ai.models.ModelResolutionContext] carrying the agent and the run's [`deps`](dependencies.md), so resolution can be run-dependent. Return a `Model` to use it, or `None` to defer to the next capability or the default [`infer_model`][pydantic_ai.models.infer_model] flow. Pre-built `Model` instances skip resolution entirely.
+
+The flagship use case is per-user provider authentication in multi-tenant apps: carry each user's credentials on `deps`, and build the model with a [`Provider`][pydantic_ai.providers.Provider] that uses them by forwarding to [`infer_model`][pydantic_ai.models.infer_model] with `provider_factory=...`:
+
+```python {title="resolve_model_id.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.models import Model, ModelResolutionContext, infer_model
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+@dataclass
+class UserDeps:
+    openai_api_key: str
+
+
+def resolve_model(ctx: ModelResolutionContext[UserDeps], model_id: str) -> Model | None:
+    provider = OpenAIProvider(api_key=ctx.deps.openai_api_key)
+    return infer_model(model_id, provider_factory=lambda _: provider)
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    deps_type=UserDeps,
+    capabilities=[ResolveModelId(resolve_model)],
+)
+```
+
+_(This example is complete, it can be run "as is")_
+
+Each `agent.run('...', deps=UserDeps(openai_api_key=...))` now builds the model with that user's key. The resolver can be sync or async, and works the same for aliases (`'fast'` → a concrete model), custom gateways, or model registries — anything that maps a string plus run context to a `Model`.
+
+!!! note "Durable execution"
+    Under [durable execution](durable_execution/overview.md) (Temporal, DBOS, Prefect), the resolver runs again inside the activity/step/task to rebuild the model on the worker, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials and registry data on `deps` instead.
+
 ## Building custom capabilities
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
@@ -1289,6 +1329,14 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
+
+#### Model resolution hook
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | `(model_id: str, ctx: ModelResolutionContext) -> Model \| None` | Resolve a model-name string to a `Model` instance, or `None` to defer |
+
+Unlike the per-request hooks above, `resolve_model_id` fires once at run setup, whenever a model-name string is in play — the agent's default, `run(model=...)`, or `override(model=...)`. It receives a [`ModelResolutionContext`][pydantic_ai.models.ModelResolutionContext] (carrying the agent and the run's `deps`) rather than a `RunContext`, because the run — and its `RunContext`, which includes the resolved model — doesn't exist yet. Composition is first-non-`None`-wins in user-supplied order. The built-in [`ResolveModelId`](#resolvemodelid) capability wraps a resolver function for the common case.
 
 #### Tool hooks
 
