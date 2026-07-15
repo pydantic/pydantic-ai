@@ -110,6 +110,26 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+# Model IDs prefixed with a known vendor prefix (e.g. AWS Bedrock Mantle's `openai.`) must produce
+# the same profile as the bare model name for every capability that's matched via `startswith`.
+_PREFIXED_PROFILE_CASES = [
+    # False-negative case: phase/tool_search/image_output/reasoning_effort_none/reasoning_mode
+    # flip to False and thinking_always_enabled flips to True when the prefix breaks `startswith`.
+    ('gpt-5.6-sol', 'openai.gpt-5.6-sol'),
+    # False-positive case: `openai.` matches the bare `'o'` reasoning prefix, enabling
+    # reasoning/thinking for a non-reasoning model.
+    ('gpt-oss-120b', 'openai.gpt-oss-120b'),
+]
+
+
+@pytest.mark.parametrize('bare,prefixed', _PREFIXED_PROFILE_CASES, ids=lambda c: c if isinstance(c, str) else c[1])
+def test_prefixed_model_id_matches_bare_profile(bare: str, prefixed: str):
+    """A vendor-prefixed model ID resolves to the same profile as the bare name."""
+    bare_profile = openai_model_profile(bare)
+    prefixed_profile = openai_model_profile(prefixed)
+    assert bare_profile == prefixed_profile
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

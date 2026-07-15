@@ -125,7 +125,23 @@ with no `reasoning.effort` set, and can be disabled exactly when it accepts `eff
 The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 
+_KNOWN_VENDOR_PREFIXES: tuple[str, ...] = ('openai.',)
+"""Vendor prefixes that some OpenAI-compatible endpoints (e.g. AWS Bedrock Mantle) prepend to
+model IDs. They are stripped before capability matching so a prefixed ID like ``openai.gpt-5.6-sol``
+is treated as the bare ``gpt-5.6-sol``; only known prefixes are stripped to avoid breaking names
+that legitimately start with those strings."""
+
+
+def _strip_vendor_prefix(model_name: str) -> str:
+    """Strip a known vendor prefix from ``model_name`` for capability matching."""
+    for prefix in _KNOWN_VENDOR_PREFIXES:
+        if model_name.startswith(prefix):
+            return model_name[len(prefix) :]
+    return model_name
+
+
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
+    model_name = _strip_vendor_prefix(model_name)
     return next(
         (support for prefix, support in _REASONING_SUPPORT_BY_PREFIX.items() if model_name.startswith(prefix)),
         _NO_REASONING,
@@ -281,6 +297,9 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    # Strip known vendor prefixes (e.g. AWS Bedrock Mantle's `openai.`) so a prefixed model ID
+    # like `openai.gpt-5.6-sol` is matched against the bare `gpt-5.6-sol` for every capability gate.
+    model_name = _strip_vendor_prefix(model_name)
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
