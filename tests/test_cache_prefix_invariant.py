@@ -99,6 +99,41 @@ def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cass
         next(iterator)
 
 
+def test_canonical_prefix_blocks_google_system_instruction_dict() -> None:
+    """Google's `systemInstruction` is a single Content dict; it must serialize as one block, not its keys."""
+    shape_and_blocks = canonical_prefix_blocks(
+        {
+            'systemInstruction': {'parts': [{'text': 'Be helpful.'}], 'role': 'user'},
+            'contents': [{'role': 'user', 'parts': [{'text': 'Hi'}]}],
+        },
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+    )
+    assert shape_and_blocks is not None
+    shape, blocks = shape_and_blocks
+    assert shape == 'google'
+    assert blocks[0] == ('system', '{"parts": [{"text": "Be helpful."}], "role": "user"}')
+
+    changed = canonical_prefix_blocks(
+        {
+            'systemInstruction': {'parts': [{'text': 'Be terse.'}], 'role': 'user'},
+            'contents': [{'role': 'user', 'parts': [{'text': 'Hi'}]}],
+        },
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+    )
+    assert changed is not None
+    assert classify_prefix_pair(blocks, changed[1]) == ('system-divergent', 0)
+
+
+@pytest.mark.moves_cache_prefix
+def test_check_cache_prefix_stability_requires_reason(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    """A bare marker without `reason=` must not silently exempt the test."""
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match='requires reason'):
+        check_cache_prefix_stability(node, prefix_moving_cassette)
+
+
 def test_canonical_prefix_blocks_bedrock() -> None:
     """The corpus has no Converse cassettes with parsed bodies, so exercise the shape directly."""
     shape_and_blocks = canonical_prefix_blocks(

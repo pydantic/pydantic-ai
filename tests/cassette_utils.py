@@ -49,7 +49,12 @@ class CassettePrefixViolation:
 
 def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
-    if node.get_closest_marker('moves_cache_prefix'):
+    if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
+        if not marker.kwargs.get('reason'):
+            pytest.fail(
+                '@pytest.mark.moves_cache_prefix requires reason=... explaining why this test '
+                'deliberately moves the cache prefix'
+            )
         return
 
     violations = list(iter_cassette_prefix_violations(cassette_path))
@@ -79,7 +84,10 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
     def add(level: str, items: Any) -> None:
         if items is None:
             return
-        if isinstance(items, str):
+        if not isinstance(items, list):
+            # Some fields hold a single block rather than a list: a plain-string system prompt
+            # (Anthropic/Bedrock), or Google's `systemInstruction`, which is one Content *dict* --
+            # iterating it would silently reduce it to its keys and blind the check to content changes.
             items = [items]
         for item in items:
             blocks.append((level, json.dumps(item)))
