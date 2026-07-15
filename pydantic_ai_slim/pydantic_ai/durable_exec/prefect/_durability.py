@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -13,17 +13,16 @@ from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
-    AbstractCapability,
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
+from pydantic_ai.durable_exec._base import BaseDurability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     model_request,
     model_request_stream,
     process_event_stream,
-    unwrap_model,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -65,7 +64,7 @@ def _wrap_event_stream_handler_in_tasks(
 
 
 @dataclass(init=False)
-class PrefectDurability(AbstractCapability[AgentDepsT]):
+class PrefectDurability(BaseDurability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
     When added to an agent, this capability intercepts model requests and
@@ -85,12 +84,15 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    engine_name = 'Prefect'
+
     name: str
     """Unique agent name used as a prefix for Prefect task names."""
 
     def __init__(
         self,
         *,
+        models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
@@ -102,6 +104,19 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         The agent's model, name, and toolsets are discovered automatically.
 
         Args:
+            models: Optional additional models keyed by ID for runtime model
+                switching. The agent's primary model is always registered as
+                `'default'`. A `Model` instance can't be serialized across the
+                task boundary, so a run-time model (via `agent.run(model=...)`
+                / `agent.override(model=...)`, or swapped in by an outer capability)
+                is sent as its `model_id` string and rebuilt inside the task by
+                registry lookup, then the agent's `resolve_model_id` capability
+                chain / `infer_model`. Register an instance here (and reference it
+                by key or pass the registered instance) whenever its `model_id`
+                alone wouldn't rebuild it faithfully — e.g. a custom provider,
+                client, or settings. Model-name strings never need registering;
+                to customize how they're built (e.g. a custom provider), use the
+                [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional handler for streaming events.
             model_task_config: Prefect task config for model request tasks.
             mcp_task_config: Prefect task config for MCP server tasks.
@@ -112,6 +127,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
             event_stream_handler_task_config: Prefect task config for event handler tasks.
         """
+        super().__init__(models=models)
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._event_stream_handler = event_stream_handler
@@ -123,7 +139,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         # Populated by for_agent when the capability is attached to an agent.
-        self._model: Model | None = None
         self._request_task: Any = None
         self._request_stream_task: Any = None
 
@@ -147,14 +162,10 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         """
         if not agent.name:
             raise UserError('An agent needs to have a unique `name` in order to be used with Prefect.')
-        if not isinstance(agent.model, Model):
-            raise UserError('An agent needs to have a concrete `model` in order to be used with Prefect.')
 
         bound = copy.copy(self)
         bound.name = agent.name
         bound._agent = agent
-        model = agent.model
-        bound._model = model
 
         # If no handler was passed to the capability, fall back to the agent's
         # instance-level one so it fires inside the task alongside the capability chain.
@@ -168,15 +179,20 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         )
         bound._prefect_toolsets_by_id = {}
 
+        # Build model registry (shared with the other durability capabilities)
+        bound._bind_models(agent)
+
         # --- Model request tasks ---
 
         @task
         async def request_task(
+            model_id: str | None,
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
+            model = await bound._resolve_model_for_request(model_id, run_context)
             request_context = ModelRequestContext(
                 model=model,
                 messages=messages,
@@ -189,11 +205,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         @task
         async def request_stream_task(
+            model_id: str | None,
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
+            model = await bound._resolve_model_for_request(model_id, run_context)
             request_context = ModelRequestContext(
                 model=model,
                 messages=messages,
@@ -318,22 +336,15 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         if FlowRunContext.get() is None:
             return await handler(request_context)
 
-        # The Prefect request tasks are registered once in `for_agent`, closing over the
-        # construction-time model, so a model set at run time via `run(model=...)` or
-        # `override(model=...)` can't cross the durable boundary and would be silently ignored.
-        # Reject it instead of answering from the wrong model, matching the deprecated
-        # `PrefectAgent`. Instances are unwrapped and compared by identity (not `model_id`): an
-        # outer `Instrumentation` wrapper is transparent, while a genuine override — even one that
-        # happens to share the construction-time model's `model_id` (same name, different
-        # provider/credentials) — is still caught.
-        if self._model is not None and unwrap_model(request_context.model) is not unwrap_model(self._model):
-            raise UserError(
-                'The model cannot be changed at agent run time when using `PrefectDurability`; '
-                'it must be set when creating the agent. '
-                f'Got {request_context.model.model_id!r}, expected {self._model.model_id!r}.'
-            )
+        # A `Model` instance can't be serialized across the task boundary, so the
+        # request carries a `model_id` (None for the default, a `models=` registry
+        # key, or a model-name string) and the task rebuilds the model deps-aware
+        # via `_resolve_model_for_request`. `request_context.model` (not `ctx.model`)
+        # is used so a model swapped in by an outer capability's
+        # `before_model_request` round-trips too.
+        model_id = self._find_model_id(request_context.model)
 
-        model_name = ctx.model.model_name
+        model_name = request_context.model.model_name
 
         # Use the streaming task when either the agent loop expects an event
         # stream (per-run/instance handler, or a chain capability that overrides
@@ -345,6 +356,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             result: StreamedActivityResult = await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
             )(
+                model_id,
                 request_context.messages,
                 request_context.model_settings,
                 request_context.model_request_parameters,
@@ -353,6 +365,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             return result.apply_to(request_context)
 
         return await self._request_task.with_options(name=f'Model Request: {model_name}', **self._model_task_config)(
+            model_id,
             request_context.messages,
             request_context.model_settings,
             request_context.model_request_parameters,

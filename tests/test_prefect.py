@@ -39,9 +39,9 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream, Toolset
+from pydantic_ai.capabilities import Instrumentation, ProcessEventStream, ResolveModelId, Toolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.models import ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -1790,48 +1790,94 @@ def test_prefect_durability_requires_agent_name() -> None:
         Agent(_durability_fn_model, capabilities=[PrefectDurability()])
 
 
-def test_prefect_durability_requires_concrete_model() -> None:
-    """PrefectDurability raises UserError when the agent has no concrete model."""
-    with pytest.raises(UserError, match='concrete `model`'):
-        Agent('openai:gpt-4o', name='needs_concrete', defer_model_check=True, capabilities=[PrefectDurability()])
+def test_prefect_durability_requires_model() -> None:
+    """PrefectDurability raises UserError when the agent has no model at all."""
+    with pytest.raises(UserError, match='needs to have a `model`'):
+        Agent(name='needs_model', capabilities=[PrefectDurability()])
 
 
-async def test_prefect_durability_rejects_runtime_model() -> None:
-    """A per-run `model=` can't cross the durable boundary, so it's rejected instead of silently ignored.
+def _prefect_alt_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='alt-response')])
 
-    The request tasks are registered in `for_agent` over the construction-time model; a model set at
-    run time would otherwise produce an answer from the wrong (construction-time) model.
+
+_prefect_alt_model = FunctionModel(_prefect_alt_model_fn, model_name='alt')
+
+
+async def test_prefect_durability_runtime_registered_model() -> None:
+    """A model registered in `models=` can be selected at run time, by key or instance.
+
+    The `model_id` crosses the task boundary and the task rebuilds the model from the
+    registry, so the response is produced by the selected model inside the Prefect task.
     """
-    agent = Agent(_durability_fn_model, name='durability_runtime_model', capabilities=[PrefectDurability()])
-    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_registered',
+        capabilities=[PrefectDurability(models={'alt': _prefect_alt_model})],
+    )
+    result = await agent.run('hello', model='alt')
+    assert result.output == 'alt-response'
+
+    result = await agent.run('hello', model=_prefect_alt_model)
+    assert result.output == 'alt-response'
+
+
+async def test_prefect_durability_override_registered_model() -> None:
+    """A model set via `override(model=...)` round-trips the task boundary like a per-run `model=`."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_registered',
+        capabilities=[PrefectDurability(models={'alt': _prefect_alt_model})],
+    )
+    with agent.override(model='alt'):
+        result = await agent.run('hello')
+    assert result.output == 'alt-response'
+
+
+async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
+    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+
+    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
+    bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
+    """
+    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
+    with pytest.raises(UserError, match='could not be rebuilt'):
         await agent.run('hello', model=TestModel())
 
 
-async def test_prefect_durability_rejects_override_model() -> None:
-    """A model set via `override(model=...)` is rejected the same way as a per-run `model=`."""
-    agent = Agent(_durability_fn_model, name='durability_override_model', capabilities=[PrefectDurability()])
-    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
-        with agent.override(model=TestModel()):
-            await agent.run('hello')
+def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+    """Resolve the 'tenant-model' alias to a model built from the run's deps.
 
-
-async def test_prefect_durability_rejects_same_model_id_override() -> None:
-    """A different instance that shares the construction-time model's `model_id` is still rejected.
-
-    Two `TestModel()` instances share `model_id` `'test'`, so a by-`model_id` comparison would let
-    the override slip through and silently answer from the construction-time model. The guard unwraps
-    any wrapper layers and compares instances by identity instead, so the override is caught.
+    Matches both the raw alias (run-setup resolution of `run(model='tenant-model')`) and the
+    `'function:tenant-model'` round-trip string the task re-resolves.
     """
-    agent = Agent(TestModel(), name='durability_same_model_id', capabilities=[PrefectDurability()])
-    with pytest.raises(UserError, match='model cannot be changed at agent run time'):
-        await agent.run('hello', model=TestModel())
+    if 'tenant-model' not in model_id:
+        return None
+    tenant = ctx.deps
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=f'tenant:{tenant}')])
+
+    return FunctionModel(fn, model_name='tenant-model')
+
+
+async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() -> None:
+    """A deps-aware `ResolveModelId` resolver rebuilds the model with the run's deps inside the task."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_tenant',
+        deps_type=str,
+        capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
+    )
+    for tenant in ('acme', 'globex'):
+        result = await agent.run('hi', model='tenant-model', deps=tenant)
+        assert result.output == f'tenant:{tenant}'
 
 
 async def test_prefect_durability_allows_instrumented_default_model() -> None:
     """An outer `Instrumentation` capability wraps the model, but the default model is still accepted.
 
-    The runtime-model guard unwraps the `InstrumentedModel` wrapper before comparing instances by
-    identity, so a normal instrumented run isn't mistaken for a runtime override.
+    `_find_model_id` unwraps the `InstrumentedModel` wrapper before comparing instances by
+    identity, so an instrumented run still takes the default's `model_id=None` fast path.
     """
     agent = Agent(
         _durability_fn_model,

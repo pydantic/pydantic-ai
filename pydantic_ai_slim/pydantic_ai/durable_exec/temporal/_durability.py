@@ -23,6 +23,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec._base import BaseDurability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
@@ -34,12 +35,9 @@ from pydantic_ai.durable_exec._utils import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import (
-    KnownModelName,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
-    ModelResolutionContext,
-    infer_model,
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -67,7 +65,7 @@ class _RequestParams:
 
 
 @dataclass(init=False)
-class TemporalDurability(AbstractCapability[AgentDepsT]):
+class TemporalDurability(BaseDurability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
 
     When added to an agent, this capability intercepts model requests and
@@ -87,6 +85,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
         ```
     """
+
+    engine_name = 'Temporal'
 
     name: str
     """Unique agent name used as a prefix for Temporal activity names."""
@@ -155,9 +155,9 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
+        super().__init__(models=models)
         self.run_context_type = run_context_type
         self._event_stream_handler = event_stream_handler
-        self._extra_models = dict(models) if models else {}
         self._deps_type = deps_type
 
         # Normalize activity config
@@ -176,7 +176,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # These are populated by for_agent()
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
-        self._models_by_id: dict[str, Model] = {}
         self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
         self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
@@ -216,25 +215,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 'An agent needs to have a unique `name` in order to be used with Temporal. '
                 "The name will be used to identify the agent's activities within the workflow."
             )
-        if agent.model is None:
-            raise UserError(
-                'An agent needs to have a `model` in order to be used with Temporal, '
-                'it cannot be set at agent run time.'
-            )
-        if isinstance(agent.model, str):
-            # The agent's default stayed a string because a capability owns string
-            # resolution (`TemporalDurability` itself, at minimum — see `Agent.__init__`).
-            # Resolve it here the same way runtime strings are resolved, so the
-            # activities can register a concrete default model. A `models=` entry
-            # registered under the raw default string wins: the user explicitly mapped
-            # that string to an instance, so it *is* the default.
-            if agent.model in self._extra_models:
-                default_model = self._extra_models[agent.model]
-            else:
-                default_model = self._resolve_model_id(agent.model)
-        else:
-            default_model = agent.model
-
         bound = copy.copy(self)
         bound.name = agent.name
         bound._agent = agent
@@ -246,17 +226,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         if bound._event_stream_handler is None:
             bound._event_stream_handler = agent.event_stream_handler
 
-        # Build model registry
-        bound._models_by_id = {'default': default_model}
-        for model_id, model_instance in bound._extra_models.items():
-            if model_id == 'default':
-                raise UserError("Model ID 'default' is reserved for the agent's primary model.")
-            bound._models_by_id[model_id] = model_instance
-        if isinstance(agent.model, str) and agent.model not in bound._models_by_id:
-            # Map the raw default string back to the registered default instance, so
-            # run-time resolution of the agent's default yields the same `Model` (and
-            # requests take the `model_id=None` fast path across the activity boundary).
-            bound._models_by_id[agent.model] = default_model
+        # Build model registry (shared with the other durability capabilities)
+        bound._bind_models(agent)
 
         # Snapshot the leaf capability classes registered with the agent so we can
         # detect runtime additions (which would bypass activity registration).
@@ -294,7 +265,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_activity(params.model_id, run_context)
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -311,7 +282,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = await self._resolve_model_for_activity(params.model_id, run_context)
+            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -392,80 +363,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         `AgentPlugin`.
         """
         return self._temporal_activities
-
-    # --- Model resolution ---
-
-    async def resolve_model_id(
-        self,
-        model_id: KnownModelName | str,
-        ctx: ModelResolutionContext[AgentDepsT],
-    ) -> Model | None:
-        """Map a model-name string to a `Model` instance via the `models=` registry or `infer_model`.
-
-        Strings get resolved through the registry, then the default `infer_model`, so a
-        workflow can accept arbitrary `agent.run(model='openai:gpt-5.2')` values without
-        pre-registering each one in `models=`. To customize how strings are built (e.g. a
-        custom provider), add a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId]
-        capability before this one — it gets first crack at every string.
-        """
-        return self._resolve_model_id(model_id)
-
-    def _find_model_id(self, model: Model) -> str | None:
-        """Find the cross-activity identifier for a `Model` instance.
-
-        Returns `None` for the agent's default model (no extra info needed),
-        a registry key when an instance from `models=` is being used, or the
-        model's own `model_id` string otherwise. Activities use the result to
-        rebuild the same `Model` on the worker side via `_resolve_model_id`.
-
-        The `model_id` fallback covers models built from a run-time string (via
-        `resolve_model_id`) and models an outer capability swaps in via
-        `before_model_request`: the worker rebuilds them by looking the `model_id`
-        up in the registry, then falling back to the `resolve_model_id` capability
-        chain / `infer_model`. This round-trip only reproduces a model that the
-        chain or `infer_model` (or the registry under that `model_id`) can rebuild —
-        a pre-built instance with a custom provider, client, or settings that isn't
-        registered in `models=` will not survive it faithfully.
-        """
-        for model_id, registered in self._models_by_id.items():
-            if registered is model:
-                return None if model_id == 'default' else model_id
-        # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
-        return model.model_id
-
-    def _resolve_model_id(self, model_id: str | None) -> Model:
-        """Resolve a model ID string to a `Model` instance.
-
-        Used both at runtime (to map raw user-provided strings via `resolve_model`)
-        and inside activities (to rebuild the same `Model` the workflow side built).
-        """
-        if model_id is None:
-            return self._models_by_id['default']
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id]
-        return infer_model(model_id)
-
-    async def _resolve_model_for_activity(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
-        """Rebuild the `Model` for a request inside the activity, deps-aware.
-
-        Mirrors the workflow-side resolution in `Agent._resolve_model`: run the agent's
-        full `resolve_model_id` capability chain — deps-aware user capabilities like
-        `ResolveModelId` get first crack, and this capability's registry resolution
-        acts as the durable backstop — so a model whose provider depends on the run's
-        deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
-        """
-        if model_id is None:
-            return self._models_by_id['default']
-        agent = run_context.agent
-        root_capability = run_context.root_capability
-        if agent is not None and root_capability is not None:
-            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
-            resolved = await root_capability.resolve_model_id(model_id, resolution_ctx)
-            if resolved is not None:
-                return resolved
-            return infer_model(model_id)  # pragma: no cover - self always resolves strings via the chain
-        return self._resolve_model_id(model_id)  # pragma: no cover - deserialize_run_context always attaches both
 
     # --- Capability hooks ---
 
