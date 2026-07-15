@@ -861,7 +861,7 @@ When you also need events from intermediate model requests and tool calls, use [
 ```python {title="stream_structured_output_and_events.py"}
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, FinalResultEvent
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent
 
 
 class Client(BaseModel):
@@ -876,6 +876,14 @@ agent = Agent(
 )
 
 
+def record_event(event: AgentStreamEvent) -> None:
+    ...
+
+
+def render_output(output: list[str | Client]) -> None:
+    ...
+
+
 async def main():
     async with agent.iter('Find clients named Jane') as run:
         async for node in run:
@@ -883,18 +891,18 @@ async def main():
                 async with node.stream(run.ctx) as stream:
                     final_result_started = False
                     async for event in stream:
-                        print(event)
+                        record_event(event)
                         if isinstance(event, FinalResultEvent):
                             final_result_started = True
                             break
 
                     if final_result_started:
                         async for output in stream.stream_output():
-                            print(output)
+                            render_output(output)
             elif Agent.is_call_tools_node(node):
                 async with node.stream(run.ctx) as stream:
                     async for event in stream:
-                        print(event)
+                        record_event(event)
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
