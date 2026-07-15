@@ -90,11 +90,6 @@ jobs:
       - run: make docs
 
       - run: tree -sh site
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
-        working-directory: docs-site
-      - run: npm run typecheck
-        working-directory: docs-site
 
       - name: Store docs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -160,12 +155,23 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
+      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      - name: cache Temporal dev-server binary
+        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
+
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it offline (see the
       # `stsb_bert_tiny_model` fixture). On a sustained HF outage the cache stays
       # cold and those tests skip instead of erroring the whole job.
       - name: pre-download sentence-transformers test model
-        if: matrix.install.name == 'all-extras'
+        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
@@ -236,6 +242,18 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
+      # different temporalio version than the frozen lockfile, wanting a different binary. A stale
+      # restored dir is safe because the SDK names the binary by its own version and re-downloads on a miss.
+      - name: cache Temporal dev-server binary
+        if: matrix.python-version != '3.14'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
+
       - run: uv sync --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
@@ -243,6 +261,7 @@ jobs:
       # Warm the HF cache out-of-band (see the `test` job) so the ST tests load
       # the model offline from disk instead of revalidating it against HF Hub.
       - name: pre-download sentence-transformers test model
+        if: matrix.python-version != '3.14'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
@@ -368,55 +387,6 @@ jobs:
             --method POST \
             -f event_type=docs-update \
             -f "client_payload[source]=pydantic/pydantic-ai@${{ github.sha }}"
-
-  deploy-docs-preview:
-    needs: [check]
-    if: success() && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: deploy-docs-preview
-
-    permissions:
-      deployments: write
-      statuses: write
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      - run: npm install
-        working-directory: docs-site
-
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-          cache-suffix: deploy-docs-preview
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: site
-          path: site
-
-      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        id: deploy
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          environment: previews
-          workingDirectory: docs-site
-          command: >
-            deploy
-            --var GIT_COMMIT_SHA:${{ github.sha }}
-            --var GIT_BRANCH:main
-
-      - name: Set preview URL
-        run: uv run --no-project --with httpx .github/set_docs_main_preview_url.py
-        env:
-          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          REF: ${{ github.sha }}
 
   # Build wheels in an isolated job with no publish credentials. If anything in
   # `uv build` (build backend, transitive build deps, restored cache) is

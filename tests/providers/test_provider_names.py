@@ -46,6 +46,7 @@ with try_import() as imports_successful:
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
+        ('azure-responses', AzureProvider, 'AZURE_OPENAI'),
         ('google', GoogleProvider, 'GOOGLE_API_KEY'),
         ('google-cloud', GoogleCloudProvider, 'Your default credentials were not found'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),

@@ -173,7 +173,10 @@ class ToolManager(Generic[AgentDepsT]):
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
         if self.ctx.retries.get(name, 0) == max_retries:
-            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
+            raise UnexpectedModelBehavior(
+                f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
+                'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
+            ) from error
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:

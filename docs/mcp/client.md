@@ -27,6 +27,8 @@ Each `MCPToolset` instance is a [toolset](../toolsets.md) and can be registered 
 
 You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
 
+Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
+
 ### Streamable HTTP
 
 The [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport is the recommended way to connect to a remote MCP server.
@@ -432,6 +434,53 @@ if __name__ == '__main__':
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## HTTP authentication
+
+For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token string, any [`httpx.Auth`](https://www.python-httpx.org/advanced/authentication/), or the literal string `'oauth'` to enable [FastMCP's OAuth flow](https://gofastmcp.com/clients/auth/oauth). Static headers like API keys can be passed via the `headers` argument instead.
+
+### Per-user authentication
+
+In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
+
+!!! warning "A shared `MCPToolset` instance is a single identity"
+    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established (and authentication resolved) by whichever run needs it first, and only torn down once the last one finishes. Deriving credentials per-request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `httpx.Auth` does not work on a shared instance: overlapping runs will silently send their requests with the credentials of whichever run opened the session.
+
+To make requests with the credentials of the user in question, each concurrent run needs its own `MCPToolset` instance so that it establishes its own authenticated session. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+
+```python {title="mcp_per_user_auth.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.mcp import MCPToolset
+
+
+@dataclass
+class UserDeps:
+    mcp_token: str
+
+
+agent = Agent('openai:gpt-5.2', deps_type=UserDeps)
+
+
+@agent.toolset(per_run_step=False)  # (1)!
+def user_mcp_server(ctx: RunContext[UserDeps]) -> MCPToolset:
+    return MCPToolset('http://localhost:8000/mcp', auth=ctx.deps.mcp_token)
+
+
+async def main():
+    result = await agent.run('What is 7 plus 5?', deps=UserDeps(mcp_token='<token>'))
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. `per_run_step=False` builds the toolset once per run instead of ahead of each run step, so the whole run shares a single MCP session.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Because the per-run toolset's session is established inside the run itself, credentials held in a `ContextVar` also resolve correctly with this pattern — but passing them through deps is more explicit and doesn't depend on task-local state.
+
+As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
 ## Custom TLS / SSL configuration
 
