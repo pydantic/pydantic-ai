@@ -60,14 +60,18 @@ with try_import() as imports_successful:
         GenerateContentResponse,
         GroundingMetadata,
         Part,
+        ToolResponse,
         ToolType,
     )
 
     from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
     from pydantic_ai.models.google import (
+        _TOOL_TYPE_TO_NATIVE_TOOL_NAME,  # pyright: ignore[reportPrivateUsage]
         GeminiStreamedResponse,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _fill_native_tool_return_from_grounding,  # pyright: ignore[reportPrivateUsage]
+        _map_tool_response,  # pyright: ignore[reportPrivateUsage]
+        _native_tool_return_part_dict,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.result import AgentStream
@@ -1013,6 +1017,46 @@ def test_web_search_none_tool_response_round_trips_unchanged():
     mapped = _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True)
     assert mapped is not None
     assert cast(Any, mapped)['parts'][1]['tool_response']['response'] is None
+
+
+@pytest.mark.parametrize('tool_type', list(_TOOL_TYPE_TO_NATIVE_TOOL_NAME))
+@pytest.mark.parametrize('response', [None, {'payload': 'from-google'}], ids=['empty', 'populated'])
+def test_raw_tool_response_is_preserved_for_web_search_only(tool_type: ToolType, response: dict[str, Any] | None):
+    """`raw_tool_response` wins over `content` on the echo, so only web_search may set it.
+
+    web_search is the only tool whose `content` grounding *replaces*, so it alone needs the payload it
+    replaced kept for the echo. Every other tool is grounded into `content` itself, so preserving a raw
+    response for it echoes that stale value and silently drops the grounded data.
+
+    Parametrized off `_TOOL_TYPE_TO_NATIVE_TOOL_NAME` so a newly mapped tool type must make this choice
+    deliberately, and over an empty response because that is the shape that regressed file_search: it
+    arrives empty and is filled later, so keying the preserve off emptiness pins the wrong value.
+    """
+    item = _map_tool_response(
+        ToolResponse.model_validate({'id': 'c1', 'tool_type': tool_type, 'response': response}), 'google-gla'
+    )
+
+    preserves_raw = 'raw_tool_response' in (item.provider_details or {})
+    assert preserves_raw == (item.tool_name == WebSearchTool.kind)
+
+
+@pytest.mark.parametrize('tool_type', list(_TOOL_TYPE_TO_NATIVE_TOOL_NAME))
+def test_grounded_content_survives_the_echo_for_non_web_search_tools(tool_type: ToolType):
+    """Whatever grounding recovers into `content` must reach Gemini on the follow-up request.
+
+    The echo is the only consumer of a filled return, so a tool that recovers content but echoes
+    something that no longer carries it has silently lost the data (see the file_search regression,
+    where the contexts were filled but `response: None` went out on the wire).
+    """
+    item = _map_tool_response(ToolResponse.model_validate({'id': 'c1', 'tool_type': tool_type}), 'google-gla')
+    if item.tool_name == WebSearchTool.kind:
+        pytest.skip('web_search deliberately echoes the raw response its content replaced')
+
+    item.content = ['recovered-from-grounding']
+    echoed = _native_tool_return_part_dict(item, frozenset({'google-gla'}), None, supports_tool_combination=True)
+
+    assert echoed is not None
+    assert 'recovered-from-grounding' in repr(cast(Any, echoed)['tool_response']['response'])
 
 
 def test_file_search_grounding_fills_empty_tool_response():
