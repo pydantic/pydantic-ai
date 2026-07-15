@@ -671,7 +671,8 @@ _RESERVED_REQUEST_METADATA_KEYS = frozenset(
         # MCP progress correlation field; the SDK sets it per request, so a user value is either
         # silently overwritten (regular tool calls) or can collide with in-flight request tokens.
         'progressToken',
-        # FastMCP's version-routing envelope; merged over by the FastMCP client.
+        # FastMCP's version-routing envelope; the FastMCP server reads `_meta['fastmcp']['version']`
+        # to pick a component version, so a user value silently reroutes the request.
         'fastmcp',
         # Interpreted by the FastMCP client as "make this request task-augmented" on
         # `prompts/get`/`resources/read`, silently changing request semantics.
