@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Callable, Sequence
 from typing import Literal, cast
 
 import httpx
@@ -18,13 +17,6 @@ except ImportError as _import_error:
         'Please install the `google-genai` package to use the Google Cloud provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
-
-
-# `google-auth` does not provide complete type information for this helper.
-_with_scopes_if_required = cast(
-    'Callable[[Credentials, Sequence[str]], Credentials]',
-    google_auth_credentials.with_scopes_if_required,  # pyright: ignore[reportUnknownMemberType]
-)
 
 
 class GoogleCloudProvider(BaseGoogleProvider):
@@ -94,7 +86,12 @@ class GoogleCloudProvider(BaseGoogleProvider):
             location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
 
             if credentials is not None:
-                credentials = _with_scopes_if_required(credentials, ['https://www.googleapis.com/auth/cloud-platform'])
+                credentials = cast(
+                    Credentials,
+                    google_auth_credentials.with_scopes_if_required(  # pyright: ignore[reportUnknownMemberType]
+                        credentials, ['https://www.googleapis.com/auth/cloud-platform']
+                    ),
+                )
 
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(
