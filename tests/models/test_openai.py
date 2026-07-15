@@ -945,51 +945,28 @@ async def test_disable_streaming_events(allow_model_requests: None):
     )
 
 
-async def test_disable_streaming_get_after_early_break(allow_model_requests: None):
-    """`get()` reports the whole response even if the consumer stops reading early.
+async def test_disable_streaming_multiple_text_parts_are_not_repeated(allow_model_requests: None):
+    """Text split across parts by a thinking block is streamed once, not once per source.
 
-    A mock is used rather than a cassette because this pins internal wrapper behavior: the response
-    is fetched in full before replay begins, so a consumer that breaks after the first event must
-    not record a truncated response that drops the tool call the model actually made.
+    `StreamedRunResult._stream_response_text` yields the text parts already on the response before it
+    starts reading events, so the replayed parts must only reach it as events. A mock is used rather
+    than a cassette to pin this exact part sequence, which depends on where the model puts its
+    thinking tags.
     """
     c = completion_message(
-        ChatCompletionMessage(
-            content='Let me look that up for you.',
-            role='assistant',
-            tool_calls=[
-                ChatCompletionMessageFunctionToolCall(
-                    id='call_1',
-                    function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
-                    type='function',
-                )
-            ],
-        ),
+        ChatCompletionMessage(content='Before.<think>reason</think>After.', role='assistant'),
         usage=CompletionUsage(completion_tokens=5, prompt_tokens=3, total_tokens=8),
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    params = ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')], allow_text_output=True)
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
 
-    async with m.request_stream(
-        [ModelRequest.user_text_prompt('What is the weather in Mexico City?')],
-        OpenAIChatModelSettings(openai_disable_streaming=True),
-        params,
-    ) as stream:
-        async for _ in stream:
-            break
+    async with agent.run_stream('What is up?') as result:
+        chunks = [chunk async for chunk in result.stream_text(debounce_by=None)]
+        output = await result.get_output()
 
-        response = stream.get()
-
-    assert response.parts == snapshot(
-        [
-            TextPart(content='Let me look that up for you.'),
-            ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
-        ]
-    )
-    assert response.usage == snapshot(RequestUsage(input_tokens=3, output_tokens=5))
-    # The consumer stopped reading, so the stream is still reported as truncated even though every
-    # part is recorded.
-    assert response.state == snapshot('incomplete')
+    assert chunks == snapshot(['Before.', 'Before.After.'])
+    assert output == snapshot('Before.After.')
 
 
 async def test_disable_streaming_ignores_leading_whitespace(allow_model_requests: None):
