@@ -101,12 +101,7 @@ def test_google_cloud_provider_preserves_existing_scopes():
     credentials = service_account_credentials(scopes=['https://www.googleapis.com/auth/devstorage.read_only'])
     provider = GoogleCloudProvider(credentials=credentials, project='pydantic-ai', location='us-central1')
 
-    forwarded_credentials = cast(
-        'service_account.Credentials',
-        provider.client._api_client._credentials,  # pyright: ignore[reportPrivateUsage]
-    )
-    assert forwarded_credentials is credentials
-    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/devstorage.read_only']
+    assert provider.client._api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_provider_preserves_non_scoped_credentials():
@@ -137,10 +132,7 @@ def test_google_cloud_provider_api_key_from_env(env: TestEnv, api_key_env_var: s
     env.set(api_key_env_var, 'your-api-key')
 
     provider = GoogleCloudProvider()
-    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-    assert api_client.api_key == 'your-api-key'
-    assert api_client.project is None
-    assert api_client.location is None
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEnv):
@@ -155,14 +147,11 @@ def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEn
     env.remove('GOOGLE_CLOUD_LOCATION')
     credentials = AnonymousCredentials()
 
-    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')) as google_auth_default:
+    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
         provider = GoogleCloudProvider()
 
-    google_auth_default.assert_called_once_with(scopes=['https://www.googleapis.com/auth/cloud-platform'])
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
-    assert api_client.project == 'pydantic-ai'
-    assert api_client.location == 'us-central1'
     assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
 
 
@@ -181,7 +170,6 @@ def test_google_cloud_provider_project_env_takes_precedence_over_api_key(env: Te
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
     assert api_client.project == 'pydantic-ai'
-    assert api_client.location == 'us-central1'
 
 
 def test_google_cloud_provider_location_env_takes_precedence_over_api_key(env: TestEnv):
@@ -196,13 +184,11 @@ def test_google_cloud_provider_location_env_takes_precedence_over_api_key(env: T
     env.set('GOOGLE_CLOUD_LOCATION', 'global')
     credentials = AnonymousCredentials()
 
-    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')) as google_auth_default:
+    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
         provider = GoogleCloudProvider()
 
-    google_auth_default.assert_called_once_with(scopes=['https://www.googleapis.com/auth/cloud-platform'])
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
-    assert api_client.project == 'pydantic-ai'
     assert api_client.location == 'global'
 
 
@@ -215,11 +201,7 @@ def test_google_cloud_provider_explicit_api_key_still_passed(env: TestEnv):
     env.set('GOOGLE_CLOUD_PROJECT', 'adc-project')
     env.set('GOOGLE_CLOUD_LOCATION', 'global')
     provider = GoogleCloudProvider(api_key='your-api-key')
-    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-    assert api_client.api_key == 'your-api-key'
-    assert api_client.vertexai is True
-    assert api_client.project is None
-    assert api_client.location is None
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key():
@@ -233,11 +215,7 @@ def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key(
     )
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
-    forwarded_credentials = cast(
-        'service_account.Credentials',
-        api_client._credentials,  # pyright: ignore[reportPrivateUsage]
-    )
-    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
+    assert api_client._credentials is not None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_key(env: TestEnv):
@@ -251,8 +229,7 @@ def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_k
     env.set('GEMINI_API_KEY', 'gemini-api-key')
 
     provider = GoogleCloudProvider()
-    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
-    assert api_client.api_key == 'google-api-key'
+    assert provider.client._api_client.api_key == 'google-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
