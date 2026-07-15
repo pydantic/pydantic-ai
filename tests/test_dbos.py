@@ -809,6 +809,20 @@ async def test_toolset_without_id():
     DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+async def test_mcp_toolset_without_id():
+    # Unlike `FunctionToolset`, an `MCPToolset` is wrapped in a `DBOSMCPToolset` whose step names and per-run
+    # tool-defs cache key both derive from the toolset's `id`; without one, two id-less MCP toolsets would
+    # collide on both. Require an `id` up front, like Temporal does for all leaf toolsets.
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+            "The ID will be used to identify the MCP server's steps within the workflow."
+        ),
+    ):
+        DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))
+
+
 async def test_dbos_agent():
     assert isinstance(complex_dbos_agent.model, DBOSModel)
     assert complex_dbos_agent.model.wrapped == complex_agent.model
@@ -998,6 +1012,41 @@ async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None,
         ),
     ):
         await simple_dbos_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_dbos_cancel_suspended_response_runs_in_step(allow_model_requests: None, dbos: DBOS):
+    """`DBOSModel.cancel_suspended_response` must run as a DBOS step, not inline in the workflow.
+
+    The provider teardown that cancels a server-side suspended/background job is a raw HTTP call;
+    wrapping it as a step makes it durable, retried, and recorded rather than running unrecorded
+    inside the workflow.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    dbos_model = DBOSModel(
+        RecordingModel(),
+        step_name_prefix='cancel_suspended',
+        step_config={},
+        get_event_stream_handler=lambda: None,
+    )
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def cancel_in_workflow() -> None:
+        await dbos_model.cancel_suspended_response(response)
+
+    with SetWorkflowID(wfid):
+        await cancel_in_workflow()
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['cancel_suspended__model.cancel_suspended_response'])
+    assert cancelled == [response]
 
 
 async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: None, dbos: DBOS):

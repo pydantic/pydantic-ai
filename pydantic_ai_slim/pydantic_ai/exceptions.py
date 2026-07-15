@@ -26,6 +26,7 @@ __all__ = (
     'UserError',
     'UndrainedPendingMessagesError',
     'AgentRunError',
+    'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
@@ -190,6 +191,16 @@ class AgentRunError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+class SuspendedResponseExpired(AgentRunError):
+    """Raised when resuming a suspended response whose server-side job is no longer available.
+
+    Suspended/background jobs are only resumable within the provider's retention window (e.g. ~10
+    minutes for OpenAI background mode). Resuming a persisted suspended response after that window
+    raises this instead of an opaque provider HTTP error; start a new run from the preceding messages
+    to retry from scratch.
+    """
 
 
 class UsageLimitExceeded(AgentRunError):
