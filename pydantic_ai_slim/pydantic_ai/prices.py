@@ -17,6 +17,7 @@ def update_in_background() -> None:
 
     The updater is retained as a shared owner for the lifetime of the process, so repeated calls
     are safe and other libraries can independently acquire compatible ownership.
+    Call this after any `os.fork()`; inheriting a running updater in a child process is unsupported.
 
     This is a fire-and-forget convenience wrapper. For shutdown, configuration, or waiting for
     the first fetch, use
