@@ -10,6 +10,8 @@ from ..conftest import BinaryContent, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
@@ -49,6 +51,40 @@ def test_grading_output():
     assert output.reason == 'Test passed'
     assert output.pass_ is True
     assert output.score == 1.0
+
+    schema = GradingOutput.model_json_schema()
+    assert schema['properties']['reason']['description'] == ('A concise 1-2 sentence justification for the verdict.')
+
+
+@pytest.mark.anyio
+async def test_judge_prompts_constrain_reason():
+    """Every judge sends the concise-reason instruction in its system prompt (#5034).
+
+    Exercises each public judge helper against a `FunctionModel` that captures the
+    system prompt actually delivered to the model, so dropping the instruction from
+    any of the four judge agents fails this test.
+    """
+    captured: list[str] = []
+
+    async def capture_system_prompt(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append(
+            '\n'.join(part.content for m in messages for part in m.parts if isinstance(part, SystemPromptPart))
+        )
+        assert info.output_tools is not None
+        args = '{"reason": "ok", "pass": true, "score": 1.0}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    model = FunctionModel(capture_system_prompt)
+
+    await judge_output('output', 'rubric', model=model)
+    await judge_input_output('input', 'output', 'rubric', model=model)
+    await judge_input_output_expected('input', 'output', 'expected', 'rubric', model=model)
+    await judge_output_expected('output', 'expected', 'rubric', model=model)
+
+    assert len(captured) == 4
+    for system_prompt in captured:
+        assert 'concise 1-2 sentence justification' in system_prompt
+        assert 'Do not include your reasoning process' in system_prompt
 
 
 def test_stringify():

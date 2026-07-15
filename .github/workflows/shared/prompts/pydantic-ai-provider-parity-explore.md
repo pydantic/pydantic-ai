@@ -53,12 +53,22 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+First check this sweep's own prior findings with a tight, server-side label
+filter — the `/search/issues` endpoint is blocked by the firewall proxy and
+there are no `mcp__github__*` tools, but the `?labels=` filter on the
+issue-list endpoint is allowed:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-parity-explore]" OR "parity"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <capability you're auditing>
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=provider-parity-explore&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "parity" and the capability you're auditing:
+
+```
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
 ```
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
@@ -91,3 +101,10 @@ run.
 >
 > ## Evidence
 > - [SDK/docs references; `path:line`; a short snippet showing the silent drop]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real output demonstrating the gap]
+> - **Existing tests checked:** [tests read; none assert this behavior is intentional]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision checked]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

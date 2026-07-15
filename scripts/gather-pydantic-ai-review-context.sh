@@ -435,6 +435,14 @@ the surrounding code before posting.
 
 - **Style / formatting** — ruff handles it.
 - **Type nits already covered by pyright** — `make typecheck` runs in CI.
+- **Coverage-gate / `# pragma: no cover` predictions** — coverage is
+  deterministic and CI reports it exactly: the `fail_under = 100` job names
+  every uncovered `file:line`, and a strict-no-cover audit flags a
+  `# pragma: no cover` sitting on a line that was actually covered. Don't
+  flag "this drops below 100%", "removing this pragma breaks coverage", or
+  "this pragma is wrong/unneeded" — CI catches all of these clearly. (A
+  missing test for genuinely *new* behavior or public API is still fair
+  game — that's about correctness, not the coverage number.)
 - **"Missing tests" for pure refactor** — if the PR moves or renames
   existing code and existing tests still exercise the behavior, no new
   test is needed. Only flag missing tests for new behavior or new public

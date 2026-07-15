@@ -80,6 +80,18 @@ class DBOSModel(WrapperModel):
 
         self._dbos_wrapped_request_stream_step = wrapped_request_stream_step
 
+        # Wrap the server-side suspended/background response teardown in a DBOS step. It performs a
+        # raw HTTP call to the provider to cancel the job, so it must run as a step (durable,
+        # retried, recorded) rather than inline in the workflow.
+        @DBOS.step(
+            name=f'{self._step_name_prefix}__model.cancel_suspended_response',
+            **self.step_config,
+        )
+        async def wrapped_cancel_suspended_response_step(response: ModelResponse) -> None:
+            await super(DBOSModel, self).cancel_suspended_response(response)
+
+        self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
     def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
         raise UserError(
             'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
@@ -93,6 +105,9 @@ class DBOSModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         return await self._dbos_wrapped_request_step(messages, model_settings, model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await self._dbos_wrapped_cancel_suspended_response_step(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -113,4 +128,11 @@ class DBOSModel(WrapperModel):
         response = await self._dbos_wrapped_request_stream_step(
             messages, model_settings, model_request_parameters, run_context
         )
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        # Without an `event_stream_handler`, the step drained and discarded the real stream's events
+        # (e.g. `agent.iter` inside a workflow, where the caller drives the workflow-side stream via
+        # `node.stream(...)`/`stream_text()`). Replay the response's parts as events so that stream
+        # produces content. With a handler, events were already delivered inside the step, so the
+        # workflow-side stream stays empty to avoid delivering them twice.
+        yield CompletedStreamedResponse(
+            model_request_parameters, response, replay_events=self._get_event_stream_handler() is None
+        )

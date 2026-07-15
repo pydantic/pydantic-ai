@@ -87,7 +87,12 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
                     continue
                 if not method.name.startswith('test_'):
                     continue
-                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list) or _has_cassette_marker(method.decorator_list):
+                if (
+                    module_has_vcr
+                    or class_has_vcr
+                    or _has_vcr_marker(method.decorator_list)
+                    or _has_cassette_marker(method.decorator_list)
+                ):
                     cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
 
     return cassette_names

@@ -134,7 +134,7 @@ constraint-dependencies = [
     "python-multipart>=0.0.31",
     "pyjwt>=2.13.0",
     "torch>=2.12.1",
-    "transformers>=5.3.0",
+    "transformers>=5.5.0",
 ]
 
 [dependency-groups]
@@ -360,9 +360,6 @@ include = [
 omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials

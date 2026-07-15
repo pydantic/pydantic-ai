@@ -115,9 +115,13 @@ FinishReason: TypeAlias = Literal[
     'tool_call',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
 
-ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+Mostly normalized to OpenTelemetry semantic convention values.
+Whether the agent should automatically continue is determined by `ModelResponse.state`, not by this field.
+"""
+
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', 'interrupted']
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
@@ -125,8 +129,13 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
+- `'suspended'`: the model paused mid-turn and expects a continuation request.
+  Used by Anthropic `pause_turn` and OpenAI background mode. Pydantic AI issues these continuations
+  transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
+  completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
+  history is never left in this state.
 - `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
   finished generating.
 """
 
@@ -142,7 +151,23 @@ ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 - `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
 """
 
-ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+
+def _serialize_provider_details_delta(
+    value: dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    # A callable `provider_details` is a transient merge callback used while chaining deltas; it cannot be
+    # JSON-serialized, so it is emitted as `null`. Once the delta is applied to a `ThinkingPart` the callback is
+    # resolved to a concrete dict, which serializes normally. This is scoped to JSON mode (`when_used='json'`) so
+    # Python-mode `model_dump()` keeps the callback intact for in-memory round-trips.
+    if callable(value):
+        return None
+    return value
+
+
+ProviderDetailsDelta: TypeAlias = Annotated[
+    dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None,
+    pydantic.PlainSerializer(_serialize_provider_details_delta, return_type=dict[str, Any] | None, when_used='json'),
+]
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
@@ -180,7 +205,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
     if isinstance(identifier, str):
         identifier = identifier.encode('utf-8')
-    return hashlib.sha1(identifier).hexdigest()[:6]
+    return hashlib.sha1(identifier, usedforsecurity=False).hexdigest()[:6]
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
@@ -1242,12 +1267,16 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
     - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
+      cancelled stream or a crash mid-execution); synthesized during message-history repair. Unlike
+      `'failed'`, `'interrupted'` is not mapped to any provider native-error channel — the result's
+      content string carries the interruption wording.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -2272,7 +2301,17 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
+    """The state of this response, indicating whether it is final or requires further action.
+
+    - `'complete'` — The response is done. This is the default.
+    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'suspended'` — The model paused mid-turn and expects a continuation request.
+      The agent graph will automatically send a continuation request.
+      Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+      or return background/async responses (e.g. OpenAI background mode).
+    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    """
 
     @property
     def text(self) -> str | None:
@@ -2963,7 +3002,9 @@ class ThinkingPartDelta:
     """Additional data returned by the provider that can't be mapped to standard fields.
 
     Can be a dict to merge with existing details, or a callable that takes
-    the existing details and returns updated details.
+    the existing details and returns updated details. A callable is a transient
+    merge callback and does not survive JSON serialization (it is emitted as
+    `null`); it is resolved to a concrete dict once the delta is applied to a `ThinkingPart`.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
 
