@@ -804,11 +804,11 @@ class MistralStreamedResponse(StreamedResponse):
                     output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
                 ):
                     try:
-                        complete_output_json: JsonValue = pydantic_core.from_json(text)
+                        # A successful complete parse of `text` is identical to `output_json`, so only
+                        # completeness is checked and the parsed value is discarded.
+                        pydantic_core.from_json(text)
                     except ValueError:
                         continue
-                    assert isinstance(complete_output_json, dict)
-                    output_json = complete_output_json
 
                 # The following part_id will be thrown away
                 return ToolCallPart(tool_name=output_tool.name, args=output_json)
