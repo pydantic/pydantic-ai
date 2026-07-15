@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 import httpx
@@ -19,6 +20,9 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Bedrock Mantle provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+_AWS_REGION_PATTERN = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)+$')
 
 
 class BedrockMantleProvider(Provider[AsyncOpenAI]):
@@ -96,6 +100,8 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
                     'Set the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable or pass it via '
                     '`BedrockMantleProvider(region_name=...)` to use the Bedrock Mantle provider.'
                 )
+            if not _AWS_REGION_PATTERN.fullmatch(region_name):
+                raise UserError(f'Invalid AWS region name: {region_name!r}')
             base_url = f'https://bedrock-mantle.{region_name}.api.aws/openai/v1'
 
         if http_client is not None:

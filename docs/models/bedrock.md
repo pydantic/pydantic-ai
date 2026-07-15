@@ -1,5 +1,8 @@
 # Bedrock
 
+!!! note
+    Looking for the Amazon Bedrock Mantle OpenAI-compatible API? See [Amazon Bedrock Mantle](openai.md#amazon-bedrock-mantle).
+
 ## Install
 
 To use `BedrockConverseModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `bedrock` optional group:
