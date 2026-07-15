@@ -1084,6 +1084,34 @@ def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> l
 
 
 @pytest.mark.anyio
+async def test_file_search_metadata_reconstructed_with_explicit_web_fetch_streaming():
+    """A metadata-only file search is not suppressed by an explicit native tool of another type."""
+    raw_parts = [*_EXPLICIT_WEB_FETCH_PARTS, {'text': 'Answer.'}]
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [_stream_chunk(raw_parts, grounding=_FILE_SEARCH_GROUNDING_METADATA)]
+    )
+    async for _ in streamed_response:
+        pass
+    streamed_model_response = streamed_response.get()
+    response = _process_response(raw_parts, grounding=_FILE_SEARCH_GROUNDING_METADATA)
+
+    for parts in (streamed_model_response.parts, response.parts):
+        assert [part.tool_name for part in parts if isinstance(part, NativeToolCallPart)] == [
+            WebFetchTool.kind,
+            FileSearchTool.kind,
+        ]
+        [file_search_return] = _file_search_returns(list(parts))
+        assert file_search_return.content is not None
+
+    file_search_call_index = next(
+        index
+        for index, part in enumerate(streamed_model_response.parts)
+        if isinstance(part, NativeToolCallPart) and part.tool_name == FileSearchTool.kind
+    )
+    assert _utils.is_trailing_provider_metadata_native_tool_call(streamed_model_response, file_search_call_index)
+
+
+@pytest.mark.anyio
 async def test_file_search_grounding_fills_empty_tool_response_streaming():
     """Streaming: grounding arrives several chunks after the empty `tool_response`, which is then filled in
     place — a single `PartStartEvent` (no empty-then-filled duplicate), ordered ahead of the grounded text.

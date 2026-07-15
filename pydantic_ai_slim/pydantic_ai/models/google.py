@@ -1452,6 +1452,16 @@ class GeminiStreamedResponse(StreamedResponse):
             file_search_part = self._handle_file_search_grounding_metadata_streaming(self._grounding_metadata)
             if file_search_part is not None:
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+            elif ToolType.FILE_SEARCH not in self._native_tool_invocation_types:
+                file_search_call, file_search_return = _map_file_search_grounding_metadata(
+                    self._grounding_metadata, self.provider_name
+                )
+                if file_search_call and file_search_return:
+                    self.metadata = _utils.add_provider_metadata_tool_call_id(
+                        self.metadata, file_search_call.tool_call_id
+                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_call)
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_return)
 
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
