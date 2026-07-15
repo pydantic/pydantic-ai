@@ -676,6 +676,10 @@ _RESERVED_REQUEST_METADATA_KEYS = frozenset(
         # Interpreted by the FastMCP client as "make this request task-augmented" on
         # `prompts/get`/`resources/read`, silently changing request semantics.
         'modelcontextprotocol.io/task',
+        # W3C trace context; FastMCP spreads its own values last when a trace is active, so a user
+        # value would be silently dropped exactly when tracing is on.
+        'traceparent',
+        'tracestate',
     }
 )
 """`_meta` keys that `MCPToolset.request_metadata` rejects because the MCP SDK or FastMCP manages
@@ -803,7 +807,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     <https://github.com/PrefectHQ/fastmcp/issues/3998>), so covering them needs an upstream change.
 
     Keys managed by the MCP SDK or FastMCP (`progressToken`, `fastmcp`,
-    `modelcontextprotocol.io/task`) are rejected at construction.
+    `modelcontextprotocol.io/task`, `traceparent`, `tracestate`) are rejected at construction.
     """
 
     sampling_model: models.Model | None

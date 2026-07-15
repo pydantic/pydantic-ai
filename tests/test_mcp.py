@@ -152,10 +152,21 @@ class TestMCPToolsetConstruction:
         assert toolset.client is client
         assert toolset.request_metadata == {'caller': 'pydantic-ai'}
 
-    @pytest.mark.parametrize('reserved_key', ['progressToken', 'fastmcp', 'modelcontextprotocol.io/task'])
+    @pytest.mark.parametrize(
+        'reserved_key', ['progressToken', 'fastmcp', 'modelcontextprotocol.io/task', 'traceparent', 'tracestate']
+    )
     def test_request_metadata_with_reserved_key_raises(self, reserved_key: str):
         with pytest.raises(ValueError, match=f"must not contain '{reserved_key}'"):
             MCPToolset('https://example.com/mcp', request_metadata={reserved_key: 'value'})
+
+    def test_request_metadata_is_copied_from_the_caller(self):
+        request_metadata: dict[str, Any] = {'caller': 'billing-agent'}
+        toolset = MCPToolset('https://example.com/mcp', request_metadata=request_metadata)
+        request_metadata['caller'] = 'mutated'
+        request_metadata['added'] = 'later'
+        # Later mutations must not reach requests, which under durable execution would run in a
+        # worker that never sees them.
+        assert toolset.request_metadata == {'caller': 'billing-agent'}
 
     def test_pre_built_client_with_overridden_read_timeout_raises(self):
         client = Client('https://example.com/mcp')
