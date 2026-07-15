@@ -166,6 +166,10 @@ def test_content_only_delta_matches_provider_details_normalization(part_kind: st
     )
     delta_type = TextPartDelta if part_kind == 'text' else ThinkingPartDelta
     start_event = _emit_string_part_delta(manager, part_kind, initial_content, provider_details={})
+    if embedded:
+        assert _emit_string_part_delta(manager, part_kind, '') == PartDeltaEvent(
+            index=0, delta=ThinkingPartDelta(content_delta='')
+        )
 
     normalized_delta = delta_type(content_delta='b')
     pure_content_delta = delta_type(content_delta='c')
@@ -266,6 +270,36 @@ def test_tool_call_provider_details_snapshot_isolated_from_buffered_arguments():
     assert manager.get_parts()[0].provider_details == {'stable': 1}
 
 
+def test_incomplete_tool_call_buffered_updates_preserve_state():
+    """Cover incomplete buffered state transitions that provider cassettes cannot isolate."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    manager.handle_tool_call_delta(vendor_part_id='tool', args='{"value":', provider_details={'stable': 1})
+    previous_part = manager.get_part_by_vendor_id('tool')
+    assert isinstance(previous_part, ToolCallPartDelta)
+
+    manager.handle_tool_call_delta(vendor_part_id='tool', args='true')
+    manager.handle_tool_call_delta(vendor_part_id='tool', args='}', tool_call_id='call', provider_name='provider')
+    assert previous_part.provider_details is not None
+    previous_part.provider_details['stable'] = 99
+
+    event = manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool', args='')
+    assert event == PartStartEvent(
+        index=0,
+        part=ToolCallPart(
+            'tool',
+            '{"value":true}',
+            'call',
+            provider_name='provider',
+            provider_details={'stable': 1},
+        ),
+    )
+
+    empty_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    empty_manager.handle_tool_call_delta(vendor_part_id='tool', tool_call_id='call')
+    empty_manager.handle_tool_call_delta(vendor_part_id='tool', args='')
+    assert empty_manager.get_part_by_vendor_id('tool') == ToolCallPartDelta(args_delta='', tool_call_id='call')
+
+
 def test_tool_call_promotes_after_buffered_arguments_are_materialized():
     """Cover typed promotion after arguments become complete across fragments."""
     manager = ModelResponsePartsManager(
@@ -322,6 +356,7 @@ def test_equality_and_repr_materialize_string_buffers():
 
     assert repr(build_manager(buffered=True)) == repr(build_manager(buffered=False))
     assert build_manager(buffered=True) == build_manager(buffered=False)
+    assert build_manager(buffered=True) != object()
 
 
 def test_thinking_delta_callback_failure_is_atomic():
