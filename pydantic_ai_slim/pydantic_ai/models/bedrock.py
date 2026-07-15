@@ -11,12 +11,13 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from itertools import count
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
@@ -128,51 +129,42 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
-# `extra_headers` from model settings are sent by injecting them via a boto3 `before-send` event on the runtime
-# client. That event is client-global, so rather than register/unregister per call (which would leak one request's
-# headers onto a concurrent one), we register a single handler per client that reads the current call's headers from
-# a context variable. Context variables are per-task and propagate into the `anyio.to_thread` worker, so concurrent
-# requests never see each other's headers, without any locking.
-_extra_headers: ContextVar[dict[str, str] | None] = ContextVar('bedrock_extra_headers', default=None)
-_clients_with_extra_headers_handler: weakref.WeakSet[BedrockRuntimeClient] = weakref.WeakSet()
+class _BotocoreRequestParams(TypedDict):
+    headers: dict[str, str]
 
 
-def _inject_extra_headers(request: Any, **kwargs: Any) -> None:
-    if extra_headers := _extra_headers.get():
-        for key, value in extra_headers.items():
-            request.headers[key] = value
+_EXTRA_HEADERS: ContextVar[dict[str, str] | None] = ContextVar('bedrock_extra_headers', default=None)
+_CLIENTS_WITH_EXTRA_HEADERS_HANDLER: weakref.WeakSet[BedrockRuntimeClient] = weakref.WeakSet()
+_EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
+
+
+def _inject_extra_headers(params: _BotocoreRequestParams, **kwargs: Any) -> None:
+    if extra_headers := _EXTRA_HEADERS.get():
+        params['headers'].update(extra_headers)
 
 
 def _register_extra_headers_handler(client: BedrockRuntimeClient) -> None:
-    """Register the `before-send` header injector on a client, once.
-
-    Registered up front on every request (not lazily on the first request that sets `extra_headers`) so the handler
-    is always in place before any request is sent. boto3's event emitter caches handler lists per event, and a
-    request sent before registration would cache a list without the injector, silently dropping later headers.
-    """
-    if client not in _clients_with_extra_headers_handler:
-        for operation in ('Converse', 'ConverseStream', 'CountTokens'):
-            client.meta.events.register(f'before-send.bedrock-runtime.{operation}', _inject_extra_headers)
-        _clients_with_extra_headers_handler.add(client)
+    """Register the pre-signing header injector on a client once."""
+    with _EXTRA_HEADERS_REGISTRATION_LOCK:
+        if client not in _CLIENTS_WITH_EXTRA_HEADERS_HANDLER:
+            for operation in ('Converse', 'ConverseStream', 'CountTokens'):
+                client.meta.events.register(f'before-call.bedrock-runtime.{operation}', _inject_extra_headers)
+            _CLIENTS_WITH_EXTRA_HEADERS_HANDLER.add(client)
 
 
 @contextmanager
-def _bedrock_extra_headers(extra_headers: dict[str, str] | None) -> Generator[None]:
-    """Send `extra_headers` with the Bedrock request made inside this context.
-
-    boto3 fires `before-send` after SigV4 signing, so the headers are sent as-is and are not part of the signature.
-    That is what proxy or gateway routing headers need, and it means overriding a signed header (e.g. `host`) would
-    break the signature, so `extra_headers` is for additional custom headers, not for replacing AWS-managed ones.
-    """
+def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str, str] | None) -> Generator[None]:
+    """Send `extra_headers` with the Bedrock request made inside this context."""
     if not extra_headers:
         yield
         return
 
-    token = _extra_headers.set(extra_headers)
+    _register_extra_headers_handler(client)
+    token = _EXTRA_HEADERS.set(extra_headers)
     try:
         yield
     finally:
-        _extra_headers.reset(token)
+        _EXTRA_HEADERS.reset(token)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -731,8 +723,7 @@ class BedrockConverseModel(Model[BaseClient]):
             'input': {'converse': converse},
         }
         client = self.client
-        _register_extra_headers_handler(client)
-        with _map_api_errors(self.model_name), _bedrock_extra_headers(settings.get('extra_headers')):
+        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
             response = await anyio.to_thread.run_sync(functools.partial(client.count_tokens, **params))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
@@ -966,9 +957,8 @@ class BedrockConverseModel(Model[BaseClient]):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
         client = self.client
-        _register_extra_headers_handler(client)
         extra_headers = model_settings.get('extra_headers') if model_settings else None
-        with _map_api_errors(self.model_name), _bedrock_extra_headers(extra_headers):
+        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, extra_headers):
             if stream:
                 model_response = await anyio.to_thread.run_sync(functools.partial(client.converse_stream, **params))
             else:

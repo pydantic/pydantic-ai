@@ -283,9 +283,9 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
+    * Bedrock
     * Gemini
     * Groq
-    * Bedrock
     * xAI
     """
 

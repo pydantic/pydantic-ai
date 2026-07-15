@@ -5,8 +5,9 @@ import os
 from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from itertools import count
+from threading import Barrier
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -67,7 +68,9 @@ from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
+    from botocore.client import BaseClient
     from botocore.exceptions import ClientError
+    from botocore.hooks import HierarchicalEmitter
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
@@ -88,11 +91,7 @@ class _StubBedrockClient:
 
     def __init__(self, error: ClientError):
         self._error = error
-
-        def register(*args: Any, **kwargs: Any) -> None:
-            pass
-
-        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=SimpleNamespace(register=register))
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
 
     def converse(self, **_: Any) -> None:
         raise self._error
@@ -148,6 +147,23 @@ def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel
         'us.amazon.nova-micro-v1:0',
         provider=_StubBedrockProvider(_StubBedrockClient(error)),
     )
+
+
+def _capture_bedrock_request_headers(
+    model: BedrockConverseModel,
+    operation: Literal['Converse', 'ConverseStream'],
+) -> dict[str, str | bytes]:
+    captured: dict[str, str | bytes] = {}
+
+    def capture(request: Any, **_: Any) -> None:
+        captured.update(request.headers.items())
+
+    model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', capture)
+    return captured
+
+
+def _decode_header(value: str | bytes) -> str:
+    return value.decode() if isinstance(value, bytes) else value
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -240,26 +256,23 @@ async def test_bedrock_model_usage_limit_not_exceeded(
 
 @pytest.mark.vcr()
 async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """`extra_headers` from model settings reach the Bedrock request via a boto3 `before-send` event.
+    """`extra_headers` reach the signed Bedrock request.
 
-    VCR's matchers ignore request headers, so playback alone can't prove the header was sent. We tap the same
-    `before-send` event (registered last, so it runs after our injector) to capture the outgoing request headers.
+    VCR's matchers ignore request headers, so playback alone can't prove the header was sent. We capture the final
+    request at `before-send`, after the injector and SigV4 signer have run.
     """
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
-
-    captured: dict[str, str] = {}
-
-    def capture(request: Any, **_: Any) -> None:
-        captured.update(request.headers.items())
-
-    model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', capture)
+    captured = _capture_bedrock_request_headers(model, 'Converse')
 
     result = await agent.run('Hello!', model_settings=BedrockModelSettings(extra_headers={'Custom-Header': 'value'}))
 
-    assert captured.get('Custom-Header') == 'value'
+    assert _decode_header(captured['Custom-Header']) == 'value'
+    authorization = _decode_header(captured['Authorization'])
+    if authorization.startswith('AWS4-HMAC-SHA256'):
+        assert 'custom-header' in authorization
     assert result.output == snapshot(
-        "Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
+        "Hello! How can I assist you today? Whether you have a question, need information, or just want to chat, I'm here to help."
     )
 
 
@@ -268,46 +281,59 @@ async def test_bedrock_model_stream_with_extra_headers(allow_model_requests: Non
     """`extra_headers` reach the streaming `ConverseStream` request too. See the non-streaming test for why we tap the event."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
-
-    captured: dict[str, str] = {}
-
-    def capture(request: Any, **_: Any) -> None:
-        captured.update(request.headers.items())
-
-    model.client.meta.events.register_last('before-send.bedrock-runtime.ConverseStream', capture)
+    captured = _capture_bedrock_request_headers(model, 'ConverseStream')
 
     async with agent.run_stream(
         'Hello!', model_settings=BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
     ) as result:
         output = await result.get_output()
 
-    assert captured.get('Custom-Header') == 'value'
+    assert _decode_header(captured['Custom-Header']) == 'value'
     assert output == snapshot(
-        "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
+        "Hello! How can I assist you today? Whether you have a question, need information, or just want to chat, I'm here to help."
     )
 
 
 async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
     """`extra_headers` never leak between requests sharing one client, even when run concurrently.
 
-    This is a unit test, not a VCR test: the boto3 `before-send` handler is registered once per client and fires
-    for every request, so isolation is a property of the per-call context variable, not of any recorded response,
-    and VCR can't reliably drive concurrent playbacks. Each concurrent request is a separate task, so setting the
-    headers in one task's context must not change what the handler reads in another.
+    This is a unit test because VCR can't reliably drive concurrent playbacks. Public `count_tokens()` calls exercise
+    the production event handler inside separate `anyio.to_thread` workers.
     """
-    from pydantic_ai.models.bedrock import (
-        _bedrock_extra_headers,  # pyright: ignore[reportPrivateUsage]
-        _inject_extra_headers,  # pyright: ignore[reportPrivateUsage]
-    )
-
+    barrier = Barrier(3, timeout=5)
     results: dict[str, dict[str, str]] = {}
 
+    class ConcurrentBedrockClient:
+        def __init__(self) -> None:
+            self.meta = SimpleNamespace(
+                endpoint_url='https://bedrock.stub',
+                events=HierarchicalEmitter(),
+            )
+
+        def count_tokens(self, **params: Any) -> dict[str, int]:
+            prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
+            barrier.wait()
+            headers: dict[str, str] = {}
+            self.meta.events.emit(
+                'before-call.bedrock-runtime.CountTokens',
+                model=None,
+                params={'headers': headers},
+                request_signer=None,
+            )
+            results[prompt] = headers
+            return {'inputTokens': 1}
+
+    client = ConcurrentBedrockClient()
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
     async def make_request(name: str, extra_headers: dict[str, str] | None) -> None:
-        with _bedrock_extra_headers(extra_headers):
-            await anyio.sleep(0)  # let the other tasks set their own headers before this one reads
-            request = SimpleNamespace(headers={})
-            _inject_extra_headers(request)
-            results[name] = request.headers
+        settings = BedrockModelSettings(extra_headers=extra_headers) if extra_headers else BedrockModelSettings()
+        await model.count_tokens(
+            [ModelRequest.user_text_prompt(name)],
+            settings,
+            ModelRequestParameters(),
+        )
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(make_request, 'a', {'Tenant': 'a'})
@@ -315,32 +341,6 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
         tg.start_soon(make_request, 'c', None)
 
     assert results == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}, 'c': {}}
-
-
-@pytest.mark.vcr()
-async def test_bedrock_count_tokens_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """`extra_headers` reach the `CountTokens` request too, so a header-gated gateway sees them before `Converse`.
-
-    See `test_bedrock_model_with_extra_headers` for why we capture the outgoing headers via the event.
-    """
-    settings = BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
-
-    captured: dict[str, str] = {}
-
-    def capture(request: Any, **_: Any) -> None:
-        captured.update(request.headers.items())
-
-    model.client.meta.events.register_last('before-send.bedrock-runtime.CountTokens', capture)
-
-    result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('Hello, world!')], settings, ModelRequestParameters()
-    )
-
-    assert captured.get('Custom-Header') == 'value'
-    assert result.input_tokens > 0
 
 
 @pytest.mark.vcr()

@@ -55,15 +55,10 @@ with try_import() as bedrock_imports:
     from pydantic_ai.profiles import DEFAULT_PROFILE
     from pydantic_ai.providers import Provider
 
-    def _stub_register(*args: Any, **kwargs: Any) -> None:
-        """No-op stand-in for `client.meta.events.register`, which the model uses to install its header injector."""
-
     class _StubBedrockClient:
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(
-                endpoint_url='https://bedrock.stub', events=SimpleNamespace(register=_stub_register)
-            )
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
 
         def converse(self, **_: Any) -> None:  # pragma: lax no cover
             raise self._error
@@ -102,9 +97,7 @@ with try_import() as bedrock_imports:
 
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(
-                endpoint_url='https://bedrock.stub', events=SimpleNamespace(register=_stub_register)
-            )
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
 
         def converse_stream(self, **_: Any) -> dict[str, Any]:
             def _stream():
