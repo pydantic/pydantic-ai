@@ -269,8 +269,8 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
-For a stable caller label or other metadata sent with every supported request from the same toolset,
-use `request_metadata`:
+For a stable caller label or other metadata sent with every tool call, resource read, and prompt get
+from the same toolset, use `request_metadata`:
 
 ```python {title="mcp_request_metadata.py"}
 from pydantic_ai.mcp import MCPToolset
