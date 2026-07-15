@@ -87,7 +87,7 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         # Some fields hold a single block rather than a list: a plain-string system prompt
         # (Anthropic/Bedrock), or Google's `systemInstruction`, which is one Content *dict* --
         # iterating it would silently reduce it to its keys and blind the check to content changes.
-        block_items: list[Any] = items if isinstance(items, list) else [items]
+        block_items: list[Any] = items if _is_list(items) else [items]
         for item in block_items:
             blocks.append((level, json.dumps(item)))
 
