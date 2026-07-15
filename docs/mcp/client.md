@@ -269,7 +269,7 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
-For stable caller identity or other metadata sent with every supported request from the same toolset,
+For a stable caller label or other metadata sent with every supported request from the same toolset,
 use `request_metadata`:
 
 ```python {title="mcp_request_metadata.py"}
@@ -288,6 +288,10 @@ keys. List requests don't carry `request_metadata`: the FastMCP client doesn't a
 there. For task-augmented tool calls, the metadata is sent on the `tools/call` request, but
 whether the server-side handler can read it depends on the server implementation; FastMCP servers
 don't currently expose request meta in background task execution contexts.
+
+Like any `_meta` a client sends, `request_metadata` is self-asserted and trivially spoofable, so
+servers should treat it as a label for routing, logging, or telemetry, not as an authenticated
+identity to make authorization decisions on. Use real credentials (`auth`) for that.
 
 How the server reads the injected metadata is MCP server SDK specific. For example, with the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) it's accessible via the [`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context) argument on tool handlers:
 

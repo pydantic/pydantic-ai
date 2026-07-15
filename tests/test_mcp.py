@@ -599,11 +599,18 @@ class TestMCPToolsetIntegration:
         assert result == 'Echo: hi'
         assert seen == [('echo', {'message': 'hi'})]
 
-    async def test_request_metadata_defaults_to_no_custom_tool_meta(self, fastmcp_server: FastMCP[None]):
-        toolset = MCPToolset(fastmcp_server)
+    @pytest.mark.parametrize('request_metadata', [None, {}])
+    async def test_request_metadata_empty_sends_no_custom_tool_meta(
+        self, fastmcp_server: FastMCP[None], request_metadata: dict[str, Any] | None
+    ):
+        toolset = MCPToolset(fastmcp_server, request_metadata=request_metadata)
+        # An empty dict is kept as-is rather than normalized, but sends nothing, same as `None`.
+        assert toolset.request_metadata == request_metadata
         async with toolset:
-            result = await toolset.direct_call_tool('echo_request_metadata', {})
-        assert result == {}
+            assert await toolset.direct_call_tool('echo_request_metadata', {}) == {}
+            content = await toolset.read_resource('resource://request_metadata.json')
+        assert isinstance(content, str)
+        assert json.loads(content) == {}
 
     async def test_request_metadata_reaches_tool_call(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(

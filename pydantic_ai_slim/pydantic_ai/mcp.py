@@ -666,16 +666,18 @@ when validating that no kwargs were passed alongside a pre-built `fastmcp.Client
 keeps the conflict checks in sync with the actual default values, so changing a default doesn't
 silently break the conflict check."""
 
-_RESERVED_REQUEST_METADATA_KEYS = frozenset({
-    # MCP progress correlation field; the SDK sets it per request, so a user value is either
-    # silently overwritten (regular tool calls) or can collide with in-flight request tokens.
-    'progressToken',
-    # FastMCP's version-routing envelope; merged over by the FastMCP client.
-    'fastmcp',
-    # Interpreted by the FastMCP client as "make this request task-augmented" on
-    # `prompts/get`/`resources/read`, silently changing request semantics.
-    'modelcontextprotocol.io/task',
-})
+_RESERVED_REQUEST_METADATA_KEYS = frozenset(
+    {
+        # MCP progress correlation field; the SDK sets it per request, so a user value is either
+        # silently overwritten (regular tool calls) or can collide with in-flight request tokens.
+        'progressToken',
+        # FastMCP's version-routing envelope; merged over by the FastMCP client.
+        'fastmcp',
+        # Interpreted by the FastMCP client as "make this request task-augmented" on
+        # `prompts/get`/`resources/read`, silently changing request semantics.
+        'modelcontextprotocol.io/task',
+    }
+)
 """`_meta` keys that `MCPToolset.request_metadata` rejects because the MCP SDK or FastMCP manages
 them per request; passing them through would silently change or break request semantics."""
 
@@ -1011,9 +1013,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
-        # Copy so later mutations of the caller's dict don't leak into requests, which would
-        # behave inconsistently under durable execution (e.g. Temporal) where calls run elsewhere.
-        self.request_metadata = dict(request_metadata) if request_metadata else None
+        # Shallow-copy so later top-level mutations of the caller's dict don't leak into requests,
+        # which would behave inconsistently under durable execution (e.g. Temporal) where calls run
+        # in a worker that never sees the mutation.
+        self.request_metadata = dict(request_metadata) if request_metadata is not None else None
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
