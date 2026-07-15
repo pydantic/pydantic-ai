@@ -71,6 +71,7 @@ with try_import() as imports_successful:
     from botocore.client import BaseClient
     from botocore.exceptions import ClientError
     from botocore.hooks import HierarchicalEmitter
+    from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
@@ -268,9 +269,6 @@ async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedr
     result = await agent.run('Hello!', model_settings=BedrockModelSettings(extra_headers={'Custom-Header': 'value'}))
 
     assert _decode_header(captured['Custom-Header']) == 'value'
-    authorization = _decode_header(captured['Authorization'])
-    if authorization.startswith('AWS4-HMAC-SHA256'):
-        assert 'custom-header' in authorization
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have a question, need information, or just want to chat, I'm here to help."
     )
@@ -294,6 +292,48 @@ async def test_bedrock_model_stream_with_extra_headers(allow_model_requests: Non
     )
 
 
+async def test_bedrock_extra_headers_are_signed_for_all_operations(monkeypatch: pytest.MonkeyPatch):
+    """The real botocore pipeline signs extra headers for every Bedrock operation we use."""
+    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    client = cast(BedrockRuntimeClient, provider.client)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+    captured: dict[str, dict[str, str | bytes]] = {}
+
+    class RequestCaptured(Exception):
+        pass
+
+    def capture(request: Any, event_name: str, **_: Any) -> None:
+        captured[event_name.rsplit('.', 1)[-1]] = dict(request.headers.items())
+        raise RequestCaptured
+
+    for operation in ('Converse', 'ConverseStream', 'CountTokens'):
+        client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', capture)
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
+    settings = BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
+    request_parameters = ModelRequestParameters()
+    try:
+        with pytest.raises(RequestCaptured):
+            await model.request(messages, settings, request_parameters)
+        with pytest.raises(RequestCaptured):
+            async with model.request_stream(messages, settings, request_parameters):
+                pass
+        with pytest.raises(RequestCaptured):
+            await model.count_tokens(messages, settings, request_parameters)
+    finally:
+        client.close()
+
+    assert set(captured) == {'Converse', 'ConverseStream', 'CountTokens'}
+    for headers in captured.values():
+        assert _decode_header(headers['Custom-Header']) == 'value'
+        assert 'custom-header' in _decode_header(headers['Authorization'])
+
+
 async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
     """`extra_headers` never leak between requests sharing one client, even when run concurrently.
 
@@ -313,7 +353,7 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
             barrier.wait()
-            headers: dict[str, str] = {}
+            headers = {'Content-Type': 'application/json'}
             self.meta.events.emit(
                 'before-call.bedrock-runtime.CountTokens',
                 model=None,
@@ -337,10 +377,57 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(make_request, 'a', {'Tenant': 'a'})
-        tg.start_soon(make_request, 'b', {'Tenant': 'b'})
+        tg.start_soon(make_request, 'b', {'Tenant': 'b', 'content-type': 'application/custom'})
         tg.start_soon(make_request, 'c', None)
 
-    assert results == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}, 'c': {}}
+    assert results == {
+        'a': {'Content-Type': 'application/json', 'Tenant': 'a'},
+        'b': {'Tenant': 'b', 'content-type': 'application/custom'},
+        'c': {'Content-Type': 'application/json'},
+    }
+
+
+async def test_bedrock_extra_headers_are_bound_to_the_request_client():
+    """A nested request on another registered client must not inherit the outer client's headers."""
+    results: dict[str, list[dict[str, str]]] = {}
+
+    class NestedBedrockClient:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.nested_client: NestedBedrockClient | None = None
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+        def count_tokens(self, **params: Any) -> dict[str, int]:
+            headers: dict[str, str] = {}
+            self.meta.events.emit(
+                'before-call.bedrock-runtime.CountTokens',
+                model=None,
+                params={'headers': headers},
+                request_signer=None,
+            )
+            results.setdefault(self.name, []).append(headers)
+            if self.nested_client is not None:
+                self.nested_client.count_tokens(**params)
+            return {'inputTokens': 1}
+
+    def make_model(client: NestedBedrockClient) -> BedrockConverseModel:
+        provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+        return BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+    client_a = NestedBedrockClient('a')
+    client_b = NestedBedrockClient('b')
+    model_a = make_model(client_a)
+    model_b = make_model(client_b)
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
+    request_parameters = ModelRequestParameters()
+
+    await model_b.count_tokens(messages, BedrockModelSettings(extra_headers={'Setup': 'b'}), request_parameters)
+    assert results == {'b': [{'Setup': 'b'}]}
+    results.clear()
+    client_a.nested_client = client_b
+    await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
+
+    assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
 
 
 @pytest.mark.vcr()

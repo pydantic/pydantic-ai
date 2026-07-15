@@ -133,22 +133,35 @@ class _BotocoreRequestParams(TypedDict):
     headers: dict[str, str]
 
 
-_EXTRA_HEADERS: ContextVar[dict[str, str] | None] = ContextVar('bedrock_extra_headers', default=None)
+_EXTRA_HEADERS: ContextVar[tuple[weakref.ReferenceType[BedrockRuntimeClient], dict[str, str]] | None] = ContextVar(
+    'bedrock_extra_headers', default=None
+)
 _CLIENTS_WITH_EXTRA_HEADERS_HANDLER: weakref.WeakSet[BedrockRuntimeClient] = weakref.WeakSet()
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 
 
-def _inject_extra_headers(params: _BotocoreRequestParams, **kwargs: Any) -> None:
-    if extra_headers := _EXTRA_HEADERS.get():
-        params['headers'].update(extra_headers)
+def _inject_extra_headers(
+    client_ref: weakref.ReferenceType[BedrockRuntimeClient], params: _BotocoreRequestParams, **kwargs: Any
+) -> None:
+    active_request = _EXTRA_HEADERS.get()
+    if active_request is None or active_request[0]() is not client_ref():
+        return
+
+    headers = params['headers']
+    for key, value in active_request[1].items():
+        for existing_key in tuple(headers):
+            if existing_key.lower() == key.lower():
+                del headers[existing_key]
+        headers[key] = value
 
 
 def _register_extra_headers_handler(client: BedrockRuntimeClient) -> None:
     """Register the pre-signing header injector on a client once."""
     with _EXTRA_HEADERS_REGISTRATION_LOCK:
         if client not in _CLIENTS_WITH_EXTRA_HEADERS_HANDLER:
+            handler = functools.partial(_inject_extra_headers, weakref.ref(client))
             for operation in ('Converse', 'ConverseStream', 'CountTokens'):
-                client.meta.events.register(f'before-call.bedrock-runtime.{operation}', _inject_extra_headers)
+                client.meta.events.register(f'before-call.bedrock-runtime.{operation}', handler)
             _CLIENTS_WITH_EXTRA_HEADERS_HANDLER.add(client)
 
 
@@ -160,7 +173,7 @@ def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str
         return
 
     _register_extra_headers_handler(client)
-    token = _EXTRA_HEADERS.set(extra_headers)
+    token = _EXTRA_HEADERS.set((weakref.ref(client), extra_headers))
     try:
         yield
     finally:
