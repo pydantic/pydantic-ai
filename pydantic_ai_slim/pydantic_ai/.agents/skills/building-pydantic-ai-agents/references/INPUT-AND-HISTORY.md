@@ -9,7 +9,7 @@ Pass multimodal content as a list mixing text with `ImageUrl`, `AudioUrl`, `Vide
 ```python
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='openai:gpt-5.2', name='multimodal_agent')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -30,7 +30,7 @@ Use `message_history=` to continue a conversation across runs.
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', name='conversation_agent', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
@@ -42,12 +42,11 @@ Important distinctions:
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
+- interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 
 ## Manage Context Size
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
-
-The legacy `Agent(history_processors=[fn])` kwarg is deprecated and remapped onto `ProcessHistory` capabilities; it will be removed in v2.
 
 ```python
 from pydantic_ai import Agent, ModelMessage
@@ -58,7 +57,7 @@ async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:] if len(messages) > 10 else messages
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
+agent = Agent('openai:gpt-5.2', name='trimmed_history_agent', capabilities=[ProcessHistory(keep_recent)])
 ```
 
 Good uses:
@@ -77,7 +76,7 @@ Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqu
 ```python
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 
 @agent.tool

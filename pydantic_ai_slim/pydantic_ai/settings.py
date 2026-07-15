@@ -100,7 +100,6 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * MCP Sampling
-    * Outlines (all providers)
     * xAI
     """
 
@@ -121,7 +120,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -141,7 +139,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -155,18 +152,19 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Anthropic
     * Cohere
+    * Bedrock (Anthropic and Amazon Nova models only)
     """
 
-    timeout: float | Timeout
+    timeout: int | float | Timeout
     """Override the client-level default timeout for a request, in seconds.
 
     Supported by:
 
-    * Gemini
+    * Gemini (numeric seconds only, not `httpx.Timeout`)
     * Anthropic
     * OpenAI
     * Groq
-    * Mistral
+    * Mistral (numeric seconds only, not `httpx.Timeout`)
     * xAI
     """
 
@@ -225,7 +223,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
-    * Outlines (LlamaCpp, VLLMOffline)
     * xAI
     """
 
@@ -239,7 +236,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -253,7 +249,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -264,7 +259,6 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
-    * Outlines (Transformers, LlamaCpp, VLLMOffline)
     """
 
     stop_sequences: list[str]
@@ -343,7 +337,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
-    * Outlines (all providers)
     """
 
 

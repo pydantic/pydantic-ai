@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 from typing import overload
 
 from httpx import AsyncClient
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -18,7 +18,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 try:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
@@ -50,7 +50,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         return self._client
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile:
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -61,13 +61,20 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         }
 
         profile: ModelProfile | None = None
+        recognized = False
         if '/' in model_name:
             model_name = model_name.lower()
             provider, model_name = model_name.split('/', 1)
             if provider in provider_to_profile:
+                recognized = True
                 profile = provider_to_profile[provider](model_name)
 
-        return replace(profile or ModelProfile(), supports_inline_system_prompts=True)
+        # Only recognized `provider/model` names get a profile; bare names and unknown providers
+        # return `None` (no fallback overlay). Recognized providers always advertise inline system
+        # prompt support, even when the upstream profile lookup itself returns `None`.
+        if not recognized:
+            return None
+        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...

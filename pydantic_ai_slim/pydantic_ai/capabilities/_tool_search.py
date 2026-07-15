@@ -92,7 +92,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Custom search function — used locally, and by provider-native "client-executed"
     # modes when supported.
     def my_search(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+        ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:
         return [
             t.name
@@ -225,7 +225,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
         capability_ids = sorted({td.capability_id for td in newly_loaded if td.capability_id})
         call_id_digest = hashlib.blake2s(
-            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8
+            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8, usedforsecurity=False
         ).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 
@@ -242,11 +242,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                 ModelRequest(
                     parts=[
                         ToolSearchReturnPart(
-                            content={
-                                'discovered_tools': [
-                                    {'name': td.name, 'description': td.description} for td in newly_loaded
-                                ]
-                            },
+                            content={'discovered_tools': [{'name': td.name} for td in newly_loaded]},
                             tool_call_id=call_id,
                         ),
                     ]

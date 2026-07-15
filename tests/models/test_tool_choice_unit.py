@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
@@ -363,7 +364,7 @@ async def test_unsupported_profile_with_forced_tool_choice_raises(
         m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-    with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
+    with pytest.raises(UserError, match=r'tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
 
 
@@ -597,6 +598,55 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
+NATIVE_TOOL_CONFIG_CASES = [
+    dict(
+        id='native-only-pre-gemini-3-omits-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config=None,
+    ),
+    dict(
+        id='native-only-gemini-3-keeps-only-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config={'include_server_side_tool_invocations': True},
+    ),
+    dict(
+        id='function-tool-keeps-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
+        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+    ),
+    dict(
+        id='code-execution-gemini-3-sets-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(
+            native_tools=[CodeExecutionTool()], function_tools=[make_tool('get_weather')]
+        ),
+        expected_tool_config={
+            'include_server_side_tool_invocations': True,
+            'function_calling_config': {'mode': 'AUTO'},
+        },
+    ),
+]
+
+
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+@pytest.mark.parametrize('case', NATIVE_TOOL_CONFIG_CASES, ids=lambda c: c['id'])
+def test_google_native_tool_only_omits_function_calling_config(case: dict[str, Any]):
+    """A `function_calling_config` only governs function tools, so it must be omitted when there are
+    only native tools: since #3611 Gemini 400s on one with no `function_declarations`.
+
+    Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
+    malformed request, since it replays a recorded response without re-validating against the API.
+    """
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+
+    _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == case['expected_tool_config']
+
+
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
 async def test_xai_fallback_single_tool_without_required_support(allow_model_requests: None):
     """Single tool with unsupported required falls back to auto and filters tool_defs to preserve user intent."""
@@ -677,7 +727,7 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
     m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
     settings: AnthropicModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='Anthropic does not support .* for this model'):
+    with pytest.raises(UserError, match=r'Anthropic does not support .* for this model'):
         m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
 

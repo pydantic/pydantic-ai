@@ -62,11 +62,22 @@ the window, and check whether an open issue/PR already tracks it.
 
 ### Deduplication — mandatory before filing
 
-Before filing, search for existing issues covering the same drift:
+Before filing, first check this sweep's own prior findings with a tight,
+server-side label filter — the `/search/issues` endpoint is blocked by the
+firewall proxy and there are no `mcp__github__*` tools, but the `?labels=`
+filter on the issue-list endpoint is allowed:
 
 ```bash
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[docs-drift]"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <keywords from your finding>
+gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=docs-drift&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title}'
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for keywords from your finding:
+
+```bash
+gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
+  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
 ```
 
 If a matching issue exists, call `mcp__safeoutputs__noop`. Do NOT file duplicates.
