@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -123,6 +124,7 @@ try:
         TemporalAgent,
         TemporalDurability,
     )
+    from pydantic_ai.durable_exec.temporal._durability import _heartbeating  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -7636,3 +7638,54 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
         ]
     )
     assert _continuation_stream_model.request_stream_calls == 1
+
+
+# --- Heartbeat supervision ---
+# Unit tests on the private `_heartbeating` helper: a `beat()` crash requires simulating an
+# SDK failure that no workflow-level test can trigger, and the exception-precedence contract
+# (request error wins; beat crash surfaces after a successful request) is exactly the kind of
+# internal invariant a VCR/workflow test would silently miss.
+
+
+async def test_heartbeating_beats_and_stops(monkeypatch: pytest.MonkeyPatch):
+    """Heartbeats fire on the derived cadence while the body runs and stop cleanly after."""
+    beats: list[None] = []
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=timedelta(seconds=0.02)))
+    monkeypatch.setattr('temporalio.activity.heartbeat', lambda: beats.append(None))
+
+    async with _heartbeating():
+        await asyncio.sleep(0.05)
+
+    assert beats  # at least the immediate first beat, then every ~10ms
+    count_after_exit = len(beats)
+    await asyncio.sleep(0.05)
+    assert len(beats) == count_after_exit  # the beater was cancelled on exit
+
+
+async def test_heartbeating_beat_crash_surfaces_after_body(monkeypatch: pytest.MonkeyPatch):
+    """A `beat()` crash fails the activity loudly instead of silently running unheartbeated."""
+
+    def broken_heartbeat() -> None:
+        raise RuntimeError('heartbeat exploded')
+
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=None))
+    monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
+
+    with pytest.raises(RuntimeError, match='heartbeat exploded'):
+        async with _heartbeating():
+            await asyncio.sleep(0.01)
+
+
+async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.MonkeyPatch):
+    """An exception from the wrapped request is never replaced by a heartbeat failure."""
+
+    def broken_heartbeat() -> None:
+        raise RuntimeError('heartbeat exploded')
+
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=None))
+    monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
+
+    with pytest.raises(ValueError, match='request failed'):
+        async with _heartbeating():
+            await asyncio.sleep(0.01)
+            raise ValueError('request failed')

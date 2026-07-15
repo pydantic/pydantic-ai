@@ -86,6 +86,12 @@ async def _heartbeating() -> AsyncGenerator[None]:
     custom (shorter or longer) timeout keeps working; the SDK additionally throttles
     outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
     harmless, so a plain 5-second cadence is fine.
+
+    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
+    once the wrapped request completes, so the activity fails loudly instead of having
+    silently run without heartbeats (the server would have failed the attempt via
+    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
+    request always wins — a heartbeat failure never replaces it.
     """
 
     async def beat() -> None:
@@ -98,9 +104,17 @@ async def _heartbeating() -> AsyncGenerator[None]:
     task = asyncio.create_task(beat())
     try:
         yield
-    finally:
+    except BaseException:
+        # The request's exception is already propagating; a heartbeat failure must not
+        # replace it.
+        task.cancel()
+        with suppress(BaseException):
+            await task
+        raise
+    else:
         task.cancel()
         with suppress(asyncio.CancelledError):
+            # Anything but our own cancellation is a `beat()` crash — propagate it.
             await task
 
 
