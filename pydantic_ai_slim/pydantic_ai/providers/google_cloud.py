@@ -95,8 +95,9 @@ class GoogleCloudProvider(BaseGoogleProvider):
             # See https://github.com/pydantic/pydantic-ai/issues/6499.
             if isinstance(credentials, Scoped) and credentials.requires_scopes:
                 credentials = cast(
-                    Credentials, credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
-                )  # type: ignore[no-untyped-call]
+                    Credentials,
+                    credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform']),  # type: ignore[reportUnknownMemberType]
+                )
 
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(
