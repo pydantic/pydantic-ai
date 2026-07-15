@@ -40,7 +40,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
 
 
 def test_tool_no_ctx():
@@ -1177,7 +1177,7 @@ def test_call_tool_without_unrequired_parameters():
     all_messages = result.all_messages()
     first_response = message(all_messages, ModelResponse, index=1)
     second_request = message(all_messages, ModelRequest, index=2)
-    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    tool_call_args = [p.args for p in first_response.tool_calls]
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
         [
@@ -1649,12 +1649,9 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     assert result.output == MyOutput(value=42)
     messages = result.all_messages()
-    retry_parts = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
     my_tool_returns = [
-        part
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'my_tool'
+        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.tool_name == 'my_tool'
     ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'output_call'
@@ -2491,13 +2488,7 @@ def test_unapproved_tool_invalid_args_retry():
 
     result = agent.run_sync('test')
     assert result.output == 'done'
-    retry_parts = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart)
-    ]
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_name == 'my_tool'
 
@@ -2925,10 +2916,8 @@ async def test_tool_timeout_triggers_retry():
     # Check that retry prompt was sent to the model
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
@@ -2968,10 +2957,8 @@ async def test_tool_with_timeout_completes_successfully():
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
@@ -3043,10 +3030,8 @@ async def test_tool_timeout_message_format():
 
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
@@ -3132,10 +3117,8 @@ async def test_agent_level_tool_timeout():
     # Check that retry prompt was sent
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
@@ -3168,10 +3151,8 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content

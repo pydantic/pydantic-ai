@@ -113,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, message, remove_schema_descriptions
+from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -2391,23 +2391,11 @@ async def test_capability_returning_toolset_func():
     )
     result = await agent.run('Greet Alice')
 
-    tool_calls = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
-        if isinstance(part, ToolCallPart)
-    ]
+    tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart))
     assert len(tool_calls) == 1
     assert tool_calls[0].tool_name == 'greet'
 
-    tool_returns = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
@@ -2423,13 +2411,7 @@ async def test_runtime_capability_contributions_applied():
     agent = Agent(TestModel())
     result = await agent.run('Greet Alice', capabilities=[ToolsetFuncCapability()])
 
-    tool_calls = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
-        if isinstance(part, ToolCallPart)
-    ]
+    tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart))
     assert [c.tool_name for c in tool_calls] == ['greet']
 
 
@@ -2444,13 +2426,7 @@ async def test_capability_returning_toolset_func_combined():
     )
     result = await agent.run('Greet Bob')
 
-    tool_returns = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
@@ -2733,13 +2709,7 @@ async def test_toolset_capability_in_agent():
     agent = Agent(TestModel(), capabilities=[Toolset(toolset=ts)])
     result = await agent.run('Greet Alice')
 
-    tool_returns = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
@@ -2767,13 +2737,7 @@ async def test_capability_function_tools_shortcuts_in_agent():
     agent = Agent(TestModel(call_tools=['greet', 'wave', 'add_deps']), capabilities=[cap], deps_type=int)
     result = await agent.run('Use the capability tools', deps=10)
 
-    tool_returns = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
 
 
@@ -3301,13 +3265,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     )
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
@@ -3471,13 +3429,7 @@ async def test_deferred_capability_tool_registered_after_construction_defers_unt
     defer_flag_by_phase: dict[str, bool | None] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         loaded = any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns)
         refund_def = next((tool for tool in info.function_tools if tool.name == 'lookup_refund_policy'), None)
         defer_flag_by_phase['after_load' if loaded else 'before_load'] = (
@@ -3532,13 +3484,7 @@ async def test_deferred_capability_tool_stays_available_across_turns() -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         # Turn 1: load the capability.
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
@@ -3629,13 +3575,7 @@ async def test_deferred_capability_synthetic_tool_search_persists_in_history() -
     )
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
@@ -3715,13 +3655,7 @@ async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
         # Turn 1: load A.
@@ -3792,13 +3726,7 @@ async def test_tool_search_discovery_and_capability_load_coexist() -> None:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
         # Turn 1: search for the standalone deferred tool.
@@ -3864,13 +3792,7 @@ async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_t
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
@@ -3950,13 +3872,7 @@ async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it(
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         names = {part.tool_name for part in tool_returns}
 
         # Turn 1: load the capability.
@@ -4022,13 +3938,7 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
     )
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         already_loaded = any(
             isinstance(part, LoadCapabilityReturnPart)
             for message in messages
@@ -7175,13 +7085,7 @@ class TestXSearchCapability:
         agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
         result = await agent.run('search X')
         assert result.output == 'done'
-        tool_returns = [
-            part
-            for msg in result.all_messages()
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
         assert len(tool_returns) == 1
         assert tool_returns[0].content == 'summary'
 
@@ -7209,13 +7113,7 @@ class TestXSearchCapability:
         agent = Agent(outer_model, capabilities=[XSearch(fallback_model=inner_model)])
         result = await agent.run('search X')
         assert result.output == 'gave up'
-        retry_parts = [
-            part
-            for msg in result.all_messages()
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-            if isinstance(part, RetryPromptPart)
-        ]
+        retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
         assert len(retry_parts) == 1
         assert retry_parts[0].tool_name == 'x_search'
 
@@ -7296,13 +7194,7 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch something')
-        tool_calls = [
-            part
-            for msg in result.all_messages()
-            if isinstance(msg, ModelResponse)
-            for part in msg.parts
-            if isinstance(part, ToolCallPart)
-        ]
+        tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart))
         assert len(tool_calls) == 1
         assert tool_calls[0].tool_name == 'web_fetch'
 
@@ -7373,13 +7265,7 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch example.com')
-        tool_calls = [
-            part
-            for msg in result.all_messages()
-            if isinstance(msg, ModelResponse)
-            for part in msg.parts
-            if isinstance(part, ToolCallPart)
-        ]
+        tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart))
         assert len(tool_calls) == 1
         assert tool_calls[0].tool_name == 'web_fetch'
 
@@ -11208,13 +11094,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
 
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             first_request = message(messages, ModelRequest)
@@ -11288,13 +11168,7 @@ async def test_prefix_tools_can_be_deferred():
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
             return ModelResponse(
@@ -14345,10 +14219,8 @@ async def test_enqueue_coerces_string_to_user_prompt():
     result = await agent.run('Hello')
     injected = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, UserPromptPart) and part.content == 'steering as plain string'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, UserPromptPart)
+        if part.content == 'steering as plain string'
     ]
     assert len(injected) == 1, 'string-coerced enqueue did not land as a UserPromptPart'
 
@@ -14378,10 +14250,8 @@ async def test_enqueue_accepts_multimodal_user_content():
     result = await agent.run('Hello')
     injected = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, UserPromptPart) and part.content == ['look at this', image]
+        for part in iter_message_parts(result.all_messages(), ModelRequest, UserPromptPart)
+        if part.content == ['look at this', image]
     ]
     assert len(injected) == 1
 
@@ -14519,7 +14389,7 @@ async def test_enqueue_parts_style_calls_produce_one_request_per_call():
         and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
     ]
     assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
-    assert [p.content for msg in drained for p in msg.parts if isinstance(p, UserPromptPart)] == [
+    assert [p.content for p in iter_message_parts(drained, ModelRequest, UserPromptPart)] == [
         'first hint',
         'second hint',
     ]
@@ -19263,7 +19133,7 @@ async def test_deferred_tool_handler_deny():
     result = await agent.run('Hello')
     assert result.output == 'Understood, denied.'
     # The denial must surface in message history as outcome='denied', not a successful return.
-    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].tool_call_id == 'call1'
     assert tool_returns[0].outcome == 'denied'
@@ -19784,7 +19654,7 @@ async def test_deferred_tool_handler_denied_via_batch():
 
     result = await agent.run('Hello')
     assert result.output == 'Understood.'
-    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].outcome == 'denied'
     assert tool_returns[0].content == 'Policy denied.'
@@ -19821,7 +19691,7 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
 
     result = await agent.run('go')
     assert result.output == 'ok'
-    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    tool_returns = {p.tool_call_id: p for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)}
     assert tool_returns['bool_false'].outcome == 'denied'
     assert tool_returns['bool_false'].content == ToolDenied().message
     assert tool_returns['default_denied'].outcome == 'denied'
@@ -19850,7 +19720,7 @@ async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
 
     result = await agent.run('go')
     assert result.output == 'done'
-    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].outcome != 'denied'
     assert tool_returns[0].content == 14
@@ -19884,14 +19754,14 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     result = await agent.run('go')
     assert result.output == 'done'
     messages = result.all_messages()
-    tool_returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+    tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].content == 'computed'
     assert tool_returns[0].metadata == {'source': 'external'}
     # The `content` field on ToolReturn becomes a UserPromptPart.
     from pydantic_ai.messages import UserPromptPart
 
-    user_extras = [p for m in messages for p in m.parts if isinstance(p, UserPromptPart) and p.content == 'user extra']
+    user_extras = [p for p in iter_message_parts(messages, ModelRequest, UserPromptPart) if p.content == 'user extra']
     assert len(user_extras) == 1
 
 
@@ -19918,11 +19788,11 @@ async def test_deferred_tool_handler_batch_external_model_retry():
     result = await agent.run('go')
     assert result.output == 'retried'
     messages = result.all_messages()
-    retry_parts = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
+    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'c1'
     assert retry_parts[0].content == 'try again'
-    tool_returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_call_id == 'c1']
+    tool_returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_call_id == 'c1']
     assert tool_returns == []
 
 
@@ -19953,7 +19823,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
 
     result = await agent.run('go')
     assert result.output == 'retried'
-    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'c1'
     assert retry_parts[0].tool_name == 'external_tool'
@@ -20056,9 +19926,8 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     # Verify the inner tool was called (tool return visible in messages)
     tool_returns = [
         p
-        for m in result.all_messages()
-        for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'caller_tool'
+        for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'caller_tool'
     ]
     assert len(tool_returns) == 1
     assert tool_returns[0].content == 'got: approved result'
@@ -20088,16 +19957,15 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     assert result.output == 'Done.'
     # Verify ToolReturn.metadata preserved
     tool_returns = [
-        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'my_tool'
+        p for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart) if p.tool_name == 'my_tool'
     ]
     assert len(tool_returns) == 1
     assert tool_returns[0].metadata == {'source': 'tool'}
     # Verify ToolReturn.content appears as UserPromptPart
     user_parts = [
         p
-        for m in result.all_messages()
-        for p in m.parts
-        if isinstance(p, UserPromptPart) and p.content == 'user prompt extra'
+        for p in iter_message_parts(result.all_messages(), ModelRequest, UserPromptPart)
+        if p.content == 'user prompt extra'
     ]
     assert len(user_parts) == 1
 
@@ -20125,7 +19993,7 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
     assert result.output == 'Retried and done.'
     # Verify the retry happened
     retry_parts = [
-        p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart) and p.tool_name == 'my_tool'
+        p for p in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart) if p.tool_name == 'my_tool'
     ]
     assert len(retry_parts) == 1
 
@@ -21080,13 +20948,7 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(
             isinstance(part, LoadCapabilityReturnPart)

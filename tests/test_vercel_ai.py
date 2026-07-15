@@ -75,7 +75,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -4294,9 +4294,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     assert tool_part.output == expected_output
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4348,9 +4346,7 @@ async def test_stream_tool_return_files_roundtrip_to_history():
             ),
         ]
     )
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -4403,9 +4399,7 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     content = tool_returns[0].content
     assert isinstance(content, BinaryContent)
@@ -4454,9 +4448,7 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     # The malformed shape is preserved verbatim (not coerced, not dropped), so nothing crashes downstream.
     assert tool_returns[0].content == {'kind': 'binary', 'data': data_payload, 'media_type': 'application/pdf'}
@@ -4484,9 +4476,7 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
@@ -4506,9 +4496,7 @@ async def test_adapter_tool_return_text_only_unchanged():
     assert tool_part.output == 'just a string'
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content == 'just a string'
 
 
@@ -4533,9 +4521,7 @@ async def test_adapter_tool_return_none_serializes_as_null():
     assert tool_part.output is None
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content is None
 
 
@@ -4563,9 +4549,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4625,9 +4609,7 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
     )
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
