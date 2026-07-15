@@ -243,7 +243,7 @@ For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent
 !!! note
     As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
 
-    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
+    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
 
 ```python {title="run_events.py" requires="run_stream_event_stream_handler.py"}
 import asyncio

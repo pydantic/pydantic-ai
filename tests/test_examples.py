@@ -479,6 +479,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         },
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Find clients named Jane': ToolCallPart(
+        tool_name='final_result',
+        args={'response': ['Matching client:', {'id': 1234, 'name': 'Jane Doe'}]},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
     'What is the capital of Italy? Answer with just the city.': 'Rome',
     'What is the capital of Italy? Answer with a paragraph.': (
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
