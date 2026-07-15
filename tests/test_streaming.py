@@ -68,11 +68,6 @@ from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
-# Wall-clock guard for the readiness `Event.wait()`s in the timing-sensitive tests below. The events are
-# set near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout
-# is configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
-
 
 class Foo(BaseModel):
     a: int
@@ -2900,8 +2895,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
-        await asyncio.wait_for(pending_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -5111,7 +5106,7 @@ async def test_run_stream_events_first_iteration_starts_background_task():
 
     async with agent.run_stream_events('') as events:
         # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(anext(events), timeout=1.0)
         assert producer_started.is_set()
 
 
@@ -5141,7 +5136,7 @@ async def test_run_stream_events_break_on_final_result_retrieves_late_producer_e
                 if isinstance(event, FinalResultEvent):
                     # This mirrors the documented "stop once final result is known" pattern.
                     # The producer task can still finish with an exception before the CM exits.
-                    await asyncio.wait_for(producer_finished.wait(), timeout=READINESS_WAIT_TIMEOUT)
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
                     await asyncio.sleep(0)
                     break
 
@@ -5256,7 +5251,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
                 pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    await asyncio.wait_for(started.wait(), timeout=1)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

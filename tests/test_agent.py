@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import json
 import re
 import sys
@@ -9072,10 +9071,6 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
             raise
         return 'done'  # pragma: no cover
 
-    # Flush cyclic garbage left by earlier tests on this worker before snapshotting tasks: collecting it
-    # mid-test can plant unrelated tasks on the current loop (e.g. google-genai's `AsyncHttpxClient.__del__`
-    # schedules an `aclose()` task on whatever loop is running) and produce a false "orphaned tasks" failure.
-    gc.collect()
     tasks_before = asyncio.all_tasks()
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('call tools')
