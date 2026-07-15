@@ -86,6 +86,7 @@ def empty_env():
 def test_infer_provider(
     provider: str, provider_cls: type[Provider[Any]], exception_has: str | None, monkeypatch: pytest.MonkeyPatch
 ):
+    """Validate provider construction and the mocked Google ADC guard without making provider API requests."""
     if provider == 'google-cloud':
         default_credentials = Mock(side_effect=DefaultCredentialsError('Your default credentials were not found'))
         monkeypatch.setattr('google.auth.default', default_credentials)
