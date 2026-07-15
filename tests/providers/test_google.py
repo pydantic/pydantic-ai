@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -7,20 +8,28 @@ import pytest
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from google.auth.credentials import Credentials, Scoped
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-    class FakeCredentials:
+    class FakeCredentials(Credentials, Scoped):
         """Minimal stand-in for `google.auth.credentials.Credentials`."""
 
         def __init__(self, *, scopes: list[str] | None = None) -> None:
-            self.scopes = scopes
-            self.scoped_with: list[str] | None = None
+            super().__init__()
+            self._scopes = scopes
 
-        def with_scopes(self, scopes: list[str]) -> FakeCredentials:
+        @property
+        def requires_scopes(self) -> bool:  # type: ignore[override]
+            return self._scopes is None
+
+        def with_scopes(self, scopes: list[str], default_scopes: list[str] | None = None) -> FakeCredentials:
             return FakeCredentials(scopes=scopes)
+
+        def refresh(self, request: object) -> None:
+            raise NotImplementedError
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
@@ -79,7 +88,7 @@ def test_google_cloud_provider_scopes_credentials(env: TestEnv):
     with patch('pydantic_ai.providers.google_cloud.Client', _CapturingClient):
         GoogleCloudProvider(credentials=credentials, project='pydantic-ai')
 
-    forwarded_credentials = captured['credentials']
+    forwarded_credentials = cast('FakeCredentials', captured['credentials'])
     assert forwarded_credentials is not credentials
     assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
 
@@ -99,7 +108,7 @@ def test_google_cloud_provider_preserves_existing_scopes(env: TestEnv):
     with patch('pydantic_ai.providers.google_cloud.Client', _CapturingClient):
         GoogleCloudProvider(credentials=credentials, project='pydantic-ai')
 
-    forwarded_credentials = captured['credentials']
+    forwarded_credentials = cast('FakeCredentials', captured['credentials'])
     assert forwarded_credentials is credentials
     assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/devstorage.read_only']
 

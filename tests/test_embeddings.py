@@ -1423,7 +1423,15 @@ class TestGoogle:
         assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
     async def test_infer_model_google_cloud(self):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
+        # `GoogleCloudProvider` uses application default credentials via
+        # `google.auth.default()`, which otherwise probes the GCE metadata
+        # server over the network. Patch it to a no-op fake and set a project
+        # id so the client can be constructed offline.
+        fake_credentials = MagicMock()
+        with (
+            patch.dict(os.environ, {'GOOGLE_CLOUD_PROJECT': 'test-project'}),
+            patch('google.auth.default', return_value=(fake_credentials, 'test-project')),
+        ):
             model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'

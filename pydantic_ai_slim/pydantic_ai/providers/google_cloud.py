@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal
+from typing import Literal, cast
 
 import httpx
 
 try:
-    from google.auth.credentials import Credentials
+    from google.auth.credentials import Credentials, Scoped
     from google.genai.client import Client
     from google.genai.types import HttpRetryOptions
 
@@ -90,10 +90,13 @@ class GoogleCloudProvider(BaseGoogleProvider):
             # The google-genai SDK scopes credentials it loads itself via
             # `google.auth.default(scopes=[...])`, but does NOT scope credentials passed
             # externally. Scope them here so service account credentials work without
-            # requiring the caller to scope them first.
+            # requiring the caller to scope them first, mirroring the SDK's own
+            # `load_auth()` scoping guard (`isinstance(..., Scoped) and requires_scopes`).
             # See https://github.com/pydantic/pydantic-ai/issues/6499.
-            if credentials is not None and not getattr(credentials, 'scopes', None):
-                credentials = credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
+            if isinstance(credentials, Scoped) and credentials.requires_scopes:
+                credentials = cast(
+                    Credentials, credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
+                )  # type: ignore[no-untyped-call]
 
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(
