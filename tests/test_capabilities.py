@@ -14125,6 +14125,32 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     assert resolved is chain_target
 
 
+async def test_resolve_model_id_alias_unusable_outside_run() -> None:
+    """A capability-owned alias default resolves during runs, and says so clearly outside one.
+
+    Sync entry points like `set_mcp_sampling_model` can't invoke the async, deps-aware
+    hook, so an alias only a capability can resolve raises an explanation instead of a
+    bare 'Unknown model' (or a misleading 'no model set').
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='aliased')
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    agent = Agent('alias', name='alias_outside_run', capabilities=[ResolveModelId(resolver)])
+    with pytest.raises(UserError, match='could not be resolved outside of an agent run'):
+        agent.set_mcp_sampling_model()
+
+    # Inside a run, the alias resolves through the hook as usual.
+    result = await agent.run('hi')
+    assert result.output == 'ok'
+
+    # Without a resolver capability, the original resolution error passes through.
+    plain = Agent('not-a-model', name='alias_plain', defer_model_check=True)
+    with pytest.raises(UserError, match='Unknown model'):
+        plain.set_mcp_sampling_model()
+
+
 # --- ResolveModelId capability tests ---
 
 

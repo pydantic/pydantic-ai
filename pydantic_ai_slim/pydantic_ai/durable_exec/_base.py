@@ -60,7 +60,7 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
                 default_model = self._extra_models[agent.model]
             else:
                 try:
-                    default_model = self._resolve_model_id(agent.model)
+                    default_model = infer_model(agent.model)
                 except (UserError, ValueError):
                     # An alias only a deps-aware capability (e.g. `ResolveModelId`) can
                     # resolve. No concrete default can be registered; every request for
@@ -82,15 +82,16 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
         model_id: KnownModelName | str,
         ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
-        """Map a model-name string to a `Model` instance via the `models=` registry or `infer_model`.
+        """Map a model-name string to its `models=` registry instance, or `None` to defer.
 
-        Strings get resolved through the registry, then the default `infer_model`, so a
-        durable run can accept arbitrary `agent.run(model='openai:gpt-5.2')` values without
-        pre-registering each one in `models=`. To customize how strings are built (e.g. a
-        custom provider), add a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId]
-        capability before this one — it gets first crack at every string.
+        Registry hits resolve to the registered instance; anything else defers to the
+        default `infer_model` flow, so a durable run can accept arbitrary
+        `agent.run(model='openai:gpt-5.2')` values without pre-registering each one in
+        `models=`. To customize how strings are built (e.g. a custom provider), add a
+        [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability — its
+        position relative to this one doesn't matter for non-registry strings.
         """
-        return self._resolve_model_id(model_id)
+        return self._models_by_id.get(model_id)
 
     def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
         """The cross-boundary identifier for this request's model.
@@ -135,19 +136,6 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
         # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
         return model.model_id
 
-    def _resolve_model_id(self, model_id: str | None) -> Model:
-        """Resolve a model ID string to a `Model` instance, without deps.
-
-        Used at run setup (to map raw user-provided strings via the `resolve_model_id`
-        hook above) and at bind time (to resolve a string default). Deps-aware
-        re-resolution on the worker side goes through `_resolve_model_for_request`.
-        """
-        if model_id is None:
-            return self._models_by_id['default']
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id]
-        return infer_model(model_id)
-
     async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
 
@@ -161,24 +149,25 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
             return self._models_by_id['default']
         agent = run_context.agent
         root_capability = run_context.root_capability
-        if agent is not None and root_capability is not None:
+        if agent is not None and root_capability is not None:  # pragma: no branch - the boundary carries both
             resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
-            try:
-                resolved = await root_capability.resolve_model_id(model_id, resolution_ctx)
-            except (UserError, ValueError) as e:
-                # The usual culprit: an unregistered `Model` instance was passed at run time,
-                # crossed the boundary as its `model_id` string, and that string can't be fed
-                # back through `infer_model` (e.g. `'function:...'`, `'test:test'`). Point at
-                # the registration escape hatches instead of surfacing a bare 'Unknown model'.
-                raise UserError(
-                    f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker. '
-                    'A `Model` instance cannot be serialized across the durable boundary, so it is '
-                    'sent as its `model_id` string and rebuilt on the other side. Register the '
-                    f'instance in `models=` on `{type(self).__name__}` and reference it by key '
-                    '(or pass the registered instance), or resolve the string with a '
-                    '`ResolveModelId` capability.'
-                ) from e
+            # Exceptions raised by user resolvers in the chain propagate unchanged;
+            # only the `infer_model` backstop below gets the translated error.
+            resolved = await root_capability.resolve_model_id(model_id, resolution_ctx)
             if resolved is not None:
                 return resolved
-            return infer_model(model_id)  # pragma: no cover - self always resolves strings via the chain
-        return self._resolve_model_id(model_id)  # pragma: no cover - the boundary always carries both
+        try:
+            return infer_model(model_id)
+        except (UserError, ValueError) as e:
+            # The usual culprit: an unregistered `Model` instance was passed at run time,
+            # crossed the boundary as its `model_id` string, and that string can't be fed
+            # back through `infer_model` (e.g. `'function:...'`, `'test:test'`). Point at
+            # the registration escape hatches instead of surfacing a bare 'Unknown model'.
+            raise UserError(
+                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker. '
+                'A `Model` instance cannot be serialized across the durable boundary, so it is '
+                'sent as its `model_id` string and rebuilt on the other side. Register the '
+                f'instance in `models=` on `{type(self).__name__}` and reference it by key '
+                '(or pass the registered instance), or resolve the string with a '
+                '`ResolveModelId` capability.'
+            ) from e

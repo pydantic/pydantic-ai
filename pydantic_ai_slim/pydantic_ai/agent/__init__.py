@@ -2524,7 +2524,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         (async, deps-aware) `resolve_model_id` capability hook — capability-owned
         strings fall back to the default `infer_model` flow. Used by entry points
         that run outside an agent run (`system_prompt_parts`, `__aenter__`,
-        `set_mcp_sampling_model`).
+        `set_mcp_sampling_model`). An alias only a capability can resolve raises
+        a `UserError` explaining that it needs a run.
 
         Args:
             model: model to use for this run, required if `model` was not set when creating the agent.
@@ -2533,7 +2534,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             The model used
         """
         raw = self._pick_raw_model(model)
-        return raw if isinstance(raw, models.Model) else models.infer_model(raw)
+        if isinstance(raw, models.Model):
+            return raw
+        try:
+            return models.infer_model(raw)
+        except (exceptions.UserError, ValueError) as e:
+            if self._root_capability.has_resolve_model_id:
+                raise exceptions.UserError(
+                    f'The model {raw!r} could not be resolved outside of an agent run: it can only be '
+                    "resolved by a capability's `resolve_model_id` hook, which runs at run setup with "
+                    "the run's `deps`. Pass a concrete `Model` instance here instead."
+                ) from e
+            raise
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
@@ -2772,7 +2784,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             sampling_model = models.infer_model(model) if model else self._get_model(None)
         except exceptions.UserError as e:
-            raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
+            if not model and self.model is None and self._override_model.get() is None:
+                raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
+            # e.g. a capability-owned alias default that can only be resolved during a run —
+            # surface `_get_model`'s explanation rather than masking it as a missing model.
+            raise
 
         from ..mcp import MCPToolset
 

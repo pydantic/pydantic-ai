@@ -5262,12 +5262,10 @@ async def test_durability_resolve_model_id_uses_models_registry():
     # String matches a registered model → returns that exact instance.
     assert await bound.resolve_model_id('alt', resolution_ctx) is alt
 
-    # String not in registry → default infer_model path. To customize how strings
-    # are built, a `ResolveModelId` capability before this one gets first crack.
-    # 'test' is the special string that always works without any provider config.
-    fallback = await bound.resolve_model_id('test', resolution_ctx)
-    assert fallback is not None
-    assert fallback.model_id == 'test:test'
+    # String not in registry → defer (None) so the default `infer_model` flow — or a
+    # user's `ResolveModelId` capability — handles it, and so an exception raised by a
+    # user resolver is never masked by this capability's backstop.
+    assert await bound.resolve_model_id('test', resolution_ctx) is None
 
 
 async def test_durability_default_string_registered_in_models_becomes_default():

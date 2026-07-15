@@ -2184,6 +2184,29 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
         assert result.output == f'tenant:{tenant}'
 
 
+def _dbos_broken_resolver(ctx: ModelResolutionContext[None], model_id: str) -> FunctionModel | None:
+    if model_id == 'broken-model':
+        raise ValueError('resolver exploded')
+    return None  # pragma: no cover - only 'broken-model' flows through this test
+
+
+async def test_dbos_durability_user_resolver_error_propagates(dbos: DBOS) -> None:
+    """An exception raised by a user's resolver propagates unchanged.
+
+    Only the `infer_model` backstop gets translated into the could-not-be-rebuilt error
+    (see the unrebuildable test above); a resolver's own failure must surface as-is —
+    both from run-setup resolution and from re-resolution inside the step — so its
+    message isn't misattributed to the durable round-trip.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_broken_resolver',
+        capabilities=[ResolveModelId(_dbos_broken_resolver), DBOSDurability()],
+    )
+    with pytest.raises(ValueError, match='resolver exploded'):
+        await agent.run('hello', model='broken-model')
+
+
 async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
     """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
 
