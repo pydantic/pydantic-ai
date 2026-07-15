@@ -8,12 +8,175 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
+from urllib.parse import urlparse
+
+import yaml
+
+from pydantic_ai._utils import is_str_dict
+
+try:
+    from yaml import CSafeLoader as SafeLoader
+except ImportError:  # pragma: no cover
+    from yaml import SafeLoader
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
+
+PrefixBlock = tuple[str, str]
+
+
+def _is_list(value: Any) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
+
+
+@dataclass(frozen=True)
+class CassettePrefixViolation:
+    """A consecutive request pair whose provider-cache wire prefix moved."""
+
+    shape: str
+    pair_index: int
+    level: str
+    block_index: int
+    earlier_block: str
+    later_block: str
+
+
+def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[PrefixBlock]] | None:
+    """Flatten a provider request into cache-ordered JSON blocks.
+
+    The supported shapes cover the multi-request endpoints in the 2026-07-15 cassette corpus.
+    Blocks deliberately use insertion-order `json.dumps` output because wire order is the invariant.
+    """
+    parsed_url = urlparse(url)
+    host, path = parsed_url.hostname or '', parsed_url.path
+    blocks: list[PrefixBlock] = []
+
+    def add(level: str, items: Any) -> None:
+        if items is None:
+            return
+        if isinstance(items, str):
+            items = [items]
+        for item in items:
+            blocks.append((level, json.dumps(item)))
+
+    if path.endswith('/v1/messages') or (host == 'api.anthropic.com' and '/messages' in path):
+        add('tools', body.get('tools'))
+        add('system', body.get('system'))
+        add('messages', body.get('messages'))
+        return 'anthropic', blocks
+    if path.endswith('/chat/completions'):
+        add('tools', body.get('tools'))
+        add('messages', body.get('messages'))
+        return 'openai-chat', blocks
+    if path.endswith('/responses') or '/responses' in path:
+        add('system', body.get('instructions'))
+        add('tools', body.get('tools'))
+        input_ = body.get('input')
+        add('messages', input_ if isinstance(input_, list) else [input_] if input_ is not None else None)
+        return 'openai-responses', blocks
+    if 'generativelanguage' in host or ':generateContent' in path or ':streamGenerateContent' in path:
+        add('tools', body.get('tools'))
+        add('system', body.get('systemInstruction') or body.get('system_instruction'))
+        add('messages', body.get('contents'))
+        return 'google', blocks
+    if '/converse' in path:
+        tool_config = body.get('toolConfig')
+        add('tools', tool_config.get('tools') if is_str_dict(tool_config) else None)
+        add('system', body.get('system'))
+        add('messages', body.get('messages'))
+        return 'bedrock', blocks
+    return None
+
+
+def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[str, int]:
+    """Classify how the cache-ordered blocks change between consecutive requests."""
+    if a == b:
+        return 'identical', -1
+    shared_length = min(len(a), len(b))
+    divergent_index = next((i for i in range(shared_length) if a[i] != b[i]), shared_length)
+    if divergent_index == len(a) and len(b) > len(a):
+        return 'extension', -1
+    if divergent_index == len(b) and len(a) > len(b):
+        return 'shrunk', divergent_index
+
+    level = a[divergent_index][0] if divergent_index < len(a) else b[divergent_index][0]
+    first_message_index = next((i for i, (block_level, _) in enumerate(a) if block_level == 'messages'), None)
+    if level == 'messages' and divergent_index == first_message_index:
+        return 'new-conversation', divergent_index
+
+    def conversation_identity(blocks: list[PrefixBlock]) -> str | None:
+        for block_level, block in blocks:
+            if block_level != 'messages':
+                continue
+            try:
+                role = json.loads(block).get('role')
+            except Exception:
+                role = None
+            if role not in ('system', 'developer'):
+                return block
+        return None
+
+    a_identity = conversation_identity(a)
+    b_identity = conversation_identity(b)
+    if a_identity is not None and b_identity is not None and a_identity != b_identity:
+        return 'different-conversation', divergent_index
+    return f'{level}-divergent', divergent_index
+
+
+def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePrefixViolation]:
+    """Yield prompt-cache prefix violations from one VCR cassette.
+
+    Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
+    cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
+    """
+    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    if not is_str_dict(cassette):
+        return
+    requests_by_endpoint: dict[tuple[str, str], list[list[PrefixBlock]]] = defaultdict(list)
+
+    raw_interactions = cassette.get('interactions')
+    if not _is_list(raw_interactions):
+        return
+    interactions = raw_interactions
+    for interaction in interactions:
+        if not is_str_dict(interaction) or not is_str_dict(request := interaction.get('request')):
+            continue
+        method = request.get('method')
+        if not isinstance(method, str) or method.upper() != 'POST':
+            continue
+        body = request.get('parsed_body')
+        if not is_str_dict(body):
+            continue
+        uri = request.get('uri')
+        if not isinstance(uri, str):
+            continue
+        canonical = canonical_prefix_blocks(body, uri)
+        if canonical is None:
+            continue
+        shape, blocks = canonical
+        requests_by_endpoint[(urlparse(uri).hostname or '', shape)].append(blocks)
+
+    for (_, shape), requests in requests_by_endpoint.items():
+        for pair_index, (earlier, later) in enumerate(zip(requests, requests[1:])):
+            classification, block_index = classify_prefix_pair(earlier, later)
+            if classification != 'shrunk' and not classification.endswith('-divergent'):
+                continue
+            level = classification.removesuffix('-divergent')
+            earlier_block = earlier[block_index][1] if block_index < len(earlier) else '<missing>'
+            later_block = later[block_index][1] if block_index < len(later) else '<missing>'
+            yield CassettePrefixViolation(
+                shape=shape,
+                pair_index=pair_index,
+                level=level,
+                block_index=block_index,
+                earlier_block=earlier_block[:200],
+                later_block=later_block[:200],
+            )
 
 
 def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
@@ -88,8 +251,6 @@ def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
 
     Used as fallback when the VCR cassette object is not available (e.g. CI playback).
     """
-    import yaml
-
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
     bodies: list[str] = []
     for interaction in data.get('interactions', []):
