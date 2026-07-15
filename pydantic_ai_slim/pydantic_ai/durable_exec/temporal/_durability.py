@@ -18,7 +18,6 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import messages as _messages
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.capabilities.abstract import (
@@ -27,10 +26,10 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import BaseDurability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
-    DurableSegmentModel,
+    DurableModel,
     StreamedActivityResult,
     disable_threads,
     process_event_stream,
@@ -125,7 +124,7 @@ async def _heartbeating() -> AsyncGenerator[None]:
 
 
 @dataclass(init=False)
-class TemporalDurability(BaseDurability[AgentDepsT]):
+class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
 
     When added to an agent, this capability intercepts model requests and
@@ -162,7 +161,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         deps_type: type[AgentDepsT] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
@@ -190,9 +188,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters. Defaults to the agent's own
                 `deps_type`, discovered when the capability binds via `for_agent()`.
-            event_stream_handler: Optional handler for streaming events. When set,
-                model requests use a streaming activity that invokes this handler
-                inside the activity.
             activity_config: Base Temporal activity config for all activities.
                 Defaults to a 60-second `start_to_close_timeout`.
             model_activity_config: Activity config merged on top of the base for
@@ -217,7 +212,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         """
         super().__init__(models=models)
         self.run_context_type = run_context_type
-        self._event_stream_handler = event_stream_handler
         self._deps_type = deps_type
 
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
@@ -295,13 +289,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         bound.name = agent.name
         bound._agent = agent
 
-        # If no handler was passed to the capability, fall back to the agent's
-        # instance-level one so it fires inside the activity alongside the
-        # capability chain. (The per-run `event_stream_handler` argument cannot
-        # cross the activity boundary.)
-        if bound._event_stream_handler is None:
-            bound._event_stream_handler = agent.event_stream_handler
-
         # Build model registry (shared with the other durability capabilities)
         bound._bind_models(agent)
 
@@ -332,7 +319,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         assert self._deps_type is not None  # set by `for_agent` before activities are registered
         deps_type = self._deps_type
         run_context_type = self.run_context_type
-        event_stream_handler = self._event_stream_handler
         activities: list[Callable[..., Any]] = []
 
         # --- Model request activities ---
@@ -377,7 +363,6 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
                             run_context=run_context,
                             request_context=request_context,
                             stream=streamed_response,
-                            handler=event_stream_handler,
                         )
                 return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -604,10 +589,8 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
                 **config,
             )
 
-        request_context.model = DurableSegmentModel(
+        request_context.model = DurableModel(
             request_context.model,
-            request_context=request_context,
-            event_stream_handler=self._event_stream_handler,
             request_segment=request_segment,
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,

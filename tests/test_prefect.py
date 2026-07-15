@@ -2014,18 +2014,23 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """PrefectDurability routes streaming requests through Prefect tasks when a handler is set."""
-    events_received: list[AgentStreamEvent] = []
+    """`ProcessEventStream` routes streaming requests through Prefect tasks.
+
+    The model-stream events must reach the handler *inside* the task, so its side effects
+    are checkpointed with the segment; the chain also fires flow-side for tool-call and
+    final-output node streams, so only model events are asserted in-task.
+    """
+    events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
-            events_received.append(event)
+            events_in_task.append((event, TaskRunContext.get() is not None))
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_durability_stream_fn)
     agent = Agent(
         stream_model,
         name='durability_streaming',
-        capabilities=[PrefectDurability(event_stream_handler=handler)],
+        capabilities=[ProcessEventStream(handler), PrefectDurability()],
     )
 
     @flow
@@ -2035,8 +2040,11 @@ async def test_prefect_durability_streaming_in_flow() -> None:
 
     output = await run_durable_streaming_agent()
     assert output == 'Echo: Hello streaming'
-    # The construction-time handler fired inside the streaming task.
-    assert events_received
+    model_events_in_task = [
+        in_task for event, in_task in events_in_task if isinstance(event, (PartStartEvent, PartDeltaEvent))
+    ]
+    assert model_events_in_task
+    assert all(model_events_in_task)
 
 
 async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -2057,6 +2065,10 @@ async def test_prefect_durability_process_event_stream_fires_live_inside_task() 
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
+            if isinstance(event, (PartStartEvent, PartDeltaEvent)):
+                # Model-stream events must be delivered inside the task; the chain also
+                # fires flow-side for tool-call and final-output node streams.
+                assert TaskRunContext.get() is not None
             events_received.append(event)
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
@@ -2113,42 +2125,6 @@ async def test_prefect_durability_runtime_handler_receives_buffered_events() -> 
         if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
     ]
     assert delta_events == ['ed ', 'response']
-
-
-async def test_prefect_durability_event_stream_handler_runs_per_event_task() -> None:
-    """The construction-time handler runs once per event, each in its own Prefect task.
-
-    PrefectDurability wraps the handler like the deprecated `PrefectAgent` does, so
-    `event_stream_handler_task_config` applies to a `'Handle Stream Event'` task per event.
-    A single once-per-stream invocation would silently ignore that config and lose per-event
-    checkpointing, so assert the handler is invoked once per streamed event, not once total.
-    """
-    invocations = 0
-    events_received: list[AgentStreamEvent] = []
-
-    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        nonlocal invocations
-        invocations += 1
-        async for event in stream:
-            events_received.append(event)
-
-    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
-    agent = Agent(
-        stream_model,
-        name='durability_per_event_task',
-        capabilities=[PrefectDurability(event_stream_handler=handler)],
-    )
-
-    @flow
-    async def run_durable_agent() -> str:
-        result = await agent.run('Hello')
-        return result.output
-
-    output = await run_durable_agent()
-    assert output == 'Streamed response'
-    # One invocation per event (each event wrapped in its own task), not a single call.
-    assert invocations > 1
-    assert invocations == len(events_received)
 
 
 # --- Continuation chains (suspended → complete) run one task per segment ---
@@ -2263,7 +2239,7 @@ async def test_prefect_durability_continuation_usage_limit_cancels_suspended() -
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-    The `event_stream_handler` fires inside each task against its live segment, and the
+    `ProcessEventStream` fires inside each task against its live segment, and the
     final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
@@ -2290,7 +2266,7 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
     agent = Agent(
         model,
         name='durability_continuation_stream',
-        capabilities=[PrefectDurability(event_stream_handler=handler)],
+        capabilities=[ProcessEventStream(handler), PrefectDurability()],
     )
 
     results: list[AgentRunResult[str]] = []

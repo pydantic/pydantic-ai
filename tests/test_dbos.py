@@ -35,6 +35,7 @@ from pydantic_ai import (
     RunContext,
     RunUsage,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
@@ -83,7 +84,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
-from pydantic_ai.capabilities import ResolveModelId, Toolset
+from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -2313,18 +2314,23 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
-    """DBOSDurability routes streaming requests through DBOS steps when event_stream_handler is set."""
-    events_received: list[Any] = []
+    """`ProcessEventStream` routes streaming requests through DBOS steps.
 
-    async def handler(ctx: RunContext[object], stream: AsyncIterable[Any]) -> None:
+    The model-stream events must reach the handler *inside* the step, so its side effects
+    are checkpointed with the segment; the chain also fires flow-side for tool-call and
+    final-output node streams, so only model events are asserted in-step.
+    """
+    events_in_step: list[tuple[AgentStreamEvent, bool]] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
-            events_received.append(event)
+            events_in_step.append((event, DBOS.step_id is not None))
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_durability_stream_fn)
     agent = Agent(
         stream_model,
         name='durability_streaming',
-        capabilities=[DBOSDurability(event_stream_handler=handler)],
+        capabilities=[ProcessEventStream(handler), DBOSDurability()],
     )
 
     wfid = str(uuid.uuid4())
@@ -2338,6 +2344,11 @@ async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
         output = await run_durable_streaming_agent()
 
     assert output == 'Echo: Hello streaming'
+    model_events_in_step = [
+        in_step for event, in_step in events_in_step if isinstance(event, (PartStartEvent, PartDeltaEvent))
+    ]
+    assert model_events_in_step
+    assert all(model_events_in_step)
 
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
@@ -2358,13 +2369,15 @@ async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos:
     on the replayed stream outside the step instead, ProcessEventStream would see a single
     synthetic delta with the full text.
     """
-    from pydantic_ai.capabilities import ProcessEventStream
-    from pydantic_ai.messages import PartDeltaEvent, TextPartDelta
 
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
+            if isinstance(event, (PartStartEvent, PartDeltaEvent)):
+                # Model-stream events must be delivered inside the step; the chain also
+                # fires flow-side for tool-call and final-output node streams.
+                assert DBOS.step_id is not None
             events_received.append(event)
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
@@ -2400,7 +2413,6 @@ async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DB
     The buffered replay preserves real granular deltas — the per-run handler sees the
     same multi-chunk stream the construction-time handler would see.
     """
-    from pydantic_ai.messages import PartDeltaEvent, TextPartDelta
 
     events_received: list[AgentStreamEvent] = []
 
@@ -2599,9 +2611,7 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
-        await agent.run(
-            'Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))]
-        )
+        await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
@@ -2738,7 +2748,7 @@ async def test_dbos_durability_continuation_usage_limit_cancels_suspended(dbos: 
 async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
     """A streamed suspended → complete chain is stitched across per-segment DBOS steps.
 
-    The `event_stream_handler` fires inside each step against its live segment, and the
+    `ProcessEventStream` fires inside each step against its live segment, and the
     final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
@@ -2765,7 +2775,7 @@ async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DB
     agent = Agent(
         model,
         name='durability_continuation_stream',
-        capabilities=[DBOSDurability(event_stream_handler=handler)],
+        capabilities=[ProcessEventStream(handler), DBOSDurability()],
     )
 
     results: list[AgentRunResult[str]] = []

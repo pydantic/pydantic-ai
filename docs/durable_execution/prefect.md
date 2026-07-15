@@ -63,7 +63,7 @@ Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the
 
 The agent stays a normal `Agent` everywhere — outside a Prefect flow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
-Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter on the capability. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Add a [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability before `PrefectDurability` to process the live event stream inside the model-request task. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 Here is a simple but complete example of attaching durable execution to an agent. All it requires is to install Pydantic AI with Prefect:
 
@@ -188,15 +188,9 @@ agent = Agent(
 
 When running inside a Prefect flow, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] works but doesn't provide real-time streaming because Prefect tasks consume their entire execution before returning results. The method will execute fully and return the complete result at once.
 
-For real-time streaming behavior inside Prefect flows, you can set an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability / [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent]) and use [`Agent.run()`][pydantic_ai.agent.Agent.run].
+For real-time event processing inside Prefect flows, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the model-request task. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
-**Note**: Event stream handlers behave differently when running inside a Prefect flow versus outside:
-- **Outside a flow**: The handler receives events as they stream from the model
-- **Inside a flow**: Each event is wrapped as a Prefect task for durability, which may affect timing but ensures reliability
-
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
-
-Because the model stream is consumed inside the task and only its events are replayed on the flow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
 ### Suspended Turns and Background Mode
 
@@ -213,7 +207,6 @@ You can customize Prefect task behavior, such as retries and timeouts, by passin
 - `mcp_task_config`: Configuration for MCP server communication tasks
 - `model_task_config`: Configuration for model request tasks
 - `tool_task_config`: Default configuration for all tool calls (per-tool overrides go on the tool's `'prefect'` metadata — see [Tool Wrapping](#tool-wrapping) above)
-- `event_stream_handler_task_config`: Configuration for event stream handler tasks (applies when running inside a Prefect flow)
 
 Available `TaskConfig` options:
 
@@ -318,7 +311,6 @@ async def daily_report_flow(user_prompt: str):
 
     result = await agent.run(user_prompt)
     return result.output
-
 
 
 # Serve the flow with a daily schedule

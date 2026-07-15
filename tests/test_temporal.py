@@ -5766,6 +5766,7 @@ async def _stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Asy
 _stream_fn_model = FunctionModel(_durability_model_fn, stream_function=_stream_model_fn)
 
 _stream_events_collected: list[AgentStreamEvent] = []
+_stream_model_events_in_activity: list[bool] = []
 
 
 async def _durability_event_stream_handler(
@@ -5773,17 +5774,18 @@ async def _durability_event_stream_handler(
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
     async for event in stream:
+        if isinstance(event, (PartStartEvent, PartDeltaEvent)):
+            # Model-stream events must be delivered inside the activity; the chain also
+            # fires workflow-side for tool-call and final-output node streams.
+            _stream_model_events_in_activity.append(activity.in_activity())
         _stream_events_collected.append(event)
 
 
-_stream_durability = TemporalDurability(
-    event_stream_handler=_durability_event_stream_handler,
-    activity_config=BASE_ACTIVITY_CONFIG,
-)
+_stream_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
 _stream_durable_agent = Agent(
     _stream_fn_model,
     name='durability_stream_agent',
-    capabilities=[_stream_durability],
+    capabilities=[ProcessEventStream(_durability_event_stream_handler), _stream_durability],
 )
 
 
@@ -5796,8 +5798,9 @@ class StreamDurableAgentWorkflow:
 
 
 async def test_durability_streaming_in_workflow(client: Client):
-    """TemporalDurability routes model requests through streaming activity when event_stream_handler is set."""
+    """`ProcessEventStream` routes model requests through a streaming activity."""
     _stream_events_collected.clear()
+    _stream_model_events_in_activity.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -5814,11 +5817,14 @@ async def test_durability_streaming_in_workflow(client: Client):
         # instead, request_stream_activity uses the stream_function path.
         # The final response is assembled from the streamed chunks.
         assert output == 'Streamed response'
+        assert _stream_model_events_in_activity
+        assert all(_stream_model_events_in_activity)
 
 
 # --- ProcessEventStream capability fires live inside the activity ---
 
 _process_events_collected: list[AgentStreamEvent] = []
+_process_model_events_in_activity: list[bool] = []
 
 
 async def _process_event_stream_handler(
@@ -5826,6 +5832,10 @@ async def _process_event_stream_handler(
     stream: AsyncIterable[AgentStreamEvent],
 ) -> None:
     async for event in stream:
+        if isinstance(event, (PartStartEvent, PartDeltaEvent)):
+            # Model-stream events must be delivered inside the activity; the chain also
+            # fires workflow-side for tool-call and final-output node streams.
+            _process_model_events_in_activity.append(activity.in_activity())
         _process_events_collected.append(event)
 
 
@@ -5917,6 +5927,7 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
     single synthetic delta with the full text.
     """
     _process_events_collected.clear()
+    _process_model_events_in_activity.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -5930,6 +5941,8 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
             task_queue=TASK_QUEUE,
         )
         assert output == 'Streamed response'
+        assert _process_model_events_in_activity
+        assert all(_process_model_events_in_activity)
 
     delta_events = [
         e for e in _process_events_collected if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
@@ -5953,12 +5966,8 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
 
 # --- Complex agent: full Logfire span tree ---
 
-# Mirrors the legacy `complex_agent`: the handler is passed to the capability (the
-# capability-path equivalent of `TemporalAgent(event_stream_handler=...)`) so the
-# resulting Logfire span tree matches the one produced by the wrapper-agent variant.
 complex_durability_for_logfire = TemporalDurability[Deps](
     deps_type=Deps,
-    event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
@@ -5969,6 +5978,7 @@ complex_durable_logfire_agent = Agent(
     model,
     deps_type=Deps,
     output_type=Response,
+    capabilities=[ProcessEventStream(event_stream_handler), complex_durability_for_logfire],
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='durability_complex_country'),
         MCPToolset(
@@ -5980,7 +5990,6 @@ complex_durable_logfire_agent = Agent(
     ],
     tools=[get_weather],
     name='durability_complex_agent_logfire',
-    capabilities=[complex_durability_for_logfire],
 )
 
 
@@ -6122,6 +6131,13 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
+                        BasicSpan(content='ctx.run_step=1'),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                        ),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                        ),
                         BasicSpan(
                             content='running tool: get_country',
                             children=[
@@ -6136,6 +6152,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                             ],
                         ),
                         BasicSpan(
+                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                        ),
+                        BasicSpan(
                             content='running tool: get_product_name',
                             children=[
                                 BasicSpan(
@@ -6148,6 +6167,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     ],
                                 )
                             ],
+                        ),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -6189,6 +6211,10 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
+                        BasicSpan(content='ctx.run_step=2'),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                        ),
                         BasicSpan(
                             content='running tool: get_weather',
                             children=[
@@ -6201,6 +6227,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     ],
                                 )
                             ],
+                        ),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -6346,6 +6375,13 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     ],
                                 )
                             ],
+                        ),
+                        BasicSpan(content='ctx.run_step=3'),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                        ),
+                        BasicSpan(
+                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                         ),
                     ],
                 ),
@@ -7641,10 +7677,8 @@ _continuation_stream_agent = Agent(
     _continuation_stream_model,
     name='durability_continuation_stream_agent',
     capabilities=[
-        TemporalDurability(
-            event_stream_handler=_continuation_event_stream_handler,
-            activity_config=BASE_ACTIVITY_CONFIG,
-        )
+        ProcessEventStream(_continuation_event_stream_handler),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
 
@@ -7672,7 +7706,7 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    The `event_stream_handler` fires inside each activity against its live segment, and the
+    `ProcessEventStream` fires inside each activity against its live segment, and the
     final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(

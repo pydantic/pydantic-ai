@@ -152,10 +152,9 @@ To customize how a model string is built — a custom provider, or per-user cred
 
 Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] are not supported when running inside of a DBOS workflow.
 
-Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) and using [`Agent.run()`][pydantic_ai.agent.Agent.run].
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Instead, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the DBOS step. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
-Because the model stream is consumed inside the step and only its events are replayed on the workflow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+Because the model stream is consumed inside the step, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
 ### Suspended Turns and Background Mode
 

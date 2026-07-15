@@ -9,17 +9,17 @@ from dbos import DBOS
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
+from pydantic_ai.agent import ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import BaseDurability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
-    DurableSegmentModel,
+    DurableModel,
     StreamedActivityResult,
     process_event_stream,
 )
@@ -36,7 +36,7 @@ from ._utils import StepConfig
 
 
 @dataclass(init=False)
-class DBOSDurability(BaseDurability[AgentDepsT]):
+class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through DBOS steps.
 
     When added to an agent, this capability intercepts model requests and
@@ -65,7 +65,6 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
         parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
@@ -88,7 +87,6 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
-            event_stream_handler: Optional handler for streaming events.
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
             parallel_execution_mode: Tool-call execution mode applied for the duration
@@ -98,7 +96,6 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         super().__init__(models=models)
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
-        self._event_stream_handler = event_stream_handler
         self._model_step_config = model_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
@@ -135,11 +132,6 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         bound.name = agent.name
         bound._agent = agent
 
-        # If no handler was passed to the capability, fall back to the agent's
-        # instance-level one so it fires inside the step alongside the capability chain.
-        if bound._event_stream_handler is None:
-            bound._event_stream_handler = agent.event_stream_handler
-        event_stream_handler = bound._event_stream_handler
         bound._dbos_toolsets_by_id = {}
 
         # Build model registry (shared with the other durability capabilities)
@@ -184,7 +176,6 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
                         run_context=run_context,
                         request_context=request_context,
                         stream=streamed_response,
-                        handler=event_stream_handler,
                     )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -409,10 +400,8 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await self._cancel_suspended_response_step(model_id, response, ctx)
 
-        request_context.model = DurableSegmentModel(
+        request_context.model = DurableModel(
             request_context.model,
-            request_context=request_context,
-            event_stream_handler=self._event_stream_handler,
             request_segment=request_segment,
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,

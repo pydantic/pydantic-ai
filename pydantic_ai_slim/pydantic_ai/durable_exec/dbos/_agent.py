@@ -52,7 +52,15 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """
 
 
-@deprecated('`DBOSAgent` is deprecated, use `capabilities=[DBOSDurability(...)]` on a regular `Agent` instead.')
+@deprecated(
+    """`DBOSAgent` is deprecated. Migrate each constructor argument as follows:
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
+- `name=` → set `name=` on `Agent`.
+- `event_stream_handler=` → use a `ProcessEventStream` capability; it runs inside the step.
+- `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
+- `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
+- `parallel_execution_mode=` → set `parallel_execution_mode=` on `DBOSDurability`."""
+)
 @DBOS.dbos_class()
 class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     _parallel_execution_mode: ParallelExecutionMode

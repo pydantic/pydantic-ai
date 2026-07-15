@@ -59,7 +59,20 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
-@deprecated('`TemporalAgent` is deprecated, use `capabilities=[TemporalDurability(...)]` on a regular `Agent` instead.')
+@deprecated(
+    """`TemporalAgent` is deprecated. Migrate each constructor argument as follows:
+- `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
+- `name=` → set `name=` on `Agent`.
+- `models=` → set `models=` on `TemporalDurability`.
+- `provider_factory=` → use a deps-aware `ResolveModelId` capability.
+- `event_stream_handler=` → use a `ProcessEventStream` capability; it runs inside the activity.
+- `activity_config=` → set `activity_config=` on `TemporalDurability`.
+- `model_activity_config=` → set `model_activity_config=` on `TemporalDurability`.
+- `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.
+- `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
+- `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
+- `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it."""
+)
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,

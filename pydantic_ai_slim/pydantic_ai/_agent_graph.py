@@ -1111,14 +1111,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
-            buffered = wrap_request_context._buffered_stream_events  # pyright: ignore[reportPrivateUsage]
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
-                # Replay the real events captured inside the durable boundary when available;
-                # otherwise synthesize events from the response parts so streaming consumers
-                # still see the short-circuited response.
-                events=buffered if buffered is not None else True,
+                events=True,
                 hooks_already_applied=wrap_request_context._hooks_already_applied,  # pyright: ignore[reportPrivateUsage]
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)

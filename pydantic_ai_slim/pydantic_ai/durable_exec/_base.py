@@ -12,7 +12,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from ._utils import unwrap_model
 
 
-class BaseDurability(AbstractCapability[AgentDepsT]):
+class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     """Shared base for the durable-execution capabilities (Temporal, DBOS, Prefect).
 
     Owns the model registry and the model round-trip across the durable boundary:
@@ -21,10 +21,10 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
     key, or a model-name string) and the model is rebuilt on the other side — deps-aware,
     via the agent's full [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id]
     capability chain, with the registry as backstop. Subclasses call
-    [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurability._bind_models] on the
-    bound copy in `for_agent`, [`_find_model_id`][pydantic_ai.durable_exec._base.BaseDurability._find_model_id]
+    [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_models] on the
+    bound copy in `for_agent`, [`_find_model_id`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._find_model_id]
     on the workflow/flow side, and
-    [`_resolve_model_for_request`][pydantic_ai.durable_exec._base.BaseDurability._resolve_model_for_request]
+    [`_resolve_model_for_request`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._resolve_model_for_request]
     inside the activity/step/task.
     """
 

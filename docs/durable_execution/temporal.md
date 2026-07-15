@@ -204,15 +204,14 @@ If you need one or more of these attributes to be available inside activities, y
 
 Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
 
-Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability / [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]) and using [`Agent.run()`][pydantic_ai.agent.Agent.run] inside the workflow.
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Instead, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run] inside the workflow. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the activity. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
-Because the model stream is consumed inside the activity and only its events are replayed on the workflow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
+Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
 ### Suspended Turns and Background Mode
 
