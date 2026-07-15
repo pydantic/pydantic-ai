@@ -4,6 +4,7 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai import Agent
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -19,8 +20,12 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.vllm import VLLMProvider
+
+    from ..models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -73,6 +78,14 @@ def test_vllm_provider_explicit_api_key() -> None:
     assert provider.client.api_key == 'explicit-key'
 
 
+def test_vllm_provider_explicit_config_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('VLLM_BASE_URL', 'https://env.vllm.com/v1/')
+    monkeypatch.setenv('VLLM_API_KEY', 'env-key')
+    provider = VLLMProvider(base_url='https://explicit.vllm.com/v1/', api_key='explicit-key')
+    assert provider.base_url == 'https://explicit.vllm.com/v1/'
+    assert provider.client.api_key == 'explicit-key'
+
+
 def test_vllm_provider_pass_http_client() -> None:
     http_client = httpx.AsyncClient()
     provider = VLLMProvider(http_client=http_client, base_url='http://localhost:8000/v1/')
@@ -88,7 +101,13 @@ def test_vllm_provider_pass_openai_client() -> None:
 def test_vllm_provider_openai_client_is_exclusive() -> None:
     openai_client = openai.AsyncOpenAI(base_url='http://localhost:8000/v1/', api_key='test')
     with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
-        VLLMProvider(openai_client=openai_client, base_url='http://localhost:8000/v1/')
+        VLLMProvider(  # type: ignore[call-overload]
+            openai_client=openai_client, base_url='http://localhost:8000/v1/'
+        )
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `http_client`'):
+        VLLMProvider(openai_client=openai_client, http_client=httpx.AsyncClient())  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `api_key`'):
+        VLLMProvider(openai_client=openai_client, api_key='test')  # type: ignore[call-overload]
 
 
 async def test_vllm_provider_recreates_closed_owned_client() -> None:
@@ -183,9 +202,9 @@ def test_vllm_provider_model_profile_handles_hf_namespaces(mocker: MockerFixture
     assert google_profile is not None
     assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
-    # The bare name carries the family here (the `cohereforai` org does not).
-    provider.model_profile('CohereForAI/command-r')
-    cohere_model_profile_mock.assert_called_once_with('command-r')
+    # The bare name carries the family here (the `coherelabs` org does not).
+    provider.model_profile('CohereLabs/c4ai-command-a-03-2025')
+    cohere_model_profile_mock.assert_called_once_with('c4ai-command-a-03-2025')
 
     # Regression guard: `mistralai/Mixtral` matches via the `mistralai` org, but its bare name
     # `mixtral-...` does not start with `mistral`, so a naive namespace-strip would drop it.
@@ -200,16 +219,40 @@ def test_vllm_provider_model_profile_is_case_insensitive(mocker: MockerFixture) 
     qwen_model_profile_mock.assert_called_once_with('qwen3-32b')
 
 
-def test_vllm_provider_profile_disables_multiple_system_messages() -> None:
-    # Regression guard for #5812: strict chat templates served by vLLM (recent Qwen, Mistral, Gemma)
-    # reject more than one leading system message, so every vLLM profile disables them and the
-    # provider does not support strict tool definitions (issue #4116).
+def test_vllm_provider_profile_overrides() -> None:
+    # Regression guard for #5812 and vLLM's OpenAI-compatible request capabilities.
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
-    for model in ('llama-3-8b', 'qwen3', 'mistral-small', 'gemma-3', 'command-r', 'gpt-oss-20b', 'unknown-model'):
+    for model in (
+        'llama-3-8b',
+        'qwen3',
+        'qwen-3-coder',
+        'mistral-small',
+        'gemma-3',
+        'command-r',
+        'gpt-oss-20b',
+        'unknown-model',
+    ):
         profile = provider.model_profile(model)
         assert profile is not None
         assert profile.get('openai_chat_supports_multiple_system_messages', True) is False
-        assert profile.get('openai_supports_strict_tool_definition', True) is False
+        assert profile.get('openai_supports_strict_tool_definition', False) is True
+        assert profile.get('openai_chat_supports_document_input', True) is False
+        assert profile.get('supports_tool_return_schema', True) is False
+
+
+async def test_vllm_provider_merges_leading_system_messages(allow_model_requests: None) -> None:
+    response = completion_message(ChatCompletionMessage(content='Paris', role='assistant'))
+    mock_client = MockOpenAI.create_mock(response)
+    model = OpenAIChatModel('Qwen/Qwen3-32B', provider=VLLMProvider(openai_client=mock_client))
+    agent = Agent(model, system_prompt='Be concise.', instructions='Answer accurately.')
+
+    result = await agent.run('What is the capital of France?')
+
+    assert result.output == 'Paris'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'Be concise.\n\nAnswer accurately.', 'role': 'system'},
+        {'content': 'What is the capital of France?', 'role': 'user'},
+    ]
 
 
 def test_vllm_provider_base_profile_flags() -> None:

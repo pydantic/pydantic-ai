@@ -840,7 +840,7 @@ print(result.output)
 
 ### vLLM
 
-[vLLM](https://docs.vllm.ai/) is a high-throughput inference server with an OpenAI-compatible API. Use [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider] to connect to a local or remote vLLM server, passing its `base_url` directly or via the `VLLM_BASE_URL` environment variable. A vLLM server does not always require an API key, so `api_key` is optional and falls back to a placeholder.
+[vLLM](https://docs.vllm.ai/) is a high-throughput inference server with an OpenAI-compatible API. Use [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider] to connect to a local or remote vLLM server, passing its `base_url` directly or via the `VLLM_BASE_URL` environment variable. For an authenticated server, pass `api_key` directly or set `VLLM_API_KEY`. Servers without authentication use a placeholder key required by the OpenAI SDK.
 
 ```python
 from pydantic_ai import Agent
@@ -858,7 +858,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-Alternatively, with `VLLM_BASE_URL` set in your environment, you can reference the provider by name:
+Alternatively, with `VLLM_BASE_URL` and, for an authenticated server, `VLLM_API_KEY` set in your environment, you can reference the provider by name:
 
 ```python
 from pydantic_ai import Agent
@@ -871,7 +871,7 @@ print(result.output)
 ```
 
 !!! note "Multiple system messages are merged by default"
-    `VLLMProvider` sets `openai_chat_supports_multiple_system_messages` to `False` on its [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], so consecutive leading system messages are merged into one before the request is sent. You can end up with multiple leading system messages whenever an agent combines instructions — for example several `instructions` functions, a toolset that sets its own instructions, or [`PromptedOutput`][pydantic_ai.output.PromptedOutput], which adds a system-style prompt — and some chat templates served by vLLM (Gemma's in particular) reject more than one leading system message with a `400` error. The merge is lossless for templates that accept multiple system messages, and because the served model is unknown when the provider is created, it is applied to every vLLM model. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`.
+    `VLLMProvider` sets `openai_chat_supports_multiple_system_messages` to `False` on its [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], so consecutive leading system messages are merged into one before the request is sent. Some chat templates served by vLLM reject more than one leading system message, and the restriction cannot be inferred reliably from a model ID or a server's custom chat template, so this setting applies to every vLLM model. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message) for details. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`.
 
 ### Nebius AI Studio
 
