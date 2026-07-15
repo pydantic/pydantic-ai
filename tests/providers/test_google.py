@@ -215,7 +215,9 @@ def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key(
     )
     api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
-    assert api_client._credentials is not None  # pyright: ignore[reportPrivateUsage]
+    forwarded_credentials = api_client._credentials  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(forwarded_credentials, service_account.Credentials)
+    assert forwarded_credentials.service_account_email == 'service-account@example.com'
 
 
 def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_key(env: TestEnv):
