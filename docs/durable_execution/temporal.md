@@ -229,6 +229,7 @@ from temporalio import workflow
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
