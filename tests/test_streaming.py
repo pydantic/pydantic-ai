@@ -65,6 +65,7 @@ from pydantic_ai._sync_stream import (
     _request_exit,  # pyright: ignore[reportPrivateUsage]
     _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
@@ -6383,6 +6384,31 @@ async def test_replay_streamed_response_events(
     assert not any(isinstance(event, PartDeltaEvent) for event in events)
     reduced = {event.index: event.part for event in events if isinstance(event, PartStartEvent)}
     assert [reduced[index] for index in sorted(reduced)] == replay_response.parts
+
+
+def test_completed_streamed_response_deprecated_positional_init(
+    replay_mrp: models.ModelRequestParameters, replay_response: ModelResponse
+) -> None:
+    """The pre-v3 positional `(model_request_parameters, response)` order still works, with a warning.
+
+    `CompletedStreamedResponse` was public under `pydantic_ai.models.wrapper` with that
+    signature before it moved to `pydantic_ai.models`.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='pass the response first'):
+        stream = CompletedStreamedResponse(replay_mrp, replay_response)  # pyright: ignore[reportDeprecated]
+    assert stream.get() is replay_response
+    assert stream.model_request_parameters is replay_mrp
+
+
+def test_completed_streamed_response_deprecated_import_path() -> None:
+    """The pre-v3 `pydantic_ai.models.wrapper` import path still works, with a warning.
+
+    The import is inside the test because triggering the module `__getattr__` shim *is*
+    the behavior under test.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='moved'):
+        from pydantic_ai.models.wrapper import CompletedStreamedResponse as OldCompletedStreamedResponse
+    assert OldCompletedStreamedResponse is CompletedStreamedResponse
 
 
 async def test_replay_streamed_response_buffered_aiter_idempotent(

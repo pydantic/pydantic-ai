@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from typing import Any
 from typing_extensions import Self
 
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..providers import Provider
@@ -118,3 +120,17 @@ class WrapperModel(Model):
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)
+
+
+def __getattr__(name: str) -> Any:
+    if name == 'CompletedStreamedResponse':
+        warnings.warn(
+            '`CompletedStreamedResponse` has moved from `pydantic_ai.models.wrapper` to `pydantic_ai.models`; '
+            'import it from there instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        from . import CompletedStreamedResponse
+
+        return CompletedStreamedResponse
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

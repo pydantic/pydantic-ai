@@ -20,7 +20,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _deferred_capabilities, _utils
@@ -1039,6 +1039,7 @@ class CompletedStreamedResponse(StreamedResponse):
       event granularity.
     """
 
+    @overload
     def __init__(
         self,
         response: ModelResponse,
@@ -1046,7 +1047,32 @@ class CompletedStreamedResponse(StreamedResponse):
         model_request_parameters: ModelRequestParameters,
         events: bool | list[ModelResponseStreamEvent] = False,
         hooks_already_applied: bool = False,
+    ) -> None: ...
+
+    @overload
+    @deprecated('Pass the response first and `model_request_parameters` as a keyword argument.')
+    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse, /) -> None: ...
+
+    def __init__(
+        self,
+        response: ModelResponse | ModelRequestParameters,
+        model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
+        *,
+        events: bool | list[ModelResponseStreamEvent] = False,
+        hooks_already_applied: bool = False,
     ):
+        if isinstance(response, ModelRequestParameters):
+            # The positional `(model_request_parameters, response)` order predates the move
+            # from `pydantic_ai.models.wrapper` to `pydantic_ai.models`.
+            warnings.warn(
+                '`CompletedStreamedResponse(model_request_parameters, response)` is deprecated; pass the response '
+                'first and `model_request_parameters` as a keyword argument: '
+                '`CompletedStreamedResponse(response, model_request_parameters=...)`.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            response, model_request_parameters = cast(ModelResponse, model_request_parameters), response
+        assert isinstance(model_request_parameters, ModelRequestParameters)
         super().__init__(model_request_parameters)
         self.response = response
         self._events = events
