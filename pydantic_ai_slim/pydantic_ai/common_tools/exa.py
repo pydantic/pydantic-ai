@@ -7,8 +7,6 @@ results across billions of web pages.
 
 import warnings
 from dataclasses import KW_ONLY, dataclass
-from functools import partial
-from inspect import signature
 from typing import TYPE_CHECKING, Literal, cast, overload
 
 from typing_extensions import Any, TypedDict, assert_never
@@ -253,8 +251,9 @@ class ExaFindSimilarTool:
             Similar pages with text content.
         """
         # `find_similar` still works but `exa-py` emits its own per-call `DeprecationWarning` synchronously; suppress
-        # it since callers are already warned once when the tool is created (via `PydanticAIDeprecationWarning`)
-        # and await outside the catch block.
+        # it since callers are already warned once when the tool is created (via `PydanticAIDeprecationWarning`).
+        # `catch_warnings` mutates process-global filters, so the guarded section must stay synchronous (await
+        # outside the block) to keep the temporary filter from affecting other coroutines.
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='find_similar', category=DeprecationWarning)
             coro = self.client.find_similar(  # pyright: ignore[reportDeprecated]
@@ -412,31 +411,36 @@ def exa_search_tool(
         exclude_domains: Domains to exclude all results from. Defaults to None (no exclusion).
     """
     client = _make_client(api_key, client)
-    func = ExaSearchTool(
+    search = ExaSearchTool(
         client=client,
         num_results=num_results,
         max_characters=max_characters,
         content=content,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
-    ).__call__
-    if search_type is not None:
-        original = func
-        func = partial(func, search_type=search_type)
-        func.__name__ = original.__name__  # type: ignore[union-attr]
-        func.__qualname__ = original.__qualname__
-        # A keyword-only partial updates the default but does not remove the parameter.
-        # Remove it explicitly so developer-owned configuration stays out of the tool schema.
-        orig_sig = signature(original)
-        func.__signature__ = orig_sig.replace(  # type: ignore[attr-defined]
-            parameters=[parameter for name, parameter in orig_sig.parameters.items() if name != 'search_type']
-        )
-
-    return Tool[Any](
-        func,  # pyright: ignore[reportArgumentType]
-        name='exa_search',
-        description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
     )
+
+    name = 'exa_search'
+    description = 'Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.'
+
+    if search_type is None:
+        return Tool[Any](search.__call__, name=name, description=description)
+
+    fixed_search_type = search_type
+
+    # Wrap the search so the developer-owned `search_type` stays out of the model-facing tool schema.
+    async def search_with_fixed_type(query: str) -> list[ExaSearchResult]:
+        """Searches Exa for the given query and returns the results with content.
+
+        Args:
+            query: The search query to execute with Exa.
+
+        Returns:
+            The search results with content.
+        """
+        return await search(query, fixed_search_type)
+
+    return Tool[Any](search_with_fixed_type, name=name, description=description)
 
 
 @overload
