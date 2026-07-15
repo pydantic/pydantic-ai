@@ -134,6 +134,14 @@ class TestOpenAI:
         assert model.system == 'openai'
         assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
 
+    async def test_infer_model_vllm(self):
+        with patch.dict(os.environ, {'VLLM_BASE_URL': 'http://localhost:8000/v1'}):
+            model = infer_embedding_model('vllm:intfloat/e5-mistral-7b-instruct')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'intfloat/e5-mistral-7b-instruct'
+        assert model.system == 'vllm'
+        assert model.base_url == 'http://localhost:8000/v1/'
+
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
