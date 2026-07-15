@@ -41,7 +41,6 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
-from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -102,7 +101,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        provider_factory: Callable[[str], Provider[Any]] | None = None,
         deps_type: type[AgentDepsT] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -122,17 +120,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 activity boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
                 is sent as its `model_id` string and rebuilt on the worker by
-                registry lookup, then `provider_factory` / `infer_model`. Register
-                an instance here (and reference it by key or pass the registered
-                instance) whenever its `model_id` alone wouldn't rebuild it
-                faithfully — e.g. a custom provider, client, or settings. Model-name
-                strings never need registering.
-            provider_factory: Optional factory used to instantiate a
-                [`Provider`][pydantic_ai.providers.Provider] from a provider
-                name when a model-name string (e.g. `'openai:gpt-5.2'`) is
-                passed at runtime via `agent.run(model=...)` /
-                `agent.override(model=...)`. Lets a workflow accept arbitrary
-                model strings without pre-registering each one in `models=`.
+                registry lookup, then the agent's `resolve_model_id` capability
+                chain / `infer_model`. Register an instance here (and reference it
+                by key or pass the registered instance) whenever its `model_id`
+                alone wouldn't rebuild it faithfully — e.g. a custom provider,
+                client, or settings. Model-name strings never need registering;
+                to customize how they're built (e.g. a custom provider), use the
+                [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters. Defaults to the agent's own
                 `deps_type`, discovered when the capability binds via `for_agent()`.
@@ -164,7 +158,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self._event_stream_handler = event_stream_handler
         self._extra_models = dict(models) if models else {}
-        self._provider_factory = provider_factory
         self._deps_type = deps_type
 
         # Normalize activity config
@@ -407,11 +400,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         model_id: KnownModelName | str,
         ctx: ModelResolutionContext[AgentDepsT],
     ) -> Model | None:
-        """Map a model-name string to a `Model` instance via the `models=` registry or `provider_factory`.
+        """Map a model-name string to a `Model` instance via the `models=` registry or `infer_model`.
 
-        Strings get resolved through the registry, then the configured `provider_factory`
-        (or the default `infer_model`), so a workflow can accept arbitrary
-        `agent.run(model='openai:gpt-5.2')` values without pre-registering each one in `models=`.
+        Strings get resolved through the registry, then the default `infer_model`, so a
+        workflow can accept arbitrary `agent.run(model='openai:gpt-5.2')` values without
+        pre-registering each one in `models=`. To customize how strings are built (e.g. a
+        custom provider), add a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId]
+        capability before this one — it gets first crack at every string.
         """
         return self._resolve_model_id(model_id)
 
@@ -424,19 +419,19 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         rebuild the same `Model` on the worker side via `_resolve_model_id`.
 
         The `model_id` fallback covers models built from a run-time string (via
-        `resolve_model_id` / `provider_factory`) and models an outer capability
-        swaps in via `before_model_request`: the worker rebuilds them by looking
-        the `model_id` up in the registry, then falling back to `provider_factory`
-        / `infer_model`. This round-trip only reproduces a model that `infer_model`
-        (or the registry under that `model_id`) can rebuild — a pre-built instance
-        with a custom provider, client, or settings that isn't registered in
-        `models=` will not survive it faithfully.
+        `resolve_model_id`) and models an outer capability swaps in via
+        `before_model_request`: the worker rebuilds them by looking the `model_id`
+        up in the registry, then falling back to the `resolve_model_id` capability
+        chain / `infer_model`. This round-trip only reproduces a model that the
+        chain or `infer_model` (or the registry under that `model_id`) can rebuild —
+        a pre-built instance with a custom provider, client, or settings that isn't
+        registered in `models=` will not survive it faithfully.
         """
         for model_id, registered in self._models_by_id.items():
             if registered is model:
                 return None if model_id == 'default' else model_id
         # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → provider_factory → default infer_model).
+        # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
         return model.model_id
 
     def _resolve_model_id(self, model_id: str | None) -> Model:
@@ -449,8 +444,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             return self._models_by_id['default']
         if model_id in self._models_by_id:
             return self._models_by_id[model_id]
-        if self._provider_factory is not None:
-            return infer_model(model_id, provider_factory=self._provider_factory)
         return infer_model(model_id)
 
     async def _resolve_model_for_activity(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
@@ -458,10 +451,9 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         Mirrors the workflow-side resolution in `Agent._resolve_model`: run the agent's
         full `resolve_model_id` capability chain — deps-aware user capabilities like
-        `ResolveModelId` get first crack, and this capability's registry /
-        `provider_factory` resolution acts as the durable backstop — so a model whose
-        provider depends on the run's deps is rebuilt with the *actual* deps on the
-        worker rather than deps-blind.
+        `ResolveModelId` get first crack, and this capability's registry resolution
+        acts as the durable backstop — so a model whose provider depends on the run's
+        deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
         """
         if model_id is None:
             return self._models_by_id['default']

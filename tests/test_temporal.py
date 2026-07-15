@@ -5262,35 +5262,12 @@ async def test_durability_resolve_model_id_uses_models_registry():
     # String matches a registered model → returns that exact instance.
     assert await bound.resolve_model_id('alt', resolution_ctx) is alt
 
-    # String not in registry and no provider_factory → default infer_model path.
+    # String not in registry → default infer_model path. To customize how strings
+    # are built, a `ResolveModelId` capability before this one gets first crack.
     # 'test' is the special string that always works without any provider config.
     fallback = await bound.resolve_model_id('test', resolution_ctx)
     assert fallback is not None
     assert fallback.model_id == 'test:test'
-
-
-async def test_durability_resolve_model_id_uses_provider_factory():
-    """resolve_model_id with a provider_factory builds a Model from any provider:name string."""
-
-    class _StubProvider:
-        def __init__(self, name: str) -> None:  # pragma: lax no cover - only reached when _factory fires
-            self.name = name
-
-    def _factory(name: str) -> Any:  # pragma: lax no cover - infer_model('test') skips provider lookup
-        return _StubProvider(name)
-
-    primary = FunctionModel(_durability_model_fn, model_name='primary')
-    durability = TemporalDurability(provider_factory=_factory, activity_config=BASE_ACTIVITY_CONFIG)
-    agent = Agent(primary, name='provider_factory_test', capabilities=[durability])
-    bound = TemporalDurability.from_agent(agent)
-    assert bound is not None
-
-    # String not in registry → resolve via the provider_factory + infer_model path.
-    # 'test' is the special string mapped to TestModel by default infer_model;
-    # the resulting Model has model_id 'test:test'.
-    resolved = await bound.resolve_model_id('test', ModelResolutionContext(agent=agent, deps=None))
-    assert resolved is not None
-    assert resolved.model_id == 'test:test'
 
 
 async def test_durability_default_string_registered_in_models_becomes_default():
@@ -5437,9 +5414,9 @@ def test_durability_find_model_id_falls_back_to_model_id_string():
     """_find_model_id round-trips runtime-built models via their `model_id` string.
 
     Pre-registered models (default and `models=` extras) match by identity. Runtime
-    models — built via `resolve_model`/`provider_factory` — aren't in the registry,
-    so we send their `model_id` string across the activity boundary; the worker
-    rebuilds them via the same `provider_factory` (or default `infer_model`).
+    models — built from a string via the `resolve_model_id` chain — aren't in the
+    registry, so we send their `model_id` string across the activity boundary; the
+    worker rebuilds them via the same chain (or default `infer_model`).
     """
     m1 = FunctionModel(_durability_model_fn, model_name='registered')
     m_runtime = FunctionModel(_durability_model_fn, model_name='runtime-built')

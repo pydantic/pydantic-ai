@@ -216,24 +216,24 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.2'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, so it's sent to the worker as its `model_id` string and rebuilt there. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those.
 
-To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a concrete model set when it's created.
+To use such model instances inside a workflow, pre-register them by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. You can then reference them by name or by passing the registered instance directly to `agent.run(model=...)`. The agent's own model, set at construction, is always available as the default; the agent must have a model set when it's created.
 
-Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys loaded at startup), you can pass a `provider_factory` to the capability, which receives the provider name and returns a [`Provider`][pydantic_ai.providers.Provider]. For *run-dependent* provider configuration — e.g. per-user credentials carried on the run's `deps` — use the general [`ResolveModelId`](../capabilities.md#resolvemodelid) capability instead.
+Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities.md#resolvemodelid) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
 Here's an example showing how to pre-register and use multiple models:
 
 ```python {title="multi_model_temporal.py" test="skip"}
 import os
-from typing import Any
 
 from temporalio import workflow
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 # Create models from different providers
 default_model = OpenAIResponsesModel('gpt-5.2')
@@ -241,32 +241,24 @@ fast_model = AnthropicModel('claude-sonnet-4-5')
 reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
-# Optional: provider factory for dynamic model configuration.
-# Closes over config loaded at startup; the factory has no access to RunContext.
-def my_provider_factory(provider_name: str) -> Provider[Any]:
-    """Create providers with custom configuration."""
-    if provider_name == 'openai':
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-        return OpenAIProvider(api_key=os.environ['OPENAI_API_KEY'])
-    elif provider_name == 'anthropic':
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
-        return AnthropicProvider(api_key=os.environ['ANTHROPIC_API_KEY'])
-    else:
-        raise ValueError(f'Unknown provider: {provider_name}')
+# Optional: customize how model-name strings are built.
+def resolve_model(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+    if model_id.startswith('openai:'):
+        provider = OpenAIProvider(api_key=os.environ['OPENAI_API_KEY'])
+        return infer_model(model_id, provider_factory=lambda _: provider)
+    return None  # everything else takes the default `infer_model` path
 
 
 agent = Agent(
     default_model,
     name='multi_model_agent',
     capabilities=[
+        ResolveModelId(resolve_model),  # Optional
         TemporalDurability(
             models={
                 'fast': fast_model,
                 'reasoning': reasoning_model,
             },
-            provider_factory=my_provider_factory,  # Optional
         ),
     ],
 )
@@ -283,7 +275,7 @@ class MultiModelWorkflow:
             # Or pass the registered instance directly
             result = await agent.run(prompt, model=fast_model)
         else:
-            # Or pass a model string (uses provider_factory if set)
+            # Or pass a model string (resolved by `ResolveModelId` if it matches)
             result = await agent.run(prompt, model='openai:gpt-5-mini')
         return result.output
 ```
