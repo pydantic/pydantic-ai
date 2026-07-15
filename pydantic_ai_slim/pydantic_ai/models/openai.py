@@ -3621,11 +3621,14 @@ class OpenAIStreamedResponse(StreamedResponse):
 class _ModelResponseStreamedResponse(StreamedResponse):
     """`StreamedResponse` wrapper for pre-built `ModelResponse` objects.
 
-    By default the parts are pre-populated without emitting events, for responses whose content is
-    only read back via `get()` (e.g. a cursor-less background resume). With `_replay_parts=True`
-    (used by `openai_disable_streaming`), each part is instead emitted whole as a single
-    `PartStartEvent` (the base class adds the matching `PartEndEvent`s), so streaming consumers
-    like the AG-UI and Vercel AI adapters keep working without incremental deltas.
+    The parts are always populated up front, so `get()` reports the whole response even if the
+    consumer never iterates or stops early: the response was fully received before this wrapper
+    existed, so a partial `get()` would under-report what the model actually returned (and was
+    billed for). With `_replay_parts=True` (used by `openai_disable_streaming`), each part is
+    additionally emitted whole as a single `PartStartEvent` (the base class adds the matching
+    `PartEndEvent`s), so streaming consumers like the AG-UI and Vercel AI adapters keep working
+    without incremental deltas. Otherwise no events are emitted and the content is only read back
+    via `get()` (e.g. a cursor-less background resume).
     """
 
     _model_response: ModelResponse
@@ -3638,12 +3641,13 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
-        if not self._replay_parts:
-            for index, part in enumerate(self._model_response.parts):
-                self._parts_manager.handle_part(vendor_part_id=index, part=part)
+        for index, part in enumerate(self._model_response.parts):
+            self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._replay_parts:
+            # Re-handling each part by its original index overwrites it in place, so the emitted
+            # `PartStartEvent`s match the parts already populated in `__post_init__`.
             for index, part in enumerate(self._model_response.parts):
                 yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 

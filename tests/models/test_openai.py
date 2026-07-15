@@ -854,7 +854,103 @@ async def test_disable_streaming_events(allow_model_requests: None):
 
     A mock is used rather than a cassette to pin the exact events the wrapper emits from a fixed
     response (a whole part per `PartStartEvent`, no deltas), which is the internal contract the AG-UI
-    and Vercel AI adapters rely on.
+    and Vercel AI adapters rely on. The response covers every part kind an open-weight model served
+    over Chat Completions can produce here: an inline `<think>` block (as Qwen3 via Ollama emits),
+    text, and parallel tool calls.
+    """
+    c = completion_message(
+        ChatCompletionMessage(
+            content='<think>They want the weather in two cities.</think>Let me look that up for you.',
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_1',
+                    function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                    type='function',
+                ),
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_2',
+                    function=Function(arguments='{"city": "Kraków"}', name='get_weather'),
+                    type='function',
+                ),
+            ],
+        ),
+        usage=CompletionUsage(completion_tokens=5, prompt_tokens=3, total_tokens=8),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')], allow_text_output=True)
+
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather in Mexico City and Kraków?')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        params,
+    ) as stream:
+        events = [event async for event in stream]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1, part=TextPart(content='Let me look that up for you.'), previous_part_kind='thinking'
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=1, part=TextPart(content='Let me look that up for you.'), next_part_kind='tool-call'),
+            PartStartEvent(
+                index=2,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=2,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                next_part_kind='tool-call',
+            ),
+            PartStartEvent(
+                index=3,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+                previous_part_kind='tool-call',
+            ),
+            PartEndEvent(
+                index=3,
+                part=ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+            ),
+        ]
+    )
+    assert stream.get() == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='They want the weather in two cities.', id='content', provider_name='openai'),
+                TextPart(content='Let me look that up for you.'),
+                ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
+                ToolCallPart(tool_name='get_weather', args='{"city": "Kraków"}', tool_call_id='call_2'),
+            ],
+            usage=RequestUsage(input_tokens=3, output_tokens=5),
+            model_name='gpt-4o-123',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='123',
+            finish_reason='stop',
+        )
+    )
+
+
+async def test_disable_streaming_get_before_iteration(allow_model_requests: None):
+    """`get()` reports the whole response even if the consumer stops early.
+
+    A mock is used rather than a cassette because this pins internal wrapper behavior: the response
+    is fetched in full (and billed) before replay begins, so a consumer that breaks after the first
+    event must not record a truncated response that drops the tool call the model actually made.
     """
     c = completion_message(
         ChatCompletionMessage(
@@ -868,6 +964,7 @@ async def test_disable_streaming_events(allow_model_requests: None):
                 )
             ],
         ),
+        usage=CompletionUsage(completion_tokens=5, prompt_tokens=3, total_tokens=8),
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -878,43 +975,26 @@ async def test_disable_streaming_events(allow_model_requests: None):
         OpenAIChatModelSettings(openai_disable_streaming=True),
         params,
     ) as stream:
-        events = [event async for event in stream]
+        async for _ in stream:
+            break
 
-    assert events == snapshot(
+        response = stream.get()
+
+    assert response.parts == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='Let me look that up for you.')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartEndEvent(index=0, part=TextPart(content='Let me look that up for you.'), next_part_kind='tool-call'),
-            PartStartEvent(
-                index=1,
-                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
-                previous_part_kind='text',
-            ),
-            PartEndEvent(
-                index=1,
-                part=ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
-            ),
+            TextPart(content='Let me look that up for you.'),
+            ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
         ]
     )
-    assert stream.get() == snapshot(
-        ModelResponse(
-            parts=[
-                TextPart(content='Let me look that up for you.'),
-                ToolCallPart(tool_name='get_weather', args='{"city": "Mexico City"}', tool_call_id='call_1'),
-            ],
-            model_name='gpt-4o-123',
-            timestamp=IsDatetime(),
-            provider_name='openai',
-            provider_url='https://api.openai.com/v1',
-            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-            provider_response_id='123',
-            finish_reason='stop',
-        )
-    )
+    assert response.usage == snapshot(RequestUsage(input_tokens=3, output_tokens=5))
 
 
 async def test_disable_streaming(allow_model_requests: None):
-    """Streaming an agent run with `openai_disable_streaming` still drives tools and final output."""
+    """Streaming an agent run with `openai_disable_streaming` still drives tools and final output.
+
+    A mock is used rather than a cassette to replay a fixed two-response sequence, and because the
+    mock asserts the request was made with `stream=False`, which a cassette would not reliably catch.
+    """
     responses = [
         completion_message(
             ChatCompletionMessage(
@@ -1005,6 +1085,8 @@ async def test_disable_streaming_cancel(allow_model_requests: None):
     """Cancelling a non-streamed replay is a no-op that does not raise.
 
     The full response was already fetched before replay, so there is no live connection to close.
+    A mock is used rather than a cassette because this pins the wrapper's teardown behavior, which
+    no recorded HTTP exchange would exercise.
     """
     c = completion_message(ChatCompletionMessage(content='hello world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)

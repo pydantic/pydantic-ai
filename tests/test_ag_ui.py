@@ -3918,16 +3918,16 @@ async def test_event_stream_multiple_responses_with_tool_calls():
 async def test_non_streamed_response_translates(allow_model_requests: None) -> None:
     """A non-streamed response (`openai_disable_streaming`) translates to AG-UI events.
 
-    The model returns a text-plus-tool-call response and a final text response, but with streaming
-    disabled each is replayed as whole parts with no deltas (see
+    The model returns a thinking-plus-text-plus-tool-call response and a final text response, but
+    with streaming disabled each is replayed as whole parts with no deltas (see
     `tests/models/test_openai.py::test_disable_streaming_events`). This drives a real agent run
-    through the AG-UI adapter to verify text, tool call, tool result, and final text all produce the
-    expected events.
+    through the AG-UI adapter to verify thinking, text, tool call, tool result, and final text all
+    produce the expected events.
     """
     responses = [
         completion_message(
             ChatCompletionMessage(
-                content='Let me check the weather for you.',
+                content='<think>They want the weather.</think>Let me check the weather for you.',
                 role='assistant',
                 tool_calls=[
                     ChatCompletionMessageFunctionToolCall(
@@ -3958,6 +3958,11 @@ async def test_non_streamed_response_translates(allow_model_requests: None) -> N
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'They want the weather.'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),

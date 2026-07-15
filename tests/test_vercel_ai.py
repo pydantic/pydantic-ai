@@ -1681,16 +1681,16 @@ async def test_event_stream_back_to_back_text():
 async def test_non_streamed_response_translates(allow_model_requests: None):
     """A non-streamed response (`openai_disable_streaming`) translates to Vercel AI chunks.
 
-    The model returns a text-plus-tool-call response and a final text response, but with streaming
-    disabled each is replayed as whole parts with no deltas (see
+    The model returns a thinking-plus-text-plus-tool-call response and a final text response, but
+    with streaming disabled each is replayed as whole parts with no deltas (see
     `tests/models/test_openai.py::test_disable_streaming_events`). This drives a real agent run
-    through the Vercel AI adapter to verify text, tool call, tool result, and final text all produce
-    the expected chunks.
+    through the Vercel AI adapter to verify thinking, text, tool call, tool result, and final text
+    all produce the expected chunks.
     """
     responses = [
         completion_message(
             ChatCompletionMessage(
-                content='Let me check the weather for you.',
+                content='<think>They want the weather.</think>Let me check the weather for you.',
                 role='assistant',
                 tool_calls=[
                     ChatCompletionMessageFunctionToolCall(
@@ -1724,6 +1724,22 @@ async def test_non_streamed_response_translates(allow_model_requests: None):
         [
             {'type': 'start'},
             {'type': 'start-step'},
+            {
+                'type': 'reasoning-start',
+                'id': (reasoning_id := IsSameStr()),
+                'providerMetadata': {'pydantic_ai': {'id': 'content', 'provider_name': 'openai'}},
+            },
+            {
+                'type': 'reasoning-delta',
+                'id': reasoning_id,
+                'delta': 'They want the weather.',
+                'providerMetadata': {'pydantic_ai': {'id': 'content', 'provider_name': 'openai'}},
+            },
+            {
+                'type': 'reasoning-end',
+                'id': reasoning_id,
+                'providerMetadata': {'pydantic_ai': {'id': 'content', 'provider_name': 'openai'}},
+            },
             {'type': 'text-start', 'id': (message_id := IsSameStr())},
             {'type': 'text-delta', 'delta': 'Let me check the weather for you.', 'id': message_id},
             {'type': 'text-end', 'id': message_id},
