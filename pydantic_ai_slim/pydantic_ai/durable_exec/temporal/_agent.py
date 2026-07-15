@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
@@ -128,11 +129,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
             )
-        # start_to_close_timeout is required
-        activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        # start_to_close_timeout is required. Normalize on copies: mutating the caller's
+        # `ActivityConfig` or a `RetryPolicy` shared with other activities would leak the
+        # non-retryable entries into them.
+        activity_config = (
+            copy.copy(activity_config)
+            if activity_config
+            else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        )
 
         # `pydantic_ai.exceptions.UserError` and `pydantic.errors.PydanticUserError` are not retryable
-        retry_policy = activity_config.get('retry_policy') or RetryPolicy()
+        retry_policy = copy.copy(activity_config.get('retry_policy') or RetryPolicy())
         retry_policy.non_retryable_error_types = [
             *(retry_policy.non_retryable_error_types or []),
             UserError.__name__,

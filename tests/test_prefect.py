@@ -1762,6 +1762,66 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
+async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
+    """`agent.iter(toolsets=...)` inside a user flow is guarded like `run(toolsets=...)`.
+
+    The rejection lives in run setup (`get_wrapper_toolset`), which every entry point routes
+    through, rather than only in the patched `run`/`run_sync` — otherwise `iter`/`run_stream`
+    inside a flow would execute the toolset's tools un-tasked.
+    """
+    agent = Agent(TestModel(), name='durability_reject_iter', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        async with agent.iter('Hello', toolsets=[FunctionToolset(id='iter_fn')]):
+            pass  # pragma: no cover — run setup raises before any node runs
+
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+        await run_agent()
+
+
+async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
+    """A toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+
+    Construction-time capability toolsets are wrapped by `for_agent` (see the
+    capability-contributed test above); a per-run capability's toolset arrives after that
+    wrapping has happened, so its tools would run un-tasked inside the flow.
+    """
+    agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
+
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+        await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+
+
+def test_prefect_durability_rejects_duplicate_toolset_id() -> None:
+    """Two distinct toolsets under one `id` are rejected at binding time.
+
+    The registry maps `id` → task wrapper, so a duplicate would silently replace the first
+    entry and route both toolsets' calls through the last one's tasks.
+    """
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'dup'"):
+        Agent(
+            _durability_fn_model,
+            name='durability_dup_toolset',
+            toolsets=[FunctionToolset(id='dup'), FunctionToolset(id='dup')],
+            capabilities=[PrefectDurability()],
+        )
+
+
+def test_prefect_durability_same_toolset_instance_reused() -> None:
+    """The same toolset instance appearing twice maps to one wrapper, not an `id` conflict."""
+    toolset = FunctionToolset(id='shared_fn')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_shared_toolset',
+        toolsets=[toolset, toolset],
+        capabilities=[PrefectDurability()],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert sorted(bound._prefect_toolsets_by_id) == ['<agent>', 'shared_fn']  # pyright: ignore[reportPrivateUsage]
+
+
 def test_prefect_durability_auto_wraps_run_sync_as_flow() -> None:
     """`agent.run_sync` outside an active flow auto-wraps in one."""
     agent = Agent(_durability_fn_model, name='durability_auto_sync', capabilities=[PrefectDurability()])
@@ -2091,11 +2151,11 @@ async def test_prefect_durability_event_stream_handler_runs_per_event_task() -> 
     assert invocations == len(events_received)
 
 
-# --- Continuation chains (suspended → complete) resolve inside the task ---
+# --- Continuation chains (suspended → complete) run one task per segment ---
 #
 # When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
-# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
-# so under `PrefectDurability` the whole suspended → complete chain runs inside ONE model
+# continuation loop in the innermost `model_request`/`model_request_stream` helpers runs
+# flow-side under `PrefectDurability`, dispatching each segment through its own model
 # request task. These tests use a scripted model (no cassettes: `FunctionModel` can't emit
 # suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
 

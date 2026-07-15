@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
@@ -31,7 +31,7 @@ from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestCon
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._toolset import PrefectWrapperToolset, prefectify_toolset as _default_prefectify_toolset
 from ._types import TaskConfig, default_task_config
@@ -216,7 +216,7 @@ class PrefectDurability(BaseDurability[AgentDepsT]):
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
-        self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        self._prefect_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         # Populated by for_agent when the capability is attached to an agent.
         self._request_task: Any = None
         self._request_stream_task: Any = None
@@ -354,13 +354,11 @@ class PrefectDurability(BaseDurability[AgentDepsT]):
             return run_coro_as_sync(original_run(*args, **kwargs))
 
         async def patched_run(*args: Any, **kwargs: Any) -> Any:
-            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if FlowRunContext.get() is not None:
                 return await original_run(*args, **kwargs)
             return cast(Any, await _auto_run_flow(*args, **kwargs))
 
         def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
-            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if FlowRunContext.get() is not None:  # pragma: lax no cover
                 return original_run_sync(*args, **kwargs)
             return cast(Any, _auto_run_sync_flow(*args, **kwargs))
@@ -369,23 +367,54 @@ class PrefectDurability(BaseDurability[AgentDepsT]):
         agent.run = patched_run
         agent.run_sync = patched_run_sync
 
-    def _reject_runtime_toolsets(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None) -> None:
-        """Reject executing toolsets added per-run.
+    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Reject executing toolsets added per-run inside a flow.
 
-        Every run on an agent with `PrefectDurability` is a Prefect flow. Prefect wraps
-        both function tools and MCP servers in tasks registered up front, and dynamic
-        toolsets can't be introspected ahead of time, so a per-run executing toolset
-        would run un-tasked inside the flow — rejected explicitly, like the deprecated
-        `PrefectAgent` does. Non-executing toolsets like `ExternalToolset` are allowed.
+        The run toolset assembled by the agent contains construction-time toolsets (whose
+        function tools and MCP I/O `for_agent` wrapped as tasks) plus any per-run extras —
+        `run(toolsets=...)`, or toolsets contributed by per-run capabilities/specs. An
+        executing extra would run un-tasked inside the flow and re-execute on retries, so
+        it's rejected explicitly, like the deprecated `PrefectAgent` does. Non-executing
+        toolsets like `ExternalToolset` are allowed. Checked here in run setup rather than
+        in the patched `run`/`run_sync` so that `iter`/`run_stream` inside a user flow are
+        covered too; only applies inside a flow — outside one the capability is transparent
+        and any toolset is fine.
         """
+        if FlowRunContext.get() is None:
+            return
+
+        construction_leaves: set[int] = set()
+        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+            for agent_toolset in self._agent.toolsets:
+                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
+
+        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
+
+        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
+            if id(leaf) not in construction_leaves:
+                runtime_leaves.append(leaf)
+
+        toolset.apply(collect)
         reject_unsupported_runtime_toolsets(
-            toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
+            runtime_leaves, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
         )
 
     def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""
 
         def prefectify(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            if ts.id is not None and (existing := self._prefect_toolsets_by_id.get(ts.id)) is not None:
+                if existing.wrapped is ts:
+                    # The same toolset instance can appear in more than one place in the
+                    # tree; reuse its wrapper.
+                    return existing
+                # A distinct toolset under an already-registered `id` would silently
+                # replace it in the registry and route both toolsets' calls to one wrapper.
+                raise UserError(
+                    f'Two toolsets have the same `id` {ts.id!r}. Toolset `id`s must be unique among all '
+                    "toolsets registered with the same agent, as they identify the toolset's tasks "
+                    'within the flow.'
+                )
             wrapped = _default_prefectify_toolset(
                 ts,
                 self._mcp_task_config,
@@ -444,6 +473,8 @@ class PrefectDurability(BaseDurability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Prefect-wrapped versions."""
+        self._reject_runtime_toolsets(toolset)
+
         if not self._prefect_toolsets_by_id:  # pragma: no cover
             # An agent always has its built-in `<agent>` `FunctionToolset`, which is registered
             # here, so this is never empty at run time; the guard mirrors DBOS/Temporal for parity.

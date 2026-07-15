@@ -46,7 +46,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
@@ -325,9 +325,15 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._deps_type = deps_type
 
-        # Normalize activity config
-        activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
-        retry_policy = activity_config.get('retry_policy') or RetryPolicy()
+        # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
+        # `RetryPolicy` shared with other activities would leak the non-retryable entries into
+        # them, and repeated construction from the same config would accumulate duplicates.
+        activity_config = (
+            copy.copy(activity_config)
+            if activity_config
+            else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        )
+        retry_policy = copy.copy(activity_config.get('retry_policy') or RetryPolicy())
         retry_policy.non_retryable_error_types = [
             *(retry_policy.non_retryable_error_types or []),
             UserError.__name__,
@@ -351,7 +357,7 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         # These are populated by for_agent()
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
-        self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        self._temporal_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
         self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
 
@@ -528,6 +534,20 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                     'need to have a unique `id` in order to be used with Temporal. '
                     "The ID will be used to identify the toolset's activities within the workflow."
+                )
+
+            existing = self._temporal_toolsets_by_id.get(ts_id)
+            if existing is not None:
+                if existing.wrapped is ts:
+                    # The same toolset instance can appear in more than one place in the
+                    # tree; reuse its wrapper so its activities register exactly once.
+                    return existing
+                # A distinct toolset under an already-registered `id` would silently
+                # replace it in the registry and route both toolsets' calls to one wrapper.
+                raise UserError(
+                    f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
+                    "toolsets registered with the same agent, as they identify the toolset's activities "
+                    'within the workflow.'
                 )
 
             wrapped = _default_temporalize_toolset(

@@ -5213,6 +5213,66 @@ def test_durability_temporal_activities_with_toolsets():
     assert len(bound.temporal_activities) == 5
 
 
+def test_durability_duplicate_toolset_id_rejected():
+    """Two distinct toolsets under one `id` are rejected at binding time.
+
+    The registry maps `id` → activity wrapper, so a duplicate would silently replace the
+    first entry and route both toolsets' calls through the last one's activities.
+    """
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'dup'"):
+        Agent(
+            _durability_fn_model,
+            name='durability_dup_toolset',
+            toolsets=[FunctionToolset(id='dup'), FunctionToolset(id='dup')],
+            capabilities=[TemporalDurability()],
+        )
+
+
+def test_durability_same_toolset_instance_reused():
+    """The same toolset instance appearing twice maps to one wrapper, not an `id` conflict.
+
+    Its activities must register with the worker exactly once — Temporal rejects duplicate
+    activity names at worker start.
+    """
+    ts = FunctionToolset[Any](id='shared_fn')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_shared_toolset',
+        toolsets=[ts, ts],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    # 3 base activities + 1 for <agent> FunctionToolset + 1 (not 2) for the shared toolset
+    assert len(bound.temporal_activities) == 5
+
+
+def test_durability_activity_config_not_mutated():
+    """The capability normalizes the retry policy on copies of the caller's config.
+
+    A `RetryPolicy` (or `ActivityConfig`) shared with other Temporal activities must not
+    gain the capability's non-retryable error types, and constructing multiple capabilities
+    from the same config must not accumulate duplicate entries.
+    """
+    retry_policy = RetryPolicy(non_retryable_error_types=['MyError'])
+    config = ActivityConfig(start_to_close_timeout=timedelta(seconds=60), retry_policy=retry_policy)
+
+    durability = TemporalDurability(activity_config=config)
+    TemporalDurability(activity_config=config)
+
+    assert retry_policy.non_retryable_error_types == ['MyError']
+    assert config.get('retry_policy') is retry_policy
+    normalized = durability.activity_config.get('retry_policy')
+    assert normalized is not None
+    assert normalized is not retry_policy
+    assert normalized.non_retryable_error_types == [
+        'MyError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+    ]
+
+
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 

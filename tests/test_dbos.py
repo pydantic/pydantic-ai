@@ -2559,11 +2559,88 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
 
 
-# --- Continuation chains (suspended → complete) resolve inside the step ---
+async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -> None:
+    """`agent.iter(toolsets=...)` inside a user workflow is guarded like `run(toolsets=...)`.
+
+    The rejection lives in run setup (`get_wrapper_toolset`), which every entry point routes
+    through, rather than only in the patched `run`/`run_sync` — otherwise `iter`/`run_stream`
+    inside a workflow would execute the MCP toolset's I/O un-checkpointed.
+    """
+    agent = Agent(_durability_fn_model, name='durability_runtime_mcp_iter', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        async with agent.iter(
+            'Hello',
+            toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='iter_mcp')],
+        ):
+            pass  # pragma: no cover — run setup raises before any node runs
+
+    with pytest.raises(
+        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+    ):
+        await run_agent()
+
+
+def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+    return FunctionToolset()  # pragma: no cover — rejected before the factory is resolved
+
+
+async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) -> None:
+    """An executing toolset contributed by a per-run capability is rejected like `run(toolsets=...)`.
+
+    Construction-time capability toolsets are wrapped by `for_agent` (see the
+    capability-contributed test above); a per-run capability's toolset arrives after that
+    wrapping has happened, so it would run un-checkpointed inside the workflow. A
+    `DynamicToolset` with a module-level factory is used because DBOS pickles the
+    auto-workflow's kwargs — an `MCPToolset`'s live client fails that serialization
+    before run setup is even reached.
+    """
+    agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
+
+    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+        await agent.run(
+            'Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))]
+        )
+
+
+async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
+    """Two distinct MCP toolsets under one `id` are rejected at binding time.
+
+    The registry maps `id` → step wrapper, so a duplicate would silently replace the first
+    entry and route both toolsets' calls through the last one's steps.
+    """
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'dup'"):
+        Agent(
+            _durability_fn_model,
+            name='durability_dup_mcp',
+            toolsets=[
+                MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='dup'),
+                MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='dup'),
+            ],
+            capabilities=[DBOSDurability()],
+        )
+
+
+async def test_dbos_durability_same_toolset_instance_reused(dbos: DBOS) -> None:
+    """The same MCP toolset instance appearing twice maps to one wrapper, not an `id` conflict."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='shared_mcp')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_shared_mcp',
+        toolsets=[mcp_toolset, mcp_toolset],
+        capabilities=[DBOSDurability()],
+    )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+    assert list(bound._dbos_toolsets_by_id) == ['shared_mcp']  # pyright: ignore[reportPrivateUsage]
+
+
+# --- Continuation chains (suspended → complete) run one step per segment ---
 #
 # When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
-# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
-# so under `DBOSDurability` the whole suspended → complete chain runs inside ONE model
+# continuation loop in the innermost `model_request`/`model_request_stream` helpers runs
+# workflow-side under `DBOSDurability`, dispatching each segment through its own model
 # request step. These tests use a scripted model (no cassettes: `FunctionModel` can't emit
 # suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
 

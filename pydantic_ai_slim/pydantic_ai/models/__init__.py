@@ -1084,16 +1084,17 @@ class CompletedStreamedResponse(StreamedResponse):
         # Buffered events were already produced by the live stream's `__aiter__`,
         # which means they include `PartEndEvent`s. Yield them directly so the
         # parent `__aiter__` doesn't re-inject PartEnds (which would lookup parts
-        # in our empty `_parts_manager` and crash). Still register `PartStartEvent`s
-        # with the manager for downstream consumers that query it.
+        # in our empty `_parts_manager` and crash). The manager is deliberately left
+        # empty: it isn't consulted on this path (`get()` returns the complete
+        # response, and the parent `__aiter__` that reads the manager is bypassed),
+        # and replaying only part of each event's effect into it would leave it
+        # subtly out of sync with the replayed events.
         if self._event_iterator is None:
             self._event_iterator = self._iter_buffered(self._events)
         return self._event_iterator
 
     async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
         for event in events:
-            if isinstance(event, PartStartEvent):
-                self._parts_manager.handle_part(vendor_part_id=None, part=event.part)
             yield event
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
