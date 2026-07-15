@@ -1498,7 +1498,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
+            toolset,
+            root_capability=run_capability,
+            default_max_retries=effective_tool_retries_resolved,
+            timeout=self._tool_timeout,
         )
 
         # Build instructions with per-run capability contributions
@@ -2879,6 +2882,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
+
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
