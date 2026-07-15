@@ -210,6 +210,26 @@ def test_outlook_uses_latest_timestamp_scanning_from_end():
     assert prompt_cache_outlook(history, retention=timedelta(minutes=5), now=NOW) == 'warm'
 
 
+def test_outlook_ignores_trailing_request_timestamp():
+    # Inside an agent run, the just-appended request is timestamped *before* history processors see
+    # it. It hasn't touched the provider's cache, so it must not reset the idle clock — the anchor
+    # is the last *response*. Regression test for the cold branch never firing in processors.
+    at = NOW - timedelta(minutes=30)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=at),
+        ModelResponse(parts=[TextPart(content='Hello!')], timestamp=at),
+        ModelRequest(parts=[UserPromptPart(content='Again')], timestamp=NOW),  # just appended, not sent
+    ]
+    assert prompt_cache_outlook(history, retention=timedelta(minutes=5), now=NOW) == 'cold'
+
+
+def test_outlook_unknown_for_request_only_history_with_timestamp():
+    # A timestamped request with no response after it never reached the provider, so there is no
+    # cache to be warm or cold about.
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=NOW)]
+    assert prompt_cache_outlook(history, retention=timedelta(minutes=5), now=NOW) == 'unknown'
+
+
 # ---- Outlook: timezone handling ----------------------------------------------------------
 
 

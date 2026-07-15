@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
-from ..messages import CachePoint, ModelRequest, UserPromptPart
+from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
@@ -218,9 +218,11 @@ def prompt_cache_outlook(
     (compaction, pruning, repair). When the outlook is `'cold'` the next request pays a full prefix
     re-write anyway, so the marginal cache cost of mutating history right now is ~zero.
 
-    The prediction compares the most recent timestamp in `messages` (a [`ModelResponse.timestamp`][pydantic_ai.messages.ModelResponse.timestamp],
-    or a [`ModelRequest.timestamp`][pydantic_ai.messages.ModelRequest.timestamp] when present) against `now`:
-    an idle gap within the retention window is `'warm'`, a larger gap is `'cold'`.
+    The prediction compares the most recent [`ModelResponse.timestamp`][pydantic_ai.messages.ModelResponse.timestamp]
+    in `messages` against `now`: an idle gap within the retention window is `'warm'`, a larger gap is `'cold'`.
+    Responses are the anchor because they mark the provider's last confirmed use of the cache — a request that
+    has no response after it (like the just-appended request a [history processor](../message-history.md#processing-message-history)
+    sees, which hasn't been sent yet) never touched the cache, so its timestamp must not reset the idle clock.
 
     Args:
         messages: The message history the next request would be built on, oldest first.
@@ -242,7 +244,7 @@ def prompt_cache_outlook(
     if retention is None:
         return 'unknown'
 
-    last_timestamp = _last_message_timestamp(messages)
+    last_timestamp = _last_response_timestamp(messages)
     if last_timestamp is None:
         return 'unknown'
 
@@ -275,13 +277,15 @@ def _max_cache_point_ttl(messages: Sequence[ModelMessage]) -> timedelta | None:
     return max(ttls) if ttls else None
 
 
-def _last_message_timestamp(messages: Sequence[ModelMessage]) -> datetime | None:
-    """The most recent timestamp in the history, scanning from the end.
+def _last_response_timestamp(messages: Sequence[ModelMessage]) -> datetime | None:
+    """The most recent `ModelResponse` timestamp in the history, scanning from the end.
 
-    `ModelResponse` always carries a timestamp; `ModelRequest.timestamp` is `None` for requests that
-    haven't been sent yet or were deserialized from an old format, so we skip those and keep looking back.
+    Responses mark the provider's last confirmed use of the cache. Requests are deliberately not
+    considered: inside an agent run, the just-appended `ModelRequest` is timestamped *before* history
+    processors see it, so anchoring on it would make the history look permanently warm — and a request
+    with no response after it never reached the provider's cache in the first place.
     """
     for message in reversed(messages):
-        if (timestamp := message.timestamp) is not None:
-            return timestamp
+        if isinstance(message, ModelResponse):
+            return message.timestamp
     return None
