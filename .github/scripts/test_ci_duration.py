@@ -4,6 +4,8 @@ import sys
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 import ci_duration
@@ -147,7 +149,7 @@ def test_collect_baselines_skips_unavailable_historical_run():
     assert baselines['job=test / runner=github-hosted / py=3.10 / extra=all-extras'].sample_size == 10
 
 
-def test_collect_baselines_stops_after_time_budget():
+def test_collect_baselines_stops_after_time_budget(monkeypatch: pytest.MonkeyPatch):
     class StubGitHubClient(ci_duration.GitHubClient):
         def request_paginated(self, path: str, *, max_items: int | None = None) -> list[ci_duration.JsonObject]:
             if path == 'actions/workflows/ci.yml/runs?branch=main&event=push&status=success':
@@ -162,18 +164,10 @@ def test_collect_baselines_stops_after_time_budget():
                 return []
             raise RuntimeError(f'Unexpected path: {path}')
 
-    monotonic_values = [0.0, ci_duration.BASELINE_COLLECTION_MAX_SECONDS]
-    original_monotonic = ci_duration.time.monotonic
+    # Force the deadline into the past so the first loop guard always trips, rather than patching the
+    # process-global time.monotonic (which any concurrent caller in the worker can desync).
+    monkeypatch.setattr(ci_duration, 'BASELINE_COLLECTION_MAX_SECONDS', -1.0)
 
-    def monotonic() -> float:
-        if monotonic_values:
-            return monotonic_values.pop(0)
-        return ci_duration.BASELINE_COLLECTION_MAX_SECONDS
-
-    ci_duration.time.monotonic = monotonic
-    try:
-        baselines = ci_duration.collect_baselines(StubGitHubClient('pydantic/pydantic-ai', 'token'), 'current-sha')
-    finally:
-        ci_duration.time.monotonic = original_monotonic
+    baselines = ci_duration.collect_baselines(StubGitHubClient('pydantic/pydantic-ai', 'token'), 'current-sha')
 
     assert baselines == {}
