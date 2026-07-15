@@ -32,8 +32,18 @@ class RaiseContentFilterError(AbstractCapability[AgentDepsT]):
         response: ModelResponse,
     ) -> ModelResponse:
         if response.finish_reason == 'content_filter':
+            details = response.provider_details or {}
             body = ModelMessagesTypeAdapter.dump_json([response]).decode()
-            message = "Content filter triggered. Finish reason: 'content_filter'"
+
+            if reason := details.get('finish_reason'):
+                message = f"Content filter triggered. Finish reason: '{reason}'"
+            elif reason := details.get('block_reason'):
+                message = f"Content filter triggered. Block reason: '{reason}'"
+            elif refusal := details.get('refusal'):
+                message = f'Content filter triggered. Refusal: {refusal!r}'
+            else:  # pragma: no cover
+                message = 'Content filter triggered.'
+
             raise ContentFilterError(message, body=body)
 
         return response

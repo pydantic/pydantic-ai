@@ -411,7 +411,7 @@ print(result.output)
     responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
     catches by default), and empty responses are retried. A response handler is useful for custom
     checks beyond these built-in behaviors. To also raise on `content_filter` responses that still carry
-    partial or refusal text, add the [`RaiseContentFilterError`](../capabilities.md#raisecontentfiltererror) capability.
+    partial or refusal text, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 

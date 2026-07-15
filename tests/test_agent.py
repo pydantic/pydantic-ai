@@ -11796,6 +11796,75 @@ async def test_raise_content_filter_error_capability_noop_for_other_finish_reaso
     assert result.output == 'Finished content.'
 
 
+async def test_raise_content_filter_error_capability_streaming():
+    """The capability raises ContentFilterError on the streaming path too."""
+
+    class ContentFilterStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=TextPart(content='Partially generated content...'),
+            )
+            self.finish_reason = 'content_filter'
+            self.provider_details = {'finish_reason': 'content_filter'}
+
+        @property
+        def model_name(self) -> str:
+            return 'test-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ContentFilterStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:  # pragma: no cover
+            return 'test-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='Partially generated content...')])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            yield ContentFilterStreamedResponse(model_request_parameters=model_request_parameters)
+
+    agent = Agent(ContentFilterStreamModel(), capabilities=[RaiseContentFilterError()])
+
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
+        async with agent.run_stream('Trigger filter') as stream:
+            await stream.get_output()
+
+
 async def test_agent_allows_none_output_empty_response():
     """Test that Agent(output_type=str | None) succeeds on empty response."""
 
