@@ -98,6 +98,8 @@ This is useful for attaching structured data to the frontend alongside the tool 
 
 When targeting AI SDK v6 or later, Pydantic AI also emits a transient `data-usage` chunk at the end of each model response whenever that response includes non-empty [`RequestUsage`][pydantic_ai.usage.RequestUsage] data. This makes per-request token usage available to the frontend during multi-step runs without waiting for the final aggregated run result.
 
+As the chunk is [transient](https://ai-sdk.dev/docs/ai-sdk-ui/streaming-data#transient-data-parts), it is read from the `onData` callback of `useChat` and is not added to the message history, so it never shows up in `message.parts`. Its payload holds the non-default [`RequestUsage`][pydantic_ai.usage.RequestUsage] fields, like `input_tokens` and `output_tokens`.
+
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
