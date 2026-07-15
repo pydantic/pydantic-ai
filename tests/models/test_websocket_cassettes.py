@@ -14,7 +14,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-    from .conftest import _RecordingConnect  # pyright: ignore[reportPrivateUsage]
+    from .conftest import _RecordingConnect, _ws_cassette_name_for  # pyright: ignore[reportPrivateUsage]
     from .websocket_cassettes import (
         CassetteInteraction,
         RecordingWebSocket,
@@ -26,6 +26,15 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='websockets/pyyaml not installed'),
 ]
+
+
+def test_ws_cassette_name_for_function(request: pytest.FixtureRequest) -> None:
+    assert _ws_cassette_name_for(request) == 'test_ws_cassette_name_for_function'
+
+
+class TestWebSocketCassetteName:
+    def test_class_method(self, request: pytest.FixtureRequest) -> None:
+        assert _ws_cassette_name_for(request) == 'TestWebSocketCassetteName.test_class_method'
 
 
 def test_plan_none_mode_with_cassette() -> None:

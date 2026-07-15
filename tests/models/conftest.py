@@ -62,6 +62,15 @@ def _ws_cassette_dir_for(request: pytest.FixtureRequest) -> Path:
     return test_path.parent / 'cassettes' / test_path.stem
 
 
+def _ws_cassette_name_for(request: pytest.FixtureRequest) -> str:
+    """Derive the cassette name from the requesting test, matching VCR convention."""
+    test_name = cast(str, request.node.name)  # pyright: ignore[reportUnknownMemberType]
+    test_class = cast(object | None, request.cls)  # pyright: ignore[reportUnknownMemberType]
+    test_class_name = cast(str | None, getattr(test_class, '__name__', None))
+    cassette_name = f'{test_class_name}.{test_name}' if test_class_name else test_name
+    return sanitize_filename(cassette_name, 240)
+
+
 def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
     try:
         return cast(Any, request.config).getoption('record_mode')
@@ -108,7 +117,7 @@ def openai_ws_model(
     allow_model_requests: None,
 ) -> Iterator[OpenAIResponsesModel]:
     """OpenAI Responses model backed by WebSocket cassettes."""
-    cassette_name = sanitize_filename(request.node.name, 240)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    cassette_name = _ws_cassette_name_for(request)
     cassette_path = _ws_cassette_dir_for(request) / f'{cassette_name}.yaml'
     record_mode = _get_record_mode(request)
 
