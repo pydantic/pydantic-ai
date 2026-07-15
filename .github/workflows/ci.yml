@@ -171,7 +171,7 @@ jobs:
       # `stsb_bert_tiny_model` fixture). On a sustained HF outage the cache stays
       # cold and those tests skip instead of erroring the whole job.
       - name: pre-download sentence-transformers test model
-        if: matrix.install.name == 'all-extras'
+        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
@@ -261,6 +261,7 @@ jobs:
       # Warm the HF cache out-of-band (see the `test` job) so the ST tests load
       # the model offline from disk instead of revalidating it against HF Hub.
       - name: pre-download sentence-transformers test model
+        if: matrix.python-version != '3.14'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
