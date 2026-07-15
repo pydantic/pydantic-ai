@@ -760,6 +760,8 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 
 #### Scheduling maintenance into cache-cold windows
 
+See [Prompt Caching](prompt-caching.md) for the full prefix-stability contract and monitoring guidance.
+
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 
 Providers publish retention windows for their prompt caches. Pydantic AI records the documented expectation boundary at the provider layer: 5 minutes for Anthropic, 10 minutes for most OpenAI models, and 30 minutes for GPT-5.6. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses [`ModelProfile.prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention] to predict, from a message history alone, whether the next request is likely to hit a warm cache:

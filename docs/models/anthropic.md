@@ -218,7 +218,7 @@ The `remaining` field on `task_budget` is for *client-side* compaction patterns 
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. See [Prompt Caching](../prompt-caching.md) for Pydantic AI's cross-provider prefix-stability contract and monitoring guidance. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
 
 ### Automatic Caching
 
