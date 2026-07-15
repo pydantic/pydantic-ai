@@ -433,6 +433,7 @@ def test_request_usage_basics():
 
 
 def test_cache_hit_ratio():
+    """Pure arithmetic on usage fields -- no model request to record."""
     assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
     assert RequestUsage().cache_hit_ratio == 0.0
     assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
