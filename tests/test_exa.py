@@ -240,6 +240,10 @@ def test_find_similar_tool_is_deprecated(exa_api_key: str):
     assert tool.name == 'exa_find_similar'
     assert len(caught) == 1
     assert isinstance(caught[0].message, PydanticAIDeprecationWarning)
+    assert str(caught[0].message) == snapshot(
+        "`exa-py` has deprecated `find_similar`, so Pydantic AI's `find_similar` support is deprecated as well. "
+        'Use `exa_search_tool` with a query like `pages similar to <URL>` instead.'
+    )
     assert Path(caught[0].filename) == Path(__file__)
 
 

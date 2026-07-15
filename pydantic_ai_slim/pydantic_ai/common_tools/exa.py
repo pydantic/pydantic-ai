@@ -121,7 +121,8 @@ def _make_client(api_key: str | None, client: AsyncExa | None) -> AsyncExa:
 
 
 _FIND_SIMILAR_DEPRECATION_MESSAGE = (
-    '`exa_find_similar_tool` is deprecated as `find_similar` is deprecated in `exa-py`; use `exa_search_tool` instead.'
+    "`exa-py` has deprecated `find_similar`, so Pydantic AI's `find_similar` support is deprecated as well. "
+    'Use `exa_search_tool` with a query like `pages similar to <URL>` instead.'
 )
 
 
