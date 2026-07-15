@@ -4913,6 +4913,97 @@ async def test_youtube_video_url_without_vendor_metadata():
     assert content[0] == {'file_data': {'file_uri': 'https://youtu.be/dQw4w9WgXcQ', 'mime_type': 'video/mp4'}}
 
 
+async def test_binary_content_with_media_resolution_vendor_metadata():
+    """`vendor_metadata['media_resolution']` is forwarded as a per-Part field, not into `video_metadata`."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                BinaryContent(
+                    data=b'\x00\x00\x00\x00',
+                    media_type='video/mp4',
+                    vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}},
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert 'video_metadata' not in content[0]
+
+
+async def test_binary_content_with_media_resolution_and_video_metadata_vendor_metadata():
+    """`media_resolution` is split out; remaining keys still go to `video_metadata`."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                BinaryContent(
+                    data=b'\x00\x00\x00\x00',
+                    media_type='video/mp4',
+                    vendor_metadata={
+                        'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+                        'start_offset': '2s',
+                        'end_offset': '10s',
+                    },
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert content[0]['video_metadata'] == {'start_offset': '2s', 'end_offset': '10s'}
+
+
+async def test_binary_content_vendor_metadata_without_media_resolution_unchanged():
+    """Existing behavior is unchanged when `media_resolution` is absent."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                BinaryContent(
+                    data=b'\x00\x00\x00\x00',
+                    media_type='video/mp4',
+                    vendor_metadata={'start_offset': '2s', 'end_offset': '10s'},
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert 'media_resolution' not in content[0]
+    assert content[0]['video_metadata'] == {'start_offset': '2s', 'end_offset': '10s'}
+
+
+async def test_binary_content_vendor_metadata_not_mutated():
+    """Forwarding `media_resolution` does not mutate the user's `vendor_metadata` dict."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    vendor_metadata = {
+        'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+        'start_offset': '2s',
+    }
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[BinaryContent(data=b'\x00\x00\x00\x00', media_type='video/mp4', vendor_metadata=vendor_metadata)]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert content[0]['video_metadata'] == {'start_offset': '2s'}
+    # the original dict is untouched
+    assert vendor_metadata == {
+        'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+        'start_offset': '2s',
+    }
+
+
 # =============================================================================
 # GCS VideoUrl tests for google-cloud (Vertex)
 #

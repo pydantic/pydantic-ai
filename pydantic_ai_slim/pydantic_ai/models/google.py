@@ -1176,7 +1176,14 @@ class GoogleModel(Model[Client]):
         else:
             part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
         if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
-            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+            # `media_resolution` is a per-Part field (not part of `video_metadata`); only
+            # per-part resolution supports `MEDIA_RESOLUTION_ULTRA_HIGH` (Gemini 3), see
+            # https://ai.google.dev/gemini-api/docs/media-resolution
+            vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
+            if 'media_resolution' in vendor_metadata:
+                part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            if vendor_metadata:
+                part_dict['video_metadata'] = cast(VideoMetadataDict, vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(
