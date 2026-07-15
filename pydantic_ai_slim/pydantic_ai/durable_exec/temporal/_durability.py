@@ -30,6 +30,7 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec._base import BaseDurability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
+    DurableSegmentModel,
     StreamedActivityResult,
     disable_threads,
     process_event_stream,
@@ -37,12 +38,10 @@ from pydantic_ai.durable_exec._utils import (
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import (
-    CompletedStreamedResponse,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
 )
-from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -73,110 +72,6 @@ class _CancelParams:
     response: ModelResponse
     serialized_run_context: Any
     model_id: str | None = None
-
-
-class _TemporalSegmentModel(WrapperModel):
-    """Dispatches each continuation segment's request through its own Temporal activity.
-
-    `TemporalDurability.wrap_model_request` swaps this in for `request_context.model` and
-    runs the innermost handler in workflow code, so the continuation loop checkpoints every
-    suspended segment in workflow history while everything else (`profile`, `settings`,
-    `continuation_delay`, ...) is answered by the wrapped workflow-side model.
-    """
-
-    def __init__(
-        self,
-        wrapped: Model,
-        *,
-        request_context: ModelRequestContext,
-        model_id: str | None,
-        serialized_run_context: Any,
-        deps: Any,
-        activity_config: ActivityConfig,
-        event_stream_handler: EventStreamHandler[Any] | None,
-        request_activity: Callable[..., Any],
-        request_stream_activity: Callable[..., Any],
-        cancel_suspended_response_activity: Callable[..., Any],
-    ):
-        super().__init__(wrapped)
-        self._request_context = request_context
-        self._model_id = model_id
-        self._serialized_run_context = serialized_run_context
-        self._deps = deps
-        self._activity_config = activity_config
-        self._event_stream_handler = event_stream_handler
-        self._request_activity = request_activity
-        self._request_stream_activity = request_stream_activity
-        self._cancel_suspended_response_activity = cancel_suspended_response_activity
-
-    def _params(
-        self, messages: list[_messages.ModelMessage], settings: ModelSettings | None, parameters: ModelRequestParameters
-    ) -> _RequestParams:
-        return _RequestParams(
-            messages, cast(dict[str, Any] | None, settings), parameters, self._serialized_run_context, self._model_id
-        )
-
-    async def request(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        if self._event_stream_handler is not None:
-            result = await self._stream(messages, model_settings, model_request_parameters)
-            return result.apply_to(self._request_context)
-        config: ActivityConfig = {
-            'summary': f'request model: {self.model_id}',
-            **self._activity_config,
-        }
-        return await workflow.execute_activity(
-            activity=self._request_activity,
-            args=[self._params(messages, model_settings, model_request_parameters), self._deps],
-            **config,
-        )
-
-    async def _stream(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> StreamedActivityResult:
-        config: ActivityConfig = {
-            'summary': f'request model: {self.model_id} (stream)',
-            **self._activity_config,
-        }
-        return await workflow.execute_activity(
-            activity=self._request_stream_activity,
-            args=[self._params(messages, model_settings, model_request_parameters), self._deps],
-            **config,
-        )
-
-    @asynccontextmanager
-    async def request_stream(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncGenerator[CompletedStreamedResponse]:
-        result = await self._stream(messages, model_settings, model_request_parameters)
-        yield CompletedStreamedResponse(
-            result.response,
-            model_request_parameters=model_request_parameters,
-            events=result.events,
-            hooks_already_applied=True,
-        )
-
-    async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        config: ActivityConfig = {
-            'summary': f'cancel suspended response: {self.model_id}',
-            **self._activity_config,
-        }
-        await workflow.execute_activity(
-            activity=self._cancel_suspended_response_activity,
-            args=[_CancelParams(response, self._serialized_run_context, self._model_id), self._deps],
-            **config,
-        )
 
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -663,17 +558,59 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
         # already unwrapped — instances are unwrap-matched by identity).
         model_id = self._model_id_for_request(ctx, request_context)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        request_context.model = _TemporalSegmentModel(
+        model_name = model_id or request_context.model.model_id
+        deps = ctx.deps
+
+        def params(
+            messages: list[_messages.ModelMessage],
+            settings: ModelSettings | None,
+            parameters: ModelRequestParameters,
+        ) -> _RequestParams:
+            return _RequestParams(
+                messages, cast(dict[str, Any] | None, settings), parameters, serialized_run_context, model_id
+            )
+
+        async def request_segment(
+            messages: list[_messages.ModelMessage],
+            settings: ModelSettings | None,
+            parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
+            return await workflow.execute_activity(
+                activity=self.request_activity, args=[params(messages, settings, parameters), deps], **config
+            )
+
+        async def request_stream_segment(
+            messages: list[_messages.ModelMessage],
+            settings: ModelSettings | None,
+            parameters: ModelRequestParameters,
+        ) -> StreamedActivityResult:
+            config: ActivityConfig = {
+                'summary': f'request model: {model_name} (stream)',
+                **self._model_activity_config,
+            }
+            return await workflow.execute_activity(
+                activity=self.request_stream_activity, args=[params(messages, settings, parameters), deps], **config
+            )
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            config: ActivityConfig = {
+                'summary': f'cancel suspended response: {model_name}',
+                **self._model_activity_config,
+            }
+            await workflow.execute_activity(
+                activity=self.cancel_suspended_response_activity,
+                args=[_CancelParams(response, serialized_run_context, model_id), deps],
+                **config,
+            )
+
+        request_context.model = DurableSegmentModel(
             request_context.model,
             request_context=request_context,
-            model_id=model_id,
-            serialized_run_context=serialized_run_context,
-            deps=ctx.deps,
-            activity_config=self._model_activity_config,
             event_stream_handler=self._event_stream_handler,
-            request_activity=self.request_activity,
-            request_stream_activity=self.request_stream_activity,
-            cancel_suspended_response_activity=self.cancel_suspended_response_activity,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
         return await handler(request_context)

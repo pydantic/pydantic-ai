@@ -45,17 +45,15 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     !!! note "Durable execution"
 
-        Under the current durable-execution integrations
-        ([Temporal][pydantic_ai.durable_exec.temporal.TemporalAgent],
-        [DBOS][pydantic_ai.durable_exec.dbos.DBOSAgent],
-        [Prefect][pydantic_ai.durable_exec.prefect.PrefectAgent]), model streaming happens
-        inside an activity/step rather than in the outer agent loop. This capability's
-        `wrap_run_event_stream` hook fires for tool-call events and the final post-streaming
-        batch, but it does **not** see individual model-response events live — the underlying
-        durable model consumes those inside the activity before returning. The in-flight
-        `event_stream_handler` parameter does still observe the live events; a future
-        refactor threading the capability chain through the activity boundary is being
-        explored in [#4977](https://github.com/pydantic/pydantic-ai/pull/4977).
+        Under the durable-execution capabilities
+        ([`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability],
+        [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability],
+        [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]), model
+        streaming happens inside an activity/step/task rather than in the outer agent loop,
+        and this capability's handler fires there against the live stream — it sees the same
+        granular events it would in a non-durable run. (Under the deprecated wrapper agents,
+        the hook only fires for tool-call events and the final post-streaming batch; the
+        durable model consumes the live model-response events inside the activity.)
     """
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]

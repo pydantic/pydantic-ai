@@ -11,18 +11,22 @@ helpers are reserved for the bundled `temporal`, `dbos`, and `prefect`
 integrations.
 """
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeAlias, TypeVar, cast
 
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 __all__ = [
+    'DurableSegmentModel',
+    'SegmentExecutor',
     'StreamedActivityResult',
     'disable_threads',
     'process_event_stream',
@@ -77,6 +81,80 @@ class StreamedActivityResult:
         buffered = request_context._buffered_stream_events  # pyright: ignore[reportPrivateUsage]
         request_context._buffered_stream_events = [*(buffered or []), *self.events]  # pyright: ignore[reportPrivateUsage]
         return self.response
+
+
+_ResultT = TypeVar('_ResultT')
+
+SegmentExecutor: TypeAlias = Callable[
+    [list[ModelMessage], 'ModelSettings | None', ModelRequestParameters], Awaitable[_ResultT]
+]
+"""Executes one model-request segment inside an engine's durable unit (activity/step/task)."""
+
+
+class DurableSegmentModel(WrapperModel):
+    """Dispatches each model-request segment through its own durable unit.
+
+    The bundled durability capabilities swap this in for `request_context.model` in
+    `wrap_model_request` and run the innermost handler in workflow/flow code, so the
+    continuation loop (Anthropic `pause_turn`, OpenAI background mode) checkpoints every
+    suspended segment durably and a failed segment retries alone, while everything else
+    (`profile`, `settings`, `continuation_delay`, ...) is answered by the wrapped
+    workflow-side model. Everything engine-specific lives in the three executors, each
+    running one request / streamed request / cancellation inside the engine's
+    activity, step, or task.
+    """
+
+    def __init__(
+        self,
+        wrapped: Model,
+        *,
+        request_context: ModelRequestContext,
+        event_stream_handler: EventStreamHandler[Any] | None,
+        request_segment: SegmentExecutor[ModelResponse],
+        request_stream_segment: SegmentExecutor[StreamedActivityResult],
+        cancel_suspended_response_segment: Callable[[ModelResponse], Awaitable[None]],
+    ):
+        super().__init__(wrapped)
+        self._request_context = request_context
+        self._event_stream_handler = event_stream_handler
+        self._request_segment = request_segment
+        self._request_stream_segment = request_stream_segment
+        self._cancel_suspended_response_segment = cancel_suspended_response_segment
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if self._event_stream_handler is not None:
+            # The capability's construction-time handler must fire against the live stream
+            # inside the boundary, so a non-streaming run still uses the streaming unit;
+            # the buffered events land on the request context for workflow-side replay.
+            result = await self._request_stream_segment(messages, model_settings, model_request_parameters)
+            return result.apply_to(self._request_context)
+        return await self._request_segment(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[CompletedStreamedResponse]:
+        result = await self._request_stream_segment(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(
+            result.response,
+            model_request_parameters=model_request_parameters,
+            events=result.events,
+            # The chain's `wrap_run_event_stream` hooks already fired against the live
+            # stream inside the boundary; the workflow-side replay must not re-fire them.
+            hooks_already_applied=True,
+        )
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await self._cancel_suspended_response_segment(response)
 
 
 async def process_event_stream(

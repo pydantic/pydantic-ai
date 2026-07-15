@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -20,13 +19,13 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec._base import BaseDurability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
+    DurableSegmentModel,
     StreamedActivityResult,
     process_event_stream,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -34,79 +33,6 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig
-
-
-class _DBOSSegmentModel(WrapperModel):
-    """Dispatches each continuation segment's request through its own DBOS step.
-
-    `DBOSDurability.wrap_model_request` swaps this in for `request_context.model` and runs
-    the innermost handler in workflow code, so the continuation loop checkpoints every
-    suspended segment as a step result while everything else (`profile`, `settings`,
-    `continuation_delay`, ...) is answered by the wrapped workflow-side model.
-    """
-
-    def __init__(
-        self,
-        wrapped: Model,
-        *,
-        request_context: ModelRequestContext,
-        model_id: str | None,
-        run_context: RunContext[Any],
-        event_stream_handler: EventStreamHandler[Any] | None,
-        request_step: Callable[..., Awaitable[ModelResponse]],
-        request_stream_step: Callable[..., Awaitable[StreamedActivityResult]],
-        cancel_suspended_response_step: Callable[..., Awaitable[None]],
-    ):
-        super().__init__(wrapped)
-        self._request_context = request_context
-        self._model_id = model_id
-        self._run_context = run_context
-        self._event_stream_handler = event_stream_handler
-        self._request_step = request_step
-        self._request_stream_step = request_stream_step
-        self._cancel_suspended_response_step = cancel_suspended_response_step
-
-    async def request(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        if self._event_stream_handler is not None:
-            result = await self._stream(messages, model_settings, model_request_parameters)
-            return result.apply_to(self._request_context)
-        return await self._request_step(
-            self._model_id, messages, model_settings, model_request_parameters, self._run_context
-        )
-
-    async def _stream(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> StreamedActivityResult:
-        return await self._request_stream_step(
-            self._model_id, messages, model_settings, model_request_parameters, self._run_context
-        )
-
-    @asynccontextmanager
-    async def request_stream(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncGenerator[CompletedStreamedResponse]:
-        result = await self._stream(messages, model_settings, model_request_parameters)
-        yield CompletedStreamedResponse(
-            result.response,
-            model_request_parameters=model_request_parameters,
-            events=result.events,
-            hooks_already_applied=True,
-        )
-
-    async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        await self._cancel_suspended_response_step(self._model_id, response, self._run_context)
 
 
 @dataclass(init=False)
@@ -465,15 +391,31 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         # A model swapped in by an outer capability's `before_model_request`
         # round-trips via `_find_model_id` on `request_context.model`.
         model_id = self._model_id_for_request(ctx, request_context)
-        request_context.model = _DBOSSegmentModel(
+
+        async def request_segment(
+            messages: list[_messages.ModelMessage],
+            settings: ModelSettings | None,
+            parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return await self._request_step(model_id, messages, settings, parameters, ctx)
+
+        async def request_stream_segment(
+            messages: list[_messages.ModelMessage],
+            settings: ModelSettings | None,
+            parameters: ModelRequestParameters,
+        ) -> StreamedActivityResult:
+            return await self._request_stream_step(model_id, messages, settings, parameters, ctx)
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            await self._cancel_suspended_response_step(model_id, response, ctx)
+
+        request_context.model = DurableSegmentModel(
             request_context.model,
             request_context=request_context,
-            model_id=model_id,
-            run_context=ctx,
             event_stream_handler=self._event_stream_handler,
-            request_step=self._request_step,
-            request_stream_step=self._request_stream_step,
-            cancel_suspended_response_step=self._cancel_suspended_response_step,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
         return await handler(request_context)
