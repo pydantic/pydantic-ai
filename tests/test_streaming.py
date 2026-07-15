@@ -4407,13 +4407,18 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
 
 
 @pytest.mark.parametrize(
-    ('leading_text', 'trailing_text'),
+    ('leading_text', 'trailing_text', 'provider_metadata', 'expected'),
     [
-        pytest.param('final answer', None, id='trailing-native-pair-preserves-prior-text'),
-        pytest.param('pre-tool text', 'final answer', id='later-text-resets-text-before-native-pair'),
+        pytest.param('pre-tool text', None, False, '', id='trailing-native-pair-resets-prior-text'),
+        pytest.param('final answer', None, True, 'final answer', id='trailing-provider-metadata-preserves-prior-text'),
+        pytest.param(
+            'pre-tool text', 'final answer', True, 'final answer', id='later-text-resets-before-provider-metadata'
+        ),
     ],
 )
-async def test_agent_stream_text_output_with_native_tool_parts(leading_text: str, trailing_text: str | None) -> None:
+async def test_agent_stream_text_output_with_native_tool_parts(
+    leading_text: str, trailing_text: str | None, provider_metadata: bool, expected: str
+) -> None:
     parts: list[ModelResponsePart] = [
         TextPart(leading_text),
         NativeToolCallPart(
@@ -4429,11 +4434,13 @@ async def test_agent_stream_text_output_with_native_tool_parts(leading_text: str
             provider_name='test',
         ),
     ]
+    if provider_metadata:
+        _utils.mark_as_provider_metadata(cast(NativeToolReturnPart, parts[-1]))
     if trailing_text is not None:
         parts.append(TextPart(trailing_text))
     response = ModelResponse(parts=parts, model_name='test')
 
-    assert await _make_text_output_agent_stream(response).validate_response_output(response) == 'final answer'
+    assert await _make_text_output_agent_stream(response).validate_response_output(response) == expected
 
 
 def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None, str]:
@@ -4463,7 +4470,15 @@ def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None,
     )
 
 
-def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
+def _native_pair_parts(n: int, *, provider_metadata: bool = False) -> list[BuiltinToolCallsReturns]:
+    tool_return = NativeToolReturnPart(
+        tool_name='web_search',
+        content=[{'uri': 'https://example.com', 'title': 'Example'}],
+        tool_call_id=f'web-search-call-{n}',
+        provider_name='function',
+    )
+    if provider_metadata:
+        _utils.mark_as_provider_metadata(tool_return)
     return [
         {
             2 * n: NativeToolCallPart(
@@ -4473,14 +4488,7 @@ def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
                 provider_name='function',
             )
         },
-        {
-            2 * n + 1: NativeToolReturnPart(
-                tool_name='web_search',
-                content=[{'uri': 'https://example.com', 'title': 'Example'}],
-                tool_call_id=f'web-search-call-{n}',
-                provider_name='function',
-            )
-        },
+        {2 * n + 1: tool_return},
     ]
 
 
@@ -4488,8 +4496,6 @@ async def test_agent_stream_text_separator_when_text_resumes_as_deltas() -> None
     """Providers that stream text under a constant vendor ID (e.g. xAI, Groq, `FunctionModel`) resume
     the pre-tool `TextPart` as deltas after a native tool pair rather than starting a new part, so the
     deferred separator must be flushed on the delta branch too, not only on a new `TextPart` start.
-    (The missing separator between the first two chunks predates the deferral: text accumulated before
-    `stream_text` starts is replayed without arming the separator at all.)
     """
 
     async def stream_function(
@@ -4508,10 +4514,10 @@ async def test_agent_stream_text_separator_when_text_resumes_as_deltas() -> None
     async with agent.run_stream('hello') as result:
         deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
 
-    assert deltas == snapshot(['first', 'second', '\n\n', 'third'])
+    assert deltas == snapshot(['first', '\n\n', 'second', '\n\n', 'third'])
 
 
-async def test_agent_stream_output_with_trailing_native_pair() -> None:
+async def test_agent_stream_output_with_trailing_provider_metadata_pair() -> None:
     """Partial outputs reset while a native tool pair streams in (mid-stream, a pair trailing the
     text so far is indistinguishable from one interrupting it, and clearing pre-tool text from
     partials is pinned for Anthropic web search), but the final output keeps the answer the pair
@@ -4521,7 +4527,7 @@ async def test_agent_stream_output_with_trailing_native_pair() -> None:
         _messages: list[ModelMessage], _info: AgentInfo
     ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
         yield 'answer'
-        for part in _native_pair_parts(1):
+        for part in _native_pair_parts(1, provider_metadata=True):
             yield part
 
     agent = Agent(FunctionModel(stream_function=stream_function))
@@ -4530,6 +4536,34 @@ async def test_agent_stream_output_with_trailing_native_pair() -> None:
         outputs = [output async for output in result.stream_output(debounce_by=None)]
 
     assert outputs == snapshot(['answer', '', '', 'answer'])
+
+
+async def test_agent_does_not_treat_text_before_trailing_native_pair_as_output() -> None:
+    async def function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    TextPart('Let me search.'),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['query']},
+                        tool_call_id='web-search-call',
+                        provider_name='function',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                        tool_call_id='web-search-call',
+                        provider_name='function',
+                    ),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('final answer')])
+
+    result = await Agent(FunctionModel(function=function)).run('hello')
+
+    assert result.output == 'final answer'
+    assert result.usage.requests == 2
 
 
 def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:

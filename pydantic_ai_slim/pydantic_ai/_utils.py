@@ -842,16 +842,26 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
-def has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
-    """Whether any `TextPart` follows `parts[index]`.
+def mark_as_provider_metadata(part: _messages.NativeToolReturnPart) -> None:
+    """Mark a native tool return as provider metadata without changing its public wire shape."""
+    setattr(part, '_pydantic_ai_provider_metadata', True)
 
-    Distinguishes a native tool pair that interrupts the text (the text before it is pre-tool
-    thoughts, not output) from one that trails all text (e.g. Google grounding metadata for the
-    answer that already streamed).
-    """
+
+def is_trailing_provider_metadata_native_tool_call(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
+    """Whether `parts[index]` starts a trailing native-tool pair synthesized from provider metadata."""
     from . import messages
 
-    return any(isinstance(part, messages.TextPart) for part in parts[index + 1 :])
+    call = parts[index]
+    if not isinstance(call, messages.NativeToolCallPart):  # pragma: no cover
+        return False
+    if any(isinstance(part, messages.TextPart) for part in parts[index + 1 :]):
+        return False
+    return any(
+        isinstance(part, messages.NativeToolReturnPart)
+        and part.tool_call_id == call.tool_call_id
+        and getattr(part, '_pydantic_ai_provider_metadata', False) is True
+        for part in parts[index + 1 :]
+    )
 
 
 def is_text_like_media_type(media_type: str) -> bool:

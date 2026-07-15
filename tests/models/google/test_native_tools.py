@@ -30,6 +30,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import CombinedCapability
 from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
@@ -242,6 +243,53 @@ def test_content_model_response_echoes_web_search_raw_tool_response():
                     }
                 },
                 {'text': 'hello'},
+            ],
+        }
+    )
+
+
+def test_content_model_response_echoes_none_web_search_raw_tool_response_after_round_trip():
+    response = ModelResponse(
+        parts=[
+            NativeToolCallPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                args={'queries': ['foo']},
+            ),
+            NativeToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                content=[{'domain': None, 'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev/'}],
+                provider_details={'raw_tool_response': None},
+            ),
+        ],
+        provider_name='google-gla',
+    )
+    [round_tripped] = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+    assert isinstance(round_tripped, ModelResponse)
+
+    assert _content_model_response(
+        round_tripped, frozenset({'google-gla'}), supports_tool_combination=True
+    ) == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'tool_call': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'args': {'queries': ['foo']},
+                    }
+                },
+                {
+                    'tool_response': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'response': None,
+                    }
+                },
             ],
         }
     )
@@ -518,6 +566,82 @@ async def test_gemini_streamed_response_web_search_grounding_metadata_reconstruc
     )
 
 
+@pytest.mark.parametrize('explicit_parts', [False, True])
+async def test_gemini_streamed_response_accumulates_web_search_grounding_chunks(explicit_parts: bool):
+    chunks = [_generate_stream_response('stream-1', parts=[{'text': 'Answer.'}])]
+    chunks.extend(
+        [
+            _generate_stream_response(
+                'stream-2',
+                parts=_EXPLICIT_WEB_SEARCH_PARTS if explicit_parts else None,
+                grounding_metadata={
+                    'webSearchQueries': ['metadata query'],
+                    'groundingChunks': [
+                        {'web': {'uri': 'https://first.example/', 'title': 'First source'}},
+                    ],
+                },
+            ),
+            _generate_stream_response(
+                'stream-3',
+                grounding_metadata={
+                    'groundingChunks': [
+                        {'web': {'uri': 'https://second.example/', 'title': 'Second source'}},
+                    ],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ]
+    )
+    streamed_response = _gemini_streamed_response_from_chunks(chunks)
+
+    async for _ in streamed_response:
+        pass
+
+    [tool_return] = [
+        part
+        for part in streamed_response.get().parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == WebSearchTool.kind
+    ]
+    assert tool_return.content == snapshot(
+        [
+            {'domain': None, 'title': 'First source', 'uri': 'https://first.example/'},
+            {'domain': None, 'title': 'Second source', 'uri': 'https://second.example/'},
+        ]
+    )
+
+
+async def test_gemini_streamed_response_preserves_explicit_web_search_return_without_grounding():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Answer.'}]),
+            _generate_stream_response(
+                'stream-2', parts=_EXPLICIT_WEB_SEARCH_PARTS, finish_reason=GoogleFinishReason.STOP
+            ),
+        ]
+    )
+
+    events = [event async for event in streamed_response]
+
+    [tool_return] = [
+        part
+        for part in streamed_response.get().parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == WebSearchTool.kind
+    ]
+    assert tool_return.content == {'search_suggestions': '<style>chip</style>'}
+    assert (
+        len(
+            [
+                event
+                for event in events
+                if isinstance(event, PartStartEvent)
+                and isinstance(event.part, NativeToolReturnPart)
+                and event.part.tool_name == WebSearchTool.kind
+            ]
+        )
+        == 1
+    )
+
+
 @pytest.mark.parametrize(
     'grounding_with_explicit_parts',
     [
@@ -728,6 +852,39 @@ async def test_gemini_response_with_explicit_web_fetch_parts():
                 provider_name='google',
             ),
         ]
+    )
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_gemini_response_reconstructs_web_search_with_explicit_web_fetch_parts(stream: bool):
+    raw_response = _generate_stream_response(
+        'response-1',
+        parts=_EXPLICIT_WEB_FETCH_PARTS,
+        grounding_metadata=_GROUNDING_METADATA,
+        finish_reason=GoogleFinishReason.STOP,
+    )
+
+    if stream:
+        streamed_response = _gemini_streamed_response_from_chunks([raw_response])
+        async for _ in streamed_response:
+            pass
+        response = streamed_response.get()
+    else:
+        candidates = cast('list[Candidate]', raw_response.candidates)
+        candidate = candidates[0]
+        content = cast(Content, candidate.content)
+        response = _process_response_from_parts(
+            cast('list[Part]', content.parts),
+            cast(Any, candidate.grounding_metadata),
+            'gemini-3-flash-preview',
+            'google',
+            'https://generativelanguage.googleapis.com/',
+            RequestUsage(),
+            raw_response.response_id,
+        )
+
+    assert [part.tool_name for part in response.parts if isinstance(part, NativeToolCallPart)] == (
+        ['web_fetch', 'web_search'] if stream else ['web_search', 'web_fetch']
     )
 
 

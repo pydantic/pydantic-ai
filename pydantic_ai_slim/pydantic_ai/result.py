@@ -46,6 +46,26 @@ __all__ = (
 )
 
 
+def _text_deltas_from_existing_parts(
+    parts: Iterable[_messages.ModelResponsePart],
+) -> tuple[list[tuple[str, int]], int | None, bool]:
+    """Collect existing text with separators and return state for later stream events."""
+    deltas: list[tuple[str, int]] = []
+    last_text_index: int | None = None
+    separator_pending = False
+    for index, part in enumerate(parts):
+        if isinstance(part, _messages.TextPart) and part.content:
+            if separator_pending:
+                deltas.append(('\n\n', index))
+                separator_pending = False
+            last_text_index = index
+            deltas.append((part.content, index))
+        elif isinstance(part, _messages.NativeToolCallPart) and last_text_index is not None:
+            separator_pending = True
+            last_text_index = None
+    return deltas, last_text_index, separator_pending
+
+
 @dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
@@ -256,11 +276,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if allow_partial or _utils.has_text_part_after(message.parts, index):
+                        if allow_partial or not _utils.is_trailing_provider_metadata_native_tool_call(
+                            message.parts, index
+                        ):
                             # Text parts before a built-in tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
-                            # If the native tool pair trails all text, it is provider metadata for
-                            # the already-streamed output and should not erase that output.
+                            # A provider may append a synthetic native tool pair after streamed text
+                            # to expose metadata for that output; that marked pair must not erase it.
                             # Partial validation always resets: mid-stream, a pair that trails the
                             # text *so far* is indistinguishable from one interrupting it, and
                             # clearing pre-tool text from partials while a native tool call runs
@@ -316,13 +338,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # yields tuples of (text_content, part_index)
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
+            existing_deltas, last_text_index, separator_pending = _text_deltas_from_existing_parts(self.response.parts)
+            for existing_delta in existing_deltas:
+                yield existing_delta
 
-            last_text_index: int | None = None
-            separator_pending = False
             async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)

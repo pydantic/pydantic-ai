@@ -28,7 +28,7 @@ from pydantic_ai._utils import (
     cancel_and_drain,
     dataclasses_no_defaults_repr,
     fill_run_metadata,
-    has_text_part_after,
+    is_trailing_provider_metadata_native_tool_call,
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
@@ -1652,11 +1652,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if has_text_part_after(self.model_response.parts, index):
+                        if not is_trailing_provider_metadata_native_tool_call(self.model_response.parts, index):
                             # Text parts before a native tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
-                            # If the native tool pair trails all text, it is provider metadata for
-                            # the already-streamed output and should not erase that output.
+                            # A provider may append a synthetic native tool pair after streamed text
+                            # to expose metadata for that output; that marked pair must not erase it.
                             text = ''
                     elif isinstance(part, _messages.NativeToolReturnPart):
                         # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
