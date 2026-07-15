@@ -22,6 +22,25 @@ with try_import() as otel_sdk_imports_successful:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
+    class DropFirstChatSpanSampler(Sampler):
+        """Drop the first `chat` span and record everything else, to exercise non-recording spans."""
+
+        def __init__(self) -> None:
+            self._chat_spans_seen = 0
+
+        def should_sample(
+            self, parent_context: Context | None, trace_id: int, name: str, *args: object, **kwargs: object
+        ) -> SamplingResult:
+            if name.startswith('chat '):
+                self._chat_spans_seen += 1
+                if self._chat_spans_seen == 1:
+                    return SamplingResult(Decision.DROP)
+            return SamplingResult(Decision.RECORD_AND_SAMPLE)
+
+        def get_description(self) -> str:
+            return 'DropFirstChatSpanSampler'
+
+
 pytestmark = pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
 
 # These are unit tests rather than VCR tests: they pin the *derived* span attributes, span events,
@@ -43,25 +62,6 @@ class CacheUsage:
 class ResponseNameFunctionModel(FunctionModel):
     def set_response_model_name(self, model_name: str) -> None:
         self._model_name = model_name
-
-
-class DropFirstChatSpanSampler(Sampler):
-    """Drop the first `chat` span and record everything else, to exercise non-recording spans."""
-
-    def __init__(self) -> None:
-        self._chat_spans_seen = 0
-
-    def should_sample(
-        self, parent_context: Context | None, trace_id: int, name: str, *args: object, **kwargs: object
-    ) -> SamplingResult:
-        if name.startswith('chat '):
-            self._chat_spans_seen += 1
-            if self._chat_spans_seen == 1:
-                return SamplingResult(Decision.DROP)
-        return SamplingResult(Decision.RECORD_AND_SAMPLE)
-
-    def get_description(self) -> str:
-        return 'DropFirstChatSpanSampler'
 
 
 def cache_spans(
