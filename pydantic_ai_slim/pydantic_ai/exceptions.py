@@ -206,11 +206,16 @@ class SuspendedResponseExpired(AgentRunError):
 class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
 
+    _HINT = (
+        'Consider raising the limit, or see the docs on usage limits '
+        'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+    )
+
     def __init__(self, message: str):
-        super().__init__(
-            f'{message.removesuffix(".")}. Consider raising the limit, or see the docs on usage limits '
-            'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
-        )
+        # Idempotent so reconstruction via `UsageLimitExceeded(*args)` (e.g. unpickling) doesn't re-append the hint.
+        if self._HINT not in message:
+            message = f'{message.removesuffix(".")}. {self._HINT}'
+        super().__init__(message)
 
 
 class ConcurrencyLimitExceeded(AgentRunError):
