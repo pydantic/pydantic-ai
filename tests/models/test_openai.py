@@ -4902,7 +4902,7 @@ async def test_openai_response_filter_error(allow_model_requests: None):
 
 
 async def test_openai_response_filter_with_partial_content(allow_model_requests: None):
-    """Test that NO exception is raised if content is returned, even if finish_reason is content_filter."""
+    """Test that ContentFilterError is raised if finish_reason is content_filter, even with partial content."""
     c = completion_message(
         ChatCompletionMessage(content='Partial', role='assistant'),
     )
@@ -4912,8 +4912,8 @@ async def test_openai_response_filter_with_partial_content(allow_model_requests:
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run('hello')
-    assert result.output == 'Partial'
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
+        await agent.run('hello')
 
 
 def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
