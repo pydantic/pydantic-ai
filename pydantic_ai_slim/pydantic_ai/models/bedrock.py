@@ -763,6 +763,17 @@ class BedrockConverseModel(Model[BaseClient]):
                                 provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
                             )
                         )
+                elif citations_content := item.get('citationsContent'):
+                    cited_text = ' '.join(
+                        c['text'] for c in citations_content.get('content', []) if 'text' in c
+                    )
+                    if cited_text:
+                        items.append(
+                            TextPart(
+                                content=cited_text,
+                                provider_details={'citations': citations_content.get('citations', [])},
+                            )
+                        )
 
         u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
@@ -1631,6 +1642,15 @@ class BedrockStreamedResponse(StreamedResponse):
                                     return_part.content = tr_content[0].get('json')
 
                                 # Don't yield anything yet - we wait for content block end
+                        if citation_delta := delta.get('citation'):
+                            cited_text = ' '.join(
+                                c.get('text', '') for c in citation_delta.get('content', [])
+                            )
+                            if cited_text:
+                                for event in self._parts_manager.handle_text_delta(
+                                    vendor_part_id=index, content=cited_text
+                                ):
+                                    yield event
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
