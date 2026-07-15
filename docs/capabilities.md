@@ -1834,6 +1834,7 @@ Capabilities for spawning and delegating to specialized subagents help agents ta
 Capabilities for cost control, input/output filtering, and tool permissions help keep agents safe and within budget:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+* [`prompt-shield-ai`](https://github.com/mthamil107/prompt-shield) - Apache 2.0 prompt-injection firewall with 33 input detectors and 9 output scanners. Ships `scan_input()` for pre-`agent.run()` gating and `PromptShieldOutputValidator` for the `result_validator` slot; `attach(agent)` one-liner installs the output guard onto an existing `Agent`. Includes novel cross-domain techniques (Smith-Waterman alignment, stylometric discontinuity, multi-turn Jaccard topic drift), a federated ed25519-signed threat-intel feed with 56 signatures live, and compliance mappings for OWASP LLM Top 10, OWASP Agentic Top 10, and MITRE ATLAS. Paper at [arXiv:2604.18248](https://arxiv.org/abs/2604.18248) with independent benchmarks against 5 public datasets (Garak, Liu USENIX 2024, InjecAgent ACL 2024, deepset, NotInject).
 
 ### File Operations & Sandboxing
 
