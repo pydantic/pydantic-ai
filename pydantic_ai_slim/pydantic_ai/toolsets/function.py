@@ -18,6 +18,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     SystemPromptFunc,
     Tool,
+    ToolAnnotations,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -162,6 +163,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -184,6 +186,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -250,6 +253,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            annotations: Optional [behavior hints][pydantic_ai.tools.ToolAnnotations] (read-only, destructive, idempotent, open-world) describing
+                what the tool does to the world. These are hints, not guarantees, and are not sent to the model.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search.
@@ -277,6 +282,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                annotations=annotations,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -305,6 +311,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -327,6 +334,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -394,6 +402,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            annotations: Optional [behavior hints][pydantic_ai.tools.ToolAnnotations] (read-only, destructive, idempotent, open-world) describing
+                what the tool does to the world. These are hints, not guarantees, and are not sent to the model.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search.
@@ -422,6 +432,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                annotations=annotations,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -478,6 +489,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        annotations: ToolAnnotations | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:
@@ -524,6 +536,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            annotations: Optional [behavior hints][pydantic_ai.tools.ToolAnnotations] (read-only, destructive, idempotent, open-world) describing
+                what the tool does to the world. These are hints, not guarantees, and are not sent to the model.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -561,6 +575,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            annotations=annotations,
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,

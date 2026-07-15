@@ -375,6 +375,41 @@ _(This example is complete, it can be run "as is")_
 
     This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
+## Behavior Annotations {#behavior-annotations}
+
+You can declare what a tool _does to the world_ using [`ToolAnnotations`][pydantic_ai.tools.ToolAnnotations],
+a small set of behavior hints mirroring the [MCP `ToolAnnotations`](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool) vocabulary:
+
+- `read_only`: the tool does not modify its environment.
+- `destructive`: the tool may perform destructive updates (only meaningful when not `read_only`).
+- `idempotent`: calling the tool repeatedly with the same arguments has no additional effect (only meaningful when not `read_only`).
+- `open_world`: the tool interacts with an "open world" of external entities (e.g. a web search), rather than a closed domain (e.g. a memory store).
+
+```python {title="tool_annotations.py"}
+from pydantic_ai import Agent
+from pydantic_ai.tools import ToolAnnotations
+
+agent = Agent('openai:gpt-5')
+
+
+@agent.tool_plain(annotations=ToolAnnotations(read_only=True, open_world=True))
+def search_docs(query: str) -> str:
+    """Search the documentation."""
+    return f'results for {query}'
+```
+
+Each hint defaults to `None`, meaning "unknown/unspecified", which is distinct from an explicit `False`.
+The same `annotations` argument is available on [`Tool`][pydantic_ai.tools.Tool]. Tools loaded from an
+[MCP server](mcp/client.md) automatically carry any annotations the server declares.
+
+!!! note "Hints, not guarantees"
+    Annotations describe the tool author's _intent_. They do not change how Pydantic AI runs a tool, are
+    never sent to the model, and should not be trusted for security decisions about tools from untrusted
+    sources. They exist so that [capabilities](capabilities.md) can reason about tool behavior — for example,
+    a permission policy building a read-only safelist, or a checkpointing capability tracking which tools
+    mutate state — **without** pattern-matching tool names. When authoring such a capability, prefer reading
+    [`ToolDefinition.annotations`][pydantic_ai.tools.ToolDefinition.annotations] over matching on tool names.
+
 ## Injecting Follow-up Messages from a Tool
 
 A tool can push extra messages into the conversation via

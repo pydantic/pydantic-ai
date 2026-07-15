@@ -86,6 +86,7 @@ Reach for these features when the user needs more than a simple function tool:
 - `ToolReturn` for rich return values plus separate content/metadata
 - `prepare=` for dynamic tool definitions
 - `timeout=` for tool execution limits
+- `annotations=ToolAnnotations(read_only=..., destructive=..., idempotent=..., open_world=...)` to declare behavior hints (mirroring MCP's `ToolAnnotations`) — hints only, never sent to the model; MCP tools carry them automatically. Capabilities should read `ToolDefinition.annotations` instead of pattern-matching tool names
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`
 
 Example with `ToolReturn`:

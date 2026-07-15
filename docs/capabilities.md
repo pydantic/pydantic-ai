@@ -783,6 +783,15 @@ result = agent.run_sync('hello')
 
 For more complex tool preparation logic, see [Tool preparation](#tool-preparation) under lifecycle hooks.
 
+!!! tip "Prefer annotations over name-matching"
+    The example above keys off the tool _name_ (`delete_`) for brevity, but names are a brittle signal: they
+    vary by author, break on rename, and don't survive being pulled in from an MCP server. When a capability
+    needs to reason about what a tool _does_ — read-only vs. mutating, destructive, open-world — read the
+    tool's [behavior annotations](tools.md#behavior-annotations) via
+    [`ToolDefinition.annotations`][pydantic_ai.tools.ToolDefinition.annotations] instead. Tool authors declare
+    these hints once (and MCP tools carry them automatically), so `td.annotations and td.annotations.read_only`
+    is both more robust and more portable than matching on names.
+
 ### PrefixTools
 
 [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] wraps another capability and prefixes all of its tool names, useful for namespacing when composing multiple capabilities that might have conflicting tool names:
