@@ -62,6 +62,14 @@ def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
 class _CacheMark:
     established_tokens: int
     last_seen: datetime
+    saw_writes: bool
+    """Whether this provider/model ever reported a cache-write count in this run.
+
+    Discriminates the meaning of a `read == write == 0` response: providers that report writes
+    (Anthropic, Bedrock) always show `write > 0` while caching is active, so `0/0` means caching
+    wasn't engaged at all; providers that never report writes (OpenAI's implicit caching) report
+    `0/0` on a genuine full cache miss, which must be judged as a collapse.
+    """
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -320,19 +328,25 @@ class Instrumentation(AbstractCapability[Any]):
         usage = response.usage
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
-        if not read and not write:
-            # The provider cache wasn't engaged for this request (caching disabled or unreported, or
-            # the prompt fell below the provider's minimum cacheable size), so there is nothing to
-            # judge — and the marks must not move: an untouched cache keeps aging toward its TTL, and
-            # a request that bypassed the cache is not a collapse of it.
-            return
         key = (response.provider_name, response.model_name)
         mark = self._cache_marks.get(key)
+        if not read and not write and (mark is None or mark.saw_writes):
+            # No cache participation reported. For providers that report cache writes (Anthropic,
+            # Bedrock), caching in play always shows `write > 0`, so `0/0` means the cache wasn't
+            # engaged for this request (caching disabled, or the prompt fell below the minimum
+            # cacheable size) — nothing to judge, and the marks must not move: an untouched cache
+            # keeps aging toward its TTL. Providers that never report writes (OpenAI's implicit
+            # caching) legitimately report `0/0` on a genuine full miss, so when the mark was
+            # established without ever seeing a write count, fall through and judge it.
+            return
         established = mark.established_tokens if mark else 0
         now = _utils.now_utc()
         collapsed = established >= _CACHE_MIN_PREFIX_TOKENS and read < established * _CACHE_COLLAPSE_RATIO
         updated_established = read + write if collapsed else max(established, read + write)
-        self._cache_marks[key] = _CacheMark(established_tokens=updated_established, last_seen=now)
+        saw_writes = (mark.saw_writes if mark else False) or write > 0
+        self._cache_marks[key] = _CacheMark(
+            established_tokens=updated_established, last_seen=now, saw_writes=saw_writes
+        )
 
         span = get_current_span()
         if not span.is_recording():
@@ -340,8 +354,8 @@ class Instrumentation(AbstractCapability[Any]):
 
         if read > 0 or established > 0:
             span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
-        # The participation gate above guarantees read + write > 0, so the updated mark is always positive.
-        span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
+        if updated_established > 0:
+            span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
 
         if not collapsed:
             return
