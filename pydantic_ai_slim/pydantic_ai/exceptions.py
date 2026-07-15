@@ -197,7 +197,7 @@ class UsageLimitExceeded(AgentRunError):
 
     def __init__(self, message: str):
         super().__init__(
-            f'{message.rstrip(".")}. Consider raising the limit, or see the docs on usage limits '
+            f'{message.removesuffix(".")}. Consider raising the limit, or see the docs on usage limits '
             'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
         )
 

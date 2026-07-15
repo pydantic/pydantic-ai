@@ -54,10 +54,7 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
 
 
 async def test_history_processor_public_type(function_model: FunctionModel) -> None:
-    """`HistoryProcessor` is publicly importable so consumers can type their own processors.
-
-    See https://github.com/pydantic/pydantic-ai/issues/1568 discussion and the VStorm survey.
-    """
+    """`HistoryProcessor` is publicly importable so consumers can type their own processors."""
 
     def drop_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [
