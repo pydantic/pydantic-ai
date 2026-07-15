@@ -155,6 +155,11 @@ Because DBOS cannot stream output directly to the workflow or step call site, [`
 Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` (or on the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) and using [`Agent.run()`][pydantic_ai.agent.Agent.run].
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
+Because the model stream is consumed inside the step and only its events are replayed on the workflow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+
+### Suspended Turns and Background Mode
+
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), the entire suspended → complete chain executes within a single model request step: the step returns one merged [`ModelResponse`][pydantic_ai.messages.ModelResponse], usage is recorded once, and a [`message_history`](../message-history.md) ending in a suspended response is resumed inside the step the same way. Note that a long-running background job keeps that one step running for the job's full duration.
 
 ### Parallel Tool Execution
 

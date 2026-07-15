@@ -29,6 +29,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     RunContext,
     RunUsage,
@@ -85,6 +87,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -2521,3 +2524,174 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
         UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
     ):
         agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
+
+
+# --- Continuation chains (suspended → complete) resolve inside the step ---
+#
+# When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
+# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
+# so under `DBOSDurability` the whole suspended → complete chain runs inside ONE model
+# request step. These tests use a scripted model (no cassettes: `FunctionModel` can't emit
+# suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
+
+
+async def test_dbos_durability_continuation_chain_in_workflow(dbos: DBOS) -> None:
+    """A suspended → complete chain resolves inside one DBOS step, as one merged response.
+
+    Usage is counted once (a continuation isn't a separate request step), and the workflow
+    record shows a single model-request step for both segments.
+    """
+    model = ScriptedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+    agent = Agent(model, name='durability_continuation', capabilities=[DBOSDurability()])
+
+    results: list[AgentRunResult[str]] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # Both segments ran inside the durable boundary: two model calls, one step.
+    assert model.request_calls == 2
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names.count('durability_continuation__model.request') == 1
+
+
+async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
+    """A streamed suspended → complete chain is stitched into one stream inside one DBOS step.
+
+    The `event_stream_handler` fires inside the step against the live stitched stream: the
+    second segment's part indices are offset past the first's (no collision), and the final
+    response merges both segments' text with usage summed once.
+    """
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='cont2', input_tokens=3, output_tokens=4
+            ),
+        ]
+    )
+
+    events_received: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    agent = Agent(
+        model,
+        name='durability_continuation_stream',
+        capabilities=[DBOSDurability(event_stream_handler=handler)],
+    )
+
+    results: list[AgentRunResult[str]] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # The handler saw the stitched stream live inside the step: the second segment's part
+    # continues the index space rather than colliding with the first's.
+    indices = [
+        (type(event).__name__, event.index)
+        for event in events_received
+        if isinstance(event, (PartStartEvent, PartDeltaEvent))
+    ]
+    assert indices == snapshot(
+        [
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
+            ('PartStartEvent', 1),
+            ('PartDeltaEvent', 1),
+        ]
+    )
+    assert model.request_stream_calls == 2
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names.count('durability_continuation_stream__model.request_stream') == 1
+
+
+async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> None:
+    """A `message_history` ending in a suspended response resumes inside the DBOS step.
+
+    The suspended tail crosses the step boundary as the last request message and seeds the
+    continuation loop there, so the run completes the paused turn instead of starting a
+    fresh generation.
+    """
+    model = ScriptedContinuationModel(
+        responses=[scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4)]
+    )
+    agent = Agent(model, name='durability_continuation_resume', capabilities=[DBOSDurability()])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+        ),
+    ]
+
+    results: list[AgentRunResult[str]] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run(message_history=history)
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # The continuation request ran inside the boundary — the seed wasn't re-generated.
+    assert model.request_calls == 1

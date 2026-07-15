@@ -2,16 +2,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
+
+# The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
+# `TemporalRunContext` subclasses can add their own fields), which means structured values
+# arrive back as plain dicts. Rehydrate the ones with behavior the framework relies on
+# inside activities — `usage`/`usage_limits` drive the mid-chain continuation usage check.
+_run_usage_ta = TypeAdapter(RunUsage)
+_usage_limits_ta = TypeAdapter(UsageLimits)
 
 
 class TemporalRunContext(RunContext[AgentDepsT]):
@@ -26,6 +35,10 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
         self.__dict__.setdefault('agent', None)
+        if isinstance(usage := self.__dict__.get('usage'), dict):
+            self.__dict__['usage'] = _run_usage_ta.validate_python(usage)
+        if isinstance(usage_limits := self.__dict__.get('usage_limits'), dict):
+            self.__dict__['usage_limits'] = _usage_limits_ta.validate_python(usage_limits)
         setattr(
             self,
             '__dataclass_fields__',

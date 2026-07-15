@@ -197,7 +197,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] (or [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]).
 
 ### Streaming
@@ -211,6 +211,21 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+
+Because the model stream is consumed inside the activity and only its events are replayed on the workflow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
+
+### Suspended Turns and Background Mode
+
+Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes, and inside a Temporal workflow the entire suspended → complete chain executes within a **single** model request activity: the activity keeps echoing the suspended response back (or polling the background job) and returns one merged [`ModelResponse`][pydantic_ai.messages.ModelResponse], so continuations don't count as separate request steps and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is resumed the same way, inside the activity.
+
+This has a few operational implications:
+
+- **Timeouts**: the default `start_to_close_timeout` is 60 seconds, but a background job can legitimately run for many minutes. When using background mode, raise the timeout for model request activities via `model_activity_config` (see [Activity Configuration](#activity-configuration) below).
+- **Heartbeats**: model request activities automatically heartbeat while the request runs, and their default activity config sets a `heartbeat_timeout` of 30 seconds, so a crashed worker is detected quickly even during a long poll loop and workflow cancellation can be delivered mid-request. Set your own `heartbeat_timeout` in `activity_config` or `model_activity_config` to override it.
+- **Retries and server-side jobs**: if a worker dies mid-chain, Temporal will retry the whole activity from scratch per its retry policy. A background job created by the failed attempt may be left running server-side, and the retry will start a new one. On errors *within* the activity, the framework cancels the in-flight server-side job before the error propagates.
+
+!!! note
+    If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: they're required inside the activity to enforce [usage limits](../agent.md#usage-limits) between continuation segments.
 
 ### Model Selection at Runtime
 

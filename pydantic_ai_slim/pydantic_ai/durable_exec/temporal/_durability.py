@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import copy
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, cast
@@ -32,7 +34,7 @@ from pydantic_ai.durable_exec._utils import (
     model_request_stream,
     process_event_stream,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import (
     Model,
@@ -62,6 +64,44 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
+
+
+_DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
+"""Default `heartbeat_timeout` for the model-request activities.
+
+A model request activity can legitimately run for a long time: it resolves the whole
+suspended → complete continuation chain (Anthropic `pause_turn`, OpenAI background mode)
+inside one activity, polling a background job for however long it takes. Heartbeating
+lets Temporal distinguish that long-but-healthy activity from a crashed worker, and makes
+workflow cancellation deliverable mid-request (cancellation reaches an activity as a
+response to a heartbeat).
+"""
+
+
+@asynccontextmanager
+async def _heartbeating() -> AsyncGenerator[None]:
+    """Emit periodic activity heartbeats in the background while the wrapped request runs.
+
+    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
+    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
+    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
+    harmless, so a plain 5-second cadence is fine.
+    """
+
+    async def beat() -> None:
+        timeout = activity.info().heartbeat_timeout
+        interval = timeout.total_seconds() / 2 if timeout else 5.0
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(interval)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 @dataclass(init=False)
@@ -167,10 +207,20 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
             *(retry_policy.non_retryable_error_types or []),
             UserError.__name__,
             PydanticUserError.__name__,
+            # A model misbehaving in a way the framework can't interpret (e.g. staying suspended
+            # past the continuation ceiling) won't be fixed by re-running the whole request chain,
+            # which would only re-incur its cost.
+            UnexpectedModelBehavior.__name__,
         ]
         activity_config['retry_policy'] = retry_policy
         self.activity_config = activity_config
-        self._model_activity_config: ActivityConfig = {**activity_config, **(model_activity_config or {})}
+        # The model activities heartbeat in the background (see `_heartbeating`), so give them a
+        # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
+        self._model_activity_config: ActivityConfig = {
+            'heartbeat_timeout': _DEFAULT_MODEL_HEARTBEAT_TIMEOUT,
+            **activity_config,
+            **(model_activity_config or {}),
+        }
         self._toolset_activity_config = toolset_activity_config or {}
 
         # These are populated by for_agent()
@@ -272,7 +322,8 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            return await model_request(model_for_request, request_context=request_context, run_context=run_context)
+            async with _heartbeating():
+                return await model_request(model_for_request, request_context=request_context, run_context=run_context)
 
         request_activity.__annotations__['deps'] = deps_type | None
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
@@ -289,19 +340,20 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
                 model_settings=cast(ModelSettings | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
             )
-            async with model_request_stream(
-                model_for_request, request_context=request_context, run_context=run_context
-            ) as streamed_response:
-                # Fire the capability chain's wrap_run_event_stream hooks against
-                # the live stream — ProcessEventStream and any other outer capability
-                # sees real events here, not synthetic ones replayed in the workflow.
-                events = await process_event_stream(
-                    run_context=run_context,
-                    request_context=request_context,
-                    stream=streamed_response,
-                    handler=event_stream_handler,
-                )
-            return StreamedActivityResult(response=streamed_response.get(), events=events)
+            async with _heartbeating():
+                async with model_request_stream(
+                    model_for_request, request_context=request_context, run_context=run_context
+                ) as streamed_response:
+                    # Fire the capability chain's wrap_run_event_stream hooks against
+                    # the live stream — ProcessEventStream and any other outer capability
+                    # sees real events here, not synthetic ones replayed in the workflow.
+                    events = await process_event_stream(
+                        run_context=run_context,
+                        request_context=request_context,
+                        stream=streamed_response,
+                        handler=event_stream_handler,
+                    )
+                return StreamedActivityResult(response=streamed_response.get(), events=events)
 
         request_stream_activity.__annotations__['deps'] = deps_type | None
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(

@@ -69,7 +69,14 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
     Model,
@@ -92,6 +99,7 @@ from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
 from ._inline_snapshot import snapshot
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 try:
     import temporalio.api.common.v1
@@ -7180,3 +7188,451 @@ async def test_durability_temporalizes_capability_contributed_toolsets(allow_mod
             task_queue=TASK_QUEUE,
         )
         assert output == 'activity'
+
+
+# --- Continuation chains (suspended → complete) resolve inside the activity ---
+#
+# When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
+# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
+# so under `TemporalDurability` the whole suspended → complete chain runs inside ONE
+# model-request activity. These tests use a scripted model (no cassettes: `FunctionModel`
+# can't emit suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
+
+
+def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
+    """The innermost `ApplicationError` of a workflow failure (walking through `ActivityError`)."""
+    cause: BaseException | None = exc.__cause__
+    while cause is not None and not isinstance(cause, ApplicationError):
+        cause = cause.__cause__
+    assert isinstance(cause, ApplicationError), f'expected ApplicationError in cause chain of {exc!r}'
+    return cause
+
+
+def _scheduled_activity_count(history: WorkflowHistory) -> int:
+    return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+_continuation_model = ScriptedContinuationModel()
+_continuation_agent = Agent(
+    _continuation_model,
+    name='durability_continuation_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityContinuationWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _continuation_agent.run(prompt)
+
+
+@workflow.defn
+class DurabilityContinuationResumeWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _continuation_agent.run(message_history=messages)
+
+
+@workflow.defn
+class DurabilityContinuationUsageLimitWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _continuation_agent.run(prompt, usage_limits=UsageLimits(total_tokens_limit=20))
+
+
+async def test_durability_continuation_chain_in_workflow(client: Client):
+    """A suspended → complete chain resolves inside one activity, as one merged response.
+
+    Usage is counted once (a continuation isn't a separate request step), and the workflow
+    history shows a single scheduled activity for both segments.
+    """
+    _continuation_model.reset(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationWorkflow],
+        plugins=[AgentPlugin(_continuation_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityContinuationWorkflow.run,
+            args=['go'],
+            id='DurabilityContinuationWorkflow_chain',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'The answer is 42.'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    usage = result.usage
+    assert usage.requests == 1
+    assert usage.input_tokens == 8
+    assert usage.output_tokens == 6
+    # Both segments ran inside the durable boundary: two model calls, one activity.
+    assert _continuation_model.request_calls == 2
+    assert _scheduled_activity_count(history) == 1
+
+
+async def test_durability_continuation_resume_from_history(client: Client):
+    """A `message_history` ending in a suspended response resumes inside the activity.
+
+    The suspended tail crosses the activity boundary as the last request message and seeds
+    the continuation loop there, so the run completes the paused turn instead of starting a
+    fresh generation.
+    """
+    _continuation_model.reset(
+        responses=[scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4)]
+    )
+    history_messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+        ),
+    ]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationResumeWorkflow],
+        plugins=[AgentPlugin(_continuation_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityContinuationResumeWorkflow.run,
+            args=[history_messages],
+            id='DurabilityContinuationWorkflow_resume',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'The answer is 42.'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    usage = result.usage
+    assert usage.requests == 1
+    assert usage.input_tokens == 8
+    assert usage.output_tokens == 6
+    # The continuation request ran inside the boundary — the seed wasn't re-generated.
+    assert _continuation_model.request_calls == 1
+    assert _scheduled_activity_count(history) == 1
+
+
+async def test_durability_continuation_error_cancels_job_inside_activity(client: Client):
+    """A request failure mid-chain cancels the suspended server-side job inside the activity.
+
+    The cancel-on-error policy runs on the real model inside the durable boundary — the
+    workflow side never sees the live suspended response.
+    """
+    _continuation_model.reset(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            RuntimeError('provider blew up'),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationWorkflow],
+        plugins=[AgentPlugin(_continuation_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                DurabilityContinuationWorkflow.run,
+                args=['go'],
+                id='DurabilityContinuationWorkflow_cancel_on_error',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == 'RuntimeError'
+    assert cause.message == 'provider blew up'
+    assert _continuation_model.request_calls == 2
+    assert len(_continuation_model.cancelled) == 1
+    assert _continuation_model.cancelled[0].provider_response_id == 'cont1'
+
+
+async def test_durability_continuation_usage_limit_checked_inside_activity(client: Client):
+    """Token limits are enforced mid-chain inside the activity, cancelling the live job.
+
+    `usage`/`usage_limits` cross the activity boundary on the serialized run context (a
+    custom `TemporalRunContext` subclass must keep including them), so a runaway
+    continuation fails fast without waiting for the workflow-side commit.
+    """
+    _continuation_model.reset(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationUsageLimitWorkflow],
+        plugins=[AgentPlugin(_continuation_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                DurabilityContinuationUsageLimitWorkflow.run,
+                args=['go'],
+                id='DurabilityContinuationWorkflow_usage_limit',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UsageLimitExceeded.__name__
+    assert 'total_tokens_limit' in cause.message
+    assert _continuation_model.request_calls == 2
+    # The over-budget merge was still suspended, so the live job was cancelled before raising.
+    assert len(_continuation_model.cancelled) == 1
+    assert _continuation_model.cancelled[0].provider_response_id == 'cont2'
+
+
+_continuation_ceiling_model = ScriptedContinuationModel()
+_continuation_ceiling_agent = Agent(
+    _continuation_ceiling_model,
+    name='durability_continuation_ceiling_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                # More than one attempt allowed, to prove `UnexpectedModelBehavior` is
+                # non-retryable rather than merely running out of attempts.
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            )
+        )
+    ],
+)
+
+
+@workflow.defn
+class DurabilityContinuationCeilingWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _continuation_ceiling_agent.run(prompt)
+
+
+async def test_durability_continuation_ceiling_surfaces_unexpected_model_behavior(client: Client):
+    """Exceeding the continuation ceiling fails the workflow without activity retries.
+
+    `UnexpectedModelBehavior` is in the activity retry policy's non-retryable error types:
+    re-running the whole chain wouldn't fix a model that never leaves `'suspended'`, it
+    would only re-incur its cost. The single-attempt call count proves no retry happened.
+    """
+    _continuation_ceiling_model.reset(
+        responses=[
+            scripted_response(
+                texts=[f'segment {i} '],
+                state='suspended',
+                provider_response_id=f'cont{i}',
+                input_tokens=1,
+                output_tokens=1,
+            )
+            for i in range(1, 12)
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationCeilingWorkflow],
+        plugins=[AgentPlugin(_continuation_ceiling_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                DurabilityContinuationCeilingWorkflow.run,
+                args=['go'],
+                id=DurabilityContinuationCeilingWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UnexpectedModelBehavior.__name__
+    assert cause.message == snapshot("Model response 'cont11' was suspended more than the maximum of 10 times")
+    # 1 initial + 10 continuation requests, from a single activity attempt (no retries).
+    assert _continuation_ceiling_model.request_calls == 11
+    # Giving up on a still-suspended job cancels it inside the activity so it doesn't leak.
+    assert len(_continuation_ceiling_model.cancelled) == 1
+
+
+# --- Streaming continuation chains inside the activity ---
+
+_continuation_stream_model = ScriptedContinuationModel()
+_continuation_stream_events: list[AgentStreamEvent] = []
+
+
+async def _continuation_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _continuation_stream_events.append(event)
+
+
+_continuation_stream_agent = Agent(
+    _continuation_stream_model,
+    name='durability_continuation_stream_agent',
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_continuation_event_stream_handler,
+            activity_config=BASE_ACTIVITY_CONFIG,
+        )
+    ],
+)
+
+
+@workflow.defn
+class DurabilityContinuationStreamWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _continuation_stream_agent.run(prompt)
+
+
+@workflow.defn
+class DurabilityContinuationStreamResumeWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _continuation_stream_agent.run(message_history=messages)
+
+
+def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
+    return [
+        (type(event).__name__, event.index) for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))
+    ]
+
+
+async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
+    """A streamed suspended → complete chain is stitched into one stream inside one activity.
+
+    The `event_stream_handler` fires inside the activity against the live stitched stream:
+    the second segment's part indices are offset past the first's (no collision), and the
+    final response merges both segments' text with usage summed once.
+    """
+    _continuation_stream_model.reset(
+        segments=[
+            StreamSegment(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='cont2', input_tokens=3, output_tokens=4
+            ),
+        ]
+    )
+    _continuation_stream_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationStreamWorkflow],
+        plugins=[AgentPlugin(_continuation_stream_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityContinuationStreamWorkflow.run,
+            args=['go'],
+            id='DurabilityContinuationStreamWorkflow_chain',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'The answer is 42.'
+    usage = result.usage
+    assert usage.requests == 1
+    assert usage.input_tokens == 8
+    assert usage.output_tokens == 6
+    # The handler saw the stitched stream live inside the activity: the second segment's
+    # part continues the index space rather than colliding with the first's.
+    assert _text_part_indices(_continuation_stream_events) == snapshot(
+        [
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
+            ('PartStartEvent', 1),
+            ('PartDeltaEvent', 1),
+        ]
+    )
+    assert _continuation_stream_model.request_stream_calls == 2
+    assert _scheduled_activity_count(history) == 1
+
+
+async def test_durability_streaming_continuation_resume_from_history(client: Client):
+    """A streamed resume of a suspended `message_history` tail completes inside the activity.
+
+    The suspended tail seeds the stitched stream, so the new segment's part indices start
+    after the seed's parts and the final output merges seed and continuation text.
+    """
+    _continuation_stream_model.reset(
+        segments=[
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='cont2', input_tokens=3, output_tokens=4
+            ),
+        ]
+    )
+    _continuation_stream_events.clear()
+    history_messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+        ),
+    ]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationStreamResumeWorkflow],
+        plugins=[AgentPlugin(_continuation_stream_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityContinuationStreamResumeWorkflow.run,
+            args=[history_messages],
+            id='DurabilityContinuationStreamWorkflow_resume',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+
+    assert result.output == 'The answer is 42.'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The new segment's part is indexed after the seed's single part.
+    assert _text_part_indices(_continuation_stream_events) == snapshot(
+        [
+            ('PartStartEvent', 1),
+            ('PartDeltaEvent', 1),
+        ]
+    )
+    assert _continuation_stream_model.request_stream_calls == 1

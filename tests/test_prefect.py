@@ -91,6 +91,7 @@ except ImportError:  # pragma: lax no cover
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`, and
 # the legacy `MCPServer*` / `FastMCPToolset` classes are deprecated in favor of `MCPToolset`.
@@ -2084,3 +2085,163 @@ async def test_prefect_durability_event_stream_handler_runs_per_event_task() -> 
     # One invocation per event (each event wrapped in its own task), not a single call.
     assert invocations > 1
     assert invocations == len(events_received)
+
+
+# --- Continuation chains (suspended → complete) resolve inside the task ---
+#
+# When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
+# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
+# so under `PrefectDurability` the whole suspended → complete chain runs inside ONE model
+# request task. These tests use a scripted model (no cassettes: `FunctionModel` can't emit
+# suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
+
+
+async def test_prefect_durability_continuation_chain_in_flow() -> None:
+    """A suspended → complete chain resolves inside one Prefect task, as one merged response.
+
+    Usage is counted once — a continuation isn't a separate request step.
+    """
+    model = ScriptedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+    agent = Agent(model, name='durability_continuation', capabilities=[PrefectDurability()])
+
+    results: list[AgentRunResult[str]] = []
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # Both segments ran inside the durable boundary.
+    assert model.request_calls == 2
+
+
+async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
+    """A streamed suspended → complete chain is stitched into one stream inside one task.
+
+    The `event_stream_handler` fires inside the task against the live stitched stream: the
+    second segment's part indices are offset past the first's (no collision), and the final
+    response merges both segments' text with usage summed once.
+    """
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='cont2', input_tokens=3, output_tokens=4
+            ),
+        ]
+    )
+
+    events_received: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    agent = Agent(
+        model,
+        name='durability_continuation_stream',
+        capabilities=[PrefectDurability(event_stream_handler=handler)],
+    )
+
+    results: list[AgentRunResult[str]] = []
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # The handler saw the stitched stream live inside the task: the second segment's part
+    # continues the index space rather than colliding with the first's.
+    indices = [
+        (type(event).__name__, event.index)
+        for event in events_received
+        if isinstance(event, (PartStartEvent, PartDeltaEvent))
+    ]
+    assert indices == snapshot(
+        [
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
+            ('PartStartEvent', 1),
+            ('PartDeltaEvent', 1),
+        ]
+    )
+    assert model.request_stream_calls == 2
+
+
+async def test_prefect_durability_continuation_resume_from_history() -> None:
+    """A `message_history` ending in a suspended response resumes inside the Prefect task.
+
+    The suspended tail crosses the task boundary as the last request message and seeds the
+    continuation loop there, so the run completes the paused turn instead of starting a
+    fresh generation.
+    """
+    model = ScriptedContinuationModel(
+        responses=[scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4)]
+    )
+    agent = Agent(model, name='durability_continuation_resume', capabilities=[PrefectDurability()])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+        ),
+    ]
+
+    results: list[AgentRunResult[str]] = []
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run(message_history=history)
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    result = results[0]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 6
+    # The continuation request ran inside the boundary — the seed wasn't re-generated.
+    assert model.request_calls == 1

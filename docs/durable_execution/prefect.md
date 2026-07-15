@@ -196,6 +196,12 @@ For real-time streaming behavior inside Prefect flows, you can set an [`event_st
 
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
+Because the model stream is consumed inside the task and only its events are replayed on the flow side, cancelling a live stream (e.g. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
+
+### Suspended Turns and Background Mode
+
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), the entire suspended → complete chain executes within a single model request task: the task returns one merged [`ModelResponse`][pydantic_ai.messages.ModelResponse], usage is recorded once, and a [`message_history`](../message-history.md) ending in a suspended response is resumed inside the task the same way. When using background mode, make sure the model task's `timeout_seconds` in [Task Configuration](#task-configuration) accounts for the job's full duration.
+
 ### Toolsets at Runtime
 
 Additional toolsets can be passed per run via `agent.run(toolsets=...)` (on both the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and `PrefectAgent` paths), but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
