@@ -199,6 +199,9 @@ def test_native_output_profile_default_transforms_schema(allow_model_requests: N
     'auto' to 'native', so schemas reaching native mode only via the profile default were sent to Anthropic
     untransformed, causing a 400 for constraints like `ge`/`min_length` that Anthropic's schema dialect
     doesn't support.
+
+    A mock test, not just the companion VCR test below, because the cassette matcher isn't sensitive to
+    request-body drift, so pinning the transformed schema directly is what actually catches a regression.
     """
     mock_client = MockAnthropic.create_mock(
         completion_message(
