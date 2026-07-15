@@ -68,7 +68,8 @@ class GoogleCloudProvider(BaseGoogleProvider):
 
         # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
         # the SDK uses Vertex AI Express Mode. The SDK reads `GOOGLE_API_KEY`/`GEMINI_API_KEY` itself,
-        # but drops them because the ADC path below always passes an explicit `location`.
+        # but drops them, since explicit `credentials` or the explicit `location` always passed
+        # in the ADC path below take SDK precedence over environment API keys.
         if credentials is not None or project is not None or location is not None:
             api_key = None
         elif api_key is None and not any(
