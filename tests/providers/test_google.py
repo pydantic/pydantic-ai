@@ -20,10 +20,10 @@ with try_import() as imports_successful:
     class FakeSigner(crypt.Signer):
         @property
         def key_id(self) -> str | None:
-            return None
+            return None  # pragma: no cover
 
         def sign(self, message: str | bytes) -> bytes:
-            return b''
+            return b''  # pragma: no cover
 
     def service_account_credentials(*, scopes: Sequence[str] | None = None) -> service_account.Credentials:
         return service_account.Credentials(
