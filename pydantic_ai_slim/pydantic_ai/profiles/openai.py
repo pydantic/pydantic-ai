@@ -127,13 +127,13 @@ The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 _KNOWN_VENDOR_PREFIXES: tuple[str, ...] = ('openai.',)
 """Vendor prefixes that some OpenAI-compatible endpoints (e.g. AWS Bedrock Mantle) prepend to
-model IDs. They are stripped before capability matching so a prefixed ID like ``openai.gpt-5.6-sol``
-is treated as the bare ``gpt-5.6-sol``; only known prefixes are stripped to avoid breaking names
+model IDs. They are stripped before capability matching so a prefixed ID like `openai.gpt-5.6-sol`
+is treated as the bare `gpt-5.6-sol`; only known prefixes are stripped to avoid breaking names
 that legitimately start with those strings."""
 
 
 def _strip_vendor_prefix(model_name: str) -> str:
-    """Strip a known vendor prefix from ``model_name`` for capability matching."""
+    """Strip a known vendor prefix from `model_name` for capability matching."""
     for prefix in _KNOWN_VENDOR_PREFIXES:
         if model_name.startswith(prefix):
             return model_name[len(prefix) :]
