@@ -611,7 +611,9 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    """
+    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -649,7 +651,9 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> The next request would exceed the request_limit of 3
+    """
+    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
@@ -675,7 +679,9 @@ try:
     agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
 except UsageLimitExceeded as e:
     print(e)
-    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+    """
+    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 !!! note
@@ -1227,7 +1233,10 @@ with capture_run_messages() as messages:  # (2)!
         result = agent.run_sync('Please get me the volume of a box with size 6.')
     except UnexpectedModelBehavior as e:
         print('An error occurred:', e)
-        #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
+        """
+        An error occurred:
+        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries
+        """
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')
         print('messages:', messages)

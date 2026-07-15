@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
@@ -281,10 +282,18 @@ def _kill_leaked_temporal_server(port: int) -> None:
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     _kill_leaked_temporal_server(TEMPORAL_PORT)
+    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
+    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
+    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
+    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
+    # restricts `Path.home()` access.
+    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
+    download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
 
