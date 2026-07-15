@@ -222,10 +222,17 @@ def test_native_output_profile_default_transforms_schema(allow_model_requests: N
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
     output_schema = completion_kwargs['output_config']['format']['schema']
 
-    assert output_schema['additionalProperties'] is False
-    assert 'minimum' not in output_schema['properties']['confidence']
-    assert 'maximum' not in output_schema['properties']['confidence']
-    assert 'minLength' not in output_schema['properties']['title']
+    assert output_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'confidence': {'type': 'number', 'description': '{maximum: 1.0, minimum: 0.0}'},
+                'title': {'type': 'string', 'description': '{minLength: 1}'},
+            },
+            'required': ['confidence', 'title'],
+            'additionalProperties': False,
+        }
+    )
 
 
 # =============================================================================
