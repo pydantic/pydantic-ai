@@ -135,7 +135,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .vercel import VercelProvider
 
         return VercelProvider
-    elif provider == 'azure':
+    elif provider in ('azure', 'azure-responses'):
         from .azure import AzureProvider
 
         return AzureProvider

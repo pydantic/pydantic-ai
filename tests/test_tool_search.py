@@ -3094,6 +3094,42 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
 
 
 @pytest.mark.vcr
+async def test_openai_native_tool_search_gpt_5_6(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end against live OpenAI Responses: GPT-5.6 supports the native `tool_search`
+    tool with `defer_loading`, backing `supports_tool_search` in its model profile — the
+    server-executed search discovers the deferred tool and the model dispatches it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the current USD to EUR exchange rate?')
+
+    assert any(
+        isinstance(p, NativeToolCallPart) and p.tool_name == 'tool_search'
+        for m in result.all_messages()
+        for p in m.parts
+    )
+    rate_returns = [
+        p
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+
+@pytest.mark.vcr
 async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str, vcr: Any) -> None:
     """End-to-end: a custom callable `ToolSearch` strategy surfaces natively on OpenAI
     Responses as `ToolSearchToolParam(execution='client')` — the provider emits a

@@ -105,7 +105,6 @@ PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
-    'moonshotai/kimi-k2-instruct-0905',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
@@ -838,11 +837,9 @@ def _map_usage(
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
-    # `completion_tokens_details` carries `reasoning_tokens`, which the genai-prices
-    # extractors don't surface, so lift its integer fields into `details` here.
-    # `cached_tokens` (from `prompt_tokens_details`) is intentionally left to the
-    # genai-prices extractors invoked by `RequestUsage.extract`; see
-    # https://github.com/pydantic/genai-prices/issues/414.
+    # Lift only `completion_tokens_details` (reasoning_tokens) into `details`: genai-prices
+    # doesn't surface those, but it does map `prompt_tokens_details.cached_tokens` to
+    # first-class `cache_read_tokens`, so lifting that too would double-report it.
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 

@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    EndStrategy,
     ExternalToolset,
     FunctionToolset,
     ModelMessage,
@@ -1591,6 +1592,152 @@ def test_tool_raises_approval_required():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+@pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
+def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
+    """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
+    which requires an exact parallel batch of an invalid output tool call and an approval-required
+    call that a live model wouldn't reliably produce (https://github.com/pydantic/pydantic-ai/issues/6486).
+    """
+
+    class MyOutput(BaseModel):
+        value: int
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'value': 'not-an-int'},
+                        tool_call_id='output_call',
+                    ),
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'x': 1},
+                        tool_call_id='approval_call',
+                    ),
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')]
+        )
+
+    agent = Agent(FunctionModel(llm), output_type=[MyOutput, DeferredToolRequests], end_strategy=end_strategy)
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x * 2
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')])
+    )
+    message_history = result.all_messages()
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls'):
+        agent.run_sync(
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'approval_call': True, 'bogus_call': True}),
+        )
+
+    result = agent.run_sync(
+        message_history=message_history,
+        deferred_tool_results=DeferredToolResults(approvals={'approval_call': True}),
+    )
+
+    assert result.output == MyOutput(value=42)
+    messages = result.all_messages()
+    retry_parts = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    my_tool_returns = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'my_tool'
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_call_id == 'output_call'
+    assert len(my_tool_returns) == 1
+    assert my_tool_returns[0].tool_call_id == 'approval_call'
+
+    if end_strategy == 'graceful':
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args={'value': 'not-an-int'}, tool_call_id='output_call'
+                        ),
+                        ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call'),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=9),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': ('value',),
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'not-an-int',
+                                }
+                            ],
+                            tool_name='final_result',
+                            tool_call_id='output_call',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content=2, tool_call_id='approval_call', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
+                    ],
+                    usage=RequestUsage(input_tokens=90, output_tokens=13),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='valid_output_call',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
 
 
 def test_approval_required_with_user_prompt():
@@ -4433,3 +4580,50 @@ def test_include_return_schema_on_toolset_tool():
 
 
 # endregion
+
+
+# --- Tool parameter validation -------------------------------------------------
+
+
+def test_tool_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        Tool(lambda: None, max_retries=-1)
+
+
+def test_tool_accepts_zero_max_retries():
+    tool = Tool(lambda: None, max_retries=0)
+    assert tool.max_retries == 0
+
+
+def test_tool_accepts_none_max_retries():
+    tool = Tool(lambda: None, max_retries=None)
+    assert tool.max_retries is None
+
+
+def test_tool_rejects_non_positive_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=0)
+
+
+def test_tool_rejects_negative_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=-1)
+
+
+def test_tool_accepts_none_timeout():
+    tool = Tool(lambda: None, timeout=None)
+    assert tool.timeout is None
+
+
+# --- ToolOutput parameter validation -------------------------------------------
+
+
+def test_tooloutput_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        ToolOutput(int, max_retries=-1)
+
+
+@pytest.mark.parametrize('max_retries', [0, None])
+def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
+    out = ToolOutput(int, max_retries=max_retries)
+    assert out.max_retries == max_retries

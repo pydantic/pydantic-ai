@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -961,6 +962,63 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 
         # double check usage matches stream count
         assert result.usage.output_tokens == len(stream)
+
+
+@pytest.mark.parametrize(
+    'output_type, json_chunks, expected',
+    [
+        pytest.param(float, ('{"response":20', '}'), 20.0, id='number-accepts-integer'),
+        pytest.param(float, ('{"response":1', '.5}'), 1.5, id='number-accepts-decimal-continuation'),
+        pytest.param(int, ('{"response":1.0', '}'), 1, id='integer-accepts-zero-fraction'),
+    ],
+)
+async def test_stream_result_type_numeric_json(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    json_chunks: tuple[str, ...],
+    expected: int | float,
+) -> None:
+    """Use mock chunks because a live model cannot reliably emit the exact numeric spellings and boundaries."""
+    stream = [text_chunk(text) for text in json_chunks[:-1]]
+    stream.append(text_chunk(json_chunks[-1], finish_reason='stop'))
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+
+@pytest.mark.parametrize(
+    'output_type, partial_value, valid_value, expected',
+    [
+        pytest.param(float, '1', '2.5', 2.5, id='number-with-integer-prefix'),
+        pytest.param(int, '1.0', '2', 2, id='integer-with-integral-float-prefix'),
+    ],
+)
+async def test_stream_result_type_numeric_json_retries_malformed_continuation(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    partial_value: str,
+    valid_value: str,
+    expected: int | float,
+) -> None:
+    """Reject a compatible numeric prefix when the completed JSON is malformed.
+
+    A live model cannot reliably reproduce the exact chunk boundary and malformed retry sequence.
+    """
+    streams = [
+        [text_chunk(f'{{"response":{partial_value}'), text_chunk('x}', finish_reason='stop')],
+        [text_chunk(f'{{"response":{valid_value}}}', finish_reason='stop')],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(streams)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 2
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -2135,6 +2193,81 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             },
             True,
         ),
+        (
+            'Number accepts integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20},
+            True,
+        ),
+        (
+            'Number accepts float',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20.5},
+            True,
+        ),
+        (
+            'Number rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Integer accepts float with zero fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.0},
+            True,
+        ),
+        (
+            'Integer rejects float with fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.5},
+            False,
+        ),
+        (
+            'Integer rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Boolean accepts booleans',
+            {
+                'required': ['true_value', 'false_value'],
+                'properties': {
+                    'true_value': {'type': 'boolean'},
+                    'false_value': {'type': 'boolean'},
+                },
+            },
+            {'true_value': True, 'false_value': False},
+            True,
+        ),
+        (
+            'Boolean rejects integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'boolean'}}},
+            {'value': 1},
+            False,
+        ),
+        (
+            'Nested number accepts integer',
+            {
+                'required': ['outer'],
+                'properties': {
+                    'outer': {
+                        'type': 'object',
+                        'required': ['inner'],
+                        'properties': {'inner': {'type': 'number'}},
+                    }
+                },
+            },
+            {'outer': {'inner': 20}},
+            True,
+        ),
+        (
+            'Array of number accepts integers',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, 2, 3]},
+            True,
+        ),
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
@@ -2880,6 +3013,14 @@ def test_map_content_concatenates_text_chunks() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:

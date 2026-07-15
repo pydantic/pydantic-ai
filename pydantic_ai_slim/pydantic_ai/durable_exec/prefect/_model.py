@@ -91,6 +91,12 @@ class PrefectModel(WrapperModel):
 
         self._wrapped_request_stream = request_stream_task
 
+        @task
+        async def cancel_suspended_response_task(response: ModelResponse) -> None:
+            await super(PrefectModel, self).cancel_suspended_response(response)
+
+        self._wrapped_cancel_suspended_response = cancel_suspended_response_task
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -101,6 +107,16 @@ class PrefectModel(WrapperModel):
         return await self._wrapped_request.with_options(
             name=f'Model Request: {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response, wrapped as a Prefect task.
+
+        The teardown performs a raw HTTP call to the provider, so it runs as a task (durable,
+        retried) rather than inline in the flow.
+        """
+        await self._wrapped_cancel_suspended_response.with_options(
+            name=f'Model Cancel Suspended Response: {self.wrapped.model_name}', **self.task_config
+        )(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -130,4 +146,11 @@ class PrefectModel(WrapperModel):
         response = await self._wrapped_request_stream.with_options(
             name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        # Without an `event_stream_handler`, the task drained and discarded the real stream's events
+        # (e.g. `agent.iter` inside a flow, where the caller drives the flow-side stream via
+        # `node.stream(...)`/`stream_text()`). Replay the response's parts as events so that stream
+        # produces content. With a handler, events were already delivered inside the task, so the
+        # flow-side stream stays empty to avoid delivering them twice.
+        yield CompletedStreamedResponse(
+            model_request_parameters, response, replay_events=self._get_event_stream_handler() is None
+        )

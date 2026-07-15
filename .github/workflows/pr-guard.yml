@@ -61,6 +61,25 @@ jobs:
             exit 0
           fi
 
+          # Author repo-role bypass. The webhook's `author_association` is unreliable — it
+          # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
+          # `dsfaccini`, a public org member with `maintain` role, came through as
+          # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
+          # the author's actual role on THIS repo via the API — the same `role_name` signal
+          # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
+          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
+          # an external contributor can never gain a bypass this way.
+          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          case "$AUTHOR_ROLE" in
+            triage | write | maintain | admin)
+              echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
+              exit 0
+              ;;
+            *)
+              echo "Author ${PR_AUTHOR} repo role: ${AUTHOR_ROLE}; continuing checks."
+              ;;
+          esac
+
           # Private-membership bypass. The `author_association` in the webhook only
           # reflects *public* org membership, so a private member of the org that
           # owns this repo is reported as CONTRIBUTOR and misses the bypass above.
