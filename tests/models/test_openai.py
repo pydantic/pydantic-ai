@@ -948,7 +948,7 @@ async def test_disable_streaming_events(allow_model_requests: None):
 async def test_disable_streaming_multiple_text_parts_are_not_repeated(allow_model_requests: None):
     """Text split across parts by a thinking block is streamed once, not once per source.
 
-    `StreamedRunResult._stream_response_text` yields the text parts already on the response before it
+    `AgentStream._stream_response_text` yields the text parts already on the response before it
     starts reading events, so the replayed parts must only reach it as events. A mock is used rather
     than a cassette to pin this exact part sequence, which depends on where the model puts its
     thinking tags.

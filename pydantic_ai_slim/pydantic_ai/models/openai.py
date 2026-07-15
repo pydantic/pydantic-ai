@@ -440,10 +440,10 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
 
 
 def _drop_whitespace_text_parts(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
-    """Drop text parts that are empty or whitespace-only.
+    r"""Drop text parts that are empty or whitespace-only.
 
     Mirrors `ModelResponsePartsManager.handle_text_delta(ignore_leading_whitespace=True)` for
-    responses that were not streamed: models like Ollama + Qwen3 emit `<think>\\n</think>\\n\\n` or an
+    responses that were not streamed: models like Ollama + Qwen3 emit `<think>\n</think>\n\n` or an
     empty text part ahead of tool calls, which `run_stream` would otherwise treat as a final result,
     ending the run before the tool calls are executed. Streaming can never build a whitespace-only
     text part under that setting, so dropping them here reproduces its end state.
@@ -3645,7 +3645,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
     single `PartStartEvent` as the consumer iterates (the base class adds the matching
     `PartEndEvent`s), so streaming consumers like the AG-UI and Vercel AI adapters keep working
     without incremental deltas. The parts must not also be populated up front in that case:
-    `StreamedRunResult._stream_response_text` yields the text parts already on the response before
+    `AgentStream._stream_response_text` yields the text parts already on the response before
     it starts reading events, so a part that is both pre-populated and replayed is emitted twice.
 
     Otherwise the parts are populated up front and no events are emitted, for responses whose content

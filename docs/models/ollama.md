@@ -113,4 +113,6 @@ agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_disable_strea
 ...
 ```
 
-Because the whole response is generated before anything is emitted, consumers see no incremental output, and the same applies to any other model served over the Chat Completions API (for example via vLLM).
+Because the whole response is generated before anything is emitted, consumers see no incremental output.
+
+The setting lives on [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings], so it works for any model served over the Chat Completions API, including open-weight models served by vLLM.
