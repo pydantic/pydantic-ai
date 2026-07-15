@@ -135,11 +135,12 @@ class _BotocoreRequestParams(TypedDict):
 _EXTRA_HEADERS: ContextVar[tuple[weakref.ReferenceType[BedrockRuntimeClient], dict[str, str]] | None] = ContextVar(
     'bedrock_extra_headers', default=None
 )
+# botocore dedups `unique_id` per emitter across ALL event names, so this id must not be reused for another event.
 _EXTRA_HEADERS_UNIQUE_ID = 'pydantic-ai-extra-headers'
 
 
 def _inject_extra_headers(
-    client_ref: weakref.ReferenceType[BedrockRuntimeClient], params: _BotocoreRequestParams, **kwargs: Any
+    client_ref: weakref.ReferenceType[BedrockRuntimeClient], params: _BotocoreRequestParams, **_: Any
 ) -> None:
     active_request = _EXTRA_HEADERS.get()
     if active_request is None or (client := client_ref()) is None or active_request[0]() is not client:
@@ -159,9 +160,10 @@ def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str
 
     The injector is registered from every request path, not just those with `extra_headers`: botocore's emitter
     caches handler lookups without locking, so registering on a client that is already serving requests can poison
-    that cache and silently drop the handler. Registering before every call means an emitting thread has always
-    completed its own registration first, so the injector is present in any lookup it caches. `unique_id` makes
-    re-registration a no-op inside botocore.
+    that cache and silently drop the handler. Registering before every call means any request made through
+    pydantic-ai has completed its own registration first, so the injector is present in any lookup it caches.
+    `unique_id` makes re-registration a no-op inside botocore. Direct boto3 calls on a shared client can still race
+    the first registration; boto3 documents such event mutation on a shared client as unsafe.
     """
     client.meta.events.register(
         'before-call.bedrock-runtime',
@@ -428,6 +430,9 @@ class BedrockModelSettings(ModelSettings, total=False):
 
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
+
+    `extra_headers` are injected before signing, so they are covered by the SigV4 signature; headers the AWS SDK
+    computes itself (e.g. `Authorization`, `User-Agent`, `X-Amz-Date`) are overwritten by botocore afterwards.
     """
 
     # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -734,6 +739,7 @@ class BedrockConverseModel(Model[BaseClient]):
             'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {'converse': converse},
         }
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
         with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
             response = await anyio.to_thread.run_sync(functools.partial(client.count_tokens, **params))
@@ -968,6 +974,7 @@ class BedrockConverseModel(Model[BaseClient]):
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
+        # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
         with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
             if stream:

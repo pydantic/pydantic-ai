@@ -66,7 +66,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
@@ -301,13 +301,13 @@ async def test_bedrock_model_stream_with_extra_headers(allow_model_requests: Non
     )
 
 
-async def test_bedrock_extra_headers_are_signed_for_all_operations(monkeypatch: pytest.MonkeyPatch):
+async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv):
     """The real botocore pipeline signs extra headers for every Bedrock operation we use.
 
     Not a VCR test: requests are aborted at `before-send` to inspect real SigV4 signing across three operations
     without recording three cassettes, and header-blind cassette matchers could not pin the signature anyway.
     """
-    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
+    env.remove('AWS_BEARER_TOKEN_BEDROCK')
     provider = BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='AKIA6666666666666666',
@@ -448,8 +448,7 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
 
 
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
-    """A no-headers request after a with-headers request on the same client and task sends no extra headers, and
-    repeated requests register the injector only once.
+    """Sequential requests on one client neither inherit earlier headers nor re-register the injector.
 
     Not a VCR test: context cleanup and handler bookkeeping between sequential requests have no observable effect
     on a single recorded exchange, so a cassette could not pin either behavior.
