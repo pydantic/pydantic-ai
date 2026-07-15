@@ -1798,6 +1798,9 @@ def _process_response_from_parts(
     response_metadata: dict[str, Any] | None = None
 
     native_tool_invocation_types = _native_tool_invocation_types(parts)
+    # Metadata-only grounding has historically preceded provider parts in non-streamed responses. Keep that
+    # order for message-history compatibility. Streamed grounding arrives only after text, so matching the
+    # non-streamed order would require buffering the response and defeat streaming.
     grounding_items = trailing_metadata_items if native_tool_invocation_types else items
     if ToolType.GOOGLE_SEARCH_WEB not in native_tool_invocation_types:
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)

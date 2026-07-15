@@ -956,6 +956,14 @@ async def test_gemini_response_reconstructs_web_search_with_explicit_web_fetch_p
         'web_fetch',
         'web_search',
     ]
+    [web_search_return] = [
+        part
+        for part in response.parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == WebSearchTool.kind
+    ]
+    assert web_search_return.content == snapshot(
+        [{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}]
+    )
 
 
 # On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
@@ -1094,6 +1102,16 @@ async def test_file_search_metadata_reconstructed_with_explicit_web_fetch_stream
         pass
     streamed_model_response = streamed_response.get()
     response = _process_response(raw_parts, grounding=_FILE_SEARCH_GROUNDING_METADATA)
+    expected_file_search_content = snapshot(
+        [
+            {
+                'text': 'Paris is the capital of France.',
+                'title': 'paris.txt',
+                'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                'file_search_store': 'fileSearchStores/test-store',
+            }
+        ]
+    )
 
     for parts in (streamed_model_response.parts, response.parts):
         assert [part.tool_name for part in parts if isinstance(part, NativeToolCallPart)] == [
@@ -1101,7 +1119,7 @@ async def test_file_search_metadata_reconstructed_with_explicit_web_fetch_stream
             FileSearchTool.kind,
         ]
         [file_search_return] = _file_search_returns(list(parts))
-        assert file_search_return.content is not None
+        assert file_search_return.content == expected_file_search_content
 
     file_search_call_index = next(
         index

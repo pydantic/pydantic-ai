@@ -4420,6 +4420,8 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
 async def test_agent_stream_text_output_with_native_tool_parts(
     leading_text: str, trailing_text: str | None, provider_metadata: bool, expected: str
 ) -> None:
+    # Synthetic by design: this exercises provider-agnostic `AgentStream` assembly and has no HTTP boundary
+    # to record. Provider behavior is covered by the model-specific VCR tests.
     parts: list[ModelResponsePart] = [
         TextPart(leading_text),
         NativeToolCallPart(
