@@ -1593,6 +1593,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             yield
 
     @staticmethod
+    @contextmanager
+    def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
+        """Use a custom async sleep function for agent-graph delays during the context.
+
+        By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
+        polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
+        DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
+        waste activity time.
+        """
+        with _agent_graph.set_agent_graph_sleep(sleep_func):
+            yield
+
+    @staticmethod
     def is_model_request_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.ModelRequestNode[T, S]]:
