@@ -1184,7 +1184,7 @@ class GoogleModel(Model[Client]):
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
-                part_dict['video_metadata'] = cast(VideoMetadataDict, vendor_metadata)
+                part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(
