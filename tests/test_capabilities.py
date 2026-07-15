@@ -13919,8 +13919,13 @@ async def test_with_event_stream_buffer_drains_around_node_stream():
     assert drained == [during, model_event, after]
 
 
-async def test_agent_stream_events_iter_drains_buffer_around_model_events():
-    """`AgentStream._events_iter` drains buffered run events before, between, and after base events."""
+async def test_agent_stream_events_iter_drains_buffer_before_each_pull():
+    """`AgentStream._events_iter` drains buffered run events before each pull from the model stream.
+
+    Events buffered while a pull is in flight surface on the next pull; events buffered after the
+    last model event are not drained here — they flow through the response-handling node's stream
+    (`_with_event_stream_buffer`'s trailing drain) once this stream is exhausted.
+    """
     initial = EnqueuedMessagesEvent(enqueue_id='initial', messages=())
     during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
     after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
@@ -13937,22 +13942,9 @@ async def test_agent_stream_events_iter_drains_buffer_around_model_events():
     stream._anext_lock = anyio.Lock()  # pyright: ignore[reportPrivateUsage]
 
     drained = [event async for event in stream._events_iter(base_iter())]  # pyright: ignore[reportPrivateUsage]
-    assert drained == [initial, during, model_event, after]
-
-
-async def test_agent_stream_events_iter_without_buffer_getter():
-    """`AgentStream._events_iter` yields only base model events when no buffer getter is configured."""
-    model_event = PartStartEvent(index=0, part=TextPart(content='done'))
-
-    async def base_iter() -> AsyncIterator[ModelResponseStreamEvent]:
-        yield model_event
-
-    stream = cast(AgentStream[Any, str], object.__new__(AgentStream))
-    stream._event_stream_buffer_getter = None  # pyright: ignore[reportPrivateUsage]
-    stream._anext_lock = anyio.Lock()  # pyright: ignore[reportPrivateUsage]
-
-    drained = [event async for event in stream._events_iter(base_iter())]  # pyright: ignore[reportPrivateUsage]
-    assert drained == [model_event]
+    assert drained == [initial, model_event, during]
+    # `after` stays buffered for the response-handling node's stream to deliver.
+    assert buffer == [after]
 
 
 class _FixedEventsAgentStream(AgentStream[Any, str]):

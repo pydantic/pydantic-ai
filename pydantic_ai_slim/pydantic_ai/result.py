@@ -57,7 +57,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
-    _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] | None = field(default=None, repr=False)
+    _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -359,12 +359,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield ''.join(deltas)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
-
-        Alongside the model response stream events, this drains the run's event buffer, so
-        [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s for messages delivered
-        around this request surface here too.
-        """
+        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
         if self._agent_stream_iterator is None:
             self._agent_stream_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, lambda: self.usage
@@ -375,7 +370,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return self._events_iter(base_iter)
 
     async def _model_response_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Iterate only the model response stream events, dropping other agent stream events."""
+        """Iterate only the model response stream events, dropping events emitted into the run's event buffer."""
         async for event in self:
             if isinstance(
                 event,
@@ -390,11 +385,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # Serialize access to the shared base iterator. An early break from
         # stream_text() can leave a pending `anext()` task in group_by_temporal
         # while cleanup/drain starts iterating the same stream.
-        def drain_buffer() -> list[AgentStreamEvent]:
-            return [] if self._event_stream_buffer_getter is None else self._event_stream_buffer_getter()
-
         while True:
-            while buffer := drain_buffer():
+            # Drain events emitted into the run's event buffer before each pull, so they interleave with the
+            # model's own events. Events emitted while a pull is in flight surface on the next pull,
+            # or through the response-handling node's stream once this stream is exhausted.
+            while buffer := self._event_stream_buffer_getter():
                 yield buffer.pop(0)
 
             async with self._anext_lock:
@@ -402,12 +397,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     event = await anext(base_iter)
 
                 except StopAsyncIteration:
-                    while buffer := drain_buffer():
-                        yield buffer.pop(0)
                     return
-
-            while buffer := drain_buffer():
-                yield buffer.pop(0)
 
             yield event
 
