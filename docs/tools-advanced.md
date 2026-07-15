@@ -168,7 +168,7 @@ def get_weather(city: str) -> str:
 
 Because strict mode guarantees the arguments match the schema exactly, not every schema can be represented under it: some providers require every property to be listed in `required` and objects to set `additionalProperties: false`. A schema that can't be represented this way may be transformed lossily or have the flag ignored for that tool — which is why `strict=True` is best read as a request to *force* strict mode wherever the provider can honor it.
 
-Strict mode is currently supported by **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models. How each provider applies it differs:
+Pydantic AI translates the `strict` flag into a native schema-enforcement feature for **OpenAI**, **Anthropic**, **Google**, and **Bedrock** models; other providers ignore it. Each provider's underlying feature differs:
 
 | Provider | Behavior |
 |---|---|

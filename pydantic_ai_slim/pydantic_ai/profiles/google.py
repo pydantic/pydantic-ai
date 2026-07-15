@@ -75,7 +75,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     is_3_or_newer = 'gemini-3' in model_name
     is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
     # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
-    # #5366); image models don't support function tools, so leave it off there.
+    # https://github.com/pydantic/pydantic-ai/issues/5366); image models don't support function tools,
+    # so leave it off there.
     supports_strict_tool_definition = is_thinking_model and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name

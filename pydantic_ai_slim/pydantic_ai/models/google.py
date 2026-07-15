@@ -705,7 +705,8 @@ class GoogleModel(Model[Client]):
         # are function tools.
         if tool_defs:
             mode = function_calling_config_modes[tool_choice_mode]
-            # `VALIDATED` is `AUTO` with API-side schema enforcement (see #5366); it needs no schema rewrites,
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see
+            # https://github.com/pydantic/pydantic-ai/issues/5366); it needs no schema rewrites,
             # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
             # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
             # have different semantics.
