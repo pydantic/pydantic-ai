@@ -111,3 +111,18 @@ Good default split:
 
 - use `WebSearch()` capability when the user wants model-agnostic search with native fallback
 - use `duckduckgo_search_tool()` / Tavily / Exa when the user explicitly wants those engines as tools
+
+For Exa agent workflows, make the search type developer-controlled and request token-efficient highlights:
+
+```python
+from pydantic_ai.common_tools.exa import exa_search_tool
+
+exa_search = exa_search_tool(
+    api_key='your-api-key',
+    search_type='auto',
+    content='highlights',
+    include_domains=['docs.example.com'],
+)
+```
+
+When `search_type` is omitted, the model can choose it per call. The default content remains full `text` for backward compatibility.

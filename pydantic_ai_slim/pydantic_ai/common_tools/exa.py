@@ -6,7 +6,9 @@ results across billions of web pages.
 """
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
+from functools import partial
+from inspect import signature
 from typing import TYPE_CHECKING, Literal, cast, overload
 
 from typing_extensions import Any, TypedDict, assert_never
@@ -27,27 +29,31 @@ if TYPE_CHECKING:
     from exa_py.api import ContentsOptions, Result, SearchResponse
 
 __all__ = (
+    'ContentType',
     'ExaToolset',
+    'SearchType',
     'exa_search_tool',
     'exa_find_similar_tool',
     'exa_get_contents_tool',
     'exa_answer_tool',
 )
 
-SearchType = Literal['auto', 'fast', 'deep']
+SearchType = Literal['auto', 'fast', 'instant', 'deep-lite', 'deep', 'deep-reasoning']
 """The Exa search types exposed by these tools.
 
-`auto` automatically picks the best strategy, `fast` is speed-optimized, and `deep` runs a
-comprehensive multi-query search. See the [Exa Search API documentation](https://exa.ai/docs/reference/search)
-for the full set of search types supported by the underlying API.
+See the [Exa Search API documentation](https://exa.ai/docs/reference/search) for details about
+each search type.
 """
+
+_ModelSearchType = Literal['auto', 'fast', 'instant', 'deep-lite', 'deep', 'deep-reasoning', 'keyword', 'neural']
+"""Search types accepted from models, including legacy values for backward compatibility."""
 
 ContentType = Literal['highlights', 'text']
 """The kind of content returned for each search result.
 
-`highlights` (the default) returns token-efficient snippets relevant to the query; `text` returns
-the full page text. See the [Exa Contents API documentation](https://exa.ai/docs/reference/get-contents)
-for more information.
+`highlights` returns token-efficient snippets relevant to the query; `text` (the default, for
+backward compatibility) returns the full page text. See the
+[Exa Contents API documentation](https://exa.ai/docs/reference/get-contents) for more information.
 """
 
 
@@ -67,8 +73,8 @@ class ExaSearchResult(TypedDict):
     author: str | None
     """The author of the content, if available."""
     text: str
-    """The content of the result: token-efficient highlight snippets by default, or the full page
-    text when the tool is configured with `content='text'`."""
+    """The content of the result: full page text by default, or token-efficient highlight snippets
+    when the tool is configured with `content='highlights'`."""
 
 
 class ExaAnswerResult(TypedDict):
@@ -114,6 +120,19 @@ def _make_client(api_key: str | None, client: AsyncExa | None) -> AsyncExa:
     return client
 
 
+_FIND_SIMILAR_DEPRECATION_MESSAGE = (
+    '`exa_find_similar_tool` is deprecated as `find_similar` is deprecated in `exa-py`; use `exa_search_tool` instead.'
+)
+
+
+def _warn_find_similar_deprecated(*, stacklevel: int) -> None:
+    warnings.warn(
+        _FIND_SIMILAR_DEPRECATION_MESSAGE,
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+
+
 @dataclass
 class ExaSearchTool:
     """The Exa search tool."""
@@ -121,17 +140,19 @@ class ExaSearchTool:
     client: AsyncExa
     """The Exa async client."""
 
-    num_results: int = 5
+    num_results: int
     """The number of results to return."""
 
-    search_type: SearchType = 'auto'
-    """The search type to use."""
+    max_characters: int | None
+    """Maximum characters requested from Exa for each result, or None for no limit.
 
-    content: ContentType = 'highlights'
+    Separators added between multiple highlights are not included in Exa's limit.
+    """
+
+    _: KW_ONLY
+
+    content: ContentType = 'text'
     """The content returned for each result: token-efficient highlight snippets or the full page text."""
-
-    max_characters: int | None = None
-    """Maximum characters of content per result, or None for no limit."""
 
     include_domains: list[str] | None = None
     """Developer-configured domains to restrict results to, or None for no restriction."""
@@ -142,11 +163,14 @@ class ExaSearchTool:
     async def __call__(
         self,
         query: str,
+        search_type: _ModelSearchType = 'auto',
     ) -> list[ExaSearchResult]:
         """Searches Exa for the given query and returns the results with content.
 
         Args:
             query: The search query to execute with Exa.
+            search_type: The search type to use. Legacy `keyword` and `neural` values are retained
+                for backward compatibility; prefer another value for new code.
 
         Returns:
             The search results with content.
@@ -168,7 +192,7 @@ class ExaSearchTool:
         response = await self.client.search(
             query,
             num_results=self.num_results,
-            type=self.search_type,
+            type=search_type,
             contents=contents,
             include_domains=self.include_domains,
             exclude_domains=self.exclude_domains,
@@ -209,6 +233,9 @@ class ExaFindSimilarTool:
     num_results: int
     """The number of results to return."""
 
+    def __post_init__(self) -> None:
+        _warn_find_similar_deprecated(stacklevel=4)
+
     async def __call__(
         self,
         url: str,
@@ -247,6 +274,13 @@ class ExaFindSimilarTool:
             )
             for result in response.results
         ]
+
+
+class _ExaFindSimilarTool(ExaFindSimilarTool):
+    """Internal variant used after the public factory or toolset has warned."""
+
+    def __post_init__(self) -> None:
+        pass
 
 
 @dataclass
@@ -326,8 +360,8 @@ def exa_search_tool(
     api_key: str,
     *,
     num_results: int = 5,
-    search_type: SearchType = 'auto',
-    content: ContentType = 'highlights',
+    search_type: SearchType | None = None,
+    content: ContentType = 'text',
     max_characters: int | None = None,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
@@ -339,8 +373,8 @@ def exa_search_tool(
     *,
     client: AsyncExa,
     num_results: int = 5,
-    search_type: SearchType = 'auto',
-    content: ContentType = 'highlights',
+    search_type: SearchType | None = None,
+    content: ContentType = 'text',
     max_characters: int | None = None,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
@@ -352,8 +386,8 @@ def exa_search_tool(
     *,
     client: AsyncExa | None = None,
     num_results: int = 5,
-    search_type: SearchType = 'auto',
-    content: ContentType = 'highlights',
+    search_type: SearchType | None = None,
+    content: ContentType = 'text',
     max_characters: int | None = None,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
@@ -367,25 +401,38 @@ def exa_search_tool(
         client: An existing AsyncExa client. If provided, `api_key` is ignored.
             This is useful for sharing a client across multiple tools.
         num_results: The number of results to return. Defaults to 5.
-        search_type: The search type to use. Defaults to `auto`.
-        content: The content returned for each result: token-efficient `highlights` (the default)
-            or the full page `text`.
-        max_characters: Maximum characters of content per result. Use this to limit
-            token usage. Defaults to None (no limit).
+        search_type: The search type to use. When provided, it is fixed for all searches and hidden
+            from the model's tool schema. When omitted, the model can choose a search type per call.
+        content: The content returned for each result: full page `text` (the default, for backward
+            compatibility) or token-efficient `highlights`.
+        max_characters: Maximum characters requested from Exa for each result. Multiple highlights
+            are joined with ` ... ` separators, which are not included in Exa's limit. Defaults to None.
         include_domains: Domains to restrict all results to. Defaults to None (no restriction).
         exclude_domains: Domains to exclude all results from. Defaults to None (no exclusion).
     """
     client = _make_client(api_key, client)
+    func = ExaSearchTool(
+        client=client,
+        num_results=num_results,
+        max_characters=max_characters,
+        content=content,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+    ).__call__
+    if search_type is not None:
+        original = func
+        func = partial(func, search_type=search_type)
+        func.__name__ = original.__name__  # type: ignore[union-attr]
+        func.__qualname__ = original.__qualname__
+        # A keyword-only partial updates the default but does not remove the parameter.
+        # Remove it explicitly so developer-owned configuration stays out of the tool schema.
+        orig_sig = signature(original)
+        func.__signature__ = orig_sig.replace(  # type: ignore[attr-defined]
+            parameters=[parameter for name, parameter in orig_sig.parameters.items() if name != 'search_type']
+        )
+
     return Tool[Any](
-        ExaSearchTool(
-            client=client,
-            num_results=num_results,
-            search_type=search_type,
-            content=content,
-            max_characters=max_characters,
-            include_domains=include_domains,
-            exclude_domains=exclude_domains,
-        ).__call__,
+        func,  # pyright: ignore[reportArgumentType]
         name='exa_search',
         description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
     )
@@ -427,15 +474,15 @@ def exa_find_similar_tool(
             This is useful for sharing a client across multiple tools.
         num_results: The number of similar results to return. Defaults to 5.
     """
-    warnings.warn(
-        '`exa_find_similar_tool` is deprecated as `find_similar` is deprecated in `exa-py`; '
-        'use `exa_search_tool` instead.',
-        PydanticAIDeprecationWarning,
-        stacklevel=2,
-    )
+    _warn_find_similar_deprecated(stacklevel=3)
     client = _make_client(api_key, client)
+
+    return _make_find_similar_tool(client, num_results)
+
+
+def _make_find_similar_tool(client: AsyncExa, num_results: int) -> Tool[Any]:
     return Tool[Any](
-        ExaFindSimilarTool(client=client, num_results=num_results).__call__,
+        _ExaFindSimilarTool(client=client, num_results=num_results).__call__,
         name='exa_find_similar',
         description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
     )
@@ -513,7 +560,12 @@ class ExaToolset(FunctionToolset):
     from pydantic_ai.common_tools.exa import ExaToolset
 
     # `find_similar` is deprecated; opt out to avoid the deprecation warning.
-    toolset = ExaToolset(api_key='your-api-key', include_find_similar=False)
+    toolset = ExaToolset(
+        api_key='your-api-key',
+        search_type='auto',
+        content='highlights',
+        include_find_similar=False,
+    )
     agent = Agent('openai:gpt-5.2', toolsets=[toolset])
     ```
     """
@@ -524,8 +576,8 @@ class ExaToolset(FunctionToolset):
         *,
         client: AsyncExa | None = None,
         num_results: int = 5,
-        search_type: SearchType = 'auto',
-        content: ContentType = 'highlights',
+        search_type: SearchType | None = None,
+        content: ContentType = 'text',
         max_characters: int | None = None,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
@@ -543,11 +595,12 @@ class ExaToolset(FunctionToolset):
                 You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
             client: An existing AsyncExa client. If provided, `api_key` is ignored.
             num_results: The number of results to return for search and find_similar. Defaults to 5.
-            search_type: The search type to use for search. Defaults to `auto`.
-            content: The content returned for each search result: token-efficient `highlights`
-                (the default) or the full page `text`.
-            max_characters: Maximum characters of content per result. Use this to limit
-                token usage. Defaults to None (no limit).
+            search_type: The search type to use. When provided, it is fixed for all searches and hidden
+                from the model's tool schema. When omitted, the model can choose a search type per call.
+            content: The content returned for each search result: full page `text` (the default, for
+                backward compatibility) or token-efficient `highlights`.
+            max_characters: Maximum characters requested from Exa for each result. Multiple highlights
+                are joined with ` ... ` separators, which are not included in Exa's limit. Defaults to None.
             include_domains: Domains to restrict all search results to. Defaults to None (no restriction).
             exclude_domains: Domains to exclude all search results from. Defaults to None (no exclusion).
             include_search: Whether to include the search tool. Defaults to True.
@@ -574,7 +627,8 @@ class ExaToolset(FunctionToolset):
             )
 
         if include_find_similar:
-            tools.append(exa_find_similar_tool(client=client, num_results=num_results))
+            _warn_find_similar_deprecated(stacklevel=3)
+            tools.append(_make_find_similar_tool(client, num_results))
 
         if include_get_contents:
             tools.append(exa_get_contents_tool(client=client))

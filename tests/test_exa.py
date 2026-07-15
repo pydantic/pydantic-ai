@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,13 +11,11 @@ import pytest
 from exa_py import AsyncExa
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.common_tools.exa import (
     ContentType,
-    ExaAnswerTool,
-    ExaGetContentsTool,
+    ExaFindSimilarTool,
     ExaSearchTool,
     ExaToolset,
     exa_answer_tool,
@@ -23,8 +23,6 @@ from pydantic_ai.common_tools.exa import (
     exa_get_contents_tool,
     exa_search_tool,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -93,16 +91,22 @@ def test_factory_built_client_sets_integration_attribution_header(exa_api_key: s
 # --- Tool schema and developer-only configuration ---
 
 
-def test_search_schema_exposes_only_query(exa_api_key: str):
-    """The model only sees the query; search_type/content/num_results/domain filters are developer-only."""
-    tool = exa_search_tool(exa_api_key, include_domains=['arxiv.org'])
+def test_search_schema_preserves_model_search_type_by_default(exa_api_key: str):
+    """Omitting `search_type` preserves the existing model-configured search behavior."""
+    tool = exa_search_tool(exa_api_key)
     assert tool.name == snapshot('exa_search')
     assert tool.function_schema.json_schema == snapshot(
         {
             'additionalProperties': False,
             'properties': {
-                'query': {
-                    'description': 'The search query to execute with Exa.',
+                'query': {'description': 'The search query to execute with Exa.', 'type': 'string'},
+                'search_type': {
+                    'default': 'auto',
+                    'description': """\
+The search type to use. Legacy `keyword` and `neural` values are retained
+for backward compatibility; prefer another value for new code.\
+""",
+                    'enum': ['auto', 'fast', 'instant', 'deep-lite', 'deep', 'deep-reasoning', 'keyword', 'neural'],
                     'type': 'string',
                 },
             },
@@ -112,13 +116,39 @@ def test_search_schema_exposes_only_query(exa_api_key: str):
     )
 
 
+def test_search_schema_hides_developer_config(exa_api_key: str):
+    """Developer-configured search settings stay out of the model-facing schema."""
+    tool = exa_search_tool(
+        exa_api_key,
+        search_type='auto',
+        content='highlights',
+        include_domains=['arxiv.org'],
+    )
+    assert tool.function_schema.json_schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'query': {'description': 'The search query to execute with Exa.', 'type': 'string'}},
+            'required': ['query'],
+            'type': 'object',
+        }
+    )
+
+
+def test_search_tool_preserves_positional_constructor(exa_api_key: str):
+    """New configuration does not shift the documented positional constructor fields."""
+    tool = ExaSearchTool(AsyncExa(exa_api_key), 3, 500, content='highlights')
+    assert tool.num_results == 3
+    assert tool.max_characters == 500
+    assert tool.content == 'highlights'
+
+
 @pytest.mark.parametrize(
-    'content,max_characters,expected_contents',
+    'content,max_characters,expected_contents,expected_text',
     [
-        ('highlights', None, {'highlights': True}),
-        ('highlights', 500, {'highlights': {'max_characters': 500}}),
-        ('text', None, {'text': True}),
-        ('text', 500, {'text': {'max_characters': 500}}),
+        ('highlights', None, {'highlights': True}, 'first highlight ... second highlight'),
+        ('highlights', 500, {'highlights': {'max_characters': 500}}, 'first highlight ... second highlight'),
+        ('text', None, {'text': True}, 'full page text'),
+        ('text', 500, {'text': {'max_characters': 500}}, 'full page text'),
     ],
 )
 async def test_search_forwards_developer_config(
@@ -127,6 +157,7 @@ async def test_search_forwards_developer_config(
     content: ContentType,
     max_characters: int | None,
     expected_contents: dict[str, Any],
+    expected_text: str,
 ):
     """The developer-configured search parameters are forwarded to the Exa SDK on every search.
 
@@ -139,60 +170,63 @@ async def test_search_forwards_developer_config(
     async def fake_search(query: str, **kwargs: Any) -> SimpleNamespace:
         captured['query'] = query
         captured.update(kwargs)
-        return SimpleNamespace(results=[])
+        return SimpleNamespace(
+            results=[
+                SimpleNamespace(
+                    title='Result',
+                    url='https://example.com',
+                    published_date=None,
+                    author=None,
+                    highlights=['first highlight', 'second highlight'],
+                    text='full page text',
+                )
+            ]
+        )
 
     monkeypatch.setattr(client, 'search', fake_search)
-    tool = ExaSearchTool(
+    tool = exa_search_tool(
         client=client,
         num_results=3,
-        search_type='fast',
+        search_type='instant',
         content=content,
         max_characters=max_characters,
         include_domains=['arxiv.org'],
         exclude_domains=['example.com'],
     )
 
-    assert await tool('quantum computing') == []
+    assert await tool.function_schema.call({'query': 'quantum computing'}, _ctx()) == [
+        {
+            'title': 'Result',
+            'url': 'https://example.com',
+            'published_date': None,
+            'author': None,
+            'text': expected_text,
+        }
+    ]
     assert captured == {
         'query': 'quantum computing',
         'num_results': 3,
-        'type': 'fast',
+        'type': 'instant',
         'contents': expected_contents,
         'include_domains': ['arxiv.org'],
         'exclude_domains': ['example.com'],
     }
 
 
-def _stale_then_valid(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Simulates a model that first replays the pre-2.15 `search_type` argument, then corrects itself."""
-    last_parts = messages[-1].parts
-    if any(isinstance(p, RetryPromptPart) for p in last_parts):
-        return ModelResponse(parts=[ToolCallPart('exa_search', {'query': 'what is pydantic ai'})])
-    if any(isinstance(p, ToolReturnPart) for p in last_parts):
-        return ModelResponse(parts=[TextPart('done')])
-    return ModelResponse(parts=[ToolCallPart('exa_search', {'query': 'what is pydantic ai', 'search_type': 'keyword'})])
-
-
-async def test_search_recovers_when_model_passes_removed_search_type(exa_api_key: str, monkeypatch: pytest.MonkeyPatch):
-    """A model still passing the removed `search_type` argument gets a retry prompt and self-heals.
-
-    Earlier versions exposed `search_type` (including the deprecated `keyword`/`neural` values) in the
-    tool schema. A model replaying that argument — e.g. resuming a conversation recorded before an
-    upgrade — is asked to retry rather than crashing the agent run.
-    """
+async def test_search_preserves_model_configured_search_type(exa_api_key: str, monkeypatch: pytest.MonkeyPatch):
+    """Legacy model-selected search types remain valid when the developer leaves the setting unset."""
     client = AsyncExa(exa_api_key)
+    captured: dict[str, Any] = {}
 
     async def fake_search(query: str, **kwargs: Any) -> SimpleNamespace:
+        captured.update(kwargs)
         return SimpleNamespace(results=[])
 
     monkeypatch.setattr(client, 'search', fake_search)
-    agent = Agent(FunctionModel(_stale_then_valid), tools=[exa_search_tool(client=client)])
+    tool = exa_search_tool(client=client)
 
-    result = await agent.run('search for pydantic ai')
-
-    assert result.output == 'done'
-    retries = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
-    assert len(retries) == 1
+    assert await tool.function_schema.call({'query': 'pydantic ai', 'search_type': 'keyword'}, _ctx()) == []
+    assert captured['type'] == 'keyword'
 
 
 # --- find_similar deprecation ---
@@ -200,16 +234,34 @@ async def test_search_recovers_when_model_passes_removed_search_type(exa_api_key
 
 def test_find_similar_tool_is_deprecated(exa_api_key: str):
     """The find_similar factory warns, mirroring exa-py's own deprecation."""
-    with pytest.warns(PydanticAIDeprecationWarning, match='find_similar'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         tool = exa_find_similar_tool(exa_api_key)
     assert tool.name == 'exa_find_similar'
+    assert len(caught) == 1
+    assert isinstance(caught[0].message, PydanticAIDeprecationWarning)
+    assert Path(caught[0].filename) == Path(__file__)
+
+
+def test_find_similar_class_is_deprecated(exa_api_key: str):
+    """Direct construction also warns before the SDK warning is suppressed during calls."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        ExaFindSimilarTool(AsyncExa(exa_api_key), 1)
+    assert len(caught) == 1
+    assert isinstance(caught[0].message, PydanticAIDeprecationWarning)
+    assert Path(caught[0].filename) == Path(__file__)
 
 
 def test_toolset_includes_find_similar_by_default(exa_api_key: str):
     """The default toolset includes find_similar for backward compatibility, emitting a deprecation warning."""
-    with pytest.warns(PydanticAIDeprecationWarning, match='find_similar'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         toolset = ExaToolset(exa_api_key)
     assert set(toolset.tools) == snapshot({'exa_search', 'exa_find_similar', 'exa_get_contents', 'exa_answer'})
+    assert len(caught) == 1
+    assert isinstance(caught[0].message, PydanticAIDeprecationWarning)
+    assert Path(caught[0].filename) == Path(__file__)
 
 
 @pytest.mark.parametrize(
@@ -237,22 +289,54 @@ def test_toolset_tool_selection(
     assert set(toolset.tools) == expected
 
 
+async def test_toolset_reuses_client_and_forwards_search_config(exa_api_key: str, monkeypatch: pytest.MonkeyPatch):
+    """The toolset keeps the supplied client and binds developer-owned search configuration."""
+    client = AsyncExa(exa_api_key)
+    captured: dict[str, Any] = {}
+
+    async def fake_search(query: str, **kwargs: Any) -> SimpleNamespace:
+        captured['query'] = query
+        captured.update(kwargs)
+        return SimpleNamespace(results=[])
+
+    monkeypatch.setattr(client, 'search', fake_search)
+    toolset = ExaToolset(
+        client=client,
+        search_type='deep-reasoning',
+        content='highlights',
+        max_characters=400,
+        include_domains=['pydantic.dev'],
+        exclude_domains=['example.com'],
+        include_find_similar=False,
+        include_get_contents=False,
+        include_answer=False,
+    )
+
+    tool = toolset.tools['exa_search']
+    assert await tool.function_schema.call({'query': 'Pydantic AI'}, _ctx()) == []
+    assert captured == {
+        'query': 'Pydantic AI',
+        'num_results': 5,
+        'type': 'deep-reasoning',
+        'contents': {'highlights': {'max_characters': 400}},
+        'include_domains': ['pydantic.dev'],
+        'exclude_domains': ['example.com'],
+    }
+
+
 # --- Integration tests (VCR) ---
 
 
-@pytest.mark.vcr()
-async def test_search_returns_highlights_by_default(exa_api_key: str):
-    """By default each result's text carries token-efficient highlight snippets."""
-    tool = ExaSearchTool(
+@pytest.mark.vcr
+async def test_search_returns_highlights(exa_api_key: str):
+    """`content='highlights'` returns token-efficient snippets through the public factory."""
+    tool = exa_search_tool(
         client=AsyncExa(exa_api_key),
         num_results=2,
         search_type='auto',
         content='highlights',
-        max_characters=None,
-        include_domains=None,
-        exclude_domains=None,
     )
-    results = await tool('What is Pydantic AI?')
+    results = await tool.function_schema.call({'query': 'What is Pydantic AI?'}, _ctx())
     assert results == snapshot(
         [
             {
@@ -260,14 +344,14 @@ async def test_search_returns_highlights_by_default(exa_api_key: str):
                 'url': 'https://pydantic.dev/docs/ai/overview/',
                 'published_date': None,
                 'author': None,
-                'text': IsStr(),
+                'text': IsStr(regex=r'(?s).+'),
             },
             {
                 'title': 'AI Agent Framework, the Pydantic way - GitHub',
                 'url': 'https://github.com/pydantic/pydantic-ai',
                 'published_date': '2024-06-21T15:55:04.000Z',
                 'author': None,
-                'text': IsStr(),
+                'text': IsStr(regex=r'(?s).+'),
             },
         ]
     )
@@ -275,17 +359,15 @@ async def test_search_returns_highlights_by_default(exa_api_key: str):
 
 @pytest.mark.vcr()
 async def test_search_with_text_content(exa_api_key: str):
-    """content='text' returns the full page text instead of highlights, scoped to a locked domain."""
-    tool = ExaSearchTool(
+    """The backward-compatible default returns full page text through the public factory."""
+    tool = exa_search_tool(
         client=AsyncExa(exa_api_key),
         num_results=1,
         search_type='auto',
-        content='text',
         max_characters=500,
         include_domains=['ai.pydantic.dev'],
-        exclude_domains=None,
     )
-    results = await tool('What is Pydantic AI?')
+    results = await tool.function_schema.call({'query': 'What is Pydantic AI?'}, _ctx())
     assert results == snapshot(
         [
             {
@@ -293,7 +375,7 @@ async def test_search_with_text_content(exa_api_key: str):
                 'url': 'https://ai.pydantic.dev/examples/bank-support/index.md',
                 'published_date': None,
                 'author': None,
-                'text': IsStr(),
+                'text': IsStr(regex=r'(?s).+'),
             }
         ]
     )
@@ -302,14 +384,14 @@ async def test_search_with_text_content(exa_api_key: str):
 @pytest.mark.vcr()
 async def test_get_contents(exa_api_key: str):
     """get_contents returns the full text content for the requested URLs."""
-    tool = ExaGetContentsTool(client=AsyncExa(exa_api_key))
-    results = await tool(['https://ai.pydantic.dev/'])
+    tool = exa_get_contents_tool(client=AsyncExa(exa_api_key))
+    results = await tool.function_schema.call({'urls': ['https://ai.pydantic.dev/']}, _ctx())
     assert results == snapshot(
         [
             {
                 'url': 'https://ai.pydantic.dev/',
                 'title': 'Pydantic AI | Pydantic Docs',
-                'text': IsStr(),
+                'text': IsStr(regex=r'(?s).+'),
                 'author': None,
                 'published_date': None,
             }
@@ -320,51 +402,51 @@ async def test_get_contents(exa_api_key: str):
 @pytest.mark.vcr()
 async def test_answer(exa_api_key: str):
     """answer returns an AI-generated answer with supporting citations."""
-    tool = ExaAnswerTool(client=AsyncExa(exa_api_key))
-    result = await tool('What is Pydantic AI?')
+    tool = exa_answer_tool(client=AsyncExa(exa_api_key))
+    result = await tool.function_schema.call({'query': 'What is Pydantic AI?'}, _ctx())
     assert result == snapshot(
         {
-            'answer': IsStr(),
+            'answer': IsStr(regex=r'(?s).+'),
             'citations': [
                 {
                     'url': 'https://pydantic.dev/docs/ai/overview/',
                     'title': 'Pydantic AI | Pydantic Docs',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://pydantic.dev/pydantic-ai?featured_on=talkpython',
                     'title': 'Pydantic AI: Type-Safe Python Framework for AI Agents & LLM Applications',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://web.appunite.com/blog/understanding-pydantic-ai-a-powerful-alternative-to-lang-chain-and-llama-index',
                     'title': 'Understanding Pydantic-AI: A Powerful Alternative to LangChain and LlamaIndex (Part: 1)  | Appunite Tech Blog',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://github.com/pydantic/pydantic-ai/',
                     'title': 'pydantic/pydantic-ai',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://pypi.org/project/pydantic-ai/1.84.1/',
                     'title': 'pydantic-ai v1.84.1',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://headofagents.ai/pydanticai',
                     'title': 'PydanticAI: Agent framework from the Pydantic team - HeadOfAgents',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://pydantic.dev/',
                     'title': 'Pydantic | The end-to-end AI engineering stack',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
                 {
                     'url': 'https://pydantic.dev/docs/ai/overview/install/',
                     'title': 'Installation | Pydantic Docs',
-                    'text': IsStr(),
+                    'text': IsStr(regex=r'(?s).+'),
                 },
             ],
         }
@@ -384,7 +466,7 @@ async def test_find_similar(exa_api_key: str):
                 'url': 'https://pydantic.dev/docs/ai/overview/',
                 'published_date': None,
                 'author': None,
-                'text': IsStr(),
+                'text': IsStr(regex=r'(?s).+'),
             }
         ]
     )

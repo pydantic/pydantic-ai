@@ -231,7 +231,7 @@ pip/uv-add "pydantic-ai-slim[exa]"
 
 You can use Exa tools individually or as a toolset. The following tools are available:
 
-- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web (with `auto`, `fast`, or `deep` search types), returning token-efficient highlights by default
+- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with current Exa search types and optional token-efficient highlights
 - [`exa_get_contents_tool`][pydantic_ai.common_tools.exa.exa_get_contents_tool]: Get full text content from URLs
 - [`exa_answer_tool`][pydantic_ai.common_tools.exa.exa_answer_tool]: Get AI-powered answers with citations
 
@@ -248,16 +248,25 @@ assert api_key is not None
 
 agent = Agent(
     'openai:gpt-5.2',
-    tools=[exa_search_tool(api_key, num_results=5, max_characters=1000)],
-    system_prompt='Search the web for information using Exa.',
+    tools=[
+        exa_search_tool(
+            api_key,
+            num_results=5,
+            search_type='auto',
+            content='highlights',
+            max_characters=1000,
+        )
+    ],
+    instructions='Search the web for information using Exa.',
 )
 
 result = agent.run_sync('What are the latest developments in quantum computing?')
 print(result.output)
 ```
 
-By default each result's `text` contains token-efficient highlight snippets relevant to the query;
-set `content='text'` to return the full page text instead, and `max_characters` to cap content length.
+For agent workflows, set `content='highlights'` to return token-efficient snippets relevant to the query.
+The default remains `content='text'` for backward compatibility. Setting `search_type` makes it
+developer-controlled and hides it from the model's tool schema; when omitted, the model can choose it per call.
 
 Use `include_domains`/`exclude_domains` to restrict (or exclude) result domains.
 
@@ -272,8 +281,15 @@ assert api_key is not None
 
 agent = Agent(
     'openai:gpt-5.2',
-    tools=[exa_search_tool(api_key, include_domains=['arxiv.org'])],
-    system_prompt='Search the web for information using Exa.',
+    tools=[
+        exa_search_tool(
+            api_key,
+            search_type='auto',
+            content='highlights',
+            include_domains=['arxiv.org'],
+        )
+    ],
+    instructions='Search the web for information using Exa.',
 )
 
 result = agent.run_sync('Find recent papers about transformer architectures')
@@ -297,7 +313,9 @@ assert api_key is not None
 toolset = ExaToolset(
     api_key,
     num_results=5,
-    max_characters=1000,  # Limit text content to control token usage
+    search_type='auto',
+    content='highlights',
+    max_characters=1000,
     include_search=True,  # Include the search tool (default: True)
     include_find_similar=False,  # Exclude the find_similar tool
     include_get_contents=True,  # Include the get_contents tool
@@ -307,7 +325,7 @@ toolset = ExaToolset(
 agent = Agent(
     'openai:gpt-5.2',
     toolsets=[toolset],
-    system_prompt='You have access to Exa search tools to find information on the web.',
+    instructions='Use Exa search tools to find information on the web.',
 )
 
 result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
