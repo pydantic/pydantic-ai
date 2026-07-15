@@ -429,18 +429,6 @@ You can retrieve usage statistics (tokens, requests, etc.) at any time from the 
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
-#### Updating model prices
-
-Price calculations use the data bundled with [`genai-prices`](https://github.com/pydantic/genai-prices). To refresh that data hourly in a background thread, call [`update_in_background()`][pydantic_ai.prices.update_in_background] at application startup:
-
-```python {test="skip"}
-from pydantic_ai import prices
-
-prices.update_in_background()
-```
-
-This helper retains shared ownership of the updater for the process lifetime. Call it after any `os.fork()` because inheriting a running updater in a child process is unsupported. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly.
-
 #### Streaming All Events and Output
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
@@ -592,6 +580,18 @@ if __name__ == '__main__':
 _(This example is complete, it can be run "as is")_
 
 ### Additional Configuration
+
+#### Updating model prices
+
+Price calculations use the data bundled with [`genai-prices`](https://github.com/pydantic/genai-prices). To refresh that data hourly in a background thread, call [`update_in_background()`][pydantic_ai.prices.update_in_background] at application startup:
+
+```python {test="skip"}
+from pydantic_ai import prices
+
+prices.update_in_background()
+```
+
+This helper retains shared ownership of the updater for the process lifetime. Call it after any `os.fork()` because inheriting a running updater in a child process is unsupported. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly.
 
 #### Usage Limits
 
