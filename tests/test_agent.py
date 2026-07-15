@@ -2592,7 +2592,8 @@ def test_structured_dict_recursive_refs():
     )
     NodeDict = StructuredDict(schema)
 
-    # The recursive `$defs` are preserved and sent to the model as-is, rather than raising.
+    # The root `$ref` is resolved into a root `object` schema and the recursive `$defs` it points at are kept,
+    # rather than `StructuredDict` raising.
     output_args: dict[str, Any] = {'nodes': [{'nodes': []}]}
     agent = Agent(TestModel(custom_output_args=output_args), output_type=NodeDict)
     assert agent.output_json_schema() == snapshot(
@@ -2643,8 +2644,29 @@ def test_structured_dict_recursive_refs_native_output():
         custom_output_text='{"nodes": [{"nodes": []}]}',
     )
     agent = Agent(model, output_type=NativeOutput(StructuredDict(Node.model_json_schema())))
-    assert '$defs' in agent.output_json_schema()
     assert agent.run_sync('Build a tree').output == snapshot({'nodes': [{'nodes': []}]})
+
+    # The recursive `$defs` reach the model, not just `output_json_schema()`.
+    request_parameters = model.last_model_request_parameters
+    assert request_parameters is not None
+    output_object = request_parameters.output_object
+    assert output_object is not None
+    assert output_object.json_schema == snapshot(
+        {
+            'properties': {'nodes': {'items': {'$ref': '#/$defs/Node'}, 'title': 'Nodes', 'type': 'array'}},
+            'required': ['nodes'],
+            'title': 'Node',
+            'type': 'object',
+            '$defs': {
+                'Node': {
+                    'properties': {'nodes': {'items': {'$ref': '#/$defs/Node'}, 'title': 'Nodes', 'type': 'array'}},
+                    'required': ['nodes'],
+                    'title': 'Node',
+                    'type': 'object',
+                }
+            },
+        }
+    )
 
 
 def test_default_structured_output_mode():

@@ -68,9 +68,18 @@ class JsonSchemaTransformer(ABC):
 
         elif self.recursive_refs:
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
+            # The retained defs have to be handled as well, so that any non-recursive `$ref`s inside them are
+            # inlined too and don't end up pointing at a `$defs` entry we're not keeping. Handling a def can
+            # reveal further recursive refs, so keep going until no new ones show up.
+            defs: dict[str, JsonSchema] = {}
+            while pending := self.recursive_refs - defs.keys():
+                for key in pending:
+                    handled_def = self._handle(self.defs[key])
+                    assert not isinstance(handled_def, bool)
+                    defs[key] = handled_def
+
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
-            defs = {key: self.defs[key] for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
             root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
             if root_key is None:
@@ -154,10 +163,13 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
-        try:
-            members = schema.pop(union_kind)
-        except KeyError:
+        members = schema.get(union_kind)
+        if members is None:
             return schema
+
+        # Copy before dropping the union kind: `schema` may be a definition held in `self.defs`,
+        # which must stay intact in case it's retained in `$defs` for recursive schemas.
+        schema = {k: v for k, v in schema.items() if k != union_kind}
 
         handled = [self._handle(member) for member in members]
 
@@ -170,7 +182,6 @@ class JsonSchemaTransformer(ABC):
             # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
-        schema = schema.copy()
         schema[union_kind] = handled
         return schema
 

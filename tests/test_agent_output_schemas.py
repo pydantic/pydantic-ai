@@ -1,4 +1,5 @@
 import dataclasses
+import re
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -12,7 +13,9 @@ from pydantic_ai import (
     StructuredDict,
     TextOutput,
     ToolOutput,
+    UserError,
 )
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import remove_schema_descriptions
@@ -284,70 +287,119 @@ async def test_structured_dict_non_recursive_defs():
     )
 
 
-async def test_structured_dict_nested_recursive_refs():
-    """A `StructuredDict` built from a schema that embeds a recursive type keeps its `$defs` (issue #4018)."""
+async def test_structured_dict_recursive_refs_sent_to_model():
+    """A recursive `StructuredDict`'s `$defs` survive into the schema the model is actually sent (issue #4018).
 
-    class Tree(BaseModel):
-        value: int
-        children: list['Tree']
+    Not a VCR test: the tool schema sent to the model is built by a different code path than
+    `agent.output_json_schema()`, and our cassette matchers aren't sensitive to the request body, so the
+    recursive `$defs` could be dropped or emptied and a recorded run would still match and pass.
+    """
+    # The recursive union reported in the issue: `data` holds an arbitrarily nested JSON value.
+    json_schema = {
+        'type': 'object',
+        'title': 'Output',
+        'properties': {
+            'name': {'type': 'string'},
+            'data': {'$ref': '#/$defs/JSONValue'},
+        },
+        'required': ['name', 'data'],
+        '$defs': {
+            'JSONValue': {
+                'anyOf': [
+                    {'type': 'string'},
+                    {'type': 'integer'},
+                    {'type': 'boolean'},
+                    {'type': 'null'},
+                    {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
+                    {'$ref': '#/$defs/Map'},
+                ],
+            },
+            'Map': {
+                'type': 'object',
+                'title': 'Map',
+                'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
+                'required': ['entries'],
+            },
+        },
+    }
 
-    class Forest(BaseModel):
-        name: str
-        root: Tree
+    model = TestModel(custom_output_args={'name': 'test', 'data': ['hello', {'entries': [1]}]})
+    agent = Agent(model, output_type=StructuredDict(json_schema))
+    result = await agent.run('Return some data')
+    assert result.output == snapshot({'name': 'test', 'data': ['hello', {'entries': [1]}]})
 
-    ForestDict = StructuredDict(Forest.model_json_schema())
-    agent = Agent('test', output_type=ForestDict)
-    assert agent.output_json_schema() == snapshot(
+    # `Map` is inlined into the recursive `JSONValue` def, which keeps its full `anyOf` and stays in `$defs`.
+    request_parameters = model.last_model_request_parameters
+    assert request_parameters is not None
+    assert request_parameters.output_tools[0].parameters_json_schema == snapshot(
         {
-            '$defs': {
-                'Tree': {
-                    'properties': {
-                        'value': {'title': 'Value', 'type': 'integer'},
-                        'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
-                    },
-                    'required': ['value', 'children'],
-                    'title': 'Tree',
-                    'type': 'object',
-                },
-                'Forest': {
-                    'properties': {
-                        'name': {'title': 'Name', 'type': 'string'},
-                        'root': {
-                            'properties': {
-                                'value': {'title': 'Value', 'type': 'integer'},
-                                'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
-                            },
-                            'required': ['value', 'children'],
-                            'title': 'Tree',
-                            'type': 'object',
-                        },
-                    },
-                    'required': ['name', 'root'],
-                    'title': 'Forest',
-                    'type': 'object',
-                },
-            },
-            'properties': {
-                'name': {'title': 'Name', 'type': 'string'},
-                'root': {
-                    'properties': {
-                        'value': {'title': 'Value', 'type': 'integer'},
-                        'children': {'items': {'$ref': '#/$defs/Tree'}, 'title': 'Children', 'type': 'array'},
-                    },
-                    'required': ['value', 'children'],
-                    'title': 'Tree',
-                    'type': 'object',
-                },
-            },
-            'required': ['name', 'root'],
-            'title': 'Forest',
             'type': 'object',
+            'title': 'Output',
+            'properties': {
+                'name': {'type': 'string'},
+                'data': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer'},
+                        {'type': 'boolean'},
+                        {'type': 'null'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
+                        {
+                            'type': 'object',
+                            'title': 'Map',
+                            'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
+                            'required': ['entries'],
+                        },
+                    ]
+                },
+            },
+            'required': ['name', 'data'],
+            '$defs': {
+                'JSONValue': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer'},
+                        {'type': 'boolean'},
+                        {'type': 'null'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
+                        {
+                            'type': 'object',
+                            'title': 'Map',
+                            'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
+                            'required': ['entries'],
+                        },
+                    ]
+                }
+            },
         }
     )
 
 
+async def test_structured_dict_recursive_refs_nested_in_other_type():
+    """A recursive `StructuredDict` can't go through `TypeAdapter`, so nesting it raises a helpful error.
+
+    Not a VCR test: this is a pre-request guard, no model is ever called.
+    """
+
+    class Node(BaseModel):
+        nodes: list['Node']
+
+    NodeDict = StructuredDict(Node.model_json_schema())
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'A `StructuredDict` with recursive `$ref`s and `$defs` can only be used as an `output_type` by itself, not nested inside another type.'
+        ),
+    ):
+        TypeAdapter(NodeDict).json_schema()
+
+
 async def test_structured_dict_recursive_root_key_collision():
-    """When the root schema's title collides with a recursive `$defs` key, the transformer picks a fresh key."""
+    """A root whose title collides with a recursive `$defs` key resolves without clobbering that key.
+
+    Not a VCR test: this pins the schema-building internals, which a cassette matcher wouldn't be sensitive to.
+    """
     schema = StructuredDict(
         {
             'type': 'object',
@@ -373,20 +425,7 @@ async def test_structured_dict_recursive_root_key_collision():
                     'required': ['child'],
                     'title': 'Node',
                     'type': 'object',
-                },
-                'Node_root': {
-                    'properties': {
-                        'child': {
-                            'type': 'object',
-                            'title': 'Node',
-                            'properties': {'child': {'$ref': '#/$defs/Node'}},
-                            'required': ['child'],
-                        }
-                    },
-                    'required': ['child'],
-                    'title': 'Node',
-                    'type': 'object',
-                },
+                }
             },
             'properties': {
                 'child': {
