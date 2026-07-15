@@ -845,6 +845,13 @@ class StreamedResponse(ABC):
         and the custom Gemini client), since they let bare `httpx` errors
         propagate from chunk reads. Model classes that use other transports
         (for example gRPC or botocore) should override this method.
+
+        Subclass authors: errors omitted here propagate from `close_stream()`
+        through `StreamedRunResult._cancel_on_early_break`, which runs implicitly
+        on `run_stream`'s `__aexit__`. If the user's `async with` body raised,
+        an omitted cleanup error will shadow the body exception (the body
+        survives only as `__context__`). Cover every error class your
+        `close_stream()` can raise on a mid-stream cancel.
         """
         return (httpx.StreamError, httpx.TransportError)
 

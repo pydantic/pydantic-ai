@@ -947,12 +947,20 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
-                            yield StreamedRunResult(
+                            stream_result = StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
                             )
+                            try:
+                                yield stream_result
+                            finally:
+                                # Backstop for users who exit the context without iterating
+                                # a stream_* method (or who used `anext()` and abandoned the
+                                # generator). When a stream_* method ran and the user broke
+                                # out of it, the generator's own finally already called this.
+                                await stream_result._cancel_on_early_break()  # pyright: ignore[reportPrivateUsage]
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle

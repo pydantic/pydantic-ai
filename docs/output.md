@@ -967,7 +967,32 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
+If you `break` out of `stream_text()`, `stream_output()`, or `stream_response()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits and the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] is recorded in [`all_messages()`][pydantic_ai.result.StreamedRunResult.all_messages] with `state='interrupted'`. Use `cancel()` explicitly when you want to stop generation immediately instead of waiting for the context to exit.
+
+!!! note "`is_complete` flips on `__aexit__`, not on `break`"
+    Because Python defers an async generator's `finally` block until the surrounding context exits, [`is_complete`][pydantic_ai.result.StreamedRunResult.is_complete] stays `False` between the `break` and the end of the `async with` block. If you need to inspect the partial response inside the block, either call [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] explicitly (as in the example above) or wrap the stream with [`contextlib.aclosing`](https://docs.python.org/3/library/contextlib.html#contextlib.aclosing) so the iterator's cleanup runs at the `break` site:
+
+    ```python {title="stream_early_break_aclosing.py" test="skip"}
+    from contextlib import aclosing
+
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2')
+
+
+    async def main():
+        async with agent.run_stream('Write a long essay about Python') as result:
+            async with aclosing(result.stream_text(delta=True)) as stream:
+                text = ''
+                async for chunk in stream:
+                    text += chunk
+                    if len(text) > 100:
+                        break
+            print(result.is_complete)
+            #> True
+            print(result.response.state == 'interrupted')
+            #> True
+    ```
 
 !!! warning "Interrupted tool calls"
     Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, and when the history is reused in another run the partial tool calls are [repaired automatically](message-history.md#making-histories-provider-valid). If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.

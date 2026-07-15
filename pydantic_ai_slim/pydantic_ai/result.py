@@ -512,6 +512,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
         on each iteration.
 
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
+
         Args:
             debounce_by: by how much (if at all) to debounce/group the output chunks by. `None` means no debouncing.
                 Debouncing is particularly important for long structured outputs to reduce the overhead of
@@ -537,6 +543,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
             [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
+
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
 
         Args:
             delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
@@ -566,6 +578,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
         [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
+
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -699,16 +717,51 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Cancel the stream, stopping token generation and closing the underlying connection.
 
         The interrupted response state is recorded in the message history so that
-        `all_messages()` includes it.
+        `all_messages()` includes it. If the upstream cancel raises (e.g.
+        `NotImplementedError` on providers without `close_stream()` support),
+        the exception propagates and the response is not marked complete.
         """
         if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()
-            # Record the interrupted response in _all_messages so all_messages()
-            # includes it. is_complete guard prevents double-append if the stream
-            # was already fully consumed before cancel was called.
             if not self.is_complete:
                 self.is_complete = True
                 self._record_response(self.response)
+
+    async def _cancel_on_early_break(self) -> None:
+        """Best-effort cancel called from `run_stream`'s `__aexit__`.
+
+        Swallows the documented cancel-side surface — `NotImplementedError` from
+        providers without `close_stream()` plus the per-provider transport errors
+        from `get_stream_cancel_errors()` — so teardown failures don't surface
+        from a clean `__aexit__`. If cancel fails, the response is left
+        incomplete rather than pretending the cancellation succeeded.
+
+        Note: this only flips `is_complete` when the surrounding context exits;
+        `is_complete` does not change synchronously when the user `break`s out of
+        a `stream_*` method, because Python defers async-generator `aclose()`
+        until GC or event-loop cleanup. A `contextlib.aclosing()` wrap doesn't
+        help either: `stream_*` has no `try/finally`, so the `GeneratorExit` from
+        `aclose()` skips the completion path. A caller who needs a synchronous
+        flip can `await result.cancel()` after breaking; making `break` itself
+        flip the flag would need an API change to async-context-manager iterators.
+        Tracked in #5756.
+        """
+        if self.is_complete or self._stream_response is None:
+            return
+        # Keep this tuple narrow so a real bug in `close_stream()` still surfaces.
+        # Widening to bare `Exception` would also let a body exception be shadowed
+        # by a cleanup-side failure during implicit `__aexit__` cleanup.
+        # The two-deep reach into `_raw_stream_response` is intentional — no user
+        # has asked for the cancel-error tuple at the `AgentStream` surface yet,
+        # so we don't add a public delegator for one internal helper to use.
+        cancel_errors = (
+            NotImplementedError,
+            *self._stream_response._raw_stream_response.get_stream_cancel_errors(),  # pyright: ignore[reportPrivateUsage]
+        )
+        try:
+            await self.cancel()
+        except cancel_errors:
+            pass
 
     @property
     def cancelled(self) -> bool:
