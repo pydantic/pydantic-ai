@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 from typing import Literal, TypeAlias
 
+from dataclasses import dataclass
+
 from ..native_tools import (
     CodeExecutionTool,
     MCPServerTool,
@@ -12,6 +14,7 @@ from ..native_tools import (
 from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
@@ -33,6 +36,80 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-5',
 )
 
+
+
+
+# Anthropic JSON Schema constraint keywords not supported in native structured output.
+# See https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs#json-schema-limitations
+_ANTHROPIC_UNSUPPORTED_NUMERIC_CONSTRAINTS = frozenset({
+    'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+})
+_ANTHROPIC_UNSUPPORTED_STRING_CONSTRAINTS = frozenset({'minLength', 'maxLength'})
+_ANTHROPIC_SUPPORTED_FORMATS = frozenset({
+    'date-time', 'date', 'time', 'duration',
+    'email', 'hostname', 'idn-email', 'idn-hostname',
+    'iri', 'iri-reference', 'ipv4', 'ipv6',
+    'uri', 'uri-reference', 'uri-template', 'uuid',
+    'regex', 'json-pointer', 'relative-json-pointer',
+})
+
+
+@dataclass(init=False)
+class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms the JSON Schema from Pydantic to be compatible with Anthropic's constrained decoder.
+
+    Anthropic's native structured output rejects several JSON Schema keywords that Pydantic
+    emits routinely. This transformer strips unsupported constraint keywords (moving their
+    semantic intent into the ``description`` so the model still sees them), sets
+    ``additionalProperties: false`` on objects, and filters ``format`` to the supported list.
+
+    See `Anthropic JSON Schema limitations <https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs#json-schema-limitations>`_
+    for the full list.
+    """
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema.pop('$schema', None)
+        schema.pop('title', None)
+        schema.pop('discriminator', None)
+
+        # Collect stripped constraint descriptions so the model still sees the intent.
+        stripped_hints: list[str] = []
+
+        for key in _ANTHROPIC_UNSUPPORTED_NUMERIC_CONSTRAINTS:
+            if (val := schema.pop(key, None)) is not None:
+                stripped_hints.append(f'{key}: {val}')
+
+        for key in _ANTHROPIC_UNSUPPORTED_STRING_CONSTRAINTS:
+            if (val := schema.pop(key, None)) is not None:
+                stripped_hints.append(f'{key}: {val}')
+
+        # maxItems is not supported; minItems only supports 0 or 1.
+        if (max_items := schema.pop('maxItems', None)) is not None:
+            stripped_hints.append(f'maxItems: {max_items}')
+        if (min_items := schema.get('minItems')) is not None and min_items > 1:
+            schema['minItems'] = 1
+            stripped_hints.append(f'minItems: {min_items}')
+
+        # Filter format to the supported list; unsupported values go into description.
+        if (fmt := schema.get('format')) is not None:
+            if fmt not in _ANTHROPIC_SUPPORTED_FORMATS:
+                schema.pop('format')
+                stripped_hints.append(f'format: {fmt}')
+
+        if stripped_hints:
+            hint_text = 'Constraints: ' + ', '.join(stripped_hints) + '. (enforce in application)'
+            schema['description'] = (
+                f"{schema['description']} ({hint_text})" if schema.get('description') else hint_text
+            )
+
+        # Objects require additionalProperties: false.
+        if schema.get('type') == 'object' and 'properties' in schema:
+            schema.setdefault('additionalProperties', False)
+
+        return schema
 
 class AnthropicModelProfile(ModelProfile, total=False):
     """Profile for models used with `AnthropicModel`.
@@ -260,6 +337,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
+        json_schema_transformer=AnthropicJsonSchemaTransformer if supports_json_schema_output else None,
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
