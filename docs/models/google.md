@@ -103,34 +103,22 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-credentials = service_account.Credentials.from_service_account_file(
-    'path/to/service-account.json',
-    scopes=['https://www.googleapis.com/auth/cloud-platform'],
-)
+credentials = service_account.Credentials.from_service_account_file('path/to/service-account.json')
 provider = GoogleCloudProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-3-flash-preview', provider=provider)
 agent = Agent(model)
 ...
 ```
 
+??? note "Credential scopes"
+    `GoogleCloudProvider` automatically scopes credentials that don't already have scopes with
+    `https://www.googleapis.com/auth/cloud-platform`, matching the google-genai SDK's own
+    `load_auth()` behavior. You can still pass scopes explicitly (for example to request a
+    narrower set) and they will be preserved as-is.
+
 #### API Key
 
-To use Google Cloud with an API key, [create a key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode) and set it as an environment variable:
-
-```bash
-export GOOGLE_API_KEY=your-api-key
-```
-
-You can then use `GoogleModel` via the `GoogleCloudProvider` by name:
-
-```python {test="ci_only"}
-from pydantic_ai import Agent
-
-agent = Agent('google-cloud:gemini-3-pro-preview')
-...
-```
-
-Or you can explicitly create the provider and model:
+To use Google Cloud with an API key ([Vertex AI Express Mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode)), pass the key explicitly to `GoogleCloudProvider`:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -142,6 +130,14 @@ model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+??? note "`GOOGLE_API_KEY` / `GEMINI_API_KEY` are not read by `GoogleCloudProvider`"
+    Unlike `GoogleProvider`, `GoogleCloudProvider` does not read the `GOOGLE_API_KEY` or
+    `GEMINI_API_KEY` environment variables. Those are the Gemini Developer API keys and would
+    override [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
+    in Vertex mode. For API-key access (Express Mode), pass `api_key` explicitly as shown above.
+    For Application Default Credentials (the default), pass `credentials`, `project`, and/or
+    `location`, or provide no arguments and let the SDK resolve ADC from the environment.
 
 #### Customizing Location or Project
 
