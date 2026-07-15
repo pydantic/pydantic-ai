@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 from vcr.cassette import Cassette
+from vcr.record_mode import RecordMode
 
 from pydantic_ai import (
     BinaryContent,
@@ -12724,8 +12725,19 @@ def _text_response(text: str, *, status: ResponseStatus = 'completed', backgroun
     return r
 
 
+def _tracking_sleep(*, real_sleep: bool = False) -> tuple[list[float], Callable[[float], Awaitable[None]]]:
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if real_sleep:  # pragma: lax no cover
+            await asyncio.sleep(delay)
+
+    return delays, sleep
+
+
 @pytest.mark.vcr()
-async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str):
+async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: background mode with a simple prompt.
 
     When background=True, the API may return 'queued'/'in_progress' before completing.
@@ -12733,13 +12745,17 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
     """
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
 
-    result = await agent.run(
-        'What is 2 + 2?',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is 2 + 2?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
 
     assert result.output == snapshot('2 + 2 equals 4.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -12772,22 +12788,26 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
 
 
 @pytest.mark.vcr()
-async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str):
+async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
     """VCR test: background mode with a tool call."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f'Sunny and 72F in {city}'
 
-    result = await agent.run(
-        'What is the weather in Paris? Use the get_weather tool.',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the weather in Paris? Use the get_weather tool.',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
 
     assert result.output == snapshot('The weather in Paris is currently sunny with a temperature of 72\u00b0F.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0, 2.0]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -13104,11 +13124,14 @@ async def test_background_queued_then_completed(allow_model_requests: None):
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'What is the meaning of life?',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the meaning of life?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'The answer is 42.'
     assert result.all_messages() == snapshot(
         [
@@ -13143,11 +13166,14 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'Hello',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'Hello',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'Done!'
     assert result.all_messages() == snapshot(
         [
@@ -13205,13 +13231,17 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
-        await agent.run(
-            'test',
-            model_settings=OpenAIResponsesModelSettings(openai_background=True),
-            usage_limits=UsageLimits(request_limit=None),
-        )
+    with Agent.using_sleep(sleep):
+        with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
+            await agent.run(
+                'test',
+                model_settings=OpenAIResponsesModelSettings(openai_background=True),
+                usage_limits=UsageLimits(request_limit=None),
+            )
+
+    assert sleep_delays == [2.0, 2.0, 2.0, 2.0]
 
 
 async def test_background_retrieve_uses_response_id(allow_model_requests: None):
@@ -13226,11 +13256,14 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     mock_client = cast(AsyncOpenAI, mock_client)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
 
-    result = await agent.run(
-        'test',
-        model_settings=OpenAIResponsesModelSettings(openai_background=True),
-    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'test',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
     assert result.output == 'final'
     assert result.all_messages() == snapshot(
         [

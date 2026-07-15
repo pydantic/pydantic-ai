@@ -165,14 +165,15 @@ jobs:
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it offline (see the
-      # `stsb_bert_tiny_model` fixture). On a sustained HF outage the cache stays
-      # cold and those tests skip instead of erroring the whole job.
+      # `stsb_bert_tiny_model` fixture). Download the snapshot without constructing
+      # the model here, since the tests construct it themselves. On a sustained HF
+      # outage the cache stays cold and those tests skip instead of erroring the job.
       - name: pre-download sentence-transformers test model
         if: matrix.python-version != '3.14' && matrix.install.name == 'all-extras'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -251,7 +252,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --no-sync python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."

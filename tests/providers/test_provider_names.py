@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -83,12 +83,11 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
+def test_infer_provider(
+    provider: str, provider_cls: type[Provider[Any]], exception_has: str | None, monkeypatch: pytest.MonkeyPatch
+):
     if provider == 'google-cloud':
-        try:
-            infer_provider(provider)
-        except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
-            pytest.skip('Google credentials not available')
+        monkeypatch.setattr('google.auth.compute_engine._metadata.ping', Mock(return_value=False))
 
     if exception_has is not None:
         with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):
