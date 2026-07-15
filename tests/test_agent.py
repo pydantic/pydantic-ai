@@ -12147,3 +12147,82 @@ async def test_image_output_validators_run_stream():
 
 
 # endregion
+
+
+async def test_run_stream_content_filter_error():
+    from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, RequestUsage
+    from pydantic_ai.exceptions import ContentFilterError
+    from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+    from pydantic_ai.messages import ModelResponseStreamEvent
+    from pydantic_ai._run_context import RunContext
+    from pydantic_ai.settings import ModelSettings
+    from typing import AsyncIterator, AsyncGenerator
+    from datetime import datetime
+    from contextlib import asynccontextmanager
+
+    class CustomStreamedResponse(StreamedResponse):
+        def __init__(self, model_request_parameters):
+            super().__init__(model_request_parameters=model_request_parameters)
+            self.parts = [TextPart('Partial output before block')]
+            self.finish_reason = 'content_filter'
+            self.provider_details = {'finish_reason': 'content_filter'}
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=self.parts[0],
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'custom-stream-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2026, 1, 1)
+
+    class CustomStreamModel(Model):
+        @property
+        def system(self) -> str:
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'custom-stream-model'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://test.example.com'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Partial output before block')], finish_reason='content_filter')
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[StreamedResponse, None]:
+            yield CustomStreamedResponse(model_request_parameters=model_request_parameters)
+
+    agent = Agent(CustomStreamModel())
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+

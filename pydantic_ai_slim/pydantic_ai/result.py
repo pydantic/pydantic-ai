@@ -48,6 +48,23 @@ T = TypeVar('T')
 """An invariant TypeVar."""
 
 
+def _check_content_filter(response: _messages.ModelResponse) -> None:
+    if response.finish_reason == 'content_filter':
+        details = response.provider_details or {}
+        body = _messages.ModelMessagesTypeAdapter.dump_json([response]).decode()
+
+        if reason := details.get('finish_reason'):
+            message = f"Content filter triggered. Finish reason: '{reason}'"
+        elif reason := details.get('block_reason'):
+            message = f"Content filter triggered. Block reason: '{reason}'"
+        elif refusal := details.get('refusal'):
+            message = f'Content filter triggered. Refusal: {refusal!r}'
+        else:
+            message = 'Content filter triggered.'
+
+        raise exceptions.ContentFilterError(message, body=body)
+
+
 @dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
@@ -222,6 +239,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        _check_content_filter(message)
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover
@@ -382,6 +400,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     event = await anext(base_iter)
 
                 except StopAsyncIteration:
+                    _check_content_filter(self.response)
                     return
 
             yield event
@@ -694,6 +713,30 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self.is_complete = True
         if message is not None:
             self._record_response(message)
+
+        # Check for content filter trigger
+        response = message
+        if response is None:
+            try:
+                response = self.response
+            except ValueError:
+                response = None
+
+        if response is not None and response.finish_reason == 'content_filter':
+            details = response.provider_details or {}
+            body = _messages.ModelMessagesTypeAdapter.dump_json([response]).decode()
+
+            if reason := details.get('finish_reason'):
+                msg = f"Content filter triggered. Finish reason: '{reason}'"
+            elif reason := details.get('block_reason'):
+                msg = f"Content filter triggered. Block reason: '{reason}'"
+            elif refusal := details.get('refusal'):
+                msg = f'Content filter triggered. Refusal: {refusal!r}'
+            else:  # pragma: no cover
+                msg = 'Content filter triggered.'
+
+            raise exceptions.ContentFilterError(msg, body=body)
+
         if self._on_complete is not None:
             await self._on_complete()
 

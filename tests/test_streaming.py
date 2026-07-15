@@ -5218,4 +5218,94 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     assert cleanup_finished.is_set()
 
 
+async def test_stream_content_filter_partial_text():
+    from pydantic_ai.models import StreamedResponse, Model, ModelRequestParameters
+    from pydantic_ai.exceptions import ContentFilterError
+    from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, TextPartDelta, ModelResponseStreamEvent
+    from pydantic_ai.settings import ModelSettings
+
+    class ChallengeStreamedResponse(StreamedResponse):
+        def __init__(self, model_request_parameters, parts, finish_reason_val):
+            super().__init__(model_request_parameters=model_request_parameters)
+            self.parts = parts
+            self.finish_reason_val = finish_reason_val
+            if finish_reason_val:
+                self.provider_details = {'finish_reason': finish_reason_val}
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            for idx, part in enumerate(self.parts):
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=idx,
+                    part=part,
+                )
+            self.finish_reason = self.finish_reason_val
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'challenge'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime.datetime:
+            return datetime.datetime.now(timezone.utc)
+
+    class ChallengeStreamModel(Model):
+        def __init__(self, parts, finish_reason):
+            super().__init__()
+            self.parts = parts
+            self.finish_reason_val = finish_reason
+
+        @property
+        def model_name(self) -> str:
+            return 'challenge'
+
+        @property
+        def system(self) -> str:
+            return 'challenge'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=self.parts,
+                finish_reason=self.finish_reason_val,
+                model_name=self.model_name,
+            )
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse, None]:
+            yield ChallengeStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                parts=self.parts,
+                finish_reason_val=self.finish_reason_val,
+            )
+
+    model = ChallengeStreamModel(parts=[TextPart('Partially generated content...')], finish_reason='content_filter')
+    agent = Agent(model)
+
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
+        async with agent.run_stream('Trigger filter') as stream:
+            await stream.get_output()
+
+
 # endregion
