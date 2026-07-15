@@ -235,6 +235,7 @@ def test_vllm_provider_profile_overrides() -> None:
         profile = provider.model_profile(model)
         assert profile is not None
         assert profile.get('openai_chat_supports_multiple_system_messages', True) is False
+        assert profile.get('openai_supports_tool_choice_required', False) is True
         assert profile.get('openai_supports_strict_tool_definition', False) is True
         assert profile.get('openai_chat_supports_document_input', True) is False
         assert profile.get('supports_tool_return_schema', True) is False

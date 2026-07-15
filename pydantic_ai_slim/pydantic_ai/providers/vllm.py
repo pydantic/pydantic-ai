@@ -69,8 +69,9 @@ class VLLMProvider(Provider[AsyncOpenAI]):
                 profile = profile_func(bare_name)
 
         # `json_schema_transformer` is a fallback (the upstream model profile wins if it set one). The other
-        # overrides win on top: vLLM's /v1/chat/completions endpoint supports response_format with json_schema
-        # and strict function tools. It does not support OpenAI file content parts or native tool return schemas.
+        # overrides win on top: vLLM's /v1/chat/completions endpoint supports response_format with json_schema,
+        # required tool choice, and strict function tools. It does not support OpenAI file content parts or native
+        # tool return schemas.
         # `openai_chat_supports_multiple_system_messages` is forced off because some chat templates served by
         # vLLM reject more than one leading system message. See #5812.
         #
@@ -83,6 +84,7 @@ class VLLMProvider(Provider[AsyncOpenAI]):
             profile,
             OpenAIModelProfile(
                 openai_chat_thinking_field='reasoning',
+                openai_supports_tool_choice_required=True,
                 openai_supports_strict_tool_definition=True,
                 openai_chat_supports_document_input=False,
                 supports_tool_return_schema=False,
