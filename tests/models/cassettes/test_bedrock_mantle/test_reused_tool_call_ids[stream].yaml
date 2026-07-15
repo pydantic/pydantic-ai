@@ -1,0 +1,337 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '730'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.6-luna
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    body:
+      string: |+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149815,"error":null,"frequency_penalty":0.0,"id":"resp_s4fivwvjsia66dy7o2f7a4bjdw6pmqhuoihpushy6tzp3ep5f2iq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"properties":{},"type":"object","additionalProperties":false},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":0,"type":"response.created"}
+        event: response.created
+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149815,"error":null,"frequency_penalty":0.0,"id":"resp_s4fivwvjsia66dy7o2f7a4bjdw6pmqhuoihpushy6tzp3ep5f2iq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"properties":{},"type":"object","additionalProperties":false},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":1,"type":"response.in_progress"}
+        event: response.in_progress
+
+        data: {"item":{"arguments":"","call_id":"call_0","id":"fc_92a921d390f65a50bb33827f001512a7","name":"first_tool","status":"in_progress","type":"function_call"},"output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+        event: response.output_item.added
+
+        data: {"delta":"{}","item_id":"fc_92a921d390f65a50bb33827f001512a7","obfuscation":"","output_index":0,"sequence_number":3,"type":"response.function_call_arguments.delta"}
+        event: response.function_call_arguments.delta
+
+        data: {"arguments":"{}","item_id":"fc_92a921d390f65a50bb33827f001512a7","output_index":0,"sequence_number":4,"type":"response.function_call_arguments.done"}
+        event: response.function_call_arguments.done
+
+        data: {"item":{"arguments":"{}","call_id":"call_0","id":"fc_92a921d390f65a50bb33827f001512a7","name":"first_tool","status":"completed","type":"function_call"},"output_index":0,"sequence_number":5,"type":"response.output_item.done"}
+        event: response.output_item.done
+
+        data: {"response":{"background":false,"completed_at":1784149816,"created_at":1784149815,"error":null,"frequency_penalty":0.0,"id":"resp_s4fivwvjsia66dy7o2f7a4bjdw6pmqhuoihpushy6tzp3ep5f2iq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[{"arguments":"{}","call_id":"call_0","id":"fc_92a921d390f65a50bb33827f001512a7","name":"first_tool","status":"completed","type":"function_call"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"default","status":"completed","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":88,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":14,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":102},"user":null,"moderation":null},"sequence_number":6,"type":"response.completed"}
+        event: response.completed
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '945'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      - arguments: '{}'
+        call_id: call_0
+        id: fc_92a921d390f65a50bb33827f001512a7
+        name: first_tool
+        type: function_call
+      - call_id: call_0
+        output: first result
+        type: function_call_output
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.6-luna
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    body:
+      string: |+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149816,"error":null,"frequency_penalty":0.0,"id":"resp_hfyafuehc67sr5idnqiudjo44vkw44n6bvclcmbefnavlawlmmtq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"properties":{},"type":"object","additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":0,"type":"response.created"}
+        event: response.created
+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149816,"error":null,"frequency_penalty":0.0,"id":"resp_hfyafuehc67sr5idnqiudjo44vkw44n6bvclcmbefnavlawlmmtq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"properties":{},"type":"object","additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":1,"type":"response.in_progress"}
+        event: response.in_progress
+
+        data: {"item":{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeH/3Hv5XLeVbvcNhaRq5MetFwUbe1qxe6BblboRMZq3MAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBcGZJQWJueG1UMFE4RlZkNmZJQ0dzQnJIZ0g5ZXNvT1Y4VWVrNXV1YnY5em9RUFFvRmxCaGNxdWxMK1ljQjc0T0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcWGTataAj/WpoO8kJHxffowf0zIrx3Flh4Tk5PFrKc+5ls0wRpnX+0wjWt1IbOlZ7BqkOgOIDBwNRjg659ezNSH7dpnVZdnegCiyoY0LI5wDnkxRGCt0hWkfbRpoCAAAQAKiLJqnkSdL1PM9+PYRYdrh5ISVG/raiuSkgQGR6N7/0uEM8ObCal9pm/I8Dc2Wwfv////8AAAABAAAAAAAAAAAAAAABAAAAnrxdtGog+KcSoGtnpVoE00TaG9f3BSkpCRmv/ZuC/xUc99yPITdmssU8QgWlAPb5BxFwZeslHrLc5Th6CTyktZ0fyum8U8bdTnBpDC+bJK2XkzbTNfO9ZOAb84SYxDhfq+hwp19V1NqJa6qAnda9S5hB10kH6cutIgxXVR1bah4OE8XOaKYIGpeZrubGJvuZnUsapWAZjdxsH8znltkoJUcRKRCiUknw2pCrHl6g6ABnMGUCMEbAWrYqi+IDtaHo2DjJtAnUYUgeppkAZptB1c5eabXq8L7i/F87nY0X71obQHuqfQIxAMv+4q6TGVVvbtA2vA8M+qF0VuO845aponkq7JBEUtIPXmAuygp00gHpraQJU7rCGw==","id":"rs_09b46dfb46ef5bb1a39091305f54b906","summary":[],"type":"reasoning"},"output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+        event: response.output_item.added
+
+        data: {"item":{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeH/3Hv5XLeVbvcNhaRq5MetFwUbe1qxe6BblboRMZq3MAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBcGZJQWJueG1UMFE4RlZkNmZJQ0dzQnJIZ0g5ZXNvT1Y4VWVrNXV1YnY5em9RUFFvRmxCaGNxdWxMK1ljQjc0T0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcWGTataAj/WpoO8kJHxffowf0zIrx3Flh4Tk5PFrKc+5ls0wRpnX+0wjWt1IbOlZ7BqkOgOIDBwNRjg659ezNSH7dpnVZdnegCiyoY0LI5wDnkxRGCt0hWkfbRpoCAAAQAKiLJqnkSdL1PM9+PYRYdrh5ISVG/raiuSkgQGR6N7/0uEM8ObCal9pm/I8Dc2Wwfv////8AAAABAAAAAAAAAAAAAAABAAAAnrxdtGog+KcSoGtnpVoE00TaG9f3BSkpCRmv/ZuC/xUc99yPITdmssU8QgWlAPb5BxFwZeslHrLc5Th6CTyktZ0fyum8U8bdTnBpDC+bJK2XkzbTNfO9ZOAb84SYxDhfq+hwp19V1NqJa6qAnda9S5hB10kH6cutIgxXVR1bah4OE8XOaKYIGpeZrubGJvuZnUsapWAZjdxsH8znltkoJUcRKRCiUknw2pCrHl6g6ABnMGUCMEbAWrYqi+IDtaHo2DjJtAnUYUgeppkAZptB1c5eabXq8L7i/F87nY0X71obQHuqfQIxAMv+4q6TGVVvbtA2vA8M+qF0VuO845aponkq7JBEUtIPXmAuygp00gHpraQJU7rCGw==","id":"rs_09b46dfb46ef5bb1a39091305f54b906","summary":[],"type":"reasoning"},"output_index":0,"sequence_number":3,"type":"response.output_item.done"}
+        event: response.output_item.done
+
+        data: {"item":{"arguments":"","call_id":"call_1","id":"fc_aa7d623529fc5be598cfde53231cb95c","name":"second_tool","status":"in_progress","type":"function_call"},"output_index":1,"sequence_number":4,"type":"response.output_item.added"}
+        event: response.output_item.added
+
+        data: {"delta":"{}","item_id":"fc_aa7d623529fc5be598cfde53231cb95c","obfuscation":"","output_index":1,"sequence_number":5,"type":"response.function_call_arguments.delta"}
+        event: response.function_call_arguments.delta
+
+        data: {"arguments":"{}","item_id":"fc_aa7d623529fc5be598cfde53231cb95c","output_index":1,"sequence_number":6,"type":"response.function_call_arguments.done"}
+        event: response.function_call_arguments.done
+
+        data: {"item":{"arguments":"{}","call_id":"call_1","id":"fc_aa7d623529fc5be598cfde53231cb95c","name":"second_tool","status":"completed","type":"function_call"},"output_index":1,"sequence_number":7,"type":"response.output_item.done"}
+        event: response.output_item.done
+
+        data: {"response":{"background":false,"completed_at":1784149817,"created_at":1784149816,"error":null,"frequency_penalty":0.0,"id":"resp_hfyafuehc67sr5idnqiudjo44vkw44n6bvclcmbefnavlawlmmtq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeH/3Hv5XLeVbvcNhaRq5MetFwUbe1qxe6BblboRMZq3MAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBcGZJQWJueG1UMFE4RlZkNmZJQ0dzQnJIZ0g5ZXNvT1Y4VWVrNXV1YnY5em9RUFFvRmxCaGNxdWxMK1ljQjc0T0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcWGTataAj/WpoO8kJHxffowf0zIrx3Flh4Tk5PFrKc+5ls0wRpnX+0wjWt1IbOlZ7BqkOgOIDBwNRjg659ezNSH7dpnVZdnegCiyoY0LI5wDnkxRGCt0hWkfbRpoCAAAQAKiLJqnkSdL1PM9+PYRYdrh5ISVG/raiuSkgQGR6N7/0uEM8ObCal9pm/I8Dc2Wwfv////8AAAABAAAAAAAAAAAAAAABAAAAnrxdtGog+KcSoGtnpVoE00TaG9f3BSkpCRmv/ZuC/xUc99yPITdmssU8QgWlAPb5BxFwZeslHrLc5Th6CTyktZ0fyum8U8bdTnBpDC+bJK2XkzbTNfO9ZOAb84SYxDhfq+hwp19V1NqJa6qAnda9S5hB10kH6cutIgxXVR1bah4OE8XOaKYIGpeZrubGJvuZnUsapWAZjdxsH8znltkoJUcRKRCiUknw2pCrHl6g6ABnMGUCMEbAWrYqi+IDtaHo2DjJtAnUYUgeppkAZptB1c5eabXq8L7i/F87nY0X71obQHuqfQIxAMv+4q6TGVVvbtA2vA8M+qF0VuO845aponkq7JBEUtIPXmAuygp00gHpraQJU7rCGw==","id":"rs_09b46dfb46ef5bb1a39091305f54b906","summary":[],"type":"reasoning"},{"arguments":"{}","call_id":"call_1","id":"fc_aa7d623529fc5be598cfde53231cb95c","name":"second_tool","status":"completed","type":"function_call"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"default","status":"completed","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"properties":{},"additionalProperties":false,"type":"object"},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":115,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":42,"output_tokens_details":{"reasoning_tokens":26},"total_tokens":157},"user":null,"moderation":null},"sequence_number":8,"type":"response.completed"}
+        event: response.completed
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2118'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      - arguments: '{}'
+        call_id: call_0
+        id: fc_92a921d390f65a50bb33827f001512a7
+        name: first_tool
+        type: function_call
+      - call_id: call_0
+        output: first result
+        type: function_call_output
+      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFeH/3Hv5XLeVbvcNhaRq5MetFwUbe1qxe6BblboRMZq3MAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBcGZJQWJueG1UMFE4RlZkNmZJQ0dzQnJIZ0g5ZXNvT1Y4VWVrNXV1YnY5em9RUFFvRmxCaGNxdWxMK1ljQjc0T0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcWGTataAj/WpoO8kJHxffowf0zIrx3Flh4Tk5PFrKc+5ls0wRpnX+0wjWt1IbOlZ7BqkOgOIDBwNRjg659ezNSH7dpnVZdnegCiyoY0LI5wDnkxRGCt0hWkfbRpoCAAAQAKiLJqnkSdL1PM9+PYRYdrh5ISVG/raiuSkgQGR6N7/0uEM8ObCal9pm/I8Dc2Wwfv////8AAAABAAAAAAAAAAAAAAABAAAAnrxdtGog+KcSoGtnpVoE00TaG9f3BSkpCRmv/ZuC/xUc99yPITdmssU8QgWlAPb5BxFwZeslHrLc5Th6CTyktZ0fyum8U8bdTnBpDC+bJK2XkzbTNfO9ZOAb84SYxDhfq+hwp19V1NqJa6qAnda9S5hB10kH6cutIgxXVR1bah4OE8XOaKYIGpeZrubGJvuZnUsapWAZjdxsH8znltkoJUcRKRCiUknw2pCrHl6g6ABnMGUCMEbAWrYqi+IDtaHo2DjJtAnUYUgeppkAZptB1c5eabXq8L7i/F87nY0X71obQHuqfQIxAMv+4q6TGVVvbtA2vA8M+qF0VuO845aponkq7JBEUtIPXmAuygp00gHpraQJU7rCGw==
+        id: rs_09b46dfb46ef5bb1a39091305f54b906
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_1
+        id: fc_aa7d623529fc5be598cfde53231cb95c
+        name: second_tool
+        type: function_call
+      - call_id: call_1
+        output: second result
+        type: function_call_output
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.6-luna
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    body:
+      string: |+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149817,"error":null,"frequency_penalty":0.0,"id":"resp_nj5gqot2vhvxn5qjjuovlixuszzgy3arrc52vqlkk7237oiw36dq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"type":"object","additionalProperties":false,"properties":{}},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":0,"type":"response.created"}
+        event: response.created
+
+        data: {"response":{"background":false,"completed_at":null,"created_at":1784149817,"error":null,"frequency_penalty":0.0,"id":"resp_nj5gqot2vhvxn5qjjuovlixuszzgy3arrc52vqlkk7237oiw36dq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"auto","status":"in_progress","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"type":"object","additionalProperties":false,"properties":{}},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"moderation":null},"sequence_number":1,"type":"response.in_progress"}
+        event: response.in_progress
+
+        data: {"item":{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeK8atcdvZT+EqgyzgSOAXXG37/w1WMHr2BrU0X0K+KKtAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBN0pJbTN3Mzl6emlxYTRaMTUzRnR5UU9QM2NNOGJ6RDFLWkcwaE5jRFNEU0VTY2Ria2ZjN3V1NHBlTllRdklSeFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcvO0+wltKcv6/lyQo/bGkOuGVhmmqxCUvSDHYj1rKc+5ls0wRpnX+0wjWt1IecweZyuEDlquAgzT2u8/1lmWzvE7zr8E/jT5N2i2MEx25m3pVM8JS3wxeJyn+GIICAAAQANuTeUH7tZb6bfH2mhgD6Xdhgur5KlLpFJLUIy0l/LnEAw8bWQrEPm8Jj0ElQ7VG7v////8AAAABAAAAAAAAAAAAAAABAAAAaJl3TP/Pv5P7I2OlgriBjcvCaUoUaXdGjFRzgouKWcFYh3pA/q8rVu7TtAheK0cf99Ziw0kjF8ZH5gpi1gx2zsBQRwjqi3VkjXYX35WSJr2OfYh1qFn1kLGJEUhAd/KxVtKUnWkDW5AEOTYzz92JfT+QR/3RFm4ZkQBnMGUCMQCKOO4ln+L7JymII5lbfQ5/qGFeqEcqdZXhhjsymUvDQh+0b4k8lFZ4TWS1nvOjRBkCMC97zXNz8/lp0NKRecmzMGKc50DDxj6VGIeuDcNLCvOuWxqKEo93fpr+vXbYyD7esw==","id":"rs_e5056067d04e50b9b0197216c40e24c3","summary":[],"type":"reasoning"},"output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+        event: response.output_item.added
+
+        data: {"item":{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeK8atcdvZT+EqgyzgSOAXXG37/w1WMHr2BrU0X0K+KKtAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBN0pJbTN3Mzl6emlxYTRaMTUzRnR5UU9QM2NNOGJ6RDFLWkcwaE5jRFNEU0VTY2Ria2ZjN3V1NHBlTllRdklSeFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcvO0+wltKcv6/lyQo/bGkOuGVhmmqxCUvSDHYj1rKc+5ls0wRpnX+0wjWt1IecweZyuEDlquAgzT2u8/1lmWzvE7zr8E/jT5N2i2MEx25m3pVM8JS3wxeJyn+GIICAAAQANuTeUH7tZb6bfH2mhgD6Xdhgur5KlLpFJLUIy0l/LnEAw8bWQrEPm8Jj0ElQ7VG7v////8AAAABAAAAAAAAAAAAAAABAAAAaJl3TP/Pv5P7I2OlgriBjcvCaUoUaXdGjFRzgouKWcFYh3pA/q8rVu7TtAheK0cf99Ziw0kjF8ZH5gpi1gx2zsBQRwjqi3VkjXYX35WSJr2OfYh1qFn1kLGJEUhAd/KxVtKUnWkDW5AEOTYzz92JfT+QR/3RFm4ZkQBnMGUCMQCKOO4ln+L7JymII5lbfQ5/qGFeqEcqdZXhhjsymUvDQh+0b4k8lFZ4TWS1nvOjRBkCMC97zXNz8/lp0NKRecmzMGKc50DDxj6VGIeuDcNLCvOuWxqKEo93fpr+vXbYyD7esw==","id":"rs_e5056067d04e50b9b0197216c40e24c3","summary":[],"type":"reasoning"},"output_index":0,"sequence_number":3,"type":"response.output_item.done"}
+        event: response.output_item.done
+
+        data: {"item":{"content":[],"id":"msg_bdcb798ae4455b06acb1029c23653ccf","phase":"final_answer","role":"assistant","status":"in_progress","type":"message"},"output_index":1,"sequence_number":4,"type":"response.output_item.added"}
+        event: response.output_item.added
+
+        data: {"content_index":0,"item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","output_index":1,"part":{"annotations":[],"logprobs":[],"text":"","type":"output_text"},"sequence_number":5,"type":"response.content_part.added"}
+        event: response.content_part.added
+
+        data: {"content_index":0,"delta":"First","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":6,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" result","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":7,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":":","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":8,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" first","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":9,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" result","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":10,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":"  \n","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":11,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":"Second","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":12,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" result","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":13,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":":","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":14,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" second","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":15,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"delta":" result","item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"obfuscation":"","output_index":1,"sequence_number":16,"type":"response.output_text.delta"}
+        event: response.output_text.delta
+
+        data: {"content_index":0,"item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","logprobs":[],"output_index":1,"sequence_number":17,"text":"First result: first result  \nSecond result: second result","type":"response.output_text.done"}
+        event: response.output_text.done
+
+        data: {"content_index":0,"item_id":"msg_bdcb798ae4455b06acb1029c23653ccf","output_index":1,"part":{"annotations":[],"logprobs":[],"text":"First result: first result  \nSecond result: second result","type":"output_text"},"sequence_number":18,"type":"response.content_part.done"}
+        event: response.content_part.done
+
+        data: {"item":{"content":[{"annotations":[],"logprobs":[],"text":"First result: first result  \nSecond result: second result","type":"output_text"}],"id":"msg_bdcb798ae4455b06acb1029c23653ccf","phase":"final_answer","role":"assistant","status":"completed","type":"message"},"output_index":1,"sequence_number":19,"type":"response.output_item.done"}
+        event: response.output_item.done
+
+        data: {"response":{"background":false,"completed_at":1784149818,"created_at":1784149817,"error":null,"frequency_penalty":0.0,"id":"resp_nj5gqot2vhvxn5qjjuovlixuszzgy3arrc52vqlkk7237oiw36dq","incomplete_details":null,"instructions":"Call first_tool. After receiving its result, call second_tool in a new model response. After receiving that result, answer with both results. Never call both tools in one response.","max_output_tokens":null,"max_tool_calls":null,"metadata":{},"model":"openai.gpt-5.6-luna","object":"response","output":[{"encrypted_content":"rsn_5ZVrif4J0bXIqmWdledj7QIFeK8atcdvZT+EqgyzgSOAXXG37/w1WMHr2BrU0X0K+KKtAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBN0pJbTN3Mzl6emlxYTRaMTUzRnR5UU9QM2NNOGJ6RDFLWkcwaE5jRFNEU0VTY2Ria2ZjN3V1NHBlTllRdklSeFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcvO0+wltKcv6/lyQo/bGkOuGVhmmqxCUvSDHYj1rKc+5ls0wRpnX+0wjWt1IecweZyuEDlquAgzT2u8/1lmWzvE7zr8E/jT5N2i2MEx25m3pVM8JS3wxeJyn+GIICAAAQANuTeUH7tZb6bfH2mhgD6Xdhgur5KlLpFJLUIy0l/LnEAw8bWQrEPm8Jj0ElQ7VG7v////8AAAABAAAAAAAAAAAAAAABAAAAaJl3TP/Pv5P7I2OlgriBjcvCaUoUaXdGjFRzgouKWcFYh3pA/q8rVu7TtAheK0cf99Ziw0kjF8ZH5gpi1gx2zsBQRwjqi3VkjXYX35WSJr2OfYh1qFn1kLGJEUhAd/KxVtKUnWkDW5AEOTYzz92JfT+QR/3RFm4ZkQBnMGUCMQCKOO4ln+L7JymII5lbfQ5/qGFeqEcqdZXhhjsymUvDQh+0b4k8lFZ4TWS1nvOjRBkCMC97zXNz8/lp0NKRecmzMGKc50DDxj6VGIeuDcNLCvOuWxqKEo93fpr+vXbYyD7esw==","id":"rs_e5056067d04e50b9b0197216c40e24c3","summary":[],"type":"reasoning"},{"content":[{"annotations":[],"logprobs":[],"text":"First result: first result  \nSecond result: second result","type":"output_text"}],"id":"msg_bdcb798ae4455b06acb1029c23653ccf","phase":"final_answer","role":"assistant","status":"completed","type":"message"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"summary":null,"effort":"medium","context":"all_turns"},"safety_identifier":null,"service_tier":"default","status":"completed","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"description":null,"name":"first_tool","parameters":{"properties":{},"type":"object","additionalProperties":false},"strict":false,"type":"function"},{"description":null,"name":"second_tool","parameters":{"type":"object","additionalProperties":false,"properties":{}},"strict":false,"type":"function"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":170,"input_tokens_details":{"cache_write_tokens":55,"cached_tokens":0},"output_tokens":27,"output_tokens_details":{"reasoning_tokens":10},"total_tokens":197},"user":null,"moderation":null},"sequence_number":20,"type":"response.completed"}
+        event: response.completed
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+version: 1
+...
