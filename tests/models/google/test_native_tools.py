@@ -1027,7 +1027,8 @@ def test_file_search_grounding_fills_empty_tool_response():
 
     _, file_search_return = response.parts
     assert isinstance(file_search_return, NativeToolReturnPart)
-    assert file_search_return.provider_details == {'raw_tool_response': None}
+    # Only web_search preserves a raw response: file_search is filled into `content` itself.
+    assert file_search_return.provider_details is None
     assert file_search_return.content == snapshot(
         [
             {
@@ -1038,9 +1039,22 @@ def test_file_search_grounding_fills_empty_tool_response():
             }
         ]
     )
+    # The contexts recovered from grounding must survive the echo, otherwise a follow-up request
+    # drops what #6216 recovered.
     mapped = _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True)
     assert mapped is not None
-    assert cast(Any, mapped)['parts'][1]['tool_response']['response'] is None
+    assert cast(Any, mapped)['parts'][1]['tool_response']['response'] == snapshot(
+        {
+            'result': [
+                {
+                    'text': 'Paris is the capital of France.',
+                    'title': 'paris.txt',
+                    'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                    'file_search_store': 'fileSearchStores/test-store',
+                }
+            ]
+        }
+    )
 
 
 def test_file_search_populated_tool_response_not_overwritten():
@@ -1152,6 +1166,9 @@ async def test_file_search_grounding_fills_empty_tool_response_streaming():
     assert isinstance(file_search_return, NativeToolReturnPart) and file_search_return.content is not None
     assert isinstance(text, TextPart)
     assert len(_file_search_return_start_parts(events)) == 1
+    # A streamed file_search return is filled from grounding like the non-streamed one, so it echoes
+    # its recovered contexts rather than a preserved raw response.
+    assert file_search_return.provider_details is None
 
 
 @pytest.mark.anyio

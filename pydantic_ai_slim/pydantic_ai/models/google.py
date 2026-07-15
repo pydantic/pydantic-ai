@@ -2021,7 +2021,10 @@ def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> Nativ
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
-    if item.tool_name == WebSearchTool.kind or item.content is None:
+    if item.tool_name == WebSearchTool.kind:
+        # Only web_search has its content replaced by grounding sources, so only it needs the raw
+        # response preserved for the echo. Other tools (e.g. file_search) are filled from grounding
+        # into `content` itself, which the echo has to send back.
         item.provider_details = {'raw_tool_response': item.content}
     return item
 
