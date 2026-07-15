@@ -37,7 +37,7 @@ python/uv-run -m pydantic_ai_examples.rag build
 (Note building the database doesn't use Pydantic AI right now, instead it uses the OpenAI SDK directly.)
 
 !!! note "Embedding model and index schema"
-    This example uses `text-embedding-3-small` for documents and queries, storing its 1,536-dimensional output in a `vector(1536)` column. If you change the model or dimensions, stop PostgreSQL, delete the example's `postgres-data` directory, update `DB_SCHEMA` if needed, then restart PostgreSQL and rerun `build`. pgvector's HNSW `vector` index supports up to 2,000 dimensions.
+    This example uses `text-embedding-3-small` for documents and queries, storing its 1,536-dimensional output in a `vector(1536)` column. If you change the model or dimensions, stop PostgreSQL, delete the example's `postgres-data` directory (this removes the entire local example database), update `DB_SCHEMA` if needed, then restart PostgreSQL and rerun `build`. pgvector's HNSW `vector` index supports up to 2,000 dimensions.
 
 You can then ask the agent a question with:
 
