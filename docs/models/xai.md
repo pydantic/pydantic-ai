@@ -127,7 +127,7 @@ _(This example is complete, it can be run "as is")_
 
 The `XSearch` capability accepts:
 
-- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 10 X handles. These are mutually exclusive.
+- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 20 X handles. These are mutually exclusive.
 - **`from_date`** / **`to_date`**: restrict results to posts created within the given datetime range (naive datetimes are interpreted as UTC).
 - **`enable_image_understanding`** (default: `False`): analyze images attached to posts.
 - **`enable_video_understanding`** (default: `False`): analyze video content attached to posts.
@@ -150,6 +150,8 @@ agent = Agent(
 ```
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
+
+Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`.
 
 ## Agentic turns
 

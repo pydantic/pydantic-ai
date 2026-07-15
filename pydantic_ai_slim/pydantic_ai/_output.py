@@ -485,16 +485,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`NativeOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
                 )
 
@@ -512,16 +512,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
+                raise UserError('`PromptedOutput` must be the only output type.')
 
             flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
-                raise UserError(  # pragma: no cover
+                raise UserError(
                     '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
                 )
 
@@ -1122,7 +1122,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         discriminated_json_schemas: list[ObjectJsonSchema] = []
         for object_key, json_schema in zip(self._processors.keys(), json_schemas):
             title = json_schema.pop('title', None)
-            description = json_schema.pop('description', None)
+            # Don't shadow the outer `description` parameter: it carries the union's own
+            # description (e.g. from `NativeOutput(..., description=...)`) into `super().__init__()` below.
+            json_schema_description = json_schema.pop('description', None)
 
             discriminated_json_schema = {
                 'type': 'object',
@@ -1138,8 +1140,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             }
             if title:  # pragma: no branch
                 discriminated_json_schema['title'] = title
-            if description:
-                discriminated_json_schema['description'] = description
+            if json_schema_description:
+                discriminated_json_schema['description'] = json_schema_description
 
             discriminated_json_schemas.append(discriminated_json_schema)
 
@@ -1438,12 +1440,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            sequential = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
                 tool_max_retries = output.max_retries
+                sequential = output.sequential
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1480,6 +1484,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
+                sequential=sequential,
             )
             processors[name] = processor
             tool_defs.append(tool_def)

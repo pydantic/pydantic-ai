@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -11,17 +10,17 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
-    Mapping,
     Sequence,
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from types import FrameType
+from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypedDict, TypeIs, TypeVar, deprecated
+from typing_extensions import Self, TypedDict, TypeIs, TypeVar
 
 from pydantic_graph import End
 
@@ -39,10 +38,9 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
+from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tool_manager import ToolManager
@@ -55,20 +53,10 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from ..usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from fasta2a.applications import FastA2A
-    from fasta2a.broker import Broker
-    from fasta2a.schema import AgentProvider, Skill
-    from fasta2a.storage import Storage
-    from starlette.middleware import Middleware
-    from starlette.routing import BaseRoute, Route
-    from starlette.types import ExceptionHandler, Lifespan
-
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
-    from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 T = TypeVar('T')
@@ -127,6 +115,129 @@ class AgentRetries(TypedDict, total=False):
 
     tools: int
     output: int
+
+
+_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[Any]]]
+"""Starts the background agent run with the internal event-forwarding handler and returns its result."""
+
+
+class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]):
+    """The event iterator returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+    Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
+    object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
+    the context manager without iterating therefore never starts a run (#6162).
+
+    This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
+    runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
+    can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
+    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    context.
+    """
+
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
+        self._receive_stream: (
+            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
+        ) = None
+        self._task: asyncio.Task[AgentRunResult[Any]] | None = None
+        # Set once the trailing `AgentRunResultEvent` has been produced, so further `__anext__()` calls stop.
+        self._result_yielded = False
+        self._closed = False
+
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+        if self._closed or self._result_yielded:
+            raise StopAsyncIteration
+
+        await self._ensure_started()
+        assert self._receive_stream is not None
+        assert self._task is not None
+
+        try:
+            return await self._receive_stream.receive()
+        except anyio.EndOfStream:
+            # The run closed its send stream, so all events have been delivered: surface the run result as a
+            # final event. Awaiting the task here also re-raises any error it failed with, to the consumer.
+            await self._receive_stream.aclose()
+            self._result_yielded = True
+            result = await self._task
+            return AgentRunResultEvent(result)
+
+    async def aclose(self) -> None:
+        """Cancel the background run (if started) and close the receive stream, idempotently."""
+        if self._closed:
+            return
+
+        self._closed = True
+        # Cancel the run first so it tears down via its own cancellation, unblocking a run that's
+        # parked pushing an event into the zero-buffer stream. But if the run *absorbs* that
+        # cancellation (e.g. a durable step under Temporal's cooperative cancellation) it can resume
+        # and block again on `send`, so close the receive end before draining: the blocked `send` then
+        # fails with `BrokenResourceError` and the drain can complete instead of deadlocking. A run
+        # that unwound normally is unaffected. If iteration was never started, `_task` is `None`.
+        if self._task is not None:
+            self._task.cancel()
+        if self._receive_stream is not None:
+            await self._receive_stream.aclose()
+        if self._task is not None:
+            await _utils.cancel_and_drain(self._task)
+
+    async def _ensure_started(self) -> None:
+        if self._task is not None:
+            return
+
+        # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
+        # and keeping the run no more than one event ahead of the consumer.
+        send_stream, receive_stream = anyio.create_memory_object_stream[
+            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
+        ]()
+        self._receive_stream = receive_stream
+
+        async def event_stream_handler(_: RunContext[Any], events: AsyncIterable[_messages.AgentStreamEvent]) -> None:
+            async for event in events:
+                await send_stream.send(event)
+
+        async def run_agent() -> AgentRunResult[Any]:
+            # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.
+            async with send_stream:
+                return await self._run_agent(event_stream_handler)
+
+        self._task = asyncio.create_task(run_agent())
+
+
+class _RunStreamEventsContext(
+    AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]
+):
+    """The async context manager returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+    Hands out a single `_RunStreamEventsIterator` on entry and closes it on exit, so an early `break` out of
+    the event loop still cancels and drains the background run.
+    """
+
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
+        self._iterator: _RunStreamEventsIterator | None = None
+
+    async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        # Single-entry: re-entering would orphan a first iterator that had already started (and leak its
+        # background task), so fail loudly instead of silently. `__aexit__` still cleans up the one live
+        # iterator.
+        if self._iterator is not None:
+            raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
+        self._iterator = _RunStreamEventsIterator(self._run_agent)
+        return self._iterator
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._iterator is not None:
+            await self._iterator.aclose()
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -320,7 +431,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -370,12 +480,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.run')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.run', current_retries=retries)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -517,7 +621,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -566,20 +669,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_sync'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'agent.run_sync', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        return _utils.get_event_loop().run_until_complete(
+        return _utils.run_until_complete(
             self.run(
                 user_prompt,
                 output_type=output_type,
@@ -672,7 +765,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
@@ -731,16 +823,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'agent.run_stream', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
@@ -816,8 +898,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             final_result = FinalResult(
                                 None, final_result_event.tool_name, final_result_event.tool_call_id
                             )
-                            if yielded:
-                                raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
@@ -979,12 +1059,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
-        This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream],
+        running all of the agent's async work on the caller's event loop while keeping context-manager and
+        iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
+
+        The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
+        context manager and should be used and closed on the thread where it was created. Use a `with` block
+        so the stream is cleaned up when you're done.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
@@ -1003,9 +1088,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent = Agent('openai:gpt-5.2')
 
         def main():
-            response = agent.run_stream_sync('What is the capital of the UK?')
-            print(response.get_output())
-            #> The capital of the UK is London.
+            with agent.run_stream_sync('What is the capital of the UK?') as response:
+                print(response.get_output())
+                #> The capital of the UK is London.
         ```
 
         Args:
@@ -1040,21 +1125,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream_sync'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'agent.run_stream_sync', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        async def _consume_stream():
-            async with self.run_stream(
+        return result.StreamedRunResultSync(
+            self.run_stream(
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
@@ -1067,16 +1142,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
-                infer_name=infer_name,
+                infer_name=False,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
-            ) as stream_result:
-                yield stream_result
-
-        async_result = _utils.get_event_loop().run_until_complete(anext(_consume_stream()))
-        return result.StreamedRunResultSync(async_result)
+            )
+        )
 
     @overload
     def run_stream_events(
@@ -1099,7 +1171,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AgentEventStream[OutputDataT]: ...
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
 
     @overload
     def run_stream_events(
@@ -1122,7 +1194,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AgentEventStream[RunOutputDataT]: ...
+    ) -> AbstractAsyncContextManager[
+        AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
+    ]: ...
 
     def run_stream_events(
         self,
@@ -1144,12 +1218,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
-    ) -> AgentEventStream[Any]:
+    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
+
+        The background run starts on the first iteration of the event stream, not on entering the
+        context manager, so entering and exiting without iterating never calls the model.
+
+        Must be used as an async context manager so the background run task is deterministically
+        cleaned up when the consumer stops iterating early.
 
         Example:
         ```python
@@ -1158,11 +1237,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent = Agent('openai:gpt-5.2')
 
         async def main():
-            events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async with agent.run_stream_events('What is the capital of France?') as stream:
-                async for event in stream:
-                    events.append(event)
-            print(events)
+            collected: list[AgentStreamEvent | AgentRunResultEvent] = []
+            async with agent.run_stream_events('What is the capital of France?') as events:
+                async for event in events:
+                    collected.append(event)
+            print(collected)
             '''
             [
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
@@ -1209,27 +1288,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An `AgentEventStream` async context manager yielding stream events `AgentStreamEvent` and finally a
-            `AgentRunResultEvent` with the final run result.
+            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
+            `AgentRunResultEvent` carrying the run result.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
-            _deprecated_kwargs, 'agent.run_stream_events'
-        )
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(
-            _deprecated_kwargs, 'agent.run_stream_events', current_retries=retries
-        )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # unfortunately this hack of returning a generator rather than defining it right here is
-        # required to allow overloads of this method to work in python's typing system, or at least with pyright
-        # or at least I couldn't make it work without
-        return AgentEventStream(
-            generator=self._run_stream_events(
+        async def run_agent(event_stream_handler: EventStreamHandler[AgentDepsT]) -> AgentRunResult[Any]:
+            return await self.run(
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
@@ -1243,86 +1309,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
+                infer_name=False,
                 toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
             )
-        )
 
-    async def _run_stream_events(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        retries: int | AgentRetries | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
-        send_stream, receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
-        ]()
-
-        async def event_stream_handler(
-            _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
-        ) -> None:
-            async for event in events:
-                await send_stream.send(event)
-
-        async def run_agent() -> AgentRunResult[Any]:
-            async with send_stream:
-                return await self.run(
-                    user_prompt,
-                    output_type=output_type,
-                    message_history=message_history,
-                    deferred_tool_results=deferred_tool_results,
-                    conversation_id=conversation_id,
-                    model=model,
-                    instructions=instructions,
-                    deps=deps,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    usage=usage,
-                    metadata=metadata,
-                    retries=retries,
-                    infer_name=False,
-                    toolsets=toolsets,
-                    event_stream_handler=event_stream_handler,
-                    capabilities=capabilities,
-                    spec=spec,
-                )
-
-        task = asyncio.create_task(run_agent())
-
-        try:
-            async with receive_stream:
-                async for message in receive_stream:
-                    yield message
-
-        except asyncio.CancelledError as e:
-            await _utils.cancel_and_drain(task, msg=e.args[0] if len(e.args) != 0 else None)
-            raise
-
-        except BaseException:
-            # The consumer side is already exiting. Await the producer only to
-            # retrieve its exception and finish cleanup; it must not replace the
-            # exception that is already propagating from the consumer side.
-            await _utils.cancel_and_drain(task)
-            raise
-
-        else:
-            result = await task
-            yield AgentRunResultEvent(result)
+        return _RunStreamEventsContext(run_agent)
 
     @overload
     def iter(
@@ -1564,14 +1558,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls() -> Generator[None]:
-        """Run tool calls sequentially during the context."""
-        with ToolManager.parallel_execution_mode('sequential'):
-            yield
-
-    @staticmethod
-    @contextmanager
     def using_thread_executor(executor: Executor) -> Generator[None]:
         """Use a custom executor for running sync functions in threads during the context.
 
@@ -1604,6 +1590,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             executor: The executor to use for running sync functions.
         """
         with _utils.using_thread_executor(executor):
+            yield
+
+    @staticmethod
+    @contextmanager
+    def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
+        """Use a custom async sleep function for agent-graph delays during the context.
+
+        By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
+        polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
+        DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
+        waste activity time.
+        """
+        with _agent_graph.set_agent_graph_sleep(sleep_func):
             yield
 
     @staticmethod
@@ -1654,200 +1653,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
 
-    @deprecated(
-        '`Agent.to_ag_ui()` is deprecated and will be removed in 2.0. Replace:\n'
-        '    app = agent.to_ag_ui()\n'
-        'with a Starlette/FastAPI route:\n'
-        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
-        '    @app.post("/")\n'
-        '    async def run_agent(request):\n'
-        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
-        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def to_ag_ui(
-        self,
-        *,
-        # Agent.iter parameters
-        output_type: OutputSpec[OutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[BaseRoute] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
-        on_startup: Sequence[Callable[[], Any]] | None = None,
-        on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
-    ) -> AGUIApp[AgentDepsT, OutputDataT]:
-        """Returns an ASGI application that handles every AG-UI request by running the agent.
-
-        Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
-        To provide different `deps` for each request (e.g. based on the authenticated user),
-        compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly via [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] instead.
-
-        Example:
-        ```python {test="skip"}
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-5.2')
-        app = agent.to_ag_ui()
-        ```
-
-        The `app` is an ASGI application that can be used with any ASGI server.
-
-        To run the application, you can use the following command:
-
-        ```bash
-        uvicorn app:app --host 0.0.0.0 --port 8000
-        ```
-
-        See [AG-UI docs](../ui/ag-ui.md) for more information.
-
-        Args:
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
-                no output validators since output validators would expect an argument that matches the agent's
-                output type.
-            message_history: History of the conversation so far.
-            deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            model: Optional model to use for this run, required if `model` was not set when creating the agent.
-            deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
-            usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
-
-            debug: Boolean indicating if debug tracebacks should be returned on errors.
-            routes: A list of routes to serve incoming HTTP and WebSocket requests.
-            middleware: A list of middleware to run for every request. A starlette application will always
-                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
-                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
-                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
-                exception cases occurring in the routing or endpoints.
-            exception_handlers: A mapping of either integer status codes, or exception class types onto
-                callables which handle the exceptions. Exception handler callables should be of the form
-                `handler(request, exc) -> response` and may be either standard functions, or async functions.
-            on_startup: A list of callables to run on application startup. Startup handler callables do not
-                take any arguments, and may be either standard functions, or async functions.
-            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
-                not take any arguments, and may be either standard functions, or async functions.
-            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
-                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
-                the other, not both.
-
-        Returns:
-            An ASGI application for running Pydantic AI agents with AG-UI protocol support.
-        """
-        from pydantic_ai.ui.ag_ui.app import AGUIApp
-
-        # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
-        # one warning from `to_ag_ui()` itself, not a second one from internal construction.
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=PydanticAIDeprecationWarning)
-            return AGUIApp(  # pyright: ignore[reportDeprecated]
-                agent=self,
-                # Agent.iter parameters
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                conversation_id=conversation_id,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                # Starlette
-                debug=debug,
-                routes=routes,
-                middleware=middleware,
-                exception_handlers=exception_handlers,
-                on_startup=on_startup,
-                on_shutdown=on_shutdown,
-                lifespan=lifespan,
-            )
-
-    @deprecated(
-        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
-        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — '
-        "install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) "
-        'and use `from fasta2a.pydantic_ai import agent_to_a2a` directly.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def to_a2a(
-        self,
-        *,
-        storage: Storage | None = None,
-        broker: Broker | None = None,
-        # Agent card
-        name: str | None = None,
-        url: str = 'http://localhost:8000',
-        version: str = '1.0.0',
-        description: str | None = None,
-        provider: AgentProvider | None = None,
-        skills: list[Skill] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[Route] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] | None = None,
-    ) -> FastA2A:
-        """Convert the agent to a FastA2A application.
-
-        Deprecated in 1.x and removed in 2.0; use
-        [`agent_to_a2a`][fasta2a.pydantic_ai.agent_to_a2a] from
-        [`fasta2a`](https://github.com/datalayer/fasta2a) (v0.6.1+) instead:
-
-        ```python {test="skip" lint="skip"}
-        from fasta2a.pydantic_ai import agent_to_a2a
-
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-5.2')
-        app = agent_to_a2a(agent)
-        ```
-
-        The `app` is an ASGI application that can be used with any ASGI server.
-
-        To run the application, you can use the following command:
-
-        ```bash
-        uvicorn app:app --host 0.0.0.0 --port 8000
-        ```
-        """
-        from .._a2a import agent_to_a2a
-
-        return agent_to_a2a(
-            self,
-            storage=storage,
-            broker=broker,
-            name=name,
-            url=url,
-            version=version,
-            description=description,
-            provider=provider,
-            skills=skills,
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            lifespan=lifespan,
-        )
-
     async def to_cli(
         self: Self,
         deps: AgentDepsT = None,
@@ -1855,6 +1660,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1864,6 +1670,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1887,6 +1694,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
         )
@@ -1898,6 +1706,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1907,6 +1716,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -1916,11 +1726,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return _utils.get_event_loop().run_until_complete(
+        return _utils.run_until_complete(
             self.to_cli(
                 deps=deps,
                 prog_name=prog_name,
                 message_history=message_history,
+                model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
             )

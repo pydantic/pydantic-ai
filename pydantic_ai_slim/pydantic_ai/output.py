@@ -7,13 +7,13 @@ from typing import Any, Generic, Literal
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
+from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -121,6 +121,13 @@ class ToolOutput(Generic[OutputDataT]):
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    sequential: bool
+    """Whether this output tool must run as a barrier, not overlapping with other tool calls.
+
+    Only meaningful under `end_strategy='exhaustive'`, where tools otherwise run in parallel: a
+    `sequential=True` output tool runs alone, so function tools the model emitted before it complete
+    first. Under `'early'`/`'graceful'` output tools already run sequentially, so this has no effect.
+    """
 
     def __init__(
         self,
@@ -130,12 +137,16 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        sequential: bool = False,
     ):
+        if max_retries is not None and max_retries < 0:
+            raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.sequential = sequential
 
 
 @dataclass(init=False)
@@ -427,16 +438,3 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
-
-
-@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
-class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
-    @property
-    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
-    def tool_calls(self) -> list[ToolCallPart]:
-        return self.calls
-
-    @property
-    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
-    def tool_defs(self) -> dict[str, ToolDefinition]:
-        return {}

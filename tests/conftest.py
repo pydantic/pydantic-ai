@@ -47,6 +47,8 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
 from ._inline_snapshot import Builder, Custom, customize
 
+T = TypeVar('T')
+
 __all__ = (
     'IsDatetime',
     'IsFloat',
@@ -57,11 +59,12 @@ __all__ = (
     'IsInstance',
     'IsList',
     'TestEnv',
-    'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
     'remove_schema_descriptions',
+    'message',
+    'message_part',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -75,15 +78,11 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
-    from typing import TypeVar
-
     from pluggy import Result
     from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
-
-    T = TypeVar('T')
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -318,26 +317,6 @@ def anyio_backend():
 def allow_model_requests():
     with pydantic_ai.models.override_allow_model_requests(True):
         yield
-
-
-@pytest.fixture
-async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
-    client: httpx.AsyncClient | None = None
-
-    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
-        nonlocal client
-        assert client is None, 'client_with_handler can only be called once'
-        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
-        return client
-
-    try:
-        yield create_client
-    finally:
-        if client:  # pragma: no branch
-            await client.aclose()
-
-
-ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]
 
 
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
@@ -596,7 +575,12 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         return cache[key]
 
     for mod in list(sys.modules.values()):
-        if getattr(mod, 'create_async_http_client', None) is original:
+        # Read the module's own namespace via `__dict__` rather than `getattr`: some
+        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+        # that imports submodules on attribute access, and probing every loaded module
+        # with `getattr` would trigger those unrelated (and possibly failing) imports.
+        mod_dict = getattr(mod, '__dict__', None)
+        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
     yield cache
@@ -706,6 +690,27 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     content = assets_path.joinpath('dummy.txt').read_text(encoding='utf-8')
     bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
     return bin_content
+
+
+# `tiny_*` fixtures: opaque 3-byte payloads for roundtrip / serialization tests where the bytes
+# are never decoded by a model and assertions only check structure (e.g. `IsStr()` on base64).
+# Prefer these whenever a real, decodable image is not required: keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads.
+# When the model has to actually see the content (e.g. VCR tests against provider APIs), use
+# the KB-scale session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
 
 
 os.environ.pop('OPENAI_BASE_URL', None)
@@ -822,6 +827,11 @@ def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def zai_api_key() -> str:
+    return os.getenv('ZAI_API_KEY', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
 def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
@@ -921,7 +931,6 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
-    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()
@@ -983,11 +992,6 @@ def model(
             from pydantic_ai.providers.cohere import CohereProvider
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
-        elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
@@ -1005,39 +1009,10 @@ def model(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
-        elif request.param == 'outlines':
-            import warnings
-
-            from outlines.models.transformers import from_transformers
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            from pydantic_ai._warnings import PydanticAIDeprecationWarning
-            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-                return OutlinesModel(  # pyright: ignore[reportDeprecated]
-                    from_transformers(
-                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    )
-                )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
         pytest.skip(f'{request.param} is not installed')
-
-
-@pytest.fixture
-def mock_snapshot_id(mocker: MockerFixture):
-    i = 0
-
-    def generate_snapshot_id(node_id: str) -> str:
-        nonlocal i
-        i += 1
-        return f'{node_id}:{i}'
-
-    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture
@@ -1098,6 +1073,23 @@ def iter_message_parts(
             for part in msg.parts:
                 if isinstance(part, part_type):
                     yield part
+
+
+def message(messages: Sequence[ModelMessage], message_type: type[T], *, index: int = 0) -> T:
+    """Return `messages[index]`, asserting it is an instance of `message_type`."""
+    msg = messages[index]
+    assert isinstance(msg, message_type)
+    return msg
+
+
+def message_part(
+    messages: Sequence[ModelMessage], part_type: type[T], *, message_index: int = 0, part_index: int = 0
+) -> T:
+    """Return `messages[message_index].parts[part_index]`, asserting it is an instance of `part_type`."""
+    msg = messages[message_index]
+    part = msg.parts[part_index]
+    assert isinstance(part, part_type)
+    return part
 
 
 # endregion

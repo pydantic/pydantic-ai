@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 import pydantic_core
 from httpx import Timeout
+from pydantic import JsonValue
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
@@ -181,7 +182,7 @@ class MistralModel(Model[Mistral]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Mistral:
@@ -418,7 +419,7 @@ class MistralModel(Model[Mistral]):
 
         return ModelResponse(
             parts=parts,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, response.model),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -535,11 +536,11 @@ class MistralModel(Model[Mistral]):
         return 'Any'
 
     @staticmethod
-    def _get_timeout_ms(timeout: Timeout | float | None) -> int | None:
+    def _get_timeout_ms(timeout: Timeout | int | float | None) -> int | None:
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
-        if isinstance(timeout, float):  # pragma: no cover
+        if isinstance(timeout, (int, float)):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
@@ -559,7 +560,7 @@ class MistralModel(Model[Mistral]):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
+                    yield MistralUserMessage(content=part.model_response())
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -604,6 +605,11 @@ class MistralModel(Model[Mistral]):
                         assert_never(part)
                 if thinking_chunks:
                     content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
+                if not content_chunks and not tool_calls:
+                    # Mistral rejects an assistant message with neither content nor tool calls
+                    # (e.g. an empty `ModelResponse` the agent graph retries). Omit it, mirroring
+                    # the OpenAI and Anthropic adapters.
+                    continue
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
@@ -644,12 +650,16 @@ class MistralModel(Model[Mistral]):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url = MistralImageURL(url=downloaded['data'])
-                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     else:
-                        content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                        image_url = MistralImageURL(url=item.url)
+                    if metadata := item.vendor_metadata:
+                        image_url.detail = metadata.get('detail', 'auto')
+                    content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
+                        if metadata := item.vendor_metadata:
+                            image_url.detail = metadata.get('detail', 'auto')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
@@ -706,7 +716,7 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data)
+                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -776,8 +786,8 @@ class MistralStreamedResponse(StreamedResponse):
 
     @staticmethod
     def _try_get_output_tool_from_text(text: str, output_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
-        output_json: dict[str, Any] | None = pydantic_core.from_json(text, allow_partial='trailing-strings')
-        if output_json:
+        output_json: JsonValue = pydantic_core.from_json(text, allow_partial='trailing-strings')
+        if isinstance(output_json, dict) and output_json:
             for output_tool in output_tools.values():
                 # NOTE: Additional verification to prevent JSON validation to crash
                 # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
@@ -787,11 +797,29 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     continue
 
+                # Matches enabled by the widened numeric compatibility can also be incomplete numeric tokens:
+                # an integer can be the prefix of a decimal number, and an integral float can be followed by an
+                # exponent. Only emit these newly supported matches once the accumulated JSON is complete.
+                if not MistralStreamedResponse._validate_required_json_schema(
+                    output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
+                ):
+                    try:
+                        # A successful complete parse of `text` is identical to `output_json`, so only
+                        # completeness is checked and the parsed value is discarded.
+                        pydantic_core.from_json(text)
+                    except ValueError:
+                        continue
+
                 # The following part_id will be thrown away
                 return ToolCallPart(tool_name=output_tool.name, args=output_json)
 
     @staticmethod
-    def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+    def _validate_required_json_schema(
+        json_dict: dict[str, JsonValue],
+        json_schema: dict[str, Any],
+        *,
+        allow_widened_numeric_match: bool = True,
+    ) -> bool:
         """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
         required_params = json_schema.get('required', [])
         properties = json_schema.get('properties', {})
@@ -803,19 +831,26 @@ class MistralStreamedResponse(StreamedResponse):
             param_schema = properties.get(param, {})
             param_type = param_schema.get('type')
             param_items_type = param_schema.get('items', {}).get('type')
+            param_value = json_dict[param]
 
             if param_type == 'array' and param_items_type:
-                if not isinstance(json_dict[param], list):
+                if not isinstance(param_value, list):
                     return False
-                for item in json_dict[param]:
-                    if not isinstance(item, VALID_JSON_TYPE_MAPPING[param_items_type]):
+                for item in param_value:
+                    if not _matches_json_type(
+                        item, param_items_type, allow_widened_numeric_match=allow_widened_numeric_match
+                    ):
                         return False
-            elif param_type and not isinstance(json_dict[param], VALID_JSON_TYPE_MAPPING[param_type]):
+            elif param_type and not _matches_json_type(
+                param_value, param_type, allow_widened_numeric_match=allow_widened_numeric_match
+            ):
                 return False
 
-            if isinstance(json_dict[param], dict) and 'properties' in param_schema:
+            if isinstance(param_value, dict) and 'properties' in param_schema:
                 nested_schema = param_schema
-                if not MistralStreamedResponse._validate_required_json_schema(json_dict[param], nested_schema):
+                if not MistralStreamedResponse._validate_required_json_schema(
+                    param_value, nested_schema, allow_widened_numeric_match=allow_widened_numeric_match
+                ):
                     return False
 
         return True
@@ -841,15 +876,42 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
-    """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
-    if response.usage:
-        return RequestUsage(
-            input_tokens=response.usage.prompt_tokens or 0,
-            output_tokens=response.usage.completion_tokens or 0,
+def _matches_json_type(value: JsonValue, json_type: str, *, allow_widened_numeric_match: bool = True) -> bool:
+    """Check whether a parsed JSON value matches a JSON Schema type."""
+    if json_type == 'number':
+        return isinstance(value, float) or (
+            allow_widened_numeric_match and isinstance(value, int) and not isinstance(value, bool)
         )
-    else:
+    if json_type == 'integer':
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            allow_widened_numeric_match and isinstance(value, float) and value.is_integer()
+        )
+    return isinstance(value, VALID_JSON_TYPE_MAPPING[json_type])
+
+
+def _map_usage(
+    response: MistralChatCompletionResponse | MistralCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
+    """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
+    if response.usage is None:
         return RequestUsage()
+    usage_data = response.usage.model_dump(exclude_none=True)
+    details: dict[str, int] = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    return RequestUsage.extract(
+        dict(model=model, usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='mistral',
+        details=details or None,
+    )
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:

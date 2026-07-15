@@ -74,9 +74,6 @@ with try_import() as xai_available:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
 ]
 
 ProviderName = Literal[
@@ -199,13 +196,6 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
         UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
     ),
-    # Anthropic API doesn't support 'file' source type in tool_result blocks
-    ('anthropic', 'image', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
-    ),
-    ('anthropic', 'document', 'uploaded_file', None): ExpectError(
-        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
-    ),
     # Bedrock UploadedFile audio raises UserError (not NotImplementedError like binary/url)
     ('bedrock_nova', 'audio', 'uploaded_file', None): ExpectError(
         UserError, r'Audio files are not supported for Bedrock UploadedFile'
@@ -323,8 +313,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -389,8 +379,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
-    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
+    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
@@ -603,7 +593,7 @@ async def test_multimodal_tool_return_matrix(
     else:
         content = URL_FACTORIES[(file_type, content_source)]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> Any:
@@ -653,7 +643,7 @@ async def test_mixed_content_ordering(
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
@@ -708,7 +698,7 @@ async def test_model_sees_multiple_images(
     kiwi_image = image_content
     url_image = URL_FACTORIES[('image', 'url')]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images() -> list[Any]:
@@ -755,7 +745,7 @@ async def test_vendor_metadata_detail(
         vendor_metadata={'detail': 'high'},
     )
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
@@ -785,7 +775,7 @@ async def test_text_plain_document_anthropic(
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_text_document() -> BinaryContent:
@@ -806,7 +796,7 @@ async def test_non_pdf_document_url_error(
 ):
     """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
     model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> DocumentUrl:

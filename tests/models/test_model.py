@@ -40,6 +40,15 @@ if not imports_successful():
 TEST_CASES = [
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
+        'gateway/openai:gpt-5',
+        'gpt-5',
+        'openai',
+        'openai',
+        OpenAIResponsesModel,
+        id='gateway/openai:gpt-5',
+    ),
+    pytest.param(
+        {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
         'gateway/chat:gpt-5',
         'gpt-5',
         'openai',
@@ -67,12 +76,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
-        'gateway/google-cloud:gemini-1.5-flash',
+        'gateway/google:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google-cloud',
         'google',
         GoogleModel,
-        id='gateway/google-cloud:gemini-1.5-flash',
+        id='gateway/google:gemini-1.5-flash',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'pylf_v1_us_gatewayapikey'},
@@ -98,20 +107,12 @@ TEST_CASES = [
         'gpt-3.5-turbo',
         'openai',
         'openai',
-        OpenAIChatModel,
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},
+        'openai-chat:gpt-3.5-turbo',
         'gpt-3.5-turbo',
-        'gpt-3.5-turbo',
-        'openai',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
-        {'OPENAI_API_KEY': 'openai-api-key'},
-        'o1',
-        'o1',
         'openai',
         'openai',
         OpenAIChatModel,
@@ -129,16 +130,20 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
-        {'GEMINI_API_KEY': 'gemini-api-key'},
-        'google-gla:gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google',
-        'google',
-        GoogleModel,
+        {
+            'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+            'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
+            'OPENAI_API_VERSION': '2024-12-01-preview',
+        },
+        'azure-responses:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'azure',
+        'openai',
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
-        'gemini-1.5-flash',
+        'google:gemini-1.5-flash',
         'gemini-1.5-flash',
         'google',
         'google',
@@ -147,14 +152,6 @@ TEST_CASES = [
     pytest.param(
         {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
         'anthropic:claude-haiku-4-5',
-        'claude-haiku-4-5',
-        'anthropic',
-        'anthropic',
-        AnthropicModel,
-    ),
-    pytest.param(
-        {'ANTHROPIC_API_KEY': 'anthropic-api-key'},
-        'claude-haiku-4-5',
         'claude-haiku-4-5',
         'anthropic',
         'anthropic',
@@ -205,14 +202,6 @@ TEST_CASES = [
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
         'moonshotai',
-        'openai',
-        OpenAIChatModel,
-    ),
-    pytest.param(
-        {'GROK_API_KEY': 'grok-api-key'},
-        'grok:grok-3',
-        'grok-3',
-        'grok',
         'openai',
         OpenAIChatModel,
     ),
@@ -286,20 +275,14 @@ def test_infer_str_unknown():
     [
         pytest.param('openai:gpt-5', ('openai', 'gpt-5'), id='provider:model'),
         pytest.param('anthropic:claude-3', ('anthropic', 'claude-3'), id='anthropic:model'),
-        pytest.param('gpt-4', ('openai', 'gpt-4'), id='legacy-gpt'),
-        pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
-        pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
-        pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gpt-4', (None, 'gpt-4'), id='no-prefix'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
     ],
 )
 def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        assert parse_model_id(model_id) == expected
+    assert parse_model_id(model_id) == expected
 
 
 @pytest.mark.parametrize(
@@ -308,12 +291,15 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('openai:gpt-5', False, id='openai'),
         pytest.param('anthropic:claude-sonnet-4-5', False, id='anthropic'),
         pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', False, id='gateway-google-cloud'),
         pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
         pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
         pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
-        pytest.param('together:model-without-slash', True, id='together-no-slash'),
+        # Together (OpenAI-compatible) returns the OpenAI default profile for a slashless name
+        # rather than crashing — like `nebius` above — so it's not `DEFAULT_PROFILE`.
+        pytest.param('together:model-without-slash', False, id='together-no-slash'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):
@@ -335,21 +321,12 @@ def test_infer_model_profile(model_id: str, is_default: bool):
             id='anthropic',
         ),
         pytest.param(
-            'google-gla:gemini-2.0-flash',
-            'pydantic_ai.providers.google.GoogleProvider',
-            'gemini-2.0-flash',
-            id='google-gla',
-        ),
-        pytest.param(
             'google:gemini-2.0-flash',
             'pydantic_ai.providers.google.GoogleProvider',
             'gemini-2.0-flash',
-            id='google-shorthand',
+            id='google',
         ),
     ],
-)
-@pytest.mark.filterwarnings(
-    'ignore:.*google-gla.*prefix is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
 )
 def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
     """Verify infer_model_profile returns the same profile as the provider's model_profile."""
@@ -397,7 +374,7 @@ def test_custom_provider_instance_method_model_profile():
     assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
-    assert isinstance(profile, ModelProfile)
+    assert isinstance(profile, dict)
 
 
 def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]]]:

@@ -106,6 +106,9 @@ def infer_embedding_model(
         'openai',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
+        # `openai-chat` / `openai-responses` aren't listed: there's no chat-vs-responses split
+        # for the embeddings API, and `normalize_gateway_provider` returns `gateway/openai`
+        # as `openai`, so the canonical name suffices.
         *get_args(OpenAIChatCompatibleProvider.__value__),
         *get_args(OpenAIResponsesCompatibleProvider.__value__),
     ):
@@ -120,7 +123,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)
@@ -347,27 +350,27 @@ class Embedder:
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query]."""
-        return _utils.get_event_loop().run_until_complete(self.embed_query(query, settings=settings))
+        return _utils.run_until_complete(self.embed_query(query, settings=settings))
 
     def embed_documents_sync(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents]."""
-        return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
+        return _utils.run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed()`][pydantic_ai.embeddings.Embedder.embed]."""
-        return _utils.get_event_loop().run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
+        return _utils.run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
 
     def max_input_tokens_sync(self) -> int | None:
         """Synchronous version of [`max_input_tokens()`][pydantic_ai.embeddings.Embedder.max_input_tokens]."""
-        return _utils.get_event_loop().run_until_complete(self.max_input_tokens())
+        return _utils.run_until_complete(self.max_input_tokens())
 
     def count_tokens_sync(self, text: str) -> int:
         """Synchronous version of [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens]."""
-        return _utils.get_event_loop().run_until_complete(self.count_tokens(text))
+        return _utils.run_until_complete(self.count_tokens(text))
 
     def _get_model(self) -> EmbeddingModel:
         """Create a model configured for this embedder.

@@ -56,8 +56,7 @@
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter",
-      "models/outlines"
+      "models/openrouter"
     ]
   },
   {
@@ -113,21 +112,7 @@
         "slug": "mcp/overview"
       },
       "mcp/client",
-      "mcp/fastmcp-client",
       "mcp/server"
-    ]
-  },
-  {
-    "label": "Pydantic AI Harness",
-    "items": [
-      {
-        "label": "Overview",
-        "slug": "harness/overview"
-      },
-      {
-        "label": "Code Mode",
-        "slug": "harness/code-mode"
-      }
     ]
   },
   {
@@ -327,10 +312,6 @@
         ]
       },
       {
-        "label": "Agent2Agent (A2A)",
-        "slug": "a2a"
-      },
-      {
         "label": "Command Line Interface (CLI)",
         "slug": "cli"
       }
@@ -375,8 +356,7 @@
       {
         "label": "Complex Workflows",
         "items": [
-          "examples/flight-booking",
-          "examples/question-graph"
+          "examples/flight-booking"
         ]
       },
       {
@@ -399,7 +379,6 @@
       {
         "label": "pydantic_ai",
         "items": [
-          "api/ag_ui",
           "api/agent",
           "api/native_tools",
           "api/capabilities",
@@ -434,7 +413,6 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
-              "api/models/outlines",
               "api/models/test",
               "api/models/wrapper"
             ]
@@ -475,29 +453,14 @@
       {
         "label": "pydantic_graph",
         "items": [
-          "api/pydantic_graph/graph",
-          "api/pydantic_graph/nodes",
-          "api/pydantic_graph/persistence",
-          "api/pydantic_graph/mermaid",
-          "api/pydantic_graph/exceptions",
-          {
-            "label": "Graph Builder",
-            "items": [
-              "api/pydantic_graph/graph_builder",
-              "api/pydantic_graph/graph_builder_graph",
-              "api/pydantic_graph/graph_builder_graph_builder",
-              "api/pydantic_graph/graph_builder_step",
-              "api/pydantic_graph/graph_builder_join",
-              "api/pydantic_graph/graph_builder_decision",
-              "api/pydantic_graph/graph_builder_node"
-            ]
-          }
-        ]
-      },
-      {
-        "label": "fasta2a",
-        "items": [
-          "api/fasta2a"
+          "api/pydantic_graph/basenode",
+          "api/pydantic_graph/graph_builder",
+          "api/pydantic_graph/step",
+          "api/pydantic_graph/join",
+          "api/pydantic_graph/decision",
+          "api/pydantic_graph/node",
+          "api/pydantic_graph/util",
+          "api/pydantic_graph/exceptions"
         ]
       }
     ]
