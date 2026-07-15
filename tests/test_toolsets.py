@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
 from collections import defaultdict
@@ -2628,3 +2629,82 @@ def test_apply_walks_combined_and_wrapper_toolsets():
     combined.apply(visited.append)
     assert inner1 in visited
     assert inner2 in visited
+
+
+async def test_toolset_timeout():
+    """Agent-level `tool_timeout` must be honored by non-`FunctionToolset` toolsets.
+
+    The timeout is currently implemented only in `FunctionToolset.call_tool`, so a toolset
+    that implements `call_tool` itself (like MCP or CodeMode) never times out. `SlowToolset`
+    stands in for those: it delegates `get_tools` to a wrapped `FunctionToolset` but runs the
+    call directly, bypassing that timeout. This is a regression test for that gap.
+    """
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    class SlowToolset(WrapperToolset[Any]):
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any:
+            # 1 second, but agent tool_timeout is 0.1s
+            # await anyio.sleep(1.0)
+            await asyncio.sleep(1.0)
+            return 'done'  # pragma: no cover
+
+    inner = FunctionToolset[None]()
+
+    @inner.tool_plain
+    async def slow_tool() -> str: ...  # pragma: no cover
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic), toolsets=[SlowToolset(inner)], tool_timeout=0.1)
+
+    result = await agent.run('call slow_tool')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call slow_tool', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:model_logic:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Tool slow_tool timed out',
+                        tool_name='slow_tool',
+                        tool_call_id='call-1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Tool timed out, giving up')],
+                usage=RequestUsage(input_tokens=63, output_tokens=7),
+                model_name='function:model_logic:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )

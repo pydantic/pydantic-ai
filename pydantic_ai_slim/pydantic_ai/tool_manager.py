@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
+import anyio
 from pydantic import ValidationError
 
 from . import messages as _messages
@@ -90,6 +91,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    timeout: float | None = None
+    """Tool timeout set on the agent to be applied to all tools being executed by the tool manager."""
 
     @classmethod
     @contextmanager
@@ -745,19 +748,24 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = validated.call.tool_name
 
+        # All tool calls go from here and we can apply the fail_after right here as long as we know what the tool timeout is
+
         try:
-            tool_result = await self.toolset.call_tool(
-                name,
-                validated.validated_args,
-                validated.ctx,
-                validated.tool,
-            )
+            with anyio.fail_after(self.timeout):
+                tool_result = await self.toolset.call_tool(
+                    name,
+                    validated.validated_args,
+                    validated.ctx,
+                    validated.tool,
+                )
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
             self._check_max_retries(name, validated.tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
+        except TimeoutError:
+            raise ModelRetry(f'Timed out after {self.timeout} seconds.') from None
 
         usage.tool_calls += 1
 
