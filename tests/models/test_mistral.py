@@ -3008,14 +3008,21 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-async def test_reasoning_effort_not_sent_for_always_on_model(allow_model_requests: None) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent even when `thinking` is enabled."""
+@pytest.mark.parametrize('thinking', [True, 'minimal', 'low', 'medium', 'high', 'xhigh'])
+async def test_reasoning_effort_not_sent_for_always_on_model(
+    allow_model_requests: None, thinking: ThinkingLevel
+) -> None:
+    """`magistral` always reasons, so `reasoning_effort` is never sent for any enabled level.
+
+    `thinking=False` is stripped upstream for always-on models, so it can't reach the model and
+    is covered by the unsupported-model case instead.
+    """
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
     assert result.output == 'hello'
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 

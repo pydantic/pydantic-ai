@@ -1282,6 +1282,27 @@ def test_litellm_openai_gpt():
     )
 
 
+def test_litellm_magistral():
+    """The always-on magistral flags survive the OpenAI baseline, which sets both thinking keys
+    to `False` and would invert them if it were layered on top."""
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    profile = LiteLLMProvider.model_profile('mistral/magistral-medium-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+        }
+    )
+
+
 def test_litellm_mistral_small_latest():
     """LiteLLM's Mistral route keeps the OpenAI baseline (structured output, inline system
     prompts) underneath the Mistral thinking flags; a bare non-None Mistral profile must not
