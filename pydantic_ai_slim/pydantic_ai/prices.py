@@ -21,7 +21,8 @@ def update_in_background() -> None:
 
     This is a fire-and-forget convenience wrapper. For shutdown, configuration, or waiting for
     the first fetch, use
-    [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly
+    [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices)
+    directly
     as a context manager or via its `start()`/`stop()` methods.
 
     Example:
