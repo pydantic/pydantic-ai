@@ -284,8 +284,10 @@ toolset = MCPToolset(
 `request_metadata` is sent with tool calls, resource reads, and prompt gets. For tool calls,
 per-call metadata passed to `direct_call_tool` by a
 [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] callback wins on overlapping
-keys. List requests don't carry `request_metadata`: the FastMCP client doesn't accept metadata
-there. For task-augmented tool calls, the metadata is sent on the `tools/call` request, but
+keys. `initialize` and the list requests don't carry `request_metadata`: those are the requests the
+FastMCP client sends no `_meta` on at all, so covering them needs an
+[upstream change](https://github.com/PrefectHQ/fastmcp/issues/3998). For task-augmented tool calls,
+the metadata is sent on the `tools/call` request, but
 whether the server-side handler can read it depends on the server implementation; FastMCP servers
 don't currently expose request meta in background task execution contexts.
 

@@ -797,7 +797,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     Included in the `_meta` of `tools/call` (including task-augmented calls), `resources/read`,
     and `prompts/get` requests. For tool calls, per-call `metadata` passed to
     [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] wins on key conflicts.
-    List requests don't carry it: the FastMCP client doesn't accept metadata there.
+
+    `initialize` and the list requests don't carry it: those are the requests the FastMCP client
+    sends no `_meta` on at all (it doesn't propagate its own trace context there either, see
+    <https://github.com/PrefectHQ/fastmcp/issues/3998>), so covering them needs an upstream change.
+
     Keys managed by the MCP SDK or FastMCP (`progressToken`, `fastmcp`,
     `modelcontextprotocol.io/task`) are rejected at construction.
     """
