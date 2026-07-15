@@ -80,7 +80,7 @@ from pydantic_ai.toolsets._tool_search import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import try_import
+from .conftest import iter_message_parts, message, message_part, try_import
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
@@ -930,13 +930,7 @@ async def test_tool_search_handles_search_gated_tools_from_eager_capability():
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_names.append([t.name for t in info.function_tools])
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
             return ModelResponse(
@@ -1002,13 +996,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_names.append([t.name for t in info.function_tools])
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
@@ -1516,8 +1504,8 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     # `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` subclasses
     # (which still `isinstance`-match the base `NativeToolCallPart` /
     # `NativeToolReturnPart`).
-    builtin_call_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    builtin_return_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    builtin_call_parts = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    builtin_return_parts = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert builtin_call_parts and builtin_return_parts
 
     # The model's follow-up tool call for the discovered tool dispatches by its plain
@@ -1525,9 +1513,8 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     # path so the dispatch doesn't fall through to an "unknown tool" retry.
     rate_returns = [
         p
-        for m in result.all_messages()
-        for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+        for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -1614,9 +1601,8 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     # The deferred tool dispatched successfully end-to-end.
     rate_returns = [
         part
-        for msg in result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -1710,9 +1696,8 @@ async def test_anthropic_promotes_local_search_history_round_trip(
     # the wire, unlocking `get_exchange_rate` server-side.
     rate_returns = [
         part
-        for msg in result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -1799,9 +1784,8 @@ async def test_openai_promotes_local_search_history_round_trip(
 
     rate_returns = [
         part
-        for msg in result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -2318,7 +2302,7 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     # `bar` (the one that used to 400) was accepted and the run finished.
     assert any(isinstance(p, LoadCapabilityReturnPart) for m in result.all_messages() for p in m.parts)
     bar_returns = [
-        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'bar'
+        p for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart) if p.tool_name == 'bar'
     ]
     assert [p.content for p in bar_returns] == [1]
 
@@ -2398,9 +2382,9 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     (load → search → tool call → answer) without coupling to provider-specific
     wire shapes."""
     trace: list[tuple[str, list[dict[str, Any]]]] = []
-    for message in messages:
+    for msg in messages:
         part_trace: list[dict[str, Any]] = []
-        for part in message.parts:
+        for part in msg.parts:
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
@@ -2430,7 +2414,7 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
             part_trace.append(part_info)
         # Use a flat lowercase tag so inline-snapshot writes a plain string instead
         # of "helpfully" resolving the class name to `'request'`.
-        tag = 'request' if isinstance(message, ModelRequest) else 'response'
+        tag = 'request' if isinstance(msg, ModelRequest) else 'response'
         trace.append((tag, part_trace))
     return trace
 
@@ -2758,9 +2742,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
 
     def trace_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
         trace: list[tuple[str, list[dict[str, Any]]]] = []
-        for message in messages:
+        for msg in messages:
             part_trace: list[dict[str, Any]] = []
-            for part in message.parts:
+            for part in msg.parts:
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):
@@ -2786,7 +2770,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                         f'anthropic→google replay trace helper saw unexpected part type: {type(part).__name__}'
                     )  # pragma: no cover
                 part_trace.append(part_info)
-            trace.append((type(message).__name__, part_trace))
+            trace.append((type(msg).__name__, part_trace))
         return trace
 
     anthropic_agent: Agent[None, str] = Agent(
@@ -3052,9 +3036,8 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
 
     rate_returns = [
         p
-        for m in result.all_messages()
-        for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+        for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -3091,6 +3074,41 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
         if t.get('defer_loading') is True
     }
     assert 'get_exchange_rate' in second_deferred
+
+
+@pytest.mark.vcr
+async def test_openai_native_tool_search_gpt_5_6(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end against live OpenAI Responses: GPT-5.6 supports the native `tool_search`
+    tool with `defer_loading`, backing `supports_tool_search` in its model profile — the
+    server-executed search discovers the deferred tool and the model dispatches it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the current USD to EUR exchange rate?')
+
+    assert any(
+        isinstance(p, NativeToolCallPart) and p.tool_name == 'tool_search'
+        for m in result.all_messages()
+        for p in m.parts
+    )
+    rate_returns = [
+        p
+        for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
 
 @pytest.mark.vcr
@@ -3152,18 +3170,16 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     # `tool_search_output.tools` in the cassette's replay request body).
     search_returns = [
         part
-        for msg in result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'search_tools'
     ]
     assert len(search_returns) == 1
     assert search_returns[0].content == {'discovered_tools': [{'name': 'get_exchange_rate'}]}
 
     rate_returns = [
         part
-        for msg in result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -3225,9 +3241,8 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
     # ToolReturnPart end-to-end.
     rate_returns = [
         p
-        for m in agent_run.result.all_messages()
-        for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+        for p in iter_message_parts(agent_run.result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -3279,9 +3294,8 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
 
     rate_returns = [
         p
-        for m in agent_run.result.all_messages()
-        for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+        for p in iter_message_parts(agent_run.result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -3353,18 +3367,16 @@ async def test_openai_client_tool_search_streaming(allow_model_requests: None, o
 
     search_returns = [
         part
-        for msg in agent_run.result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+        for part in iter_message_parts(agent_run.result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'search_tools'
     ]
     assert len(search_returns) == 1
     assert search_returns[0].content == {'discovered_tools': [{'name': 'get_exchange_rate'}]}
 
     rate_returns = [
         part
-        for msg in agent_run.result.all_messages()
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+        for part in iter_message_parts(agent_run.result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
@@ -3791,8 +3803,7 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
             },
         ],
     }
-    [resp] = ModelMessagesTypeAdapter.validate_python([raw])
-    assert isinstance(resp, ModelResponse)
+    resp = message(ModelMessagesTypeAdapter.validate_python([raw]), ModelResponse)
     assert isinstance(resp.parts[0], NativeToolSearchCallPart)
     assert isinstance(resp.parts[1], NativeToolSearchReturnPart)
     # Unrecognized `tool_name` (and unset `tool_kind`) falls through to the base class.
@@ -3816,8 +3827,7 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
             NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='c2'),
         ]
     )
-    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
-    assert isinstance(revalidated, ModelResponse)
+    revalidated = message(ModelMessagesTypeAdapter.validate_python([resp]), ModelResponse)
     assert isinstance(revalidated.parts[0], NativeToolSearchCallPart)
     assert isinstance(revalidated.parts[1], NativeToolSearchReturnPart)
     assert isinstance(revalidated.parts[2], NativeToolCallPart)
@@ -3950,10 +3960,8 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     # The framework-promoted call part is typed (via `_narrow_tool_call_parts` post-hook).
     search_calls = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
-        if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools'
+        for part in iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart)
+        if part.tool_name == 'search_tools'
     ]
     assert len(search_calls) == 1
     assert isinstance(search_calls[0], ToolSearchCallPart)
@@ -3962,10 +3970,8 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     # The framework-constructed return part is typed (via `_call_tool` dispatch hook).
     search_returns = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'search_tools'
     ]
     assert len(search_returns) == 1
     assert isinstance(search_returns[0], ToolSearchReturnPart)
@@ -4037,21 +4043,16 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
 
     # The response now carries a local `ToolSearchCallPart` (typed `ToolCallPart` subclass),
     # and the return part has been lifted onto a fresh trailing `ModelRequest`.
-    response = translated[1]
-    assert isinstance(response, ModelResponse)
+    response = message(translated, ModelResponse, index=1)
     assert len(response.parts) == 1
-    call_part = response.parts[0]
-    assert isinstance(call_part, ToolSearchCallPart)
+    call_part = message_part(translated, ToolSearchCallPart, message_index=1)
     # Subclass of `ToolCallPart`, NOT `NativeToolSearchCallPart`.
     assert isinstance(call_part, ToolCallPart)
     assert not isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'search_tools'
     assert call_part.args == {'queries': ['mortgage']}
 
-    return_request = translated[2]
-    assert isinstance(return_request, ModelRequest)
-    return_part = return_request.parts[0]
-    assert isinstance(return_part, ToolSearchReturnPart)
+    return_part = message_part(translated, ToolSearchReturnPart, message_index=2)
     assert isinstance(return_part, ToolReturnPart)
     assert not isinstance(return_part, NativeToolSearchReturnPart)
     assert return_part.tool_name == 'search_tools'
@@ -4084,10 +4085,7 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
         ),
     ]
     translated = synthesize_local_tool_search_messages(history)
-    request = translated[1]
-    assert isinstance(request, ModelRequest)
-    [part] = request.parts
-    assert isinstance(part, ToolSearchReturnPart)
+    part = message_part(translated, ToolSearchReturnPart, message_index=1)
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
@@ -4144,18 +4142,13 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     assert len(prepared) == 3
     assert prepared[0] is history[0]
 
-    response = prepared[1]
-    assert isinstance(response, ModelResponse)
+    response = message(prepared, ModelResponse, index=1)
     assert len(response.parts) == 1
-    call_part = response.parts[0]
-    assert isinstance(call_part, ToolSearchCallPart)
+    call_part = message_part(prepared, ToolSearchCallPart, message_index=1)
     assert not isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'search_tools'
 
-    return_request = prepared[2]
-    assert isinstance(return_request, ModelRequest)
-    [return_part] = return_request.parts
-    assert isinstance(return_part, ToolSearchReturnPart)
+    return_part = message_part(prepared, ToolSearchReturnPart, message_index=2)
     assert not isinstance(return_part, NativeToolSearchReturnPart)
     assert return_part.tool_name == 'search_tools'
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage'}]}
@@ -4271,9 +4264,7 @@ def test_pydantic_validation_promotes_local_tool_return_with_tool_kind_set() -> 
             ],
         },
     ]
-    [req] = ModelMessagesTypeAdapter.validate_python(raw)
-    [part] = req.parts
-    assert isinstance(part, ToolSearchReturnPart)
+    part = message_part(ModelMessagesTypeAdapter.validate_python(raw), ToolSearchReturnPart)
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
@@ -4331,8 +4322,7 @@ def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
     ]
     result = synthesize_local_tool_search_messages(history)
     assert len(result) == 1
-    response = result[0]
-    assert isinstance(response, ModelResponse)
+    response = message(result, ModelResponse)
     assert len(response.parts) == 1
     assert isinstance(response.parts[0], ToolSearchCallPart)
 
@@ -4353,11 +4343,9 @@ def test_synthesize_messages_response_with_only_return_part_no_response_kept() -
     ]
     result = synthesize_local_tool_search_messages(history)
     assert len(result) == 1
-    request = result[0]
-    assert isinstance(request, ModelRequest)
+    request = message(result, ModelRequest)
     assert len(request.parts) == 1
-    return_part = request.parts[0]
-    assert isinstance(return_part, ToolSearchReturnPart)
+    message_part(result, ToolSearchReturnPart)
 
 
 def test_synthesize_messages_request_with_unrelated_tool_return_passthrough() -> None:
@@ -4409,12 +4397,11 @@ def test_synthesize_messages_response_with_search_then_downstream_tool_call_spli
     # response[ToolCall(weather)], request[ToolReturn(weather)] (the original).
     assert len(result) == 5
 
-    assert isinstance(result[0], ModelRequest)
-    assert result[0] is history[0]
+    first_req = message(result, ModelRequest)
+    assert first_req is history[0]
 
     # First synthetic response: text + search call only — NOT the downstream weather call.
-    first_resp = result[1]
-    assert isinstance(first_resp, ModelResponse)
+    first_resp = message(result, ModelResponse, index=1)
     assert len(first_resp.parts) == 2
     assert isinstance(first_resp.parts[0], TextPart)
     assert isinstance(first_resp.parts[1], ToolSearchCallPart)
@@ -4422,22 +4409,19 @@ def test_synthesize_messages_response_with_search_then_downstream_tool_call_spli
     assert not any(isinstance(p, ToolCallPart) and not isinstance(p, ToolSearchCallPart) for p in first_resp.parts)
 
     # Lifted search return as a fresh request.
-    search_return_req = result[2]
-    assert isinstance(search_return_req, ModelRequest)
+    search_return_req = message(result, ModelRequest, index=2)
     assert len(search_return_req.parts) == 1
     assert isinstance(search_return_req.parts[0], ToolSearchReturnPart)
 
     # Second synthetic response: weather call only.
-    second_resp = result[3]
-    assert isinstance(second_resp, ModelResponse)
+    second_resp = message(result, ModelResponse, index=3)
     assert len(second_resp.parts) == 1
-    weather_call = second_resp.parts[0]
-    assert isinstance(weather_call, ToolCallPart)
+    weather_call = message_part(result, ToolCallPart, message_index=3)
     assert weather_call.tool_name == 'get_weather'
 
     # Original weather-return request flows naturally — no consecutive `ModelRequest`s.
-    assert isinstance(result[4], ModelRequest)
-    assert result[4] is history[2]
+    last_req = message(result, ModelRequest, index=4)
+    assert last_req is history[2]
 
 
 def test_synthesize_messages_devins_consecutive_request_repro() -> None:
@@ -4493,21 +4477,17 @@ def test_synthesize_messages_multiple_search_rounds_in_one_response() -> None:
 
     # 4 messages: response[call_a], request[return_a], response[call_b], request[return_b].
     assert len(result) == 4
-    assert isinstance(result[0], ModelResponse)
-    assert isinstance(result[0].parts[0], ToolSearchCallPart)
-    assert result[0].parts[0].tool_call_id == 's1'
+    call_part_1 = message_part(result, ToolSearchCallPart)
+    assert call_part_1.tool_call_id == 's1'
 
-    assert isinstance(result[1], ModelRequest)
-    assert isinstance(result[1].parts[0], ToolSearchReturnPart)
-    assert result[1].parts[0].tool_call_id == 's1'
+    return_part_1 = message_part(result, ToolSearchReturnPart, message_index=1)
+    assert return_part_1.tool_call_id == 's1'
 
-    assert isinstance(result[2], ModelResponse)
-    assert isinstance(result[2].parts[0], ToolSearchCallPart)
-    assert result[2].parts[0].tool_call_id == 's2'
+    call_part_2 = message_part(result, ToolSearchCallPart, message_index=2)
+    assert call_part_2.tool_call_id == 's2'
 
-    assert isinstance(result[3], ModelRequest)
-    assert isinstance(result[3].parts[0], ToolSearchReturnPart)
-    assert result[3].parts[0].tool_call_id == 's2'
+    return_part_2 = message_part(result, ToolSearchReturnPart, message_index=3)
+    assert return_part_2.tool_call_id == 's2'
 
 
 def test_synthesize_messages_metadata_kept_on_first_split_only() -> None:
@@ -4579,8 +4559,7 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
 
     # The merged request carries both the synthetic search return and the original user prompt,
     # with the tool return part sorted ahead of the user prompt.
-    last = cleaned[-1]
-    assert isinstance(last, ModelRequest)
+    last = message(cleaned, ModelRequest, index=-1)
     assert isinstance(last.parts[0], ToolSearchReturnPart)
     assert isinstance(last.parts[1], UserPromptPart)
 
@@ -4647,20 +4626,14 @@ def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch()
             ],
         },
     ]
-    [resp] = ModelMessagesTypeAdapter.validate_python(raw)
-    assert isinstance(resp, ModelResponse)
-    [part] = resp.parts
-    assert isinstance(part, ToolSearchCallPart)
+    message_part(ModelMessagesTypeAdapter.validate_python(raw), ToolSearchCallPart)
 
 
 def test_model_response_part_discriminator_passthrough_for_unknown_part_kind() -> None:
     """Instance dispatch falls through to `getattr(v, 'part_kind', ...)` for other types."""
 
     resp = ModelResponse(parts=[TextPart(content='hello')])
-    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
-    assert isinstance(revalidated, ModelResponse)
-    [part] = revalidated.parts
-    assert isinstance(part, TextPart)
+    message_part(ModelMessagesTypeAdapter.validate_python([resp]), TextPart)
 
 
 def test_model_response_part_discriminator_recognizes_typed_instances() -> None:

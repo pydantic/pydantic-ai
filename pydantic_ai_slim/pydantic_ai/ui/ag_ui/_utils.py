@@ -6,7 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from typing_extensions import Required, TypedDict
 
@@ -130,7 +130,9 @@ _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 provider blob in the same slot is never mistaken for our data."""
 
 
-def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
+def tool_kind_encrypted_value(
+    tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
+) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
     AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
@@ -139,10 +141,21 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
     in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
     plain part if it doesn't validate.
+
+    A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
+    so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
+    `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
+    native error channel), that would silently change the request bytes and break the prompt-cache
+    prefix stability the repaired history is designed to keep.
     """
-    if tool_kind is None:
+    payload: dict[str, str] = {}
+    if tool_kind is not None:
+        payload['tool_kind'] = tool_kind
+    if outcome is not None and outcome != 'success':
+        payload['outcome'] = outcome
+    if not payload:
         return None
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
@@ -151,14 +164,20 @@ class _EncryptedValueKwargs(TypedDict, total=False):
     encrypted_value: str
 
 
-def tool_kind_encrypted_value_kwargs(tool_kind: ToolPartKind | None, *, supported: bool) -> _EncryptedValueKwargs:
-    """`ToolCall`/`ToolMessage` kwargs carrying `tool_kind` as an `encrypted_value`, or empty to omit it.
+def tool_kind_encrypted_value_kwargs(
+    tool_kind: ToolPartKind | None,
+    *,
+    supported: bool,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+) -> _EncryptedValueKwargs:
+    """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
+    Carries `tool_kind` and an `'interrupted'` result outcome (see `tool_kind_encrypted_value`).
     Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
-    has no `tool_kind`, so — like the streaming carrier — the field is only ever set when there's a
+    has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, outcome) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -179,12 +198,12 @@ def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
     )
 
 
-def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
-    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | None:
+    """Extract the `pydantic_ai` namespace from an AG-UI `encrypted_value` blob, or `None`.
 
-    Client-supplied and untrusted: anything that isn't a JSON object carrying
-    `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
-    encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
+    Client-supplied and untrusted: anything that isn't a JSON object with a `pydantic_ai` object
+    inside reads as `None`, so a genuine provider encrypted blob in the same slot is never read
+    as our data.
     """
     if not encrypted_value:
         return None
@@ -195,10 +214,35 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     if not is_str_dict(data):
         return None
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
-    if not is_str_dict(namespaced):
+    return namespaced if is_str_dict(namespaced) else None
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    A forged or unknown claim reads as `None`, so it degrades to a plain part.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
         return None
     tool_kind = namespaced.get('tool_kind')
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+
+
+def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'denied', 'interrupted'] | None:
+    """Read an outcome claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Only non-`'success'` outcomes are ever carried (`'success'` is the default), so an absent or
+    unrecognized client-supplied value reads as `None` and the result loads as a regular
+    successful return.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    outcome = namespaced.get('outcome')
+    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
+        return outcome
+    return None
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

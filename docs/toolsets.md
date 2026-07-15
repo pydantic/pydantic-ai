@@ -796,7 +796,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Dynamically Building a Toolset
 
-Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md).
+Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md) — for example to [connect to an MCP server with per-user credentials](mcp/client.md#per-user-authentication).
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 

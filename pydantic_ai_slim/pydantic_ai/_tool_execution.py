@@ -249,7 +249,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if self.tool_call_results is not None:
             # The resume path must supply a result for every eligible call from the original response,
             # including `'unknown'` (hallucinated) ones, using the `'skip'` sentinel for any call that
-            # was already handled in a prior step. The check below relies on that convention.
+            # was already handled in a prior step. Non-eligible `'output'` calls settled in the original
+            # step also arrive as `'skip'` entries (from their retry/status parts in the trailing
+            # request), so results may cover more than the eligible calls but never more than the
+            # response's calls. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
             eligible_calls = [
                 call
@@ -266,7 +269,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
             result_tool_call_ids = set(self.tool_call_results.keys())
             eligible_call_ids = {call.tool_call_id for call in eligible_calls}
-            if eligible_call_ids != result_tool_call_ids:
+            response_tool_call_ids = {call.tool_call_id for call in self.tool_calls}
+            if not (eligible_call_ids <= result_tool_call_ids <= response_tool_call_ids):
                 raise exceptions.UserError(
                     'Tool call results need to be provided for all deferred tool calls. '
                     f'Expected: {eligible_call_ids}, got: {result_tool_call_ids}'
@@ -279,16 +283,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             self.calls_to_run_results = {}
 
         self.function_indices = [i for i in range(len(self.tool_calls)) if self.is_executable_function(i)]
-        self.output_indices = [i for i in range(len(self.tool_calls)) if call_kinds[i] == 'output']
+        self.output_indices = [i for i in range(len(self.tool_calls)) if self.is_executable_output(i)]
         self.schema = self.ctx.deps.output_schema
 
-    def is_executable_function(self, index: int) -> bool:
-        if self.call_kinds[index] not in self.executable_function_kinds:
-            return False
+    def _is_resume_eligible(self, index: int) -> bool:
         # On resume, calls without a supplied result were executed in a previous step; skip.
-        if self.tool_call_results is not None and self.tool_calls[index].tool_call_id not in self.calls_to_run_results:
-            return False
-        return True
+        return self.tool_call_results is None or self.tool_calls[index].tool_call_id in self.calls_to_run_results
+
+    def is_executable_output(self, index: int) -> bool:
+        return self.call_kinds[index] == 'output' and self._is_resume_eligible(index)
+
+    def is_executable_function(self, index: int) -> bool:
+        return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
     async def run(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
@@ -881,9 +887,9 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'early'`: run all output tools first; run function tools only if every output failed."""
 
     async def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:
-        for call in self.tool_calls_by_kind['output']:
+        for i in self.output_indices:
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
-            async for event in self._run_output(call):  # pragma: no branch
+            async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
                 yield event
         self.ctx.state.output_retries_used += self.output_retries_increment
 
@@ -920,7 +926,7 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     yield event
 
         for i, call in enumerate(self.tool_calls):
-            if self.call_kinds[i] == 'output':
+            if self.is_executable_output(i):
                 async for event in flush_pending():
                     yield event
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.

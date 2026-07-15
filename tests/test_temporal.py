@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -70,7 +71,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
@@ -152,7 +153,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsStr
+    from .conftest import IsDatetime, IsStr, message
 
 pytestmark = [
     pytest.mark.anyio,
@@ -207,10 +208,18 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
+    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
+    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
+    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
+    # restricts `Path.home()` access.
+    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
+    download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
 
@@ -1461,8 +1470,7 @@ async def test_dynamic_toolset_outside_workflow():
 
 
 def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
 
 
@@ -1530,8 +1538,7 @@ def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: Agent
     # First request: call a tool to force a second model-request step.
     # Second request (carrying the tool return): echo the instructions, which by then must
     # reflect the current step — proving the cache is repopulated by `get_tools` each step.
-    request = messages[-1]
-    assert isinstance(request, ModelRequest)
+    request = message(messages, ModelRequest, index=-1)
     if any(isinstance(part, ToolReturnPart) for part in request.parts):
         return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
     return ModelResponse(parts=[ToolCallPart('noop', {})])
@@ -1863,6 +1870,7 @@ async def test_temporal_agent():
             'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__model_cancel_suspended_response',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
             'agent__complex_agent__mcp_server__mcp__get_instructions',
@@ -3359,6 +3367,22 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
+def test_temporal_run_context_serializes_usage_limits():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        usage_limits=UsageLimits(request_limit=7, total_tokens_limit=1000),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage_limits'] == ctx.usage_limits
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage_limits == ctx.usage_limits
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4254,6 +4278,99 @@ async def test_temporal_model_request_outside_workflow():
     assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
 
 
+async def test_temporal_model_cancel_suspended_response_outside_workflow():
+    """`TemporalModel.cancel_suspended_response()` falls back to the wrapped model outside a workflow.
+
+    Inside a workflow it runs the provider teardown in the `model_cancel_suspended_response` activity
+    (registered in `temporal_activities`) so the raw HTTP call never runs in the workflow sandbox;
+    outside a workflow it delegates straight to the wrapped model.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    temporal_model = TemporalModel(
+        RecordingModel(),
+        activity_name_prefix='test__direct_cancel',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # The cancel activity is registered alongside the request activities.
+    assert [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_model.temporal_activities
+    ] == snapshot(
+        [
+            'test__direct_cancel__model_request',
+            'test__direct_cancel__model_request_stream',
+            'test__direct_cancel__model_cancel_suspended_response',
+        ]
+    )
+
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    await temporal_model.cancel_suspended_response(response)
+    assert cancelled == [response]
+
+
+# Module-level so the `@workflow.defn` below can bind to it (mirrors `simple_temporal_agent`). The
+# activity records into this list; since activities always run outside the workflow sandbox in the
+# worker process, the workflow can dispatch the teardown while the assertion still observes it here.
+model_cancel_calls: list[ModelResponse] = []
+
+
+class CancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        model_cancel_calls.append(response)
+
+
+cancel_temporal_model = TemporalModel(
+    CancelRecordingModel(),
+    activity_name_prefix='cancel_suspended',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=type(None),
+)
+
+
+@workflow.defn
+class CancelSuspendedResponseWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        # In-workflow, `cancel_suspended_response` must dispatch the provider teardown to the
+        # `model_cancel_suspended_response` activity rather than make the raw HTTP call in the sandbox.
+        await cancel_temporal_model.cancel_suspended_response(response)
+
+
+async def test_temporal_model_cancel_suspended_response_in_workflow(client: Client):
+    """Inside a workflow, `cancel_suspended_response` tears the server-side job down via an activity.
+
+    Counterpart to `test_temporal_model_cancel_suspended_response_outside_workflow`: it drives the
+    in-workflow override -> `workflow.execute_activity` -> activity-body path end to end, proving the
+    wrapped model's cancel actually runs and that the `ModelResponse` argument survives serialization
+    across both the workflow and activity boundaries.
+    """
+    model_cancel_calls.clear()
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelSuspendedResponseWorkflow],
+        activities=cancel_temporal_model.temporal_activities,
+    ):
+        await client.execute_workflow(
+            CancelSuspendedResponseWorkflow.run,
+            args=[response],
+            id=CancelSuspendedResponseWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    # The teardown ran in the activity worker against the wrapped model, with the response faithfully
+    # round-tripped through both serialization boundaries.
+    assert model_cancel_calls == [response]
+
+
 async def test_temporal_model_request_stream_outside_workflow():
     """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
 
@@ -4687,6 +4804,69 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')
+
+
+@nested_multimodal_tool_return_agent.tool
+def get_nested_multimodal_content(ctx: RunContext) -> dict[str, str | MultiModalContent]:
+    """Return multimodal content nested inside a mapping."""
+    return {
+        'caption': 'see attached',
+        'attachment': BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        'source': DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    }
+
+
+nested_multimodal_tool_return_temporal_agent = TemporalAgent(
+    nested_multimodal_tool_return_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class NestedMultiModalToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await nested_multimodal_tool_return_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_nested_multimodal_tool_return_survives_temporal(client: Client):
+    """Nested multimodal values in tool returns survive the Temporal activity boundary."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NestedMultiModalToolReturnWorkflow],
+        plugins=[AgentPlugin(nested_multimodal_tool_return_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            NestedMultiModalToolReturnWorkflow.run,
+            args=['inspect attachment'],
+            id='test_nested_multimodal_tool_return',
+            task_queue=TASK_QUEUE,
+        )
+
+    tool_return = next(
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_nested_multimodal_content'
+    )
+    tool_return_content_obj = tool_return.content
+    assert isinstance(tool_return_content_obj, dict)
+    tool_return_content = cast(dict[str, object], tool_return_content_obj)
+    assert tool_return_content['caption'] == 'see attached'
+
+    attachment = tool_return_content['attachment']
+    assert isinstance(attachment, BinaryImage)
+    assert attachment.media_type == 'image/png'
+    assert attachment.data == b'\x89PNG'
+
+    source = tool_return_content['source']
+    assert isinstance(source, DocumentUrl)
+    assert source.media_type == 'application/pdf'
+    assert source.url == 'https://example.com/doc/12345'
 
 
 async def test_text_content_serialization_in_workflow(client: Client):

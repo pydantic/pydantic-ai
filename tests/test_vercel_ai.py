@@ -75,7 +75,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -209,6 +209,11 @@ def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
+    """The streamed tool-input JSON preserves SDK model serialization order.
+
+    OpenAI SDK 2.45 emits the `type` key before `query`; the ordering-only snapshot update is a
+    consequence of the minimum SDK version required for GPT-5.6 request fields.
+    """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -447,7 +452,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OpenTelemetry FastAPI instrumentation capture request and response body"}',
             },
             {
                 'type': 'tool-input-available',
@@ -508,7 +513,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -566,7 +571,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -624,7 +629,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY"}',
             },
             {
                 'type': 'tool-input-available',
@@ -801,7 +806,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_PYTHON_LOG_CORRELATION environment variable"}',
             },
             {
                 'type': 'tool-input-available',
@@ -2599,7 +2604,7 @@ Fix the errors and try again.\
             },
             {
                 'type': 'error',
-                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1",
+                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries",
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
@@ -4289,9 +4294,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     assert tool_part.output == expected_output
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4343,9 +4346,7 @@ async def test_stream_tool_return_files_roundtrip_to_history():
             ),
         ]
     )
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -4398,9 +4399,7 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     content = tool_returns[0].content
     assert isinstance(content, BinaryContent)
@@ -4449,9 +4448,7 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     # The malformed shape is preserved verbatim (not coerced, not dropped), so nothing crashes downstream.
     assert tool_returns[0].content == {'kind': 'binary', 'data': data_payload, 'media_type': 'application/pdf'}
@@ -4479,9 +4476,7 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
@@ -4501,9 +4496,7 @@ async def test_adapter_tool_return_text_only_unchanged():
     assert tool_part.output == 'just a string'
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content == 'just a string'
 
 
@@ -4528,9 +4521,7 @@ async def test_adapter_tool_return_none_serializes_as_null():
     assert tool_part.output is None
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content is None
 
 
@@ -4558,9 +4549,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4620,9 +4609,7 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
     )
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -5247,8 +5234,7 @@ Fix the errors and try again.\
     # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     # instead of RetryPromptPart for tool errors from the Vercel AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = reloaded_messages[2].parts[0]
-    assert isinstance(tool_error_part, ToolReturnPart)
+    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part == snapshot(
         ToolReturnPart(
             tool_name='my_tool',
@@ -5335,8 +5321,7 @@ Fix the errors and try again.\
         )
     )
     # Get original tool_call_id and replace with original RetryPromptPart
-    original_retry = messages[2].parts[0]
-    assert isinstance(original_retry, RetryPromptPart)
+    original_retry = message_part(messages, RetryPromptPart, message_index=2)
     reloaded_messages[2] = ModelRequest(
         parts=[
             RetryPromptPart(
@@ -6099,8 +6084,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
     # Verify roundtrip — load_messages should reconstruct a ToolCallPart without a result
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     assert len(reloaded) == 2
-    tool_call_part = reloaded[1].parts[0]
-    assert isinstance(tool_call_part, ToolCallPart)
+    tool_call_part = message_part(reloaded, ToolCallPart, message_index=1)
     assert tool_call_part.tool_name == 'dangerous_action'
     assert tool_call_part.tool_call_id == 'deferred_tc1'
 
@@ -6371,16 +6355,14 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
 
     # `load_messages` constructs the `UploadedFile` from the client-controlled `providerMetadata`.
     loaded = VercelAIAdapter.load_messages(ui_messages)
-    loaded_part = loaded[0].parts[0]
-    assert isinstance(loaded_part, UserPromptPart)
+    loaded_part = message_part(loaded, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in loaded_part.content)
 
     # The default sanitizer drops it with a warning before it reaches the agent.
     adapter = VercelAIAdapter(agent=agent, run_input=run_input)
     with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
         sanitized = adapter.sanitize_messages(adapter.messages)
-    sanitized_part = sanitized[0].parts[0]
-    assert isinstance(sanitized_part, UserPromptPart)
+    sanitized_part = message_part(sanitized, UserPromptPart)
     assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
     # With the trusted-frontend opt-in, the `UploadedFile` is preserved.
@@ -6388,8 +6370,7 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         preserved = preserve_adapter.sanitize_messages(preserve_adapter.messages)
-    preserved_part = preserved[0].parts[0]
-    assert isinstance(preserved_part, UserPromptPart)
+    preserved_part = message_part(preserved, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
@@ -6445,14 +6426,12 @@ async def test_from_request_threads_allow_uploaded_files(allow_uploaded_files: b
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             sanitized = adapter.sanitize_messages(adapter.messages)
-        sanitized_part = sanitized[0].parts[0]
-        assert isinstance(sanitized_part, UserPromptPart)
+        sanitized_part = message_part(sanitized, UserPromptPart)
         assert any(isinstance(item, UploadedFile) for item in sanitized_part.content)
     else:
         with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
             sanitized = adapter.sanitize_messages(adapter.messages)
-        sanitized_part = sanitized[0].parts[0]
-        assert isinstance(sanitized_part, UserPromptPart)
+        sanitized_part = message_part(sanitized, UserPromptPart)
         assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
 
@@ -6719,8 +6698,7 @@ async def test_adapter_load_messages_json_list_args():
     messages = VercelAIAdapter.load_messages(ui_messages)
 
     assert len(messages) == 2  # ToolCall in response + ToolReturn in request
-    response = messages[0]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse)
     assert len(response.parts) == 1
     tool_call = response.parts[0]
     assert isinstance(tool_call, ToolCallPart)
@@ -7093,8 +7071,7 @@ async def test_adapter_load_messages_provider_executed_dynamic_tool():
     messages = VercelAIAdapter.load_messages(ui_messages)
 
     assert len(messages) == 1
-    response = messages[0]
-    assert isinstance(response, ModelResponse)
+    response = message(messages, ModelResponse)
     assert [type(part) for part in response.parts] == [
         NativeToolCallPart,
         NativeToolReturnPart,
@@ -7234,8 +7211,7 @@ async def test_adapter_dump_load_roundtrip_filepart_vendor_metadata():
     ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
 
-    reloaded_part = reloaded[0].parts[0]
-    assert isinstance(reloaded_part, FilePart)
+    reloaded_part = message_part(reloaded, FilePart)
     assert reloaded_part.content.vendor_metadata == {
         'fps': 24,
         'start_offset': '12.5s',
@@ -7293,8 +7269,7 @@ async def test_adapter_load_filepart_ignores_non_dict_vendor_metadata():
     file_ui_part.provider_metadata['pydantic_ai']['vendor_metadata'] = 'not-a-dict'
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    reloaded_part = reloaded[0].parts[0]
-    assert isinstance(reloaded_part, FilePart)
+    reloaded_part = message_part(reloaded, FilePart)
     assert reloaded_part.content.vendor_metadata is None
 
 
@@ -7706,8 +7681,7 @@ Fix the errors and try again.\
 
     # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    tool_error_part = reloaded_messages[2].parts[0]
-    assert isinstance(tool_error_part, ToolReturnPart)
+    tool_error_part = message_part(reloaded_messages, ToolReturnPart, message_index=2)
     assert tool_error_part.outcome == 'failed'
     assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
 
@@ -8673,8 +8647,7 @@ async def test_adapter_dump_messages_tool_return_error():
 
     # Verify roundtrip
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    error_part = reloaded[2].parts[0]
-    assert isinstance(error_part, ToolReturnPart)
+    error_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert error_part.outcome == 'failed'
     assert error_part.content == 'Something went wrong'
 
@@ -8755,6 +8728,111 @@ async def test_event_stream_function_tool_return_error():
                 'type': 'tool-output-error',
                 'toolCallId': 'tc_err',
                 'errorText': 'Something went wrong',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error,
+    and the outcome claim in the metadata channel survives a dump/load round-trip.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_int'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='tc_int',
+                    outcome='interrupted',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant_parts = [msg.model_dump() for msg in ui_messages if msg.role == 'assistant'][0]['parts']
+    assert assistant_parts == snapshot(
+        [
+            {
+                'type': 'tool-my_tool',
+                'tool_call_id': 'tc_int',
+                'title': None,
+                'state': 'output-available',
+                'input': {'x': 1},
+                'output': 'The tool call was interrupted before a result was produced.',
+                'provider_executed': False,
+                'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'preliminary': None,
+                'approval': None,
+            }
+        ]
+    )
+
+    # Round-trip: the metadata claim restores the interrupted outcome on load instead of
+    # upgrading it to 'success'.
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'interrupted'
+    assert reloaded_return.tool_kind is None
+
+
+async def test_event_stream_function_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` streams as neutral output, not an error.
+
+    Not VCR-backed: this pins a local event-stream transformation and makes no model request.
+    """
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name='my_tool',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='tc_int',
+                outcome='interrupted',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Do something')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'tc_int',
+                'output': 'The tool call was interrupted before a result was produced.',
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -9857,6 +9935,46 @@ async def test_adapter_roundtrip_preserves_file_vendor_metadata():
     )
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True),
+            id='image-true',
+        ),
+        pytest.param(
+            AudioUrl(url='https://example.com/audio.mp3', media_type='audio/mpeg', force_download='allow-local'),
+            id='audio-allow-local',
+        ),
+        pytest.param(
+            VideoUrl(url='https://example.com/video.mp4', media_type='video/mp4', force_download=True),
+            id='video-true',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf', force_download='allow-local'),
+            id='document-allow-local',
+        ),
+    ],
+)
+async def test_adapter_roundtrip_preserves_file_url_force_download(
+    content: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+):
+    """`FileUrl.force_download` survives a Vercel AI dump -> load round-trip."""
+    messages = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, FileUIPart)]
+    assert len(file_parts) == 1
+    assert load_provider_metadata(file_parts[0].provider_metadata)['force_download'] == content.force_download
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    user_part = message_part(loaded, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    loaded_content = user_part.content[0]
+    assert isinstance(loaded_content, ImageUrl | AudioUrl | VideoUrl | DocumentUrl)
+    assert loaded_content.force_download == content.force_download
+
+
 async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
     """A file with no `vendor_metadata` round-trips to `None` (no spurious metadata)."""
     messages = [
@@ -9879,10 +9997,7 @@ async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
     assert all(part.provider_metadata is None for part in file_parts)
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(loaded, UserPromptPart)
     assert isinstance(user_part.content, list)
     for item in user_part.content:
         assert getattr(item, 'vendor_metadata', None) is None
