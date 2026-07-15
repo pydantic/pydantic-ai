@@ -852,5 +852,25 @@ def xai_proto_cassette_session(
         )
 
 
+def get_recorded_request_messages(async_client: AsyncClient) -> list[list[dict[str, Any]]]:
+    """Return each recorded/replayed `chat.sample()` request's `messages` as dicts.
+
+    Parallels `get_mock_chat_create_kwargs` for live proto cassettes: it lets a real-API test
+    assert the exact request wire shape sent to xAI — e.g. that a reasoning trace and the tool
+    calls it produced are grouped onto a single assistant message. Works against both the replay
+    client and the recorder, which each hold the `cassette` whose `SampleInteraction`s carry the
+    serialized request protos.
+    """
+    if not isinstance(async_client, (XaiProtoCassetteClient, XaiProtoRecorder, XaiProtoCassetteHybridClient)):
+        raise RuntimeError('Not a cassette-backed xAI client')  # pragma: no cover
+    requests: list[list[dict[str, Any]]] = []
+    for interaction in async_client.cassette.interactions:
+        if isinstance(interaction, SampleInteraction):
+            proto = chat_pb2.GetCompletionsRequest()
+            proto.ParseFromString(interaction.request_raw)
+            requests.append([MessageToDict(m, preserving_proto_field_name=True) for m in proto.messages])
+    return requests
+
+
 def xai_sdk_available() -> bool:
     return imports_successful()

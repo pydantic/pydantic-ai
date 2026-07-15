@@ -47,6 +47,12 @@ class WrapperModel(Model):
     ) -> ModelResponse:
         return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        return await self.wrapped.cancel_suspended_response(response)
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return self.wrapped.continuation_delay(response)
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],

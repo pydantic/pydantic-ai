@@ -51,6 +51,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:
     from prefect import flow, task
+    from prefect.context import TaskRunContext
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -909,6 +910,34 @@ async def test_prefect_agent_run_with_model(allow_model_requests: None) -> None:
         ),
     ):
         await simple_prefect_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_prefect_cancel_suspended_response_runs_in_task(allow_model_requests: None) -> None:
+    """`PrefectModel.cancel_suspended_response` must run inside a Prefect task, not inline in the flow.
+
+    The provider teardown that cancels a server-side suspended/background job is a raw HTTP call;
+    wrapping it as a task makes it durable and retried. We assert a `TaskRunContext` is active when
+    the wrapped model's cancel runs, proving it executed inside a task rather than inline.
+    """
+    ran_in_task: list[bool] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ran_in_task.append(TaskRunContext.get() is not None)
+
+    prefect_model = PrefectModel(
+        RecordingModel(),
+        task_config=TaskConfig(),
+        get_event_stream_handler=lambda: None,
+    )
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    @flow(name='test_cancel_suspended_response')
+    async def cancel_in_flow() -> None:
+        await prefect_model.cancel_suspended_response(response)
+
+    await cancel_in_flow()
+    assert ran_in_task == [True]
 
 
 async def test_prefect_agent_override_model() -> None:

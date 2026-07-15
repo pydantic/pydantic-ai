@@ -4,16 +4,17 @@ import itertools
 import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
 
+from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -56,6 +57,7 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 )
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
+_BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
 
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -103,7 +105,10 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
 
 def serialize_any(value: Any) -> str:
     try:
-        return ANY_ADAPTER.dump_python(value, mode='json')
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except UnicodeDecodeError:
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
             return str(value)
@@ -325,6 +330,31 @@ def open_model_request_span(
     finally:
         if record_metrics:
             record_metrics()
+
+
+def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
+    """Snapshot the current OTel context so it can be re-attached in another task.
+
+    The streaming continuation composite opens each segment's `request_stream` lazily,
+    in the *consumer* task that iterates the stream, whereas the `chat` span is opened
+    by `wrap_model_request` in a separate task. Those tasks don't share an OTel context,
+    so without re-attaching, span updates driven by `get_current_span()` (e.g.
+    `FallbackModel` recording the resolved inner model) would land on the wrong span.
+
+    Returns a factory that yields a context manager re-attaching the captured context;
+    the composite enters it around each segment without depending on OpenTelemetry itself.
+    """
+    captured = otel_context.get_current()
+
+    @contextmanager
+    def attach_captured_context() -> Generator[None]:
+        token = otel_context.attach(captured)
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
+
+    return attach_captured_context
 
 
 def get_instructions(

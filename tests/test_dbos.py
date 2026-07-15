@@ -1029,6 +1029,41 @@ async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None,
         await simple_dbos_agent.run('What is the capital of Mexico?', model=model)
 
 
+async def test_dbos_cancel_suspended_response_runs_in_step(allow_model_requests: None, dbos: DBOS):
+    """`DBOSModel.cancel_suspended_response` must run as a DBOS step, not inline in the workflow.
+
+    The provider teardown that cancels a server-side suspended/background job is a raw HTTP call;
+    wrapping it as a step makes it durable, retried, and recorded rather than running unrecorded
+    inside the workflow.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    dbos_model = DBOSModel(
+        RecordingModel(),
+        step_name_prefix='cancel_suspended',
+        step_config={},
+        get_event_stream_handler=lambda: None,
+    )
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def cancel_in_workflow() -> None:
+        await dbos_model.cancel_suspended_response(response)
+
+    with SetWorkflowID(wfid):
+        await cancel_in_workflow()
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['cancel_suspended__model.cancel_suspended_response'])
+    assert cancelled == [response]
+
+
 async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: None, dbos: DBOS):
     # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can pass in toolsets directly.
     result = await simple_dbos_agent.run('What is the capital of Mexico?', toolsets=[FunctionToolset()])

@@ -643,10 +643,10 @@ async def lifespan(app):
 
 #### Output Tool Calls
 
-When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+When a model produces a final result — an [output tool](output.md#tool-output) call, or structured [native](output.md#native-output)/[prompted](output.md#prompted-output) or [image](output.md#image-output) output — in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
 The default `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information on how `end_strategy` works with both function tools and output tools, see [Parallel Output Tool Calls](output.md#parallel-output-tool-calls).
+For more information on how `end_strategy` works with function tools, output tools, and non-tool output, see [Tool calls alongside a final result](output.md#parallel-output-tool-calls).
 
 ## Tool Search
 

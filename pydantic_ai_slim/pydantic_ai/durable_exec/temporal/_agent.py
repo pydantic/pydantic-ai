@@ -18,6 +18,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
+    _agent_graph,
     _instructions,
     _utils,
     messages as _messages,
@@ -293,11 +294,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # need their activities registered with the worker before the workflow runs.
         merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        # Override model and set the model for workflow execution
+        # Override model and set the model for workflow execution.
+        # Register workflow.sleep so agent graph delays survive workflow replays.
         with (
             super().override(model=self._temporal_model, toolsets=merged_toolsets, tools=[]),
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
+            _agent_graph.set_agent_graph_sleep(workflow.sleep),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
             try:
