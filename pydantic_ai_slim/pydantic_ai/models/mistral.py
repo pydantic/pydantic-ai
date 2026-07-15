@@ -810,6 +810,18 @@ class MistralStreamedResponse(StreamedResponse):
                     except ValueError:
                         continue
 
+                # Guard against a trailing integer token that can still extend into a
+                # non-integer on the next chunk (e.g. "1" -> "1.5"). The widened-match
+                # gate above covers float-for-integer and int-for-number, but leaves the
+                # strict int-for-integer case unprotected. When the accumulated text ends
+                # with a digit the JSON document may not yet be closed; run a non-partial
+                # parse to confirm completeness before emitting.
+                if text.rstrip()[-1:].isdigit():
+                    try:
+                        pydantic_core.from_json(text)
+                    except ValueError:
+                        continue
+
                 # The following part_id will be thrown away
                 return ToolCallPart(tool_name=output_tool.name, args=output_json)
 
