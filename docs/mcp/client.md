@@ -249,7 +249,7 @@ async def process_tool_call(
     tool_args: dict[str, Any],
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(name, tool_args, {'deps': ctx.deps})
+    return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
 
 toolset = MCPToolset(
@@ -268,6 +268,28 @@ async def main():
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
+
+For stable caller identity or other metadata sent with every supported request from the same toolset,
+use `request_metadata`:
+
+```python {test="skip"}
+from pydantic_ai.mcp import MCPToolset
+
+toolset = MCPToolset(
+    'http://localhost:8000/mcp',
+    request_metadata={'com.example/caller': 'billing-agent'},
+)
+```
+
+`request_metadata` is sent with tool calls, resource reads, and prompt gets. The dict is read at
+request time, so later mutations apply to subsequent requests. For tool calls, per-call metadata
+passed to `direct_call_tool` by a
+[`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] callback wins on overlapping keys. List
+requests do not currently carry `request_metadata` because the FastMCP client does not yet accept
+metadata there; coverage may expand as FastMCP adds support. For task-augmented tool calls, metadata
+is sent on the wire, but whether the server-side handler can read it depends on the server
+implementation; FastMCP servers currently do not expose request meta in background task execution
+contexts.
 
 How the server reads the injected metadata is MCP server SDK specific. For example, with the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) it's accessible via the [`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context) argument on tool handlers:
 

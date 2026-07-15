@@ -776,6 +776,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
     """
 
+    request_metadata: dict[str, Any] | None
+    """Default request-level `_meta` payload for outgoing MCP requests that support it.
+
+    The dict is read at request time, so later mutations apply to subsequent requests. Merged into
+    the `_meta` of `tools/call`, `resources/read`, and `prompts/get` requests. For tool calls,
+    per-call `metadata` passed to
+    [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] wins on key conflicts.
+    List requests do not currently carry this metadata because the FastMCP client does not yet
+    accept metadata there; coverage may expand as FastMCP adds support.
+    """
+
     sampling_model: models.Model | None
     """A Pydantic AI model that the server may sample from via the MCP `sampling/createMessage` flow.
 
@@ -817,6 +828,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int | None = None,
         tool_error_behavior: Literal['retry', 'error'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
+        request_metadata: dict[str, Any] | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
         cache_prompts: bool = True,
@@ -855,6 +867,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self-correct; `'error'` propagates the underlying exception.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
+            request_metadata: Default request-level `_meta` payload for supported outgoing requests.
+                See [`MCPToolset.request_metadata`][pydantic_ai.mcp.MCPToolset.request_metadata].
             cache_tools: Whether to cache the list of tools. See
                 [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools].
             cache_resources: Whether to cache the list of resources. See
@@ -976,6 +990,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
+        self.request_metadata = request_metadata
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
@@ -1189,15 +1204,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
         """
+        meta = {**(self.request_metadata or {}), **(metadata or {})} if self.request_metadata or metadata else None
         async with self:
             try:
                 if use_task:
-                    tool_task: ToolTask = await self.client.call_tool(
-                        name=name, arguments=args, task=True, meta=metadata
-                    )
+                    tool_task: ToolTask = await self.client.call_tool(name=name, arguments=args, task=True, meta=meta)
                     result: CallToolResult = await tool_task.result()
                 else:
-                    result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                    result = await self.client.call_tool(name=name, arguments=args, meta=meta)
             except ToolError as e:
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
@@ -1295,7 +1309,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     code=-32601,
                 )
             try:
-                result = await self.client.get_prompt(name, arguments)
+                result = await self.client.get_prompt(name, arguments, meta=self.request_metadata)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             return PromptResult(
@@ -1376,7 +1390,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:
             try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri))
+                contents = await self.client.read_resource(AnyUrl(resource_uri), meta=self.request_metadata)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 

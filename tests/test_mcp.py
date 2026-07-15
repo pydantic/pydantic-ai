@@ -41,6 +41,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import FastMCP
+    from fastmcp.server.context import Context
     from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
     from mcp.shared.exceptions import McpError
@@ -57,6 +58,7 @@ with try_import() as imports_successful:
     from pydantic import AnyUrl
 
     from pydantic_ai.mcp import (
+        CallToolFunc,
         MCPError,
         MCPToolset,
         Prompt,
@@ -66,6 +68,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        ToolResult,
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -142,6 +145,12 @@ class TestMCPToolsetConstruction:
         client = Client('https://example.com/mcp')
         with pytest.raises(ValueError, match='init_timeout'):
             MCPToolset(client, init_timeout=30)
+
+    def test_pre_built_client_with_request_metadata_is_allowed(self):
+        client = Client('https://example.com/mcp')
+        toolset = MCPToolset(client, request_metadata={'caller': 'pydantic-ai'})
+        assert toolset.client is client
+        assert toolset.request_metadata == {'caller': 'pydantic-ai'}
 
     def test_pre_built_client_with_overridden_read_timeout_raises(self):
         client = Client('https://example.com/mcp')
@@ -251,6 +260,12 @@ class TestResourceTypeMapping:
         assert '-32002' in str(err)
 
 
+def _request_metadata(ctx: Context) -> dict[str, Any]:
+    if ctx.request_context is None or ctx.request_context.meta is None:
+        return {}
+    return dict(ctx.request_context.meta.model_extra or {})
+
+
 @pytest.fixture
 async def fastmcp_server() -> FastMCP[None]:
     """In-process FastMCP server with a representative tool/resource surface."""
@@ -265,6 +280,11 @@ async def fastmcp_server() -> FastMCP[None]:
     async def add(a: int, b: int) -> dict[str, int]:
         """Add two numbers and return the result."""
         return {'sum': a + b}
+
+    @server.tool()
+    async def echo_request_metadata(ctx: Context) -> dict[str, Any]:
+        """Echo custom request metadata."""
+        return _request_metadata(ctx)
 
     @server.tool()
     async def boom() -> str:
@@ -294,6 +314,10 @@ async def fastmcp_server() -> FastMCP[None]:
     @server.resource('resource://greeting.txt')
     async def greeting() -> str:
         return 'Hello, world!'
+
+    @server.resource('resource://request_metadata.json')
+    async def request_metadata_resource(ctx: Context) -> str:
+        return json.dumps(_request_metadata(ctx), sort_keys=True)
 
     @server.resource('resource://{name}/profile.json')
     async def profile(name: str) -> str:
@@ -331,6 +355,11 @@ def _register_prompts(server: FastMCP[None]) -> None:
     def text_meta_prompt() -> list[Message]:
         """A prompt template with `_meta` text metadata."""
         return [Message(content=McpTextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+
+    @server.prompt()
+    def request_metadata_prompt(ctx: Context) -> str:
+        """A prompt template that echoes request metadata."""
+        return json.dumps(_request_metadata(ctx), sort_keys=True)
 
     @server.prompt()
     def image_prompt() -> list[Message]:
@@ -565,6 +594,83 @@ class TestMCPToolsetIntegration:
         assert result == 'Echo: hi'
         assert seen == [('echo', {'message': 'hi'})]
 
+    async def test_request_metadata_defaults_to_no_custom_tool_meta(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('echo_request_metadata', {})
+        assert result == {}
+
+    async def test_request_metadata_reaches_tool_call(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(
+            fastmcp_server,
+            request_metadata={'caller': 'pydantic-ai', 'com.example/caller': 'billing-agent'},
+        )
+        async with toolset:
+            result = await toolset.direct_call_tool('echo_request_metadata', {})
+        assert result == {
+            'caller': 'pydantic-ai',
+            'com.example/caller': 'billing-agent',
+        }
+
+    async def test_direct_call_tool_metadata_still_works_without_request_metadata(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('echo_request_metadata', {}, metadata={'per_call': 'value'})
+        assert result == {'per_call': 'value'}
+
+    async def test_request_metadata_merges_with_direct_call_tool_metadata(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_metadata={'stable': 'toolset', 'shared': 'toolset'})
+        async with toolset:
+            result = await toolset.direct_call_tool(
+                'echo_request_metadata',
+                {},
+                metadata={'per_call': 'value', 'shared': 'per-call'},
+            )
+        assert result == {'stable': 'toolset', 'per_call': 'value', 'shared': 'per-call'}
+
+    async def test_request_metadata_reaches_agent_tool_call(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+    ):
+        toolset = MCPToolset(fastmcp_server, request_metadata={'com.example/caller': 'billing-agent'})
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('echo_request_metadata', {}, run_context, tools['echo_request_metadata'])
+        assert result == {'com.example/caller': 'billing-agent'}
+
+    async def test_request_metadata_merges_with_process_tool_call_metadata(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+    ):
+        async def add_per_call_metadata(
+            ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]
+        ) -> ToolResult:
+            return await call_tool(name, args, metadata={'per_call': 'value', 'shared': 'per-call'})
+
+        toolset = MCPToolset(
+            fastmcp_server,
+            request_metadata={'stable': 'toolset', 'shared': 'toolset'},
+            process_tool_call=add_per_call_metadata,
+        )
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('echo_request_metadata', {}, run_context, tools['echo_request_metadata'])
+        assert result == {'stable': 'toolset', 'per_call': 'value', 'shared': 'per-call'}
+
+    async def test_request_metadata_reaches_read_resource(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_metadata={'caller': 'resource'})
+        async with toolset:
+            content = await toolset.read_resource('resource://request_metadata.json')
+        assert isinstance(content, str)
+        assert json.loads(content) == {'caller': 'resource'}
+
+    async def test_request_metadata_reaches_get_prompt(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, request_metadata={'caller': 'prompt'})
+        async with toolset:
+            result = await toolset.get_prompt('request_metadata_prompt')
+        assert len(result.messages) == 1
+        content = result.messages[0].content
+        assert isinstance(content, TextContent)
+        assert json.loads(content.content) == {'caller': 'prompt'}
+
     async def test_list_resources_returns_pai_types(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
@@ -651,6 +757,11 @@ class TestMCPToolsetIntegration:
                 Prompt(
                     name='text_meta_prompt',
                     description='A prompt template with `_meta` text metadata.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='request_metadata_prompt',
+                    description='A prompt template that echoes request metadata.',
                     metadata={'fastmcp': {'tags': []}},
                 ),
                 Prompt(
@@ -1437,3 +1548,39 @@ class TestMCPToolsetBackgroundTasks:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
         assert result == 'task_required_completed'
+
+    async def test_task_tool_forwards_request_metadata_with_per_call_override(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        async def add_per_call_metadata(
+            ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]
+        ) -> ToolResult:
+            return await call_tool(name, args, metadata={'per_call': 'value', 'shared': 'per-call'})
+
+        toolset = MCPToolset(
+            task_server,
+            request_metadata={'stable': 'toolset', 'shared': 'toolset'},
+            process_tool_call=add_per_call_metadata,
+        )
+        captured_kwargs: list[dict[str, Any]] = []
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            real_call_tool = toolset.client.call_tool
+
+            async def spy_call_tool(*args: Any, **kwargs: Any) -> Any:
+                captured_kwargs.append(kwargs.copy())
+                return await real_call_tool(*args, **kwargs)
+
+            toolset.client.call_tool = spy_call_tool
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+
+        assert result == 'task_required_completed'
+        assert captured_kwargs == [
+            {
+                'name': 'task_required_tool',
+                'arguments': {},
+                'task': True,
+                'meta': {'stable': 'toolset', 'per_call': 'value', 'shared': 'per-call'},
+            }
+        ]

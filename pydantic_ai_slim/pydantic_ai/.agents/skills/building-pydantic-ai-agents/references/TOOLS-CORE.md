@@ -90,6 +90,7 @@ agent = Agent(
 ```
 
 When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly and pass it via `toolsets=[...]`.
+Pass `request_metadata={...}` to `MCPToolset` for stable per-toolset request `_meta`.
 
 ## Search with DuckDuckGo, Tavily, or Exa
 
