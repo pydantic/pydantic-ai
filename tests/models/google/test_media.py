@@ -59,7 +59,7 @@ def mapping_model() -> GoogleModel:
 @dataclass
 class MediaResolutionCase:
     id: str
-    content: BinaryContent | ImageUrl | DocumentUrl
+    content: BinaryContent | ImageUrl | DocumentUrl | UploadedFile
     expected: dict[str, object]
     system: str | None = None
     """When set, patch `GoogleModel.system` (e.g. 'google-cloud' for gs:// URIs)."""
@@ -130,6 +130,27 @@ MEDIA_RESOLUTION_CASES = [
             'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'},
         },
         system='google-cloud',
+    ),
+    MediaResolutionCase(
+        id='uploaded_file_media_resolution_and_video_metadata',
+        content=UploadedFile(
+            file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
+            provider_name='google',
+            media_type='video/mp4',
+            vendor_metadata={
+                'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+                'start_offset': '10s',
+                'end_offset': '30s',
+            },
+        ),
+        expected={
+            'file_data': {
+                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/video123',
+                'mime_type': 'video/mp4',
+            },
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+            'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
+        },
     ),
 ]
 
@@ -312,10 +333,12 @@ async def test_http_video_url_downloads_on_google(mapping_model: GoogleModel, mo
     content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     mock_download.assert_called_once()
-    assert len(content) == 1
-    assert 'inline_data' in content[0]
-    assert 'file_data' not in content[0]
-    assert content[0].get('video_metadata') == {'start_offset': '10s', 'end_offset': '20s'}
+    assert content == [
+        {
+            'inline_data': {'data': b'fake video data', 'mime_type': 'video/mp4'},
+            'video_metadata': {'start_offset': '10s', 'end_offset': '20s'},
+        }
+    ]
 
 
 async def test_http_video_url_uses_file_uri_on_google_cloud(mapping_model: GoogleModel, mocker: MockerFixture):
