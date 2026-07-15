@@ -4930,7 +4930,7 @@ async def test_binary_content_with_media_resolution_vendor_metadata():
     )
 
     assert len(content) == 1
-    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
     assert 'video_metadata' not in content[0]
 
 
@@ -4955,8 +4955,8 @@ async def test_binary_content_with_media_resolution_and_video_metadata_vendor_me
     )
 
     assert len(content) == 1
-    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
-    assert content[0]['video_metadata'] == {'start_offset': '2s', 'end_offset': '10s'}
+    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert content[0].get('video_metadata') == {'start_offset': '2s', 'end_offset': '10s'}
 
 
 async def test_binary_content_vendor_metadata_without_media_resolution_unchanged():
@@ -4977,7 +4977,7 @@ async def test_binary_content_vendor_metadata_without_media_resolution_unchanged
 
     assert len(content) == 1
     assert 'media_resolution' not in content[0]
-    assert content[0]['video_metadata'] == {'start_offset': '2s', 'end_offset': '10s'}
+    assert content[0].get('video_metadata') == {'start_offset': '2s', 'end_offset': '10s'}
 
 
 async def test_binary_content_vendor_metadata_not_mutated():
@@ -4995,8 +4995,8 @@ async def test_binary_content_vendor_metadata_not_mutated():
     )
 
     assert len(content) == 1
-    assert content[0]['media_resolution'] == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
-    assert content[0]['video_metadata'] == {'start_offset': '2s'}
+    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
+    assert content[0].get('video_metadata') == {'start_offset': '2s'}
     # the original dict is untouched
     assert vendor_metadata == {
         'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
