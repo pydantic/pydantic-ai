@@ -3030,6 +3030,85 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
 
 
+@pytest.mark.anyio
+async def test_toolset_timeout_applies_without_agent_timeout():
+    """A `FunctionToolset`'s own timeout is honored when the agent sets no `tool_timeout`.
+
+    The agent-level timeout reaches `ToolManager` directly, so it can mask a toolset-level
+    one that isn't plumbed through; running without `tool_timeout` pins the toolset default
+    on its own.
+    """
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    toolset = FunctionToolset(timeout=0.1)
+
+    @toolset.tool_plain
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but toolset timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_logic), toolsets=[toolset])
+
+    result = await agent.run('call slow_tool')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_per_tool_timeout_overrides_toolset_timeout():
+    """A tool's own timeout wins over the timeout its toolset defaults to."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    # Generous toolset default, but the tool pins a much shorter one.
+    toolset = FunctionToolset(timeout=10.0)
+
+    @toolset.tool_plain(timeout=0.1)
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)
+        return 'done'  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_logic), toolsets=[toolset])
+
+    result = await agent.run('call slow_tool')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+
+
 def test_agent_tool_timeout_passed_to_toolset():
     """Test that agent-level tool_timeout is passed to FunctionToolset as timeout."""
     agent = Agent(TestModel(), tool_timeout=30.0)
