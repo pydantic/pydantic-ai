@@ -866,7 +866,12 @@ def add_provider_metadata_tool_call_id(metadata: dict[str, Any] | None, tool_cal
 
 
 def is_trailing_provider_metadata_native_tool_call(response: _messages.ModelResponse, index: int) -> bool:
-    """Whether `response.parts[index]` starts a trailing native-tool pair synthesized from provider metadata."""
+    """Whether `response.parts[index]` starts a trailing native-tool pair synthesized from provider metadata.
+
+    Assumes a marked pair is only ever appended after every other part: an unmarked native tool call
+    that followed one would still reset the text this is meant to protect. Producers must keep marked
+    pairs last, as `GoogleModel` does on both the streamed and non-streamed paths.
+    """
     from . import messages
 
     parts = response.parts
