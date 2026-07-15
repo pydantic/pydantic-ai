@@ -21,7 +21,7 @@ from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...agent.abstract import AbstractAgent
-from ...exceptions import UserError
+from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
@@ -138,7 +138,12 @@ class PydanticAIPlugin(SimplePlugin):
             name='PydanticAIPlugin',
             data_converter=_data_converter,
             workflow_runner=_workflow_runner,
-            workflow_failure_exception_types=[UserError, PydanticUserError],
+            # `AgentRunError` covers deterministic run failures that can now surface in
+            # workflow code, like `UsageLimitExceeded` and the `UnexpectedModelBehavior`
+            # continuation ceilings raised by the workflow-side continuation loop: they
+            # must fail the workflow (preserving the exception type for the caller)
+            # rather than fail the workflow *task*, which Temporal would retry forever.
+            workflow_failure_exception_types=[UserError, PydanticUserError, AgentRunError],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:

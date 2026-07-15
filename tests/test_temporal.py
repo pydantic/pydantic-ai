@@ -5195,8 +5195,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 2 base activities (request, request_stream) + 1 for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 3
+    # 3 base activities (request, request_stream, cancel) + 1 for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 4
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -5209,8 +5209,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 2 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(bound.temporal_activities) == 4
+    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
+    assert len(bound.temporal_activities) == 5
 
 
 def test_durability_shared_instance_across_agents():
@@ -7203,13 +7203,15 @@ async def test_durability_temporalizes_capability_contributed_toolsets(allow_mod
         assert output == 'activity'
 
 
-# --- Continuation chains (suspended → complete) resolve inside the activity ---
+# --- Continuation chains (suspended → complete) run one activity per segment ---
 #
 # When a model suspends a turn (Anthropic `pause_turn`, OpenAI background mode), the
-# continuation loop lives in the innermost `model_request`/`model_request_stream` helpers,
-# so under `TemporalDurability` the whole suspended → complete chain runs inside ONE
-# model-request activity. These tests use a scripted model (no cassettes: `FunctionModel`
-# can't emit suspended streaming segments, and VCR matchers wouldn't pin the chain shape).
+# continuation loop in the innermost `model_request`/`model_request_stream` helpers runs
+# workflow-side under `TemporalDurability`, dispatching each segment through its own
+# model-request activity, so a failed segment retries alone and the suspended response is
+# checkpointed in workflow history between segments. These tests use a scripted model (no
+# cassettes: `FunctionModel` can't emit suspended streaming segments, and VCR matchers
+# wouldn't pin the chain shape).
 
 
 def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
@@ -7255,10 +7257,10 @@ class DurabilityContinuationUsageLimitWorkflow:
 
 
 async def test_durability_continuation_chain_in_workflow(client: Client):
-    """A suspended → complete chain resolves inside one activity, as one merged response.
+    """A suspended → complete chain resolves across per-segment activities as one merged response.
 
     Usage is counted once (a continuation isn't a separate request step), and the workflow
-    history shows a single scheduled activity for both segments.
+    history shows one scheduled activity for each segment.
     """
     _continuation_model.reset(
         responses=[
@@ -7296,9 +7298,70 @@ async def test_durability_continuation_chain_in_workflow(client: Client):
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    # Both segments ran inside the durable boundary: two model calls, one activity.
+    # Both segments ran in their own durable boundary.
     assert _continuation_model.request_calls == 2
-    assert _scheduled_activity_count(history) == 1
+    assert _scheduled_activity_count(history) == 2
+
+
+class _DelayedContinuationModel(ScriptedContinuationModel):
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.2
+
+
+_continuation_delay_model = _DelayedContinuationModel()
+_continuation_delay_agent = Agent(
+    _continuation_delay_model,
+    name='durability_continuation_delay_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityContinuationDelayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _continuation_delay_agent.run(prompt)
+
+
+async def test_durability_continuation_delay_uses_durable_timer(client: Client):
+    """The wait before re-polling a suspended segment burns a durable Temporal timer.
+
+    `TemporalDurability` registers `workflow.sleep` as the agent-graph sleep, so a model's
+    `continuation_delay` (forwarded through the per-segment wrapper to the real workflow-side
+    model) shows up in workflow history as a timer that survives replays, rather than
+    consuming activity wall-clock time.
+    """
+    _continuation_delay_model.reset(
+        responses=[
+            scripted_response(
+                texts=['The answer '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=5,
+                output_tokens=2,
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityContinuationDelayWorkflow],
+        plugins=[AgentPlugin(_continuation_delay_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityContinuationDelayWorkflow.run,
+            args=['go'],
+            id='DurabilityContinuationDelayWorkflow_timer',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'The answer is 42.'
+    assert _continuation_delay_model.request_calls == 2
+    assert _scheduled_activity_count(history) == 2
+    assert any(event.HasField('timer_started_event_attributes') for event in history.events)
 
 
 async def test_durability_continuation_resume_from_history(client: Client):
@@ -7547,10 +7610,9 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 
 
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
-    """A streamed suspended → complete chain is stitched into one stream inside one activity.
+    """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    The `event_stream_handler` fires inside the activity against the live stitched stream:
-    the second segment's part indices are offset past the first's (no collision), and the
+    The `event_stream_handler` fires inside each activity against its live segment, and the
     final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
@@ -7588,25 +7650,23 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    # The handler saw the stitched stream live inside the activity: the second segment's
-    # part continues the index space rather than colliding with the first's.
+    # The construction-time handler sees each live segment inside its activity.
     assert _text_part_indices(_continuation_stream_events) == snapshot(
         [
             ('PartStartEvent', 0),
             ('PartDeltaEvent', 0),
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
         ]
     )
     assert _continuation_stream_model.request_stream_calls == 2
-    assert _scheduled_activity_count(history) == 1
+    assert _scheduled_activity_count(history) == 2
 
 
 async def test_durability_streaming_continuation_resume_from_history(client: Client):
-    """A streamed resume of a suspended `message_history` tail completes inside the activity.
+    """A streamed resume passes the suspended history tail to the first activity.
 
-    The suspended tail seeds the stitched stream, so the new segment's part indices start
-    after the seed's parts and the final output merges seed and continuation text.
+    The suspended tail seeds the workflow-side composite and the final output merges both texts.
     """
     _continuation_stream_model.reset(
         segments=[
@@ -7641,11 +7701,11 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    # The new segment's part is indexed after the seed's single part.
+    # The construction-time handler sees the activity-local segment index.
     assert _text_part_indices(_continuation_stream_events) == snapshot(
         [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
         ]
     )
     assert _continuation_stream_model.request_stream_calls == 1

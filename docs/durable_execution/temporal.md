@@ -216,17 +216,17 @@ Because the model stream is consumed inside the activity and only its events are
 
 ### Suspended Turns and Background Mode
 
-Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes, and inside a Temporal workflow the entire suspended → complete chain executes within a **single** model request activity: the activity keeps echoing the suspended response back (or polling the background job) and returns one merged [`ModelResponse`][pydantic_ai.messages.ModelResponse], so continuations don't count as separate request steps and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is resumed the same way, inside the activity.
+Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes. Each segment runs in a separate model request activity, while the workflow checkpoints the suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and its background job ID between segments. The final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response resumes with that response passed to the first activity.
 
 This has a few operational implications:
 
-- **Timeouts**: the default `start_to_close_timeout` is 60 seconds, but a background job can legitimately run for many minutes. When using background mode, raise the timeout for model request activities via `model_activity_config` (see [Activity Configuration](#activity-configuration) below).
-- **Heartbeats**: model request activities automatically heartbeat while the request runs, and their default activity config sets a `heartbeat_timeout` of 30 seconds, so a crashed worker is detected quickly even during a long poll loop and workflow cancellation can be delivered mid-request. Set your own `heartbeat_timeout` in `activity_config` or `model_activity_config` to override it.
-- **Retries and server-side jobs**: if a worker dies mid-chain, Temporal will retry the whole activity from scratch per its retry policy. A background job created by the failed attempt may be left running server-side, and the retry will start a new one. On errors *within* the activity, the framework cancels the in-flight server-side job before the error propagates.
-- **Payload size**: with an [event stream handler](#streaming), the events of every segment in the chain are buffered in the activity result for replay, so a very long streamed chain counts against Temporal's 2MB payload limit.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Activities heartbeat automatically, with a default `heartbeat_timeout` of 30 seconds.
+- **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
+- **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
+- **Payload size**: with an [event stream handler](#streaming), each segment's buffered events must fit within Temporal's 2MB payload limit.
 
 !!! note
-    If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: they're required inside the activity to enforce [usage limits](../agent.md#usage-limits) between continuation segments.
+    If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: tools and capabilities running inside activities read them from the [`RunContext`][pydantic_ai.tools.RunContext], e.g. to adapt to the run's remaining [usage budget](../agent.md#usage-limits).
 
 ### Model Selection at Runtime
 

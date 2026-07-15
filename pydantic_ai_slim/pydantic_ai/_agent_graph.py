@@ -763,13 +763,9 @@ async def model_request(
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
+    on_progress: Callable[[_messages.ModelResponse], None],
 ) -> _messages.ModelResponse:
     """Run the innermost non-streaming model request, resolving any continuation chain.
-
-    Used internally by `pydantic_ai.durable_exec._utils.model_request` so the bundled
-    durable-execution capabilities (Temporal/DBOS/Prefect) can perform the actual
-    provider request from inside their activity/step/task with the run context
-    correctly threaded through.
 
     Loops over any suspended → complete continuation segments (Anthropic `pause_turn`,
     OpenAI background mode), echoing each suspended response back and merging the segments
@@ -779,10 +775,19 @@ async def model_request(
     the merged response is appended to history. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
+    Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
+    in workflow code: the capability swaps `request_context.model` for a wrapper that
+    dispatches each segment's `model.request(...)` through its own activity/step/task, so a
+    failed segment retries alone and each suspended response is checkpointed between
+    segments.
+
     Args:
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
+        on_progress: Callback invoked with the merged response after each segment, so the
+            caller can preserve partial progress when a later segment's error is converted
+            to a retry.
 
     Returns:
         The (merged) model response.
@@ -870,6 +875,7 @@ async def model_request(
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
+            on_progress(response)
 
 
 @asynccontextmanager
@@ -881,10 +887,10 @@ async def model_request_stream(
 ) -> AsyncGenerator[models.StreamedResponse]:
     """Open the innermost streaming model request, stitching any continuation chain.
 
-    Used internally by `pydantic_ai.durable_exec._utils.model_request_stream` so the
-    bundled durable-execution capabilities can drain the `StreamedResponse` and
-    (optionally) fire `wrap_run_event_stream` hooks against live events inside
-    the activity/step/task before returning the assembled `ModelResponse`.
+    Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
+    workflow code: the capability swaps `request_context.model` for a wrapper whose
+    `request_stream` drains one segment inside its own activity/step/task and replays its
+    buffered events, so the composite below stitches per-segment replays.
 
     The yielded stream is a composite that stitches the (possibly suspended → complete)
     segments into one continuous stream: it opens a `model.request_stream(...)` per segment
@@ -922,6 +928,7 @@ async def model_request_stream(
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
         )
+        sr._hooks_already_applied = request_context._hooks_already_applied  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
         finally:
@@ -1049,8 +1056,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         wrap_request_context._model_id = ctx.deps.model_id  # pyright: ignore[reportPrivateUsage]
-        # Signal to hooks that the agent loop expects a real event stream —
-        # durability capabilities route through the streaming activity/step/task.
+        # Signal to hooks that the agent loop expects a real event stream.
         wrap_request_context.streaming = True
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
@@ -1215,12 +1221,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
+
             # `model_request` resolves any suspended → complete continuation chain (Anthropic
             # `pause_turn`, OpenAI background mode) and returns the final merged response, so
             # `wrap_model_request` spans the whole chain and `after_model_request` sees just
             # the final response. Continuations are not separate request steps, so usage is
             # committed exactly once by `_finish_handling` → `_append_response`.
-            response = await model_request(req_ctx.model, request_context=req_ctx, run_context=run_context)
+            def on_progress(response: _messages.ModelResponse) -> None:
+                nonlocal _handler_response
+                _handler_response = response
+
+            response = await model_request(
+                req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+            )
             _handler_response = response
             return response
 

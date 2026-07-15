@@ -15,7 +15,6 @@ from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic_ai._agent_graph import model_request, model_request_stream
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
@@ -25,9 +24,7 @@ from pydantic_ai.tools import RunContext
 
 __all__ = [
     'StreamedActivityResult',
-    'model_request',
     'disable_threads',
-    'model_request_stream',
     'process_event_stream',
     'unwrap_model',
 ]
@@ -77,7 +74,8 @@ class StreamedActivityResult:
         the coordination fields.
         """
         request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
-        request_context._buffered_stream_events = self.events  # pyright: ignore[reportPrivateUsage]
+        buffered = request_context._buffered_stream_events  # pyright: ignore[reportPrivateUsage]
+        request_context._buffered_stream_events = [*(buffered or []), *self.events]  # pyright: ignore[reportPrivateUsage]
         return self.response
 
 

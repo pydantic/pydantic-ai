@@ -2,8 +2,8 @@
 
 The Temporal/DBOS/Prefect durability tests need a model that produces a
 `suspended → complete` continuation chain (Anthropic `pause_turn`, OpenAI background
-mode) so they can assert that the whole chain resolves *inside* the durable boundary
-(one activity/step/task). `FunctionModel` can't emit a suspended *streaming* segment,
+mode) so they can assert that each segment resolves in its own durable boundary
+(activity/step/task). `FunctionModel` can't emit a suspended *streaming* segment,
 so this module provides a small scripted model, mirroring the one in
 `tests/models/test_streamed_continuation.py` (the core regression net for the
 continuation loop), extended with call counting, scripted request errors, and a
@@ -87,7 +87,7 @@ class ScriptedContinuationModel(Model):
     `responses` drives the non-streaming path (an `Exception` entry is raised instead of
     returned); `segments` drives the streaming path. `request_calls`/`request_stream_calls`
     count provider calls and `cancelled` records `cancel_suspended_response` teardowns, so
-    tests can assert how many segments ran inside a durable boundary and that a leaked
+    tests can assert how many segments crossed the durable boundary and that a leaked
     server-side job was cancelled there.
     """
 

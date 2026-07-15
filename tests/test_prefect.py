@@ -40,14 +40,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Instrumentation, ProcessEventStream, ResolveModelId, Toolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import ModelResolutionContext, create_async_http_client
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 try:
     from prefect import flow, task
@@ -2101,7 +2101,7 @@ async def test_prefect_durability_event_stream_handler_runs_per_event_task() -> 
 
 
 async def test_prefect_durability_continuation_chain_in_flow() -> None:
-    """A suspended → complete chain resolves inside one Prefect task, as one merged response.
+    """A suspended → complete chain resolves across per-segment Prefect tasks, as one merged response.
 
     Usage is counted once — a continuation isn't a separate request step.
     """
@@ -2138,16 +2138,73 @@ async def test_prefect_durability_continuation_chain_in_flow() -> None:
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # Both segments ran inside the durable boundary.
+    # Each segment ran in its own durable boundary.
     assert model.request_calls == 2
 
 
-async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
-    """A streamed suspended → complete chain is stitched into one stream inside one task.
+async def test_prefect_durability_continuation_usage_limit_cancels_suspended() -> None:
+    """A usage limit tripped between segments cancels the live suspended job in its own task.
 
-    The `event_stream_handler` fires inside the task against the live stitched stream: the
-    second segment's part indices are offset past the first's (no collision), and the final
-    response merges both segments' text with usage summed once.
+    The continuation loop runs flow-side and checks the limit as each segment merges; the
+    provider teardown of the abandoned server-side job is I/O, so it must cross the boundary
+    through the dedicated cancellation task. We assert a `TaskRunContext` is active inside
+    the model's `request` and `cancel_suspended_response`, proving each segment and the
+    teardown ran in their own Prefect tasks rather than inline in the flow, and that the
+    error surfaces to flow code with its real type.
+    """
+    calls_in_task: list[tuple[str, bool]] = []
+
+    class RecordingContinuationModel(ScriptedContinuationModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            calls_in_task.append(('request', TaskRunContext.get() is not None))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            calls_in_task.append(('cancel', TaskRunContext.get() is not None))
+            await super().cancel_suspended_response(response)
+
+    model = RecordingContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='durability_continuation_usage_limit', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+
+    # The over-budget merge was still suspended, so the live job was cancelled before raising.
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert calls_in_task == [('request', True), ('request', True), ('cancel', True)]
+
+
+async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
+    """A streamed suspended → complete chain is stitched across per-segment tasks.
+
+    The `event_stream_handler` fires inside each task against its live segment, and the
+    final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -2191,8 +2248,7 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # The handler saw the stitched stream live inside the task: the second segment's part
-    # continues the index space rather than colliding with the first's.
+    # The construction-time handler sees each live segment inside its task.
     indices = [
         (type(event).__name__, event.index)
         for event in events_received
@@ -2202,8 +2258,8 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
         [
             ('PartStartEvent', 0),
             ('PartDeltaEvent', 0),
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
         ]
     )
     assert model.request_stream_calls == 2

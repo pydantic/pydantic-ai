@@ -159,7 +159,7 @@ Because the model stream is consumed inside the step and only its events are rep
 
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), the entire suspended → complete chain executes within a single model request step: the step returns one merged [`ModelResponse`][pydantic_ai.messages.ModelResponse], usage is recorded once, and a [`message_history`](../message-history.md) ending in a suspended response is resumed inside the step the same way. Note that a long-running background job keeps that one step running for the job's full duration.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
 
 ### Parallel Tool Execution
 

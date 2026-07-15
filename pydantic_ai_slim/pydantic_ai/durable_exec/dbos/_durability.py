@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
 from dbos import DBOS
 
 from pydantic_ai import messages as _messages
+from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -19,13 +21,12 @@ from pydantic_ai.durable_exec._base import BaseDurability
 from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
-    model_request,
-    model_request_stream,
     process_event_stream,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -33,6 +34,79 @@ from pydantic_ai.toolsets import AbstractToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig
+
+
+class _DBOSSegmentModel(WrapperModel):
+    """Dispatches each continuation segment's request through its own DBOS step.
+
+    `DBOSDurability.wrap_model_request` swaps this in for `request_context.model` and runs
+    the innermost handler in workflow code, so the continuation loop checkpoints every
+    suspended segment as a step result while everything else (`profile`, `settings`,
+    `continuation_delay`, ...) is answered by the wrapped workflow-side model.
+    """
+
+    def __init__(
+        self,
+        wrapped: Model,
+        *,
+        request_context: ModelRequestContext,
+        model_id: str | None,
+        run_context: RunContext[Any],
+        event_stream_handler: EventStreamHandler[Any] | None,
+        request_step: Callable[..., Awaitable[ModelResponse]],
+        request_stream_step: Callable[..., Awaitable[StreamedActivityResult]],
+        cancel_suspended_response_step: Callable[..., Awaitable[None]],
+    ):
+        super().__init__(wrapped)
+        self._request_context = request_context
+        self._model_id = model_id
+        self._run_context = run_context
+        self._event_stream_handler = event_stream_handler
+        self._request_step = request_step
+        self._request_stream_step = request_stream_step
+        self._cancel_suspended_response_step = cancel_suspended_response_step
+
+    async def request(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if self._event_stream_handler is not None:
+            result = await self._stream(messages, model_settings, model_request_parameters)
+            return result.apply_to(self._request_context)
+        return await self._request_step(
+            self._model_id, messages, model_settings, model_request_parameters, self._run_context
+        )
+
+    async def _stream(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> StreamedActivityResult:
+        return await self._request_stream_step(
+            self._model_id, messages, model_settings, model_request_parameters, self._run_context
+        )
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[CompletedStreamedResponse]:
+        result = await self._stream(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(
+            result.response,
+            model_request_parameters=model_request_parameters,
+            events=result.events,
+            hooks_already_applied=True,
+        )
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        await self._cancel_suspended_response_step(self._model_id, response, self._run_context)
 
 
 @dataclass(init=False)
@@ -106,6 +180,7 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         # Populated by for_agent when the capability is attached to an agent.
         self._request_step: Any = None
         self._request_stream_step: Any = None
+        self._cancel_suspended_response_step: Any = None
         self._auto_run_workflow: Callable[..., Awaitable[Any]] | None = None
         self._auto_run_sync_workflow: Callable[..., Any] | None = None
 
@@ -155,13 +230,8 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
             run_context: RunContext[Any],
         ) -> ModelResponse:
             model = await bound._resolve_model_for_request(model_id, run_context)
-            request_context = ModelRequestContext(
-                model=model,
-                messages=messages,
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-            )
-            return await model_request(model, request_context=request_context, run_context=run_context)
+            with set_current_run_context(run_context):
+                return await model.request(messages, model_settings, model_request_parameters)
 
         bound._request_step = request_step
 
@@ -180,20 +250,29 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
-            async with model_request_stream(
-                model, request_context=request_context, run_context=run_context
-            ) as streamed_response:
-                # Fire the full capability chain's wrap_run_event_stream hooks against
-                # the live stream inside the DBOS step.
-                events = await process_event_stream(
-                    run_context=run_context,
-                    request_context=request_context,
-                    stream=streamed_response,
-                    handler=event_stream_handler,
-                )
+            with set_current_run_context(run_context):
+                async with model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as streamed_response:
+                    events = await process_event_stream(
+                        run_context=run_context,
+                        request_context=request_context,
+                        stream=streamed_response,
+                        handler=event_stream_handler,
+                    )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
         bound._request_stream_step = request_stream_step
+
+        @DBOS.step(name=f'{bound.name}__model.cancel_suspended_response', **bound._model_step_config)
+        async def cancel_suspended_response_step(
+            model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
+        ) -> None:
+            model = await bound._resolve_model_for_request(model_id, run_context)
+            with set_current_run_context(run_context):
+                await model.cancel_suspended_response(response)
+
+        bound._cancel_suspended_response_step = cancel_suspended_response_step
 
         # --- MCP toolset wrapping ---
         for toolset in agent.toolsets:
@@ -339,30 +418,18 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
         # A model swapped in by an outer capability's `before_model_request`
         # round-trips via `_find_model_id` on `request_context.model`.
         model_id = self._model_id_for_request(ctx, request_context)
-
-        # Use the streaming step when either the agent loop expects an event
-        # stream (per-run/instance handler, or a chain capability that overrides
-        # `wrap_run_event_stream`) OR this capability has its own construction-
-        # time handler that needs to fire inside the step. The streaming step
-        # fires the chain against live events inside the boundary and buffers
-        # events for replay through any per-run handler on the workflow side.
-        if request_context.streaming or self._event_stream_handler is not None:
-            result: StreamedActivityResult = await self._request_stream_step(
-                model_id,
-                request_context.messages,
-                request_context.model_settings,
-                request_context.model_request_parameters,
-                ctx,
-            )
-            return result.apply_to(request_context)
-
-        return await self._request_step(
-            model_id,
-            request_context.messages,
-            request_context.model_settings,
-            request_context.model_request_parameters,
-            ctx,
+        request_context.model = _DBOSSegmentModel(
+            request_context.model,
+            request_context=request_context,
+            model_id=model_id,
+            run_context=ctx,
+            event_stream_handler=self._event_stream_handler,
+            request_step=self._request_step,
+            request_stream_step=self._request_stream_step,
+            cancel_suspended_response_step=self._cancel_suspended_response_step,
         )
+        request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
+        return await handler(request_context)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace MCP leaf toolsets with their DBOS-wrapped versions."""

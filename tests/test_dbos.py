@@ -42,14 +42,14 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -2569,10 +2569,10 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
 
 
 async def test_dbos_durability_continuation_chain_in_workflow(dbos: DBOS) -> None:
-    """A suspended → complete chain resolves inside one DBOS step, as one merged response.
+    """A suspended → complete chain resolves across per-segment DBOS steps, as one merged response.
 
     Usage is counted once (a continuation isn't a separate request step), and the workflow
-    record shows a single model-request step for both segments.
+    record shows one model-request step per segment.
     """
     model = ScriptedContinuationModel(
         responses=[
@@ -2609,19 +2609,60 @@ async def test_dbos_durability_continuation_chain_in_workflow(dbos: DBOS) -> Non
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # Both segments ran inside the durable boundary: two model calls, one step.
+    # Each segment ran in its own durable boundary: two model calls, two steps.
     assert model.request_calls == 2
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
-    assert step_names.count('durability_continuation__model.request') == 1
+    assert step_names.count('durability_continuation__model.request') == 2
+
+
+async def test_dbos_durability_continuation_usage_limit_cancels_suspended(dbos: DBOS) -> None:
+    """A usage limit tripped between segments cancels the live suspended job in its own step.
+
+    The continuation loop runs workflow-side and checks the limit as each segment merges;
+    the provider teardown of the abandoned server-side job is I/O, so it crosses the
+    boundary through the dedicated cancellation step, and the error surfaces to workflow
+    code with its real type.
+    """
+    model = ScriptedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='durability_continuation_usage_limit', capabilities=[DBOSDurability()])
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+            await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    assert model.request_calls == 2
+    # The over-budget merge was still suspended, so the live job was cancelled before raising.
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names.count('durability_continuation_usage_limit__model.request') == 2
+    assert step_names.count('durability_continuation_usage_limit__model.cancel_suspended_response') == 1
 
 
 async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
-    """A streamed suspended → complete chain is stitched into one stream inside one DBOS step.
+    """A streamed suspended → complete chain is stitched across per-segment DBOS steps.
 
-    The `event_stream_handler` fires inside the step against the live stitched stream: the
-    second segment's part indices are offset past the first's (no collision), and the final
-    response merges both segments' text with usage summed once.
+    The `event_stream_handler` fires inside each step against its live segment, and the
+    final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -2667,8 +2708,7 @@ async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DB
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # The handler saw the stitched stream live inside the step: the second segment's part
-    # continues the index space rather than colliding with the first's.
+    # The construction-time handler sees each live segment inside its step.
     indices = [
         (type(event).__name__, event.index)
         for event in events_received
@@ -2678,22 +2718,20 @@ async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DB
         [
             ('PartStartEvent', 0),
             ('PartDeltaEvent', 0),
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
+            ('PartStartEvent', 0),
+            ('PartDeltaEvent', 0),
         ]
     )
     assert model.request_stream_calls == 2
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
-    assert step_names.count('durability_continuation_stream__model.request_stream') == 1
+    assert step_names.count('durability_continuation_stream__model.request_stream') == 2
 
 
 async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> None:
-    """A `message_history` ending in a suspended response resumes inside the DBOS step.
+    """A suspended history tail crosses the first DBOS step boundary.
 
-    The suspended tail crosses the step boundary as the last request message and seeds the
-    continuation loop there, so the run completes the paused turn instead of starting a
-    fresh generation.
+    The workflow-side continuation loop passes the tail as the last request message.
     """
     model = ScriptedContinuationModel(
         responses=[scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4)]
