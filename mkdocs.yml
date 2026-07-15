@@ -118,6 +118,7 @@ nav:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
+      - OpenAI Responses Endpoint: responses.md
 
   - Related Packages:
       - clai: cli.md
@@ -193,6 +194,7 @@ nav:
           - api/ui/ag_ui.md
           - api/ui/base.md
           - api/ui/vercel_ai.md
+          - api/responses.md
           - api/usage.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
