@@ -10,8 +10,9 @@ interactions:
 - direction: received
   data:
     type: error
-    code: server_error
-    message: The server had an error while processing your request.
-    param: null
-    sequence_number: 0
+    status: 400
+    error:
+      code: previous_response_not_found
+      message: Previous response with id 'resp_abc' not found.
+      param: previous_response_id
 synthetic: true

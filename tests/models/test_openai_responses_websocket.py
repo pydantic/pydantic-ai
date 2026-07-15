@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -11,7 +12,8 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import try_import
@@ -22,11 +24,11 @@ with try_import() as imports_successful:
     from websockets.exceptions import ConnectionClosedOK, InvalidStatus, WebSocketException
     from websockets.http11 import Response
 
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .mock_openai import response_message
-    from .websocket_cassettes import ReplayConnect, ReplayWebSocket, WebSocketCassette
+    from .websocket_cassettes import CassetteInteraction, ReplayConnect, ReplayWebSocket, WebSocketCassette
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai/websockets not installed'),
@@ -96,25 +98,6 @@ class _StubWebSocket:
         return None  # pragma: no cover
 
 
-class _StubConnect:
-    """Mimics `websockets.connect` as an awaitable and async context manager."""
-
-    def __init__(self, ws: _StubWebSocket):
-        self._ws = ws
-
-    def __await__(self) -> Any:
-        async def _resolve() -> _StubWebSocket:
-            return self._ws
-
-        return _resolve().__await__()
-
-    async def __aenter__(self) -> _StubWebSocket:
-        return self._ws  # pragma: no cover
-
-    async def __aexit__(self, *args: Any) -> None:
-        pass
-
-
 @pytest.mark.ws_cassette
 async def test_connect_lifecycle(openai_ws_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_ws_model)
@@ -158,6 +141,87 @@ async def test_no_connect_uses_http(openai_model: OpenAIResponsesModel) -> None:
         await _assert_uses_http(openai_model)
 
 
+async def test_child_task_outliving_connect_uses_http(openai_model: OpenAIResponsesModel) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_after_context() -> str:
+        started.set()
+        await release.wait()
+        return (await Agent(openai_model).run('Use HTTP.')).output
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(WebSocketCassette()))
+
+    create = AsyncMock(return_value=_http_text_response())
+    with (
+        patch('websockets.asyncio.client.connect', fake_connect),
+        patch.object(openai_model.client.responses, 'create', create),
+    ):
+        async with openai_model.connect():
+            task = asyncio.create_task(run_after_context())
+            await started.wait()
+
+        release.set()
+        assert await task == 'hello from HTTP'
+
+    create.assert_awaited_once()
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_ws_background_mode_not_supported(openai_model: OpenAIResponsesModel, stream: bool) -> None:
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(WebSocketCassette()))
+
+    agent = Agent(
+        openai_model,
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    )
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            with pytest.raises(UserError, match='`openai_background` is not supported'):
+                if stream:
+                    async with agent.run_stream('Run in the background.'):
+                        pass  # pragma: no cover
+                else:
+                    await agent.run('Run in the background.')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_ws_suspended_response_resumes_over_http(openai_model: OpenAIResponsesModel, stream: bool) -> None:
+    request = ModelRequest(parts=[UserPromptPart(content='Continue.')])
+    suspended = ModelResponse(
+        parts=[],
+        model_name='gpt-4o-mini',
+        provider_name='openai',
+        provider_response_id='resp_background',
+        state='suspended',
+    )
+    settings = OpenAIResponsesModelSettings(openai_background=True)
+    retrieve = AsyncMock(return_value=_http_text_response('resumed over HTTP'))
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(WebSocketCassette()))
+
+    with (
+        patch('websockets.asyncio.client.connect', fake_connect),
+        patch.object(openai_model, '_responses_retrieve', retrieve),
+    ):
+        async with openai_model.connect():
+            if stream:
+                async with openai_model.request_stream(
+                    [request, suspended], settings, ModelRequestParameters()
+                ) as response:
+                    async for _ in response:
+                        pass
+                    assert response.get().parts
+            else:
+                response = await openai_model.request([request, suspended], settings, ModelRequestParameters())
+                assert response.parts
+
+    retrieve.assert_awaited_once_with('resp_background', settings)
+
+
 async def test_ws_invalid_status_raises_model_http_error(openai_model: OpenAIResponsesModel) -> None:
     response = Response(429, 'Too Many Requests', Headers(), body=b'too many requests')
 
@@ -194,8 +258,8 @@ async def test_ws_concurrent_requests_error(openai_model: OpenAIResponsesModel) 
     agent: Agent[None, str] = Agent(openai_model)
     sent = asyncio.Event()
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _StubConnect:
-        return _StubConnect(_StubWebSocket(sent))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(_StubWebSocket(sent))
 
     with patch('websockets.asyncio.client.connect', fake_connect):
         async with openai_model.connect():
@@ -211,8 +275,8 @@ async def test_ws_concurrent_requests_error(openai_model: OpenAIResponsesModel) 
 async def test_ws_send_connection_closed_raises_model_api_error(openai_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_model)
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _StubConnect:
-        return _StubConnect(_StubWebSocket(asyncio.Event(), ConnectionClosedOK(None, None)))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(_StubWebSocket(asyncio.Event(), ConnectionClosedOK(None, None)))
 
     with patch('websockets.asyncio.client.connect', fake_connect):
         async with openai_model.connect():
@@ -223,8 +287,8 @@ async def test_ws_send_connection_closed_raises_model_api_error(openai_model: Op
 async def test_ws_send_websocket_exception_raises_model_api_error(openai_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_model)
 
-    def fake_connect(*args: Any, **kwargs: Any) -> _StubConnect:
-        return _StubConnect(_StubWebSocket(asyncio.Event(), WebSocketException('boom')))
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(_StubWebSocket(asyncio.Event(), WebSocketException('boom')))
 
     with patch('websockets.asyncio.client.connect', fake_connect):
         async with openai_model.connect():
@@ -257,6 +321,70 @@ async def test_ws_simple_text_request(openai_ws_model: OpenAIResponsesModel) -> 
     assert result.usage == RunUsage(requests=1, input_tokens=15, output_tokens=3, details={'reasoning_tokens': 0})
 
 
+async def test_ws_request_forwards_optional_parameters(openai_model: OpenAIResponsesModel) -> None:
+    settings = OpenAIResponsesModelSettings(
+        max_tokens=123,
+        temperature=0.25,
+        top_p=0.75,
+        openai_service_tier='priority',
+        openai_truncation='auto',
+        openai_context_management=[{'type': 'compaction', 'compact_threshold': 2048}],
+        openai_store=False,
+        openai_user='user_123',
+        openai_include_code_execution_outputs=True,
+        openai_include_web_search_sources=True,
+        openai_include_file_search_results=True,
+        openai_logprobs=True,
+        openai_top_logprobs=2,
+        openai_prompt_cache_key='cache_key_123',
+        openai_prompt_cache_retention='24h',
+        openai_conversation_id='conv_123',
+    )
+    expected_request = CassetteInteraction(
+        direction='sent',
+        data={
+            'type': 'response.create',
+            'model': 'gpt-4o-mini',
+            'input': [{'role': 'user', 'content': 'Forward every setting.'}],
+            'conversation': 'conv_123',
+            'truncation': 'auto',
+            'context_management': [{'type': 'compaction', 'compact_threshold': 2048}],
+            'max_output_tokens': 123,
+            'temperature': 0.25,
+            'top_p': 0.75,
+            'service_tier': 'priority',
+            'top_logprobs': 2,
+            'store': False,
+            'user': 'user_123',
+            'include': [
+                'code_interpreter_call.outputs',
+                'web_search_call.action.sources',
+                'file_search_call.results',
+                'message.output_text.logprobs',
+            ],
+            'prompt_cache_key': 'cache_key_123',
+            'prompt_cache_retention': '24h',
+        },
+    )
+    simple = _load_cassette('test_ws_simple_text_request.yaml')
+    cassette = WebSocketCassette(
+        interactions=[expected_request, *(item for item in simple.interactions if item.direction != 'sent')]
+    )
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(cassette))
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            response = await openai_model.request(
+                [ModelRequest(parts=[UserPromptPart(content='Forward every setting.')])],
+                settings,
+                ModelRequestParameters(),
+            )
+
+    assert response.parts
+
+
 @pytest.mark.ws_cassette
 async def test_ws_streamed_text_request(openai_ws_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_ws_model)
@@ -276,8 +404,8 @@ async def test_ws_sequential_requests(openai_ws_model: OpenAIResponsesModel) -> 
         result1 = await agent.run('Say "first"')
         result2 = await agent.run('Say "second"')
 
-    assert result1.output
-    assert result2.output
+    assert result1.output == 'First.'
+    assert result2.output == 'Second.'
 
 
 @pytest.mark.ws_cassette
@@ -338,8 +466,15 @@ async def test_ws_error_event_raises(openai_ws_model: OpenAIResponsesModel) -> N
     agent: Agent[None, str] = Agent(openai_ws_model)
 
     async with openai_ws_model.connect():
-        with pytest.raises(ModelAPIError, match='server had an error'):
+        with pytest.raises(ModelHTTPError) as exc_info:
             await agent.run('trigger an error')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == {
+        'code': 'previous_response_not_found',
+        'message': "Previous response with id 'resp_abc' not found.",
+        'param': 'previous_response_id',
+    }
 
 
 @pytest.mark.ws_cassette
@@ -350,6 +485,79 @@ async def test_ws_error_event_raises_streaming(openai_ws_model: OpenAIResponsesM
         with pytest.raises(ModelAPIError, match='server had an error'):
             async with agent.run_stream('trigger an error'):
                 pass  # pragma: no cover
+
+
+async def test_ws_error_event_leaves_connection_usable(openai_model: OpenAIResponsesModel) -> None:
+    error = _load_cassette('test_ws_error_event_raises.yaml')
+    success = _load_cassette('test_ws_simple_text_request.yaml')
+    cassette = WebSocketCassette(interactions=[*error.interactions, *success.interactions])
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(cassette))
+
+    agent = Agent(openai_model)
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            with pytest.raises(ModelHTTPError):
+                await agent.run('trigger an error')
+            result = await agent.run(_HELLO_PROMPT)
+
+    assert 'hello' in result.output.lower()
+
+
+async def test_ws_connection_limit_error_requires_new_context(openai_model: OpenAIResponsesModel) -> None:
+    cassette = deepcopy(_load_cassette('test_ws_error_event_raises.yaml'))
+    error = cassette.interactions[-1].data['error']
+    error['code'] = 'websocket_connection_limit_reached'
+    error['message'] = 'Create a new websocket connection to continue.'
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(cassette))
+
+    agent = Agent(openai_model)
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            with pytest.raises(ModelHTTPError):
+                await agent.run('trigger an error')
+            with pytest.raises(UserError, match=r'cancelled or failed|unknown state'):
+                await agent.run(_HELLO_PROMPT)
+
+
+@pytest.mark.parametrize('terminal_status', ['failed', 'incomplete'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_ws_terminal_response_leaves_connection_usable(
+    openai_model: OpenAIResponsesModel, terminal_status: str, stream: bool
+) -> None:
+    first = deepcopy(_load_cassette('test_ws_simple_text_request.yaml'))
+    terminal = next(item for item in reversed(first.interactions) if item.data.get('type') == 'response.completed')
+    terminal.data['type'] = f'response.{terminal_status}'
+    terminal.data['response']['status'] = terminal_status
+    if terminal_status == 'failed':
+        terminal.data['response']['error'] = {'code': 'server_error', 'message': 'The response failed.'}
+    else:
+        terminal.data['response']['incomplete_details'] = {'reason': 'max_output_tokens'}
+
+    success = _load_cassette('test_ws_simple_text_request.yaml')
+    cassette = WebSocketCassette(interactions=[*first.interactions, *success.interactions])
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(cassette))
+
+    messages: list[ModelRequest | ModelResponse] = [ModelRequest(parts=[UserPromptPart(content=_HELLO_PROMPT)])]
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            if stream:
+                async with openai_model.request_stream(messages, None, ModelRequestParameters()) as first_response:
+                    async for _ in first_response:
+                        pass
+                assert first_response.get().state == 'complete'
+            else:
+                first_response = await openai_model.request(messages, None, ModelRequestParameters())
+                assert first_response.state == 'complete'
+
+            second_response = await openai_model.request(messages, None, ModelRequestParameters())
+
+    assert second_response.state == 'complete'
 
 
 @pytest.mark.ws_cassette
@@ -378,6 +586,8 @@ async def test_ws_abnormal_close_raises_model_api_error(openai_ws_model: OpenAIR
     async with openai_ws_model.connect():
         with pytest.raises(ModelAPIError, match='closed unexpectedly'):
             await agent.run('hello')
+        with pytest.raises(UserError, match=r'cancelled or failed|unknown state'):
+            await agent.run('hello again')
 
 
 @pytest.mark.ws_cassette
@@ -390,7 +600,7 @@ async def test_ws_abnormal_close_streaming_raises_model_api_error(openai_ws_mode
                 pass  # pragma: no cover
 
 
-@pytest.mark.ws_cassette
+@pytest.mark.ws_cassette(allow_unconsumed=True)
 async def test_ws_stream_cancel(openai_ws_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_ws_model)
 
@@ -403,7 +613,7 @@ async def test_ws_stream_cancel(openai_ws_model: OpenAIResponsesModel) -> None:
             assert result.cancelled
 
 
-@pytest.mark.ws_cassette
+@pytest.mark.ws_cassette(allow_unconsumed=True)
 async def test_ws_poisoned_session_after_early_stream_exit(openai_ws_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_ws_model)
 

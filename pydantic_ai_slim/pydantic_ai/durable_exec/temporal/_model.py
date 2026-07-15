@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -145,11 +145,13 @@ class TemporalModel(WrapperModel):
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
         )(cancel_suspended_response_activity)
 
-    def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise UserError(
-            'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
-            'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
-        )
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
+        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
+            raise UserError(
+                'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
+                'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            )
+        return getattr(self.wrapped, 'connect')(*args, **kwargs)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

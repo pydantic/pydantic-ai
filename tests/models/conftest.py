@@ -72,18 +72,18 @@ def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
 class _RecordingConnect:
     """Mimics `websockets.connect` while wrapping a real connection for recording."""
 
-    def __init__(self, *args: Any, **kwargs: Any):  # pragma: no cover
+    def __init__(self, *args: Any, **kwargs: Any):
         self._args = args
         self._kwargs = kwargs
         self._real: Any = None
         self._recording_ws: RecordingWebSocket | None = None
         self._cassette: WebSocketCassette | None = None
 
-    def with_cassette(self, cassette: WebSocketCassette) -> _RecordingConnect:  # pragma: no cover
+    def with_cassette(self, cassette: WebSocketCassette) -> _RecordingConnect:
         self._cassette = cassette
         return self
 
-    def __await__(self) -> Any:  # pragma: no cover
+    def __await__(self) -> Any:
         async def _resolve() -> RecordingWebSocket:
             assert self._cassette is not None
             self._real = _real_ws_connect(*self._args, **self._kwargs)
@@ -93,10 +93,10 @@ class _RecordingConnect:
 
         return _resolve().__await__()
 
-    async def __aenter__(self) -> RecordingWebSocket:  # pragma: no cover
+    async def __aenter__(self) -> RecordingWebSocket:
         return await self
 
-    async def __aexit__(self, *args: Any) -> None:  # pragma: no cover
+    async def __aexit__(self, *args: Any) -> None:
         if self._recording_ws is not None:
             await self._recording_ws.close()
 
@@ -119,6 +119,11 @@ def openai_ws_model(
             f'Missing WebSocket cassette: {cassette_path}\n'
             'Record with: OPENAI_API_KEY=... uv run pytest --record-mode=once <test> -v'
         )
+    if plan == 'error_unsupported':  # pragma: no cover
+        raise RuntimeError(
+            'WebSocket cassettes do not support `--record-mode=new_episodes`; '
+            'use `--record-mode=rewrite` to replace the cassette.'
+        )
 
     cassette = WebSocketCassette.load(cassette_path) if plan == 'replay' else WebSocketCassette()
     replay_websockets: list[ReplayWebSocket] = []
@@ -138,6 +143,11 @@ def openai_ws_model(
 
     if plan == 'replay':
         assert all(ws.sent_frames_consumed for ws in replay_websockets)
+        node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+        marker = node.get_closest_marker('ws_cassette')
+        allow_unconsumed = bool(marker and marker.kwargs.get('allow_unconsumed'))
+        if not allow_unconsumed:
+            assert all(ws.interactions_consumed for ws in replay_websockets)
 
     if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):  # pragma: no cover
         cassette.dump(cassette_path)

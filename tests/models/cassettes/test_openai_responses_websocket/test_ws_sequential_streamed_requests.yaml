@@ -243,7 +243,7 @@ interactions:
   data:
     type: response.created
     response:
-      id: resp_0b3b0964033862cf0069c5b98f2a4881969f94423a19739e7a
+      id: resp_second_response
       object: response
       created_at: 1774565775
       status: in_progress
@@ -286,7 +286,7 @@ interactions:
   data:
     type: response.in_progress
     response:
-      id: resp_0b3b0964033862cf0069c5b98f2a4881969f94423a19739e7a
+      id: resp_second_response
       object: response
       created_at: 1774565775
       status: in_progress
@@ -329,7 +329,7 @@ interactions:
   data:
     type: response.output_item.added
     item:
-      id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+      id: msg_second_message
       type: message
       status: in_progress
       content: []
@@ -340,7 +340,7 @@ interactions:
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+    item_id: msg_second_message
     output_index: 0
     part:
       type: output_text
@@ -353,7 +353,7 @@ interactions:
     type: response.output_text.delta
     content_index: 0
     delta: Second
-    item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+    item_id: msg_second_message
     logprobs: []
     obfuscation: PbgAQL1tC4p
     output_index: 0
@@ -363,7 +363,7 @@ interactions:
     type: response.output_text.delta
     content_index: 0
     delta: .
-    item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+    item_id: msg_second_message
     logprobs: []
     obfuscation: cUMiWYyLoZ79XIO
     output_index: 0
@@ -372,7 +372,7 @@ interactions:
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+    item_id: msg_second_message
     logprobs: []
     output_index: 0
     sequence_number: 6
@@ -381,7 +381,7 @@ interactions:
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+    item_id: msg_second_message
     output_index: 0
     part:
       type: output_text
@@ -393,7 +393,7 @@ interactions:
   data:
     type: response.output_item.done
     item:
-      id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+      id: msg_second_message
       type: message
       status: completed
       content:
@@ -408,7 +408,7 @@ interactions:
   data:
     type: response.completed
     response:
-      id: resp_0b3b0964033862cf0069c5b98f2a4881969f94423a19739e7a
+      id: resp_second_response
       object: response
       created_at: 1774565775
       status: completed
@@ -422,7 +422,7 @@ interactions:
       max_tool_calls: null
       model: gpt-4o-mini-2024-07-18
       output:
-      - id: msg_0b3b0964033862cf0069c5b98ff18c81968efd5f406c8e1696
+      - id: msg_second_message
         type: message
         status: completed
         content:

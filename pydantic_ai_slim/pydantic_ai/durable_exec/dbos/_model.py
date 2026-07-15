@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any, NoReturn
+from typing import Any
 
 from dbos import DBOS
 
@@ -92,11 +92,13 @@ class DBOSModel(WrapperModel):
 
         self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
 
-    def connect(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise UserError(
-            'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
-            'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
-        )
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
+        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
+            raise UserError(
+                'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
+                'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            )
+        return getattr(self.wrapped, 'connect')(*args, **kwargs)
 
     async def request(
         self,
