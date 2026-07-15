@@ -15,6 +15,35 @@ class _PassthroughTransformer(JsonSchemaTransformer):
         return schema
 
 
+class _InliningTransformer(JsonSchemaTransformer):
+    def __init__(self, schema: dict[str, Any]):
+        super().__init__(schema, prefer_inlined_defs=True)
+
+    def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+        return schema
+
+
+@pytest.mark.parametrize('union_kind', ['anyOf', 'oneOf'])
+def test_inlining_union_def_referenced_twice(union_kind: str):
+    """A union def referenced more than once is inlined in full every time, not just the first.
+
+    Handling a union used to drop the union kind off the definition held in `self.defs`, so every later
+    `$ref` to it inlined `{}`, silently telling the model that anything goes for that field.
+    """
+    union_def = {union_kind: [{'type': 'string'}, {'type': 'integer'}]}
+    result = _InliningTransformer(
+        {
+            'type': 'object',
+            'properties': {'a': {'$ref': '#/$defs/Scalar'}, 'b': {'$ref': '#/$defs/Scalar'}},
+            'required': ['a', 'b'],
+            '$defs': {'Scalar': union_def},
+        }
+    ).walk()
+
+    assert result['properties']['a'] == union_def
+    assert result['properties']['b'] == union_def
+
+
 def test_simplify_nullable_unions():
     """Test the simplify_nullable_unions feature (deprecated, to be removed in v2)."""
 

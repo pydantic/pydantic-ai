@@ -52,7 +52,11 @@ class JsonSchemaTransformer(ABC):
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
-        """Make changes to the schema."""
+        """Make changes to the schema.
+
+        This has to be idempotent: a definition that is both inlined and retained in `$defs` is handled more
+        than once, so `transform(transform(schema))` must equal `transform(schema)`.
+        """
         return schema
 
     def walk(self) -> JsonSchema:
@@ -172,8 +176,9 @@ class JsonSchemaTransformer(ABC):
         if members is None:
             return schema
 
-        # Copy before dropping the union kind: `schema` may be a definition held in `self.defs`,
-        # which must stay intact in case it's retained in `$defs` for recursive schemas.
+        # Copy before dropping the union kind: `schema` may be a definition held in `self.defs`, which has to
+        # stay intact. Dropping it in place would empty that definition for every later use of it: each further
+        # `$ref` to it would inline `{}`, and a recursive one retained in `$defs` would be `{}` as well.
         schema = {k: v for k, v in schema.items() if k != union_kind}
 
         handled = [self._handle(member) for member in members]
