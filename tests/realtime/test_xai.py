@@ -22,12 +22,12 @@ from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     ReconnectedEvent,
     SessionErrorEvent,
     ToolCall,
     Transcript,
 )
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -151,16 +151,18 @@ def test_session_config_no_voice_by_default() -> None:
 
 
 def test_session_config_forwards_model_settings() -> None:
-    settings = ModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
-    config = _model()._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    settings = RealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
+    model = _model(settings=settings)
+    assert model.settings == settings
+    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
     assert config['max_output_tokens'] == 256
     assert config['parallel_tool_calls'] is False
     assert config['tool_choice'] == 'required'
 
 
 def test_session_config_omits_absent_model_settings() -> None:
-    """A truthy `ModelSettings` without the realtime-relevant keys forwards none of them."""
-    config = _model()._session_config('hi', None, ModelSettings(temperature=0.5))  # pyright: ignore[reportPrivateUsage]
+    """Absent realtime settings are omitted from the session config."""
+    config = _model()._session_config('hi', None, RealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert 'max_output_tokens' not in config
     assert 'parallel_tool_calls' not in config
     assert 'tool_choice' not in config

@@ -193,7 +193,75 @@ class ModelRequestContext:
     model_request_parameters: ModelRequestParameters
 
 
-class Model(ABC, Generic[InterfaceClient]):
+class AbstractModel(ABC):
+    """Shared identity for request-response and realtime models."""
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """The model name."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def system(self) -> str:
+        """The model provider, ex: openai.
+
+        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
+        so should use well-known values listed in
+        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
+        when applicable.
+        """
+        raise NotImplementedError()
+
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model name in `'provider:model_name'` format."""
+        return f'{self.system}:{self.model_name}'
+
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model.
+
+        Handles common patterns:
+        - gpt-5 -> GPT 5
+        - claude-sonnet-4-5 -> Claude Sonnet 4.5
+        - gemini-2.5-pro -> Gemini 2.5 Pro
+        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+        """
+        label = self.model_name
+        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+        if '/' in label:
+            label = label.split('/')[-1]
+
+        parts = label.split('-')
+        result: list[str] = []
+        for i, part in enumerate(parts):
+            if i == 0 and part.lower() == 'gpt':
+                result.append(part.upper())
+            elif part.replace('.', '').isdigit():
+                if result and result[-1].replace('.', '').isdigit():
+                    result[-1] = f'{result[-1]}.{part}'
+                else:
+                    result.append(part)
+            else:
+                result.append(part.capitalize())
+        return ' '.join(result)
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context."""
+
+
+class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
     _provider: Provider[InterfaceClient]
@@ -523,48 +591,6 @@ class Model(ABC, Generic[InterfaceClient]):
         ]
         return replace(params, native_tools=supported_natives, function_tools=function_tools)
 
-    @property
-    @abstractmethod
-    def model_name(self) -> str:
-        """The model name."""
-        raise NotImplementedError()
-
-    @property
-    def model_id(self) -> str:
-        """The fully qualified model name in `'provider:model_name'` format."""
-        return f'{self.system}:{self.model_name}'
-
-    @property
-    def label(self) -> str:
-        """Human-friendly display label for the model.
-
-        Handles common patterns:
-        - gpt-5 -> GPT 5
-        - claude-sonnet-4-5 -> Claude Sonnet 4.5
-        - gemini-2.5-pro -> Gemini 2.5 Pro
-        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
-        """
-        label = self.model_name
-        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
-        if '/' in label:
-            label = label.split('/')[-1]
-
-        parts = label.split('-')
-        result: list[str] = []
-
-        for i, part in enumerate(parts):
-            if i == 0 and part.lower() == 'gpt':
-                result.append(part.upper())
-            elif part.replace('.', '').isdigit():
-                if result and result[-1].replace('.', '').isdigit():
-                    result[-1] = f'{result[-1]}.{part}'
-                else:
-                    result.append(part)
-            else:
-                result.append(part.capitalize())
-
-        return ' '.join(result)
-
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of native tool types this model class can handle.
@@ -614,18 +640,6 @@ class Model(ABC, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
-
-    @property
-    @abstractmethod
-    def system(self) -> str:
-        """The model provider, ex: openai.
-
-        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
-        so should use well-known values listed in
-        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
-        when applicable.
-        """
-        raise NotImplementedError()
 
     @property
     def base_url(self) -> str | None:

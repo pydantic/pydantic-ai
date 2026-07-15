@@ -19,7 +19,7 @@ from .exceptions import UserError
 if TYPE_CHECKING:
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
-    from .models import Model
+    from .models import AbstractModel
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -38,8 +38,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     deps: RunContextAgentDepsT
     """Dependencies for the agent."""
-    model: Model
-    """The model used in this run."""
+    model: AbstractModel
+    """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)

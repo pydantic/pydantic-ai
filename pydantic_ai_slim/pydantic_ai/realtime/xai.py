@@ -41,13 +41,13 @@ from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..native_tools import AbstractNativeTool
 from ..providers import infer_provider
-from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ._base import (
     KnownRealtimeTranscriptionModelName,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     ReconnectPolicy,
     inject_trace_context,
 )
@@ -136,6 +136,7 @@ class XaiRealtimeModel(RealtimeModel):
 
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     voice: str | None = None
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
@@ -162,6 +163,10 @@ class XaiRealtimeModel(RealtimeModel):
         return self.model
 
     @property
+    def system(self) -> str:
+        return 'xai'
+
+    @property
     def _resolved_transcription_model(self) -> str | None:
         """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
         return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
@@ -180,7 +185,7 @@ class XaiRealtimeModel(RealtimeModel):
         )
 
     def _session_config(
-        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: ModelSettings | None
+        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: RealtimeModelSettings | None
     ) -> dict[str, Any]:
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
@@ -212,7 +217,7 @@ class XaiRealtimeModel(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[XaiRealtimeConnection]:
         # The `model` query parameter is required: without it the server silently falls back to a default.

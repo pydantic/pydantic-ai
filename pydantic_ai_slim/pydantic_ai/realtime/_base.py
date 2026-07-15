@@ -31,8 +31,9 @@ from ..messages import (
     PartStartEvent,
     UserPromptPart,
 )
+from ..models import AbstractModel
 from ..native_tools import AbstractNativeTool
-from ..settings import ModelSettings
+from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -48,6 +49,30 @@ Retained audio is stored on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]'
 `audio` as raw PCM [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Alignment between retained
 audio and its transcript is approximate.
 """
+
+
+class RealtimeModelSettings(TypedDict, total=False):
+    """Settings to configure a realtime model session.
+
+    Includes only settings which are supported by all realtime model providers; providers with
+    additional generation parameters extend it, e.g.
+    [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
+    """
+
+    max_tokens: int
+    """The maximum number of tokens to generate per response before stopping."""
+
+    parallel_tool_calls: bool
+    """Whether to allow parallel tool calls."""
+
+    tool_choice: ToolChoice
+    """Control which function tools the model can use.
+
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation.
+    Restrictions that realtime providers can't express are dropped: OpenAI and xAI support
+    `'auto'`/`'none'`/`'required'` and a single-tool list, but not multi-tool lists or
+    [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput].
+    """
 
 
 # Input content types (fed into the connection via `send`).
@@ -516,12 +541,16 @@ class RealtimeConnection(ABC):
         return True
 
 
-class RealtimeModel(ABC):
+class RealtimeModel(AbstractModel):
     """Abstract base class for realtime model providers.
 
-    Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model
-    opens a persistent bidirectional connection for streaming content in and out.
+    [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] and the request-response
+    [`Model`][pydantic_ai.models.Model] share [`AbstractModel`][pydantic_ai.models.AbstractModel].
+    A realtime model opens a persistent bidirectional connection for streaming content in and out.
     """
+
+    settings: RealtimeModelSettings | None = None
+    """Model settings used as defaults for realtime sessions."""
 
     @abstractmethod
     def connect(
@@ -530,7 +559,7 @@ class RealtimeModel(ABC):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         """Open a connection to the realtime model.

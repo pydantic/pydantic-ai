@@ -27,6 +27,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     RateLimit,
     RateLimitsEvent,
+    RealtimeModelSettings,
     ReconnectedEvent,
     SessionErrorEvent,
     SessionUsageEvent,
@@ -46,7 +47,7 @@ from pydantic_ai.realtime.openai import (
     OpenAIRealtimeModel,
     map_event,
 )
-from pydantic_ai.settings import ModelSettings, ToolOrOutput
+from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -394,29 +395,29 @@ def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
 
 
 def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
-    model = OpenAIRealtimeModel()
-    settings = ModelSettings(parallel_tool_calls=True, tool_choice='required', temperature=0.5)
+    settings = RealtimeModelSettings(parallel_tool_calls=True, tool_choice='required')
+    model = OpenAIRealtimeModel(settings=settings)
+    assert model.settings == settings
     config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
     assert config['parallel_tool_calls'] is True
     assert config['tool_choice'] == 'required'
-    assert 'temperature' not in config  # GA realtime has no temperature field
 
 
 def test_session_config_tool_choice_single_function() -> None:
     model = OpenAIRealtimeModel()
-    config = model._session_config('hi', None, ModelSettings(tool_choice=['get_weather']))  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, RealtimeModelSettings(tool_choice=['get_weather']))  # pyright: ignore[reportPrivateUsage]
     assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
 
 
 def test_session_config_tool_choice_multi_tool_dropped() -> None:
     model = OpenAIRealtimeModel()
-    config = model._session_config('hi', None, ModelSettings(tool_choice=['a', 'b']))  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, RealtimeModelSettings(tool_choice=['a', 'b']))  # pyright: ignore[reportPrivateUsage]
     assert 'tool_choice' not in config  # realtime can't express a multi-tool restriction
 
 
 def test_session_config_tool_choice_tool_or_output_dropped() -> None:
     model = OpenAIRealtimeModel()
-    settings = ModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
+    settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
     config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
     assert 'tool_choice' not in config  # ToolOrOutput restriction isn't expressible in realtime
 
@@ -1003,7 +1004,7 @@ async def test_connect_applies_max_tokens_without_temperature(monkeypatch: pytes
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x', model_settings=ModelSettings(max_tokens=256)):
+    async with model.connect(instructions='x', model_settings=RealtimeModelSettings(max_tokens=256)):
         pass
     session = json.loads(ws.sent[0])['session']
     assert session['max_output_tokens'] == 256

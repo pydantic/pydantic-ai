@@ -19,6 +19,7 @@ from pydantic_ai.realtime import (
     ImageInput,
     InputTranscript,
     NativeToolParts,
+    RealtimeModelSettings,
     ReconnectedEvent,
     SessionErrorEvent,
     SessionUsageEvent,
@@ -31,7 +32,6 @@ from pydantic_ai.realtime import (
     TurnCompleteEvent,
     WebSource,
 )
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -41,7 +41,6 @@ with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
     from google.genai.live import AsyncSession, ConnectionClosed
 
-    from pydantic_ai.models.google import GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
@@ -49,6 +48,7 @@ with try_import() as imports_successful:
         ContextCompression,
         GoogleRealtimeConnection,
         GoogleRealtimeModel,
+        GoogleRealtimeModelSettings,
         MultiSpeaker,
         ReconnectPolicy,
     )
@@ -237,9 +237,12 @@ def test_profile() -> None:
 
 
 def test_config_full() -> None:
-    model = GoogleRealtimeModel(voice='Puck', vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400))
+    settings = GoogleRealtimeModelSettings(max_tokens=256, temperature=0.5, top_p=0.9)
+    model = GoogleRealtimeModel(
+        voice='Puck', vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400), settings=settings
+    )
+    assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
-    settings = ModelSettings(max_tokens=256, temperature=0.5, top_p=0.9)
     config = model._config('Be nice', tools, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert model.model_name == 'gemini-live-2.5-flash'
@@ -272,7 +275,7 @@ def test_config_minimal_text_no_transcription_no_vad() -> None:
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
-    config = GoogleRealtimeModel()._config('hi', None, ModelSettings(presence_penalty=0.1))  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config('hi', None, RealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert config.max_output_tokens is None
     assert config.temperature is None
     assert config.top_p is None
@@ -818,7 +821,7 @@ def test_session_resumption_passes_handle() -> None:
 
 
 def test_generation_params_from_model_settings() -> None:
-    settings = GoogleModelSettings(
+    settings = GoogleRealtimeModelSettings(
         temperature=0.3,
         top_p=0.8,
         top_k=20,

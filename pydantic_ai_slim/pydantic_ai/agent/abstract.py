@@ -57,7 +57,7 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
-    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeSession
+    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
 
 
 T = TypeVar('T')
@@ -1524,7 +1524,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,

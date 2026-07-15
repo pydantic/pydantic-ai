@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import AudioRetention, RealtimeModel, RealtimeSession
+    from ..realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -182,30 +182,6 @@ def _normalize_agent_retry_overrides(
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-
-
-class _RealtimeModelStub(models.Model):
-    """Placeholder [`Model`][pydantic_ai.models.Model] used as `RunContext.model` in realtime sessions.
-
-    Realtime sessions don't issue text-model requests, but `RunContext` requires a model, so tools
-    that read `ctx.model` get this stub when the agent has no text model configured.
-    """
-
-    @property
-    def model_name(self) -> str:
-        return 'realtime-session-stub'
-
-    @property
-    def system(self) -> str:
-        return 'realtime'
-
-    async def request(
-        self,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: models.ModelRequestParameters,
-    ) -> _messages.ModelResponse:
-        raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
 @dataclasses.dataclass
@@ -2686,7 +2662,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
@@ -2735,7 +2711,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             model: The realtime model to connect to.
             deps: Dependencies passed to tool functions.
-            model_settings: Optional settings forwarded to the realtime model.
+            model_settings: Optional realtime settings overriding the model's defaults for this session.
             instructions: Additional instructions for this session, combined with the agent's
                 instructions. Dynamic instruction functions (`@agent.instructions`) are evaluated
                 once at connect time (there is no per-request rebuild in a realtime session).
@@ -2769,7 +2745,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
-            model=self._get_model(None) if self._model else _RealtimeModelStub(),
+            model=model,
             usage=usage if usage is not None else _usage.RunUsage(),
             model_settings=None,
             conversation_id=conversation_id,
@@ -2813,16 +2789,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_context.instrumentation_version = session_instrumentation_settings.version
         run_context.metadata = self._get_metadata(run_context, metadata)
 
-        # Agent-level model settings selection: an active `Agent.override(model_settings=...)` replaces
-        # both the agent default and this call's `model_settings`; otherwise the call's settings layer on
-        # top. The layers are merged (and any callables resolved) after `for_run` below, so a callable
-        # observes the resolved capabilities — matching the graph run.
-        model_settings_override = self._override_model_settings.get()
-        agent_model_settings = (
-            model_settings_override.value if model_settings_override is not None else self.model_settings
-        )
-        run_model_settings = model_settings if model_settings_override is None else None
-
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
         # the shared helper. Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, no
         # deferred loader (`inject_deferred_loader=False`), no root-capability override, once-only model
@@ -2839,11 +2805,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_capability = resolved_caps.run_capability
         run_context.capabilities = resolved_caps.capabilities
 
-        # Layer agent -> capability -> run model settings once (no per-request rebuild), via the same
-        # helper `iter` uses. A realtime model carries no base settings.
-        effective_model_settings = _layer_model_settings(
-            run_context, (agent_model_settings, resolved_caps.model_settings, run_model_settings)
-        )
+        # Regular agent and capability model settings intentionally do not apply to realtime sessions.
+        # A future capability hook dedicated to realtime settings can add that behavior deliberately.
+        effective_model_settings: RealtimeModelSettings | None = model.settings.copy() if model.settings else None
+        if model_settings:
+            if effective_model_settings is None:
+                effective_model_settings = model_settings.copy()
+            else:
+                effective_model_settings.update(model_settings)
 
         # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
         # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime. The

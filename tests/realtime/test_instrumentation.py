@@ -34,13 +34,13 @@ from pydantic_ai.realtime import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     RealtimeSession,
     SessionUsageEvent,
     ToolCall,
     Transcript,
     TurnCompleteEvent,
 )
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -75,6 +75,10 @@ class _Model(RealtimeModel):
         return 'gpt-realtime'
 
     @property
+    def system(self) -> str:
+        return 'openai'
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,
@@ -92,7 +96,7 @@ class _Model(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[RealtimeConnection]:
         yield self._connection

@@ -27,6 +27,7 @@ from pydantic_ai.realtime import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     TurnCompleteEvent,
 )
 from pydantic_ai.settings import ModelSettings
@@ -49,16 +50,26 @@ class _Connection(RealtimeConnection):
 class _RecordingModel(RealtimeModel):
     """A realtime model that records the arguments `realtime_session` passes to `connect`."""
 
-    def __init__(self, *, supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset()) -> None:
+    def __init__(
+        self,
+        *,
+        settings: RealtimeModelSettings | None = None,
+        supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
+    ) -> None:
+        self.settings = settings
         self._supported = supported_native_tools
         self.instructions: str | None = None
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
-        self.model_settings: ModelSettings | None = None
+        self.model_settings: RealtimeModelSettings | None = None
 
     @property
     def model_name(self) -> str:
         return 'gpt-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'openai'
 
     @property
     def profile(self) -> RealtimeModelProfile:
@@ -78,7 +89,7 @@ class _RecordingModel(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[RealtimeConnection]:
         self.instructions = instructions
@@ -109,18 +120,22 @@ async def test_capability_instructions_reach_session() -> None:
     assert 'Speak like a pirate.' in model.instructions
 
 
-async def test_capability_model_settings_reach_session() -> None:
-    """A capability's `get_model_settings` is folded into the session's effective settings."""
+async def test_regular_settings_do_not_reach_session() -> None:
+    """Regular agent and capability settings do not leak into realtime settings."""
 
     class SettingsCap(AbstractCapability[None]):
         def get_model_settings(self) -> ModelSettings:
             return ModelSettings(temperature=0.3)
 
-    agent = Agent()
-    model = _RecordingModel()
-    await _drain(agent, model, capabilities=[SettingsCap()])
-    assert model.model_settings is not None
-    assert model.model_settings.get('temperature') == 0.3
+    agent = Agent(model_settings=ModelSettings(temperature=0.1))
+    model = _RecordingModel(settings=RealtimeModelSettings(max_tokens=100, parallel_tool_calls=False))
+    await _drain(
+        agent,
+        model,
+        capabilities=[SettingsCap()],
+        model_settings=RealtimeModelSettings(parallel_tool_calls=True),
+    )
+    assert model.model_settings == RealtimeModelSettings(max_tokens=100, parallel_tool_calls=True)
 
 
 async def test_capability_toolset_reaches_session() -> None:

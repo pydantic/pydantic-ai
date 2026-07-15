@@ -30,7 +30,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -46,7 +45,7 @@ from ._utils import StepConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
-    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeSession
+    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
@@ -1072,7 +1071,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,

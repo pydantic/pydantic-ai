@@ -25,7 +25,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -41,7 +40,7 @@ from ._toolset import prefectify_toolset
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
-    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeSession
+    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
 
 from ._types import TaskConfig, default_task_config
 
@@ -1011,7 +1010,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,

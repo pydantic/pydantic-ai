@@ -2198,6 +2198,10 @@ class _FakeRealtimeModel(RealtimeModel):
         return 'fake-realtime'
 
     @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,
@@ -3894,6 +3898,8 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
+    # `RunContext.model` is an `AbstractModel`; narrow to a request-response model to read its profile.
+    assert isinstance(ctx.model, _BuiltinToolModel)
     if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()

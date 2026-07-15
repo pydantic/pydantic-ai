@@ -35,7 +35,6 @@ from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..native_tools import AbstractNativeTool
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -51,6 +50,7 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
@@ -377,6 +377,7 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     voice: str | None = None
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
@@ -407,6 +408,10 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self.model
 
     @property
+    def system(self) -> str:
+        return self._provider.name
+
+    @property
     def _resolved_transcription_model(self) -> str | None:
         """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
         return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
@@ -423,7 +428,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         )
 
     def _session_config(
-        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: ModelSettings | None
+        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: RealtimeModelSettings | None
     ) -> dict[str, Any]:
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
@@ -464,7 +469,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'

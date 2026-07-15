@@ -204,10 +204,12 @@ Session behaviour is configured on the provider model. For OpenAI, on
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]:
 
 ```python {test="skip" lint="skip"}
+from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, SemanticVAD
 
 model = OpenAIRealtimeModel(
     'gpt-realtime',
+    settings=RealtimeModelSettings(max_tokens=2_000, parallel_tool_calls=True),
     voice='alloy',
     turn_detection=SemanticVAD(eagerness='high'),  # how eagerly the model takes its turn
     input_noise_reduction='near_field',            # tuned for a headset mic
@@ -215,22 +217,41 @@ model = OpenAIRealtimeModel(
 )
 ```
 
-`tool_choice`, `parallel_tool_calls`, and `max_tokens` (forwarded as the session's
-`max_output_tokens`) are read from `model_settings` passed to `realtime_session`. (GA realtime
-sessions have no `temperature`, so it is not forwarded.)
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] contains the settings shared by
+all realtime providers: `tool_choice`, `parallel_tool_calls`, and `max_tokens`. Set defaults on the
+model as above, then override individual values for one session:
+
+```python {test="skip" lint="skip"}
+async with agent.realtime_session(
+    model=model,
+    model_settings=RealtimeModelSettings(max_tokens=4_000),
+) as session:
+    ...
+```
+
+The agent's regular `model_settings` and capability `get_model_settings()` contributions do not apply
+to realtime sessions. OpenAI and xAI realtime sessions do not accept `temperature`.
 
 ### Gemini configuration
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] exposes Gemini Live's knobs
-as optional fields, grouped by concern. Generation parameters come from `model_settings` (consistent
-with the rest of pydantic-ai), so `temperature`, `top_p`, `top_k`, `max_tokens`, `seed`,
-`google_thinking_config`, and `google_video_resolution` all flow through.
+as optional fields, grouped by concern. Google-only generation parameters use
+[`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings], which extends
+the shared settings with `temperature`, `top_p`, `top_k`, `seed`, `google_thinking_config`, and
+`google_video_resolution`.
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime.google import AutomaticVAD, ContextCompression, GoogleRealtimeModel, MultiSpeaker
+from pydantic_ai.realtime.google import (
+    AutomaticVAD,
+    ContextCompression,
+    GoogleRealtimeModel,
+    GoogleRealtimeModelSettings,
+    MultiSpeaker,
+)
 
 model = GoogleRealtimeModel(
     'gemini-live-2.5-flash-native-audio',
+    settings=GoogleRealtimeModelSettings(temperature=0.7, top_p=0.9),
     voice='Puck',
     language_code='en-US',                              # output language
     affective_dialog=True,                              # emotion-aware delivery (native-audio)
@@ -275,8 +296,8 @@ model = XaiRealtimeModel(
 )
 ```
 
-`tool_choice`, `parallel_tool_calls`, and `max_tokens` are read from `model_settings` passed to
-`realtime_session`. Grok Voice reports the input transcript as cumulative snapshots that can
+The shared realtime settings can be configured on the model or passed to `realtime_session`. Grok
+Voice reports the input transcript as cumulative snapshots that can
 retroactively correct earlier text, so live partials are not streamed — the transcript is surfaced at
 the end of each user turn.
 
@@ -590,7 +611,7 @@ ones that are specific to the request-response graph (faking them would be misle
 
 | `run` / `iter` parameter | In `realtime_session`? |
 | --- | --- |
-| `deps`, `model_settings` | ✅ same |
+| `deps`, `model_settings` | ✅ realtime-specific settings; regular agent/capability settings do not apply |
 | `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
 | `toolsets` | ✅ extra toolsets for the session |
 | `capabilities` | ⚠️ **setup + tool hooks only** — see [Capabilities](#capabilities) below |
@@ -635,10 +656,11 @@ stages have nothing to fire on and are **silently skipped**.
 
 What a capability contributes to a session:
 
-- **Setup** — its toolsets, native (built-in) tools, instructions, and model settings are applied when
+- **Setup** — its toolsets, native (built-in) tools, and instructions are applied when
   the session connects, and its `for_run` runs, resolved through the same
   `Agent._resolve_run_capabilities` as a graph run. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
   is wired in exactly as for `run`/`iter` (see [Observability](#observability-with-logfire)).
+  Regular capability model settings intentionally do not apply to realtime sessions.
 - **Tool hooks** — every tool call routes through the same tool manager as `run`/`iter`, so
   `prepare_tools`, the `tool_validate` hooks (`before`/`after`/`wrap`/`on_error`), and the
   `tool_execute` hooks (`before`/`after`/`wrap`/`on_error`) all run. This is where guards, argument

@@ -51,7 +51,6 @@ from ..models.google import (
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._base import (
@@ -65,6 +64,7 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     ReconnectedEvent,
     ReconnectPolicy,
     SessionErrorEvent,
@@ -81,6 +81,29 @@ from ._base import (
     reconnect_with_backoff,
     user_prompt_text,
 )
+
+
+class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
+    """Settings used for a Gemini Live session."""
+
+    temperature: float
+    """Amount of randomness injected into the response."""
+
+    top_p: float
+    """Nucleus sampling probability mass."""
+
+    top_k: int
+    """Only sample from the top K options for each subsequent token."""
+
+    seed: int
+    """The random seed to use for the session."""
+
+    google_thinking_config: genai_types.ThinkingConfigDict
+    """The thinking configuration to use for the model."""
+
+    google_video_resolution: genai_types.MediaResolution
+    """The video resolution to use for the model."""
+
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
@@ -359,6 +382,7 @@ class GoogleRealtimeModel(RealtimeModel):
 
     model: str = 'gemini-live-2.5-flash'
     provider: InitVar[Provider[Client] | str] = 'google'
+    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     voice: str | None = None
     language_code: str | None = None
     multi_speaker: MultiSpeaker | None = None
@@ -390,6 +414,10 @@ class GoogleRealtimeModel(RealtimeModel):
     @property
     def model_name(self) -> str:
         return self.model
+
+    @property
+    def system(self) -> str:
+        return self._provider.name
 
     @property
     def profile(self) -> RealtimeModelProfile:
@@ -458,31 +486,32 @@ class GoogleRealtimeModel(RealtimeModel):
             automatic_activity_detection=detection, activity_handling=activity, turn_coverage=coverage
         )
 
-    def _apply_generation(self, config: genai_types.LiveConnectConfig, model_settings: ModelSettings | None) -> None:
+    def _apply_generation(
+        self, config: genai_types.LiveConnectConfig, model_settings: GoogleRealtimeModelSettings | None
+    ) -> None:
         """Apply generation params from `model_settings` (base keys + Google-specific ones)."""
         if not model_settings:
             return
-        settings = cast('dict[str, Any]', model_settings)
-        if (max_tokens := settings.get('max_tokens')) is not None:
+        if (max_tokens := model_settings.get('max_tokens')) is not None:
             config.max_output_tokens = max_tokens
-        if (temperature := settings.get('temperature')) is not None:
+        if (temperature := model_settings.get('temperature')) is not None:
             config.temperature = temperature
-        if (top_p := settings.get('top_p')) is not None:
+        if (top_p := model_settings.get('top_p')) is not None:
             config.top_p = top_p
-        if (top_k := settings.get('top_k')) is not None:
+        if (top_k := model_settings.get('top_k')) is not None:
             config.top_k = top_k
-        if (seed := settings.get('seed')) is not None:
+        if (seed := model_settings.get('seed')) is not None:
             config.seed = seed
-        if (thinking := settings.get('google_thinking_config')) is not None:
+        if (thinking := model_settings.get('google_thinking_config')) is not None:
             config.thinking_config = genai_types.ThinkingConfig(**thinking)
-        if (resolution := settings.get('google_video_resolution')) is not None:
+        if (resolution := model_settings.get('google_video_resolution')) is not None:
             config.media_resolution = resolution
 
     def _config(
         self,
         instructions: str,
         tools: list[ToolDefinition] | None,
-        model_settings: ModelSettings | None,
+        model_settings: RealtimeModelSettings | None,
         *,
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
@@ -520,7 +549,7 @@ class GoogleRealtimeModel(RealtimeModel):
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
         if genai_tools:
             config.tools = genai_tools
-        self._apply_generation(config, model_settings)
+        self._apply_generation(config, cast('GoogleRealtimeModelSettings | None', model_settings))
         if self.config_overrides:
             for key, value in self.config_overrides.items():
                 setattr(config, key, value)
@@ -533,7 +562,7 @@ class GoogleRealtimeModel(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client

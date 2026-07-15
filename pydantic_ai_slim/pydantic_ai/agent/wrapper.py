@@ -29,7 +29,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
-    from ..realtime import AudioRetention, RealtimeModel, RealtimeSession
+    from ..realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -295,7 +295,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,

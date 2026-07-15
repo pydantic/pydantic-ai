@@ -40,6 +40,7 @@ intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sendi
 | Object | Role |
 | --- | --- |
 | [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] | Provider ABC; `connect()` opens a connection. |
+| [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
 | [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic (sync/background) tool dispatch. |
 | [`ToolRunner`][pydantic_ai.realtime.ToolRunner] | Async callable a session uses to execute a tool by name. |
@@ -115,7 +116,7 @@ fields — turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.Automati
 `activity_handling`/`turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
 long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression], and resilience via
 session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. Generation
-parameters are read from `model_settings`.
+parameters use [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
 
 ::: pydantic_ai.realtime.google
 

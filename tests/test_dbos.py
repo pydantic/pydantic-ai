@@ -975,6 +975,10 @@ class _FakeRealtimeModel(RealtimeModel):
         return 'fake-realtime'
 
     @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,

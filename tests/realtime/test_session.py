@@ -51,6 +51,7 @@ from pydantic_ai.realtime import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     RealtimeSession,
     SessionErrorEvent,
     SessionUsageEvent,
@@ -132,18 +133,29 @@ class FakeRealtimeConnection(RealtimeConnection):
 class FakeRealtimeModel(RealtimeModel):
     """A model that yields a pre-built connection and records connect arguments."""
 
-    def __init__(self, connection: FakeRealtimeConnection, *, profile: RealtimeModelProfile | None = None) -> None:
+    def __init__(
+        self,
+        connection: FakeRealtimeConnection,
+        *,
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfile | None = None,
+    ) -> None:
         self._connection = connection
+        self.settings = settings
         self._profile = profile or _profile()
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
-        self.last_model_settings: ModelSettings | None = None
+        self.last_model_settings: RealtimeModelSettings | None = None
         self.last_messages: Sequence[ModelMessage] | None = None
 
     @property
     def model_name(self) -> str:
         return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
 
     @property
     def profile(self) -> RealtimeModelProfile:
@@ -156,7 +168,7 @@ class FakeRealtimeModel(RealtimeModel):
         instructions: str,
         tools: list[ToolDefinition] | None = None,
         native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: RealtimeModelSettings | None = None,
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[FakeRealtimeConnection]:
         self.last_instructions = instructions
@@ -1520,7 +1532,7 @@ async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:
     assert result.part.content == 'deps=alice'
 
 
-async def test_agent_realtime_session_stub_model_visible_to_tools() -> None:
+async def test_agent_realtime_session_model_visible_to_tools() -> None:
     agent: Agent[None, str] = Agent()
     seen_name: str | None = None
 
@@ -1537,12 +1549,12 @@ async def test_agent_realtime_session_stub_model_visible_to_tools() -> None:
     async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
 
-    assert seen_name == 'realtime-session-stub'
+    assert seen_name == 'fake-realtime'
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert result.part.content == 'system=realtime'
+    assert result.part.content == 'system=fake'
 
 
-async def test_agent_realtime_session_uses_text_model_when_set() -> None:
+async def test_agent_realtime_session_uses_realtime_model_when_text_model_set() -> None:
     agent: Agent[None, str] = Agent('test')
     seen_system: str | None = None
 
@@ -1558,7 +1570,7 @@ async def test_agent_realtime_session_uses_text_model_when_set() -> None:
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model) as session:
         _ = [e async for e in session]
-    assert seen_system != 'realtime'
+    assert seen_system == 'fake'
 
 
 async def test_agent_realtime_session_background_tools_end_to_end() -> None:
@@ -1590,32 +1602,33 @@ async def test_agent_realtime_session_forwards_model_settings() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
-    settings = ModelSettings(temperature=0.5)
+    settings = RealtimeModelSettings(max_tokens=50)
     async with agent.realtime_session(model=model, model_settings=settings) as session:
         _ = [e async for e in session]
     assert model.last_model_settings == settings
 
 
-async def test_agent_realtime_session_merges_agent_and_call_model_settings() -> None:
-    """Call-time `model_settings` layer over the agent-level default, mirroring `run`/`iter`."""
+async def test_agent_realtime_session_merges_model_and_call_settings() -> None:
+    """Call-time realtime settings override the model defaults key by key."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1, max_tokens=100))
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
-    model = FakeRealtimeModel(conn)
-    async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
+    model = FakeRealtimeModel(conn, settings=RealtimeModelSettings(max_tokens=100, parallel_tool_calls=False))
+    async with agent.realtime_session(
+        model=model, model_settings=RealtimeModelSettings(parallel_tool_calls=True)
+    ) as session:
         _ = [e async for e in session]
-    assert model.last_model_settings == ModelSettings(temperature=0.5, max_tokens=100)
+    assert model.last_model_settings == RealtimeModelSettings(max_tokens=100, parallel_tool_calls=True)
 
 
-async def test_agent_realtime_session_applies_model_settings_override() -> None:
-    """`Agent.override(model_settings=...)` reaches the realtime connection, mirroring `run`/`iter`."""
+async def test_agent_realtime_session_ignores_regular_model_settings_override() -> None:
+    """`Agent.override(model_settings=...)` does not affect realtime settings."""
     agent: Agent[None, str] = Agent(model_settings=ModelSettings(temperature=0.1))
     conn = FakeRealtimeConnection([TurnCompleteEvent()])
     model = FakeRealtimeModel(conn)
     with agent.override(model_settings=ModelSettings(temperature=0.9)):
-        async with agent.realtime_session(model=model, model_settings=ModelSettings(temperature=0.5)) as session:
+        async with agent.realtime_session(model=model, model_settings=RealtimeModelSettings(max_tokens=50)) as session:
             _ = [e async for e in session]
-    # The override replaces both the agent-level default and the call-time settings, as in `run`/`iter`.
-    assert model.last_model_settings == ModelSettings(temperature=0.9)
+    assert model.last_model_settings == RealtimeModelSettings(max_tokens=50)
 
 
 async def test_agent_realtime_session_send_audio() -> None:
