@@ -852,6 +852,57 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+#### Making structured responses appear faster
+
+If a structured response takes a long time to appear in your application, make sure you stream validated partial output rather than waiting for the full run to finish. [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] yields the accumulated output as the model produces it, with partial validation applied to each snapshot and full validation applied to the final output.
+
+When you also need events from intermediate model requests and tool calls, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]. Iterate over each `AgentStream` until the model starts producing the final result, then switch to `stream_output()` for validated partial output:
+
+```python {title="stream_structured_output_and_events.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, FinalResultEvent
+
+
+class Client(BaseModel):
+    id: int
+    name: str
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    output_type=list[str | Client],
+    instructions='Find the requested clients and explain each match.',
+)
+
+
+async def main():
+    async with agent.iter('Find clients named Jane') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    final_result_started = False
+                    async for event in stream:
+                        print(event)
+                        if isinstance(event, FinalResultEvent):
+                            final_result_started = True
+                            break
+
+                    if final_result_started:
+                        async for output in stream.stream_output():
+                            print(output)
+            elif Agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        print(event)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Each value from `stream_output()` is an accumulated snapshot, not a delta. An incomplete field or list item may be absent until enough data has arrived for it to pass partial validation, so update the rendered value from each snapshot rather than appending every yield.
+
+`AgentStream` is a single iterator. Once you switch to `stream_output()`, it consumes the remaining final-output events while validating them, so those raw events are not also yielded to the preceding loop. If you need to retain every raw event, use [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] and reconstruct and validate the output yourself.
+
 As setting an `output_type` uses the [Tool Output](#tool-output) mode by default, this will only work if the model supports streaming tool arguments. For models that don't, like Gemini, try [Native Output](#native-output) or [Prompted Output](#prompted-output) instead.
 
 ### Streaming Model Responses
