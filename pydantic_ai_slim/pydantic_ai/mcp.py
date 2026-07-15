@@ -1009,7 +1009,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if request_metadata and (reserved := _RESERVED_REQUEST_METADATA_KEYS.intersection(request_metadata)):
             names = ', '.join(repr(k) for k in sorted(reserved))
             raise ValueError(
-                f'`request_metadata` must not contain {names} — these `_meta` keys are '
+                f'`request_metadata` must not contain {names}: these `_meta` keys are '
                 'managed by the MCP SDK and FastMCP per request.'
             )
 
