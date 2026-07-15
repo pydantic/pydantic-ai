@@ -4913,6 +4913,18 @@ async def test_youtube_video_url_without_vendor_metadata():
     assert content[0] == {'file_data': {'file_uri': 'https://youtu.be/dQw4w9WgXcQ', 'mime_type': 'video/mp4'}}
 
 
+# =============================================================================
+# Per-Part `media_resolution` forwarding via `vendor_metadata`
+#
+# These assert the pre-request `PartDict` shape directly (through `_map_user_prompt`)
+# rather than via a cassette: `media_resolution` is a request-body field, and the VCR
+# matchers are body-insensitive, so a cassette would replay green even if the field were
+# dropped or renamed — the internal-shape assertion is what pins the mapping. Live
+# acceptance of the field (image ULTRA_HIGH, document HIGH) is verified separately against
+# Vertex; see https://github.com/pydantic/pydantic-ai/issues/6524.
+# =============================================================================
+
+
 async def test_binary_content_with_media_resolution_vendor_metadata():
     """`vendor_metadata['media_resolution']` is forwarded as a per-Part field, not into `video_metadata`."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
@@ -4929,9 +4941,12 @@ async def test_binary_content_with_media_resolution_vendor_metadata():
         )
     )
 
-    assert len(content) == 1
-    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
-    assert 'video_metadata' not in content[0]
+    assert content == [
+        {
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+        }
+    ]
 
 
 async def test_binary_content_with_media_resolution_and_video_metadata_vendor_metadata():
@@ -4954,9 +4969,13 @@ async def test_binary_content_with_media_resolution_and_video_metadata_vendor_me
         )
     )
 
-    assert len(content) == 1
-    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
-    assert content[0].get('video_metadata') == {'start_offset': '2s', 'end_offset': '10s'}
+    assert content == [
+        {
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+            'video_metadata': {'start_offset': '2s', 'end_offset': '10s'},
+        }
+    ]
 
 
 async def test_binary_content_vendor_metadata_without_media_resolution_unchanged():
@@ -4975,9 +4994,50 @@ async def test_binary_content_vendor_metadata_without_media_resolution_unchanged
         )
     )
 
-    assert len(content) == 1
-    assert 'media_resolution' not in content[0]
-    assert content[0].get('video_metadata') == {'start_offset': '2s', 'end_offset': '10s'}
+    assert content == [
+        {
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'video_metadata': {'start_offset': '2s', 'end_offset': '10s'},
+        }
+    ]
+
+
+async def test_image_url_with_media_resolution_forwarded_on_google_cloud(mocker: MockerFixture):
+    """`media_resolution` is forwarded for `ImageUrl` too, even though `video_metadata` is video-only."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+
+    image = ImageUrl(
+        url='gs://bucket/image.png',
+        vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[image]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == [
+        {
+            'file_data': {'file_uri': 'gs://bucket/image.png', 'mime_type': 'image/png'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+        }
+    ]
+
+
+async def test_document_url_with_media_resolution_forwarded_on_google_cloud(mocker: MockerFixture):
+    """`media_resolution` is forwarded for `DocumentUrl` (PDF) too."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+
+    document = DocumentUrl(
+        url='gs://bucket/report.pdf',
+        vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'}},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[document]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == [
+        {
+            'file_data': {'file_uri': 'gs://bucket/report.pdf', 'mime_type': 'application/pdf'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'},
+        }
+    ]
 
 
 async def test_binary_content_vendor_metadata_not_mutated():
@@ -4994,9 +5054,13 @@ async def test_binary_content_vendor_metadata_not_mutated():
         )
     )
 
-    assert len(content) == 1
-    assert content[0].get('media_resolution') == {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'}
-    assert content[0].get('video_metadata') == {'start_offset': '2s'}
+    assert content == [
+        {
+            'inline_data': {'data': b'\x00\x00\x00\x00', 'mime_type': 'video/mp4'},
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
+            'video_metadata': {'start_offset': '2s'},
+        }
+    ]
     # the original dict is untouched
     assert vendor_metadata == {
         'media_resolution': {'level': 'MEDIA_RESOLUTION_ULTRA_HIGH'},
