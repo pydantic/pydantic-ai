@@ -104,7 +104,6 @@ with try_import() as imports_successful:
         BetaBashCodeExecutionResultBlock,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultError,
-        BetaCodeExecutionOutputBlock,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionIterationUsage,
@@ -11869,15 +11868,15 @@ async def test_anthropic_code_execution_download_file_stream(allow_model_request
 
 
 async def test_anthropic_code_execution_download_disabled_no_download(allow_model_requests: None):
-    """When setting is disabled, no FileParts are added even if files exist."""
+    """When setting is disabled, a downloadable bash result does not trigger a download."""
     c = completion_message(
         [
             BetaTextBlock(text='Done.', type='text'),
-            BetaCodeExecutionToolResultBlock(
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    type='code_execution_result',
-                    content=[BetaCodeExecutionOutputBlock(file_id='file_1', type='code_execution_output')],
+            BetaBashCodeExecutionToolResultBlock(
+                type='bash_code_execution_tool_result',
+                content=BetaBashCodeExecutionResultBlock(
+                    type='bash_code_execution_result',
+                    content=[BetaBashCodeExecutionOutputBlock(file_id='file_1', type='bash_code_execution_output')],
                     return_code=0,
                     stderr='',
                     stdout='done',
@@ -11888,6 +11887,8 @@ async def test_anthropic_code_execution_download_disabled_no_download(allow_mode
         BetaUsage(input_tokens=10, output_tokens=20, cache_creation_input_tokens=0, cache_read_input_tokens=0),
     )
     mock_client = MockAnthropic.create_mock(c)
+    mock_client.files = MagicMock()  # type: ignore
+    mock_client.files.download = AsyncMock()  # type: ignore
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
@@ -11895,6 +11896,7 @@ async def test_anthropic_code_execution_download_disabled_no_download(allow_mode
 
     files = [p for p in result.all_messages()[-1].parts if isinstance(p, FilePart)]
     assert len(files) == 0
+    mock_client.files.download.assert_not_called()  # type: ignore
 
 
 async def test_anthropic_code_execution_download_empty_content(allow_model_requests: None):

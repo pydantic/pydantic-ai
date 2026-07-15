@@ -587,5 +587,7 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 When you use the [`CodeExecutionTool`](../native-tools.md#code-execution-tool) native tool, enable [`AnthropicModelSettings.anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files] to automatically download the files it produces from the Anthropic Files API and return them as [`FilePart`][pydantic_ai.messages.FilePart] objects, available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]. See [the `CodeExecutionTool` docs](../native-tools.md#code-execution-tool) for a usage example.
 
+Automatic downloads require the direct Anthropic client and are not available through the Bedrock, Vertex, or Foundry transports, which do not expose the Files API. Enabling the setting with one of those transports emits a warning and returns no files.
+
 !!! note
     Only files that the model **runs code** to write to disk (Anthropic's `bash` code execution tool) are downloadable, since only those are stored in the Files API. Files the model creates or edits with Anthropic's file editor tool stay inside the execution sandbox and are not downloadable, and neither the download nor the sandbox has any access to your local filesystem. So if you rely on this feature, prompt the model to run code that saves the result to disk (e.g. "write and run Python code that saves the result to a CSV file").

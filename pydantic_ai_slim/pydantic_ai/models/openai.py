@@ -2290,6 +2290,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = 'content_filter'
             provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
+            if container_file_citations is not None:
+                container_file_citations.clear()
 
         return ModelResponse(
             parts=items,
@@ -4093,7 +4095,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # download them below. The event types the annotation as `object`, so validate it to a typed
                     # annotation rather than reaching into a raw dict.
                     if self._model_settings.get('openai_download_code_execution_files'):
-                        annotation = responses_output_text_annotation_ta.validate_python(chunk.annotation)
+                        try:
+                            annotation = responses_output_text_annotation_ta.validate_python(chunk.annotation)
+                        except ValidationError:
+                            annotation = None
                         if isinstance(annotation, responses.response_output_text.AnnotationContainerFileCitation):
                             _file_citations_by_item.setdefault(chunk.item_id, []).append(annotation)
 
@@ -5059,6 +5064,7 @@ async def _download_container_file(
         warnings.warn(
             f'Failed to download code execution file {citation.filename!r} ({citation.file_id}): {e}',
             UserWarning,
+            stacklevel=2,
         )
         return None
     media_type = mimetypes.guess_type(citation.filename)[0] or 'application/octet-stream'

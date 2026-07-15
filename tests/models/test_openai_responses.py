@@ -76,7 +76,11 @@ with try_import() as imports_successful:
     )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-    from openai.types.responses.response_output_text import Annotation, ResponseOutputText
+    from openai.types.responses.response_output_text import (
+        Annotation,
+        AnnotationContainerFileCitation,
+        ResponseOutputText,
+    )
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -12433,8 +12437,6 @@ async def test_openai_responses_code_execution_download_file_stream(allow_model_
 
 async def test_openai_code_execution_download_multiple_files(allow_model_requests: None):
     """Multiple container file annotations are downloaded and returned as FileParts."""
-    from openai.types.responses.response_output_text import AnnotationContainerFileCitation
-
     annotation_1 = AnnotationContainerFileCitation(
         type='container_file_citation',
         file_id='oai_file_1',
@@ -12500,6 +12502,50 @@ async def test_openai_code_execution_download_multiple_files(allow_model_request
     assert files[1].id == 'oai_file_2'
     assert files[1].content.media_type == 'image/png'
     assert files[1].content.data == b'\x89PNG...'
+
+
+async def test_openai_code_execution_download_skipped_on_refusal(allow_model_requests: None):
+    """Non-streaming: files are not downloaded when a response containing a citation is refused."""
+    annotation = AnnotationContainerFileCitation(
+        type='container_file_citation',
+        file_id='oai_file_1',
+        container_id='ctr_1',
+        filename='output.csv',
+        start_index=0,
+        end_index=5,
+    )
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=[
+                    ResponseOutputText(
+                        text='Here is your file.',
+                        type='output_text',
+                        annotations=[annotation],
+                    ),
+                    ResponseOutputRefusal(refusal="I can't help with that request.", type='refusal'),
+                ],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock()
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+        await agent.run(
+            'harmful prompt',
+            model_settings=OpenAIResponsesModelSettings(openai_download_code_execution_files=True),
+        )
+
+    mock_client.containers.files.content.retrieve.assert_not_called()
 
 
 async def test_openai_code_execution_download_multiple_files_stream(allow_model_requests: None):
@@ -12692,8 +12738,127 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
     assert files[1].content.data == b'\x89PNG...'
 
 
+async def test_openai_code_execution_download_unknown_annotation_stream(allow_model_requests: None):
+    """Streaming: an unknown annotation type is ignored without interrupting the response."""
+    from openai.types.responses import (
+        ResponseContentPartAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+
+    annotation = {
+        'type': 'some_future_annotation',
+        'detail': 'unsupported annotation data',
+    }
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=2,
+        ),
+        ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Normal response text.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            logprobs=[],
+            sequence_number=3,
+        ),
+        ResponseOutputTextAnnotationAddedEvent(
+            annotation=cast(Annotation, cast(object, annotation)),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=4,
+        ),
+        ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Normal response text.',
+            type='response.output_text.done',
+            logprobs=[],
+            sequence_number=5,
+        ),
+        ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[ResponseOutputText(text='Normal response text.', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=7,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock()
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    async with agent.iter(
+        'Respond normally',
+        model_settings=OpenAIResponsesModelSettings(openai_download_code_execution_files=True),
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    response = agent_run.result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='Normal response text.', id='msg_001', provider_name='openai')]
+    assert response.files == []
+    mock_client.containers.files.content.retrieve.assert_not_called()
+
+
 async def test_openai_code_execution_download_disabled_no_download(allow_model_requests: None):
-    """When setting is disabled, no FileParts are added."""
+    """When setting is disabled, a downloadable citation does not trigger a download."""
+    annotation = AnnotationContainerFileCitation(
+        type='container_file_citation',
+        file_id='oai_file_1',
+        container_id='ctr_1',
+        filename='output.csv',
+        start_index=0,
+        end_index=5,
+    )
     c = response_message(
         [
             ResponseOutputMessage(
@@ -12702,9 +12867,9 @@ async def test_openai_code_execution_download_disabled_no_download(allow_model_r
                     list[Content],
                     [
                         ResponseOutputText(
-                            text='No files.',
+                            text='Here is your file.',
                             type='output_text',
-                            annotations=[],
+                            annotations=[annotation],
                         )
                     ],
                 ),
@@ -12715,6 +12880,8 @@ async def test_openai_code_execution_download_disabled_no_download(allow_model_r
         ]
     )
     mock_client = MockOpenAIResponses.create_mock(c)
+    mock_client.containers = MagicMock()  # type: ignore
+    mock_client.containers.files.content.retrieve = AsyncMock()
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
 
@@ -12722,6 +12889,7 @@ async def test_openai_code_execution_download_disabled_no_download(allow_model_r
 
     files = [p for p in result.all_messages()[-1].parts if isinstance(p, FilePart)]
     assert len(files) == 0
+    mock_client.containers.files.content.retrieve.assert_not_called()
 
 
 async def test_openai_code_execution_download_no_annotations(allow_model_requests: None):

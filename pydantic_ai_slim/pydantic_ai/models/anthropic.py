@@ -3166,7 +3166,7 @@ async def _download_anthropic_file(
         file_bytes = await file_content.read()
         metadata = await client.beta.files.retrieve_metadata(file_id=file_id)
     except (APIStatusError, APIConnectionError) as e:
-        warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning)
+        warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning, stacklevel=2)
         return None
     content = BinaryContent(media_type=metadata.mime_type, data=file_bytes)
     return FilePart(
