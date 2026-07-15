@@ -152,6 +152,11 @@ class TestMCPToolsetConstruction:
         assert toolset.client is client
         assert toolset.request_metadata == {'caller': 'pydantic-ai'}
 
+    @pytest.mark.parametrize('reserved_key', ['progressToken', 'fastmcp', 'modelcontextprotocol.io/task'])
+    def test_request_metadata_with_reserved_key_raises(self, reserved_key: str):
+        with pytest.raises(ValueError, match=f"must not contain '{reserved_key}'"):
+            MCPToolset('https://example.com/mcp', request_metadata={reserved_key: 'value'})
+
     def test_pre_built_client_with_overridden_read_timeout_raises(self):
         client = Client('https://example.com/mcp')
         with pytest.raises(ValueError, match='read_timeout'):
@@ -603,13 +608,13 @@ class TestMCPToolsetIntegration:
     async def test_request_metadata_reaches_tool_call(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(
             fastmcp_server,
-            request_metadata={'caller': 'pydantic-ai', 'com.example/caller': 'billing-agent'},
+            request_metadata={'caller': 'pydantic-ai', 'io.modelcontextprotocol/server-variant': 'compact'},
         )
         async with toolset:
             result = await toolset.direct_call_tool('echo_request_metadata', {})
         assert result == {
             'caller': 'pydantic-ai',
-            'com.example/caller': 'billing-agent',
+            'io.modelcontextprotocol/server-variant': 'compact',
         }
 
     async def test_direct_call_tool_metadata_still_works_without_request_metadata(self, fastmcp_server: FastMCP[None]):
@@ -1552,6 +1557,13 @@ class TestMCPToolsetBackgroundTasks:
     async def test_task_tool_forwards_request_metadata_with_per_call_override(
         self, task_server: FastMCP[None], run_context: RunContext[None]
     ) -> None:
+        """The merged `_meta` is carried on the outgoing `tools/call` request for task-augmented tools.
+
+        Can't be end-to-end: FastMCP doesn't expose request meta in task execution contexts
+        (`ctx.request_context` is `None` in the task worker), so the tool can't echo it back;
+        assert on the request passed to the session instead.
+        """
+
         async def add_per_call_metadata(
             ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]
         ) -> ToolResult:
@@ -1562,25 +1574,23 @@ class TestMCPToolsetBackgroundTasks:
             request_metadata={'stable': 'toolset', 'shared': 'toolset'},
             process_tool_call=add_per_call_metadata,
         )
-        captured_kwargs: list[dict[str, Any]] = []
+        captured_requests: list[Any] = []
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            real_call_tool = toolset.client.call_tool
+            session = toolset.client.session
+            real_send_request = session.send_request
 
-            async def spy_call_tool(*args: Any, **kwargs: Any) -> Any:
-                captured_kwargs.append(kwargs.copy())
-                return await real_call_tool(*args, **kwargs)
+            async def spy_send_request(*args: Any, **kwargs: Any) -> Any:
+                captured_requests.append(args[0] if args else kwargs['request'])
+                return await real_send_request(*args, **kwargs)
 
-            toolset.client.call_tool = spy_call_tool
+            session.send_request = spy_send_request
             result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
 
         assert result == 'task_required_completed'
-        assert captured_kwargs == [
-            {
-                'name': 'task_required_tool',
-                'arguments': {},
-                'task': True,
-                'meta': {'stable': 'toolset', 'per_call': 'value', 'shared': 'per-call'},
-            }
-        ]
+        call_requests = [r for r in captured_requests if r.method == 'tools/call']
+        assert len(call_requests) == 1
+        meta = call_requests[0].params.meta
+        assert meta is not None
+        assert dict(meta.model_extra or {}) == {'stable': 'toolset', 'per_call': 'value', 'shared': 'per-call'}

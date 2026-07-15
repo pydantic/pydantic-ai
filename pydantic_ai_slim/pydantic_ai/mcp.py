@@ -666,6 +666,19 @@ when validating that no kwargs were passed alongside a pre-built `fastmcp.Client
 keeps the conflict checks in sync with the actual default values, so changing a default doesn't
 silently break the conflict check."""
 
+_RESERVED_REQUEST_METADATA_KEYS = frozenset({
+    # MCP progress correlation field; the SDK sets it per request, so a user value is either
+    # silently overwritten (regular tool calls) or can collide with in-flight request tokens.
+    'progressToken',
+    # FastMCP's version-routing envelope; merged over by the FastMCP client.
+    'fastmcp',
+    # Interpreted by the FastMCP client as "make this request task-augmented" on
+    # `prompts/get`/`resources/read`, silently changing request semantics.
+    'modelcontextprotocol.io/task',
+})
+"""`_meta` keys that `MCPToolset.request_metadata` rejects because the MCP SDK or FastMCP manages
+them per request; passing them through would silently change or break request semantics."""
+
 
 @dataclass(init=False, repr=False)
 class MCPToolset(AbstractToolset[AgentDepsT]):
@@ -779,12 +792,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     request_metadata: dict[str, Any] | None
     """Default request-level `_meta` payload for outgoing MCP requests that support it.
 
-    The dict is read at request time, so later mutations apply to subsequent requests. Merged into
-    the `_meta` of `tools/call`, `resources/read`, and `prompts/get` requests. For tool calls,
-    per-call `metadata` passed to
+    Included in the `_meta` of `tools/call` (including task-augmented calls), `resources/read`,
+    and `prompts/get` requests. For tool calls, per-call `metadata` passed to
     [`direct_call_tool`][pydantic_ai.mcp.MCPToolset.direct_call_tool] wins on key conflicts.
-    List requests do not currently carry this metadata because the FastMCP client does not yet
-    accept metadata there; coverage may expand as FastMCP adds support.
+    List requests don't carry it: the FastMCP client doesn't accept metadata there.
+    Keys managed by the MCP SDK or FastMCP (`progressToken`, `fastmcp`,
+    `modelcontextprotocol.io/task`) are rejected at construction.
     """
 
     sampling_model: models.Model | None
@@ -912,7 +925,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
                 would otherwise build a default Client (sampling, elicitation, headers, etc.), or
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
-                `http_client` are both passed.
+                `http_client` are both passed, or if `request_metadata` contains a reserved
+                `_meta` key.
         """
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
@@ -986,11 +1000,20 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             )
             self._user_message_handler = message_handler
 
+        if request_metadata and (reserved := _RESERVED_REQUEST_METADATA_KEYS.intersection(request_metadata)):
+            names = ', '.join(repr(k) for k in sorted(reserved))
+            raise ValueError(
+                f'`request_metadata` must not contain {names} — these `_meta` keys are '
+                'managed by the MCP SDK and FastMCP per request.'
+            )
+
         self._id = id
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
-        self.request_metadata = request_metadata
+        # Copy so later mutations of the caller's dict don't leak into requests, which would
+        # behave inconsistently under durable execution (e.g. Temporal) where calls run elsewhere.
+        self.request_metadata = dict(request_metadata) if request_metadata else None
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
@@ -1309,7 +1332,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     code=-32601,
                 )
             try:
-                result = await self.client.get_prompt(name, arguments, meta=self.request_metadata)
+                result = await self.client.get_prompt(name, arguments, meta=self.request_metadata or None)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
             return PromptResult(
@@ -1390,7 +1413,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:
             try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri), meta=self.request_metadata)
+                contents = await self.client.read_resource(AnyUrl(resource_uri), meta=self.request_metadata or None)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
