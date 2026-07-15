@@ -146,7 +146,7 @@ Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/adv
 
 Chunking, the embedding model, similarity metric, number of retrieved chunks, and reranking all interact. Public benchmarks can narrow the candidates, but they cannot prove which complete pipeline works best for your application. Compare changes using queries and documents representative of production, checking both that relevant text is retrieved and that irrelevant text is kept out of the agent's context.
 
-Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) demonstrates how to build a synthetic evaluation set and evaluate generated answers.
+Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of representative queries. Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) demonstrates how to build a synthetic evaluation set and evaluate generated answers.
 
 ## Providers
 
