@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 from urllib.parse import urlparse
 
+import pytest
 import yaml
 
 from pydantic_ai._utils import is_str_dict
@@ -44,6 +45,25 @@ class CassettePrefixViolation:
     block_index: int
     earlier_block: str
     later_block: str
+
+
+def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
+    """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
+    if node.get_closest_marker('moves_cache_prefix'):
+        return
+
+    violations = list(iter_cassette_prefix_violations(cassette_path))
+    if violations:
+        details = '\n'.join(
+            f'{cassette_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
+            f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
+            for violation in violations
+        )
+        pytest.fail(
+            f"{details}\nA moving wire prefix busts the provider prompt cache on every turn; if this test's behavior is "
+            'deliberately prefix-moving (compaction, dynamic tool disclosure, history rewriting), add '
+            '@pytest.mark.moves_cache_prefix(reason=...) to the test'
+        )
 
 
 def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[PrefixBlock]] | None:

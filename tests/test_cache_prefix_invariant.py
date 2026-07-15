@@ -1,82 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import yaml
+from vcr.record_mode import RecordMode
 
-from .cassette_utils import canonical_prefix_blocks, classify_prefix_pair, iter_cassette_prefix_violations
-
-TESTS_ROOT = Path(__file__).parent
-CASSETTES = sorted(TESTS_ROOT.glob('**/cassettes/**/*.yaml'))
-
-KNOWN_PREFIX_MOVERS: dict[str, str] = {
-    'cassettes/test_tool_search/test_tool_search_eval[anthropic].yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'cassettes/test_tool_search/test_tool_search_eval[google].yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'cassettes/test_tool_search/test_tool_search_eval[openai-chat].yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'cassettes/test_tool_search/test_cross_provider_capability_replay[google-gemini-3-flash-preview-openai-responses-gpt-5.4].yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'cassettes/test_tool_search/test_openai_deferred_capability_runs_on_model_without_native_tool_search.yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'models/cassettes/test_deepseek/test_deepseek_deferred_capability_with_thinking.yaml': (
-        'dynamic tool disclosure after ToolSearch discovery'
-    ),
-    'models/cassettes/test_openai_responses/test_openai_responses_compact_with_auto_previous_response_id_chain.yaml': (
-        'deliberate history compaction'
-    ),
-    'models/cassettes/test_openai_responses/test_openai_responses_compact_with_auto_previous_response_id.yaml': (
-        'deliberate history compaction'
-    ),
-    'models/cassettes/test_openai_responses/test_openai_responses_compact_with_instructions.yaml': (
-        'deliberate history compaction'
-    ),
-    'models/cassettes/test_openai_responses/test_openai_responses_thinking_with_modified_history.yaml': (
-        'test deliberately modifies history'
-    ),
-}
-
-
-@pytest.mark.parametrize(
-    'cassette_path',
-    [pytest.param(path, id=path.relative_to(TESTS_ROOT).as_posix()) for path in CASSETTES],
+from .cassette_utils import (
+    canonical_prefix_blocks,
+    check_cache_prefix_stability,
+    classify_prefix_pair,
+    iter_cassette_prefix_violations,
 )
-def test_cassette_cache_prefix_invariant(cassette_path: Path) -> None:
-    """Every recorded conversation preserves its provider-cache wire prefix as history grows."""
-    relative_path = cassette_path.relative_to(TESTS_ROOT).as_posix()
-    violations = list(iter_cassette_prefix_violations(cassette_path))
-
-    if relative_path in KNOWN_PREFIX_MOVERS:
-        assert violations, f'{relative_path}: allowlist entry is stale, remove it'
-        return
-
-    details = '\n'.join(
-        f'{relative_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
-        f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
-        for violation in violations
-    )
-    assert not violations, (
-        f"{details}\nA moving wire prefix busts the provider prompt cache on every turn; if this test's behavior is "
-        'deliberately prefix-moving (compaction, dynamic tool disclosure, history rewriting), add the cassette to '
-        'KNOWN_PREFIX_MOVERS with a reason'
-    )
+from .conftest import fail_cache_prefix_violations
 
 
-def test_known_prefix_movers_exist() -> None:
-    """Require deleted or renamed allowlist entries to be removed explicitly."""
-    missing = [path for path in KNOWN_PREFIX_MOVERS if not (TESTS_ROOT / path).is_file()]
-    assert not missing, f'{missing}: allowlist entry is stale, remove it'
-
-
-def test_synthetic_cassette_detects_prefix_violation(tmp_path: Path) -> None:
-    """Exercise cassette parsing because VCR matching does not protect request-body prefix shape."""
+@pytest.fixture
+def prefix_moving_cassette(tmp_path: Path) -> Path:
     cassette_path = tmp_path / 'prefix-moving.yaml'
     cassette = {
         'interactions': [
@@ -97,8 +40,12 @@ def test_synthetic_cassette_detects_prefix_violation(tmp_path: Path) -> None:
         ]
     }
     cassette_path.write_text(yaml.safe_dump(cassette), encoding='utf-8')
+    return cassette_path
 
-    violations = list(iter_cassette_prefix_violations(cassette_path))
+
+def test_synthetic_cassette_detects_prefix_violation(prefix_moving_cassette: Path) -> None:
+    """Exercise cassette parsing because VCR matching does not protect request-body prefix shape."""
+    violations = list(iter_cassette_prefix_violations(prefix_moving_cassette))
 
     assert classify_prefix_pair([('messages', 'one')], [('messages', 'one'), ('messages', 'two')]) == (
         'extension',
@@ -107,6 +54,49 @@ def test_synthetic_cassette_detects_prefix_violation(tmp_path: Path) -> None:
     assert len(violations) == 1
     assert violations[0].level == 'tools'
     assert violations[0].block_index == 0
+
+
+def test_check_cache_prefix_stability_fails_unmarked(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match='@pytest.mark.moves_cache_prefix'):
+        check_cache_prefix_stability(node, prefix_moving_cassette)
+
+
+@pytest.mark.moves_cache_prefix(reason='unit test covers the deliberate exemption')
+def test_check_cache_prefix_stability_allows_marked(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    check_cache_prefix_stability(node, prefix_moving_cassette)
+
+
+def test_check_cache_prefix_stability_allows_clean(request: pytest.FixtureRequest, tmp_path: Path) -> None:
+    cassette_path = tmp_path / 'clean.yaml'
+    cassette_path.write_text('interactions: []\n', encoding='utf-8')
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    check_cache_prefix_stability(node, cassette_path)
+
+
+@pytest.mark.parametrize(
+    'call_report,cassette_path',
+    [
+        (SimpleNamespace(skipped=False, failed=True), '/unused/after-failure.yaml'),
+        (SimpleNamespace(skipped=False, failed=False), '/missing/cassette.yaml'),
+    ],
+)
+def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cassette_path: str) -> None:
+    """Failed tests and missing cassette files must not produce a second teardown failure."""
+    node = SimpleNamespace(rep_setup=SimpleNamespace(skipped=False, failed=False), rep_call=call_report)
+    request = SimpleNamespace(node=node)
+    vcr = SimpleNamespace(record_mode=RecordMode.NONE, _path=cassette_path)
+    fixture = cast(Callable[[Any, Any], Iterator[None]], getattr(fail_cache_prefix_violations, '__wrapped__'))
+    iterator = fixture(cast(Any, request), cast(Any, vcr))
+
+    next(iterator)
+    with pytest.raises(StopIteration):
+        next(iterator)
 
 
 def test_canonical_prefix_blocks_bedrock() -> None:

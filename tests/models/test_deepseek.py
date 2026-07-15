@@ -33,6 +33,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
