@@ -225,7 +225,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
         capability_ids = sorted({td.capability_id for td in newly_loaded if td.capability_id})
         call_id_digest = hashlib.blake2s(
-            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8
+            '\x00'.join(td.name for td in newly_loaded).encode(), digest_size=8, usedforsecurity=False
         ).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 

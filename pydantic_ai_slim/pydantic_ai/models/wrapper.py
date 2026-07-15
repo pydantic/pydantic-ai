@@ -25,14 +25,33 @@ class CompletedStreamedResponse(StreamedResponse):
     is returned.
     """
 
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        *,
+        replay_events: bool = False,
+    ):
         super().__init__(model_request_parameters)
         self.response = response
+        self._replay_events = replay_events
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return
-        # noinspection PyUnreachableCode
-        yield
+        # The underlying stream was already consumed elsewhere (e.g. inside a durable-execution
+        # step/activity), so we only have the final response. By default we emit nothing: the
+        # events were already delivered to the consumer (e.g. an `event_stream_handler`) where the
+        # stream was originally consumed, and `get()` carries the final response.
+        #
+        # When `replay_events` is set, the original consumption discarded the events without
+        # delivering them (no handler), so replay the response's parts as `PartStartEvent`s — one
+        # per part, each carrying the full content — so this behaves like a real (if coarse)
+        # `StreamedResponse`. A consumer that drives the stream via events (e.g. the continuation
+        # composite stitching segments, or `stream_text()`) would otherwise observe an empty stream
+        # and lose all content, even though `get()` holds the full response.
+        if not self._replay_events:
+            return
+        for i, part in enumerate(self.response.parts):
+            yield self._parts_manager.handle_part(vendor_part_id=i, part=part)
 
     async def close_stream(self) -> None:
         # The stream was already consumed by the durable execution wrapper.
@@ -106,6 +125,12 @@ class WrapperModel(Model):
         instructions: str | None = None,
     ) -> ModelResponse:
         return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        return await self.wrapped.cancel_suspended_response(response)
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return self.wrapped.continuation_delay(response)
 
     @asynccontextmanager
     async def request_stream(

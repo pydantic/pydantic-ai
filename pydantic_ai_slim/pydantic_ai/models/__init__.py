@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
@@ -289,6 +290,23 @@ class Model(ABC, Generic[InterfaceClient]):
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response (e.g. an OpenAI background job).
+
+        Called when a continuation is abandoned via cancellation or error. No-op by default;
+        model classes with cancellable server-side jobs override this.
+        """
+        return None
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        """Seconds to wait before continuing a suspended response, or `None` to continue immediately.
+
+        Called between the segments of a suspended turn. `None` by default (e.g. Anthropic `pause_turn`
+        continues immediately); a model that polls a server-side job (e.g. OpenAI background mode)
+        overrides this to return a poll interval so the graph doesn't busy-poll.
+        """
+        return None
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.
@@ -682,11 +700,17 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+    state: ModelResponseState = field(default='complete', init=False)
+    """Lifecycle state of the response."""
+    metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
+    _first_chunk_monotonic: float | None = field(default=None, init=False)
+    """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
+    was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -769,18 +793,27 @@ class StreamedResponse(ABC):
                 # iteration.
                 try:
                     async for event in iterator:
+                        if self._first_chunk_monotonic is None:
+                            # First event surfaced to the consumer: stamp the monotonic clock.
+                            self._first_chunk_monotonic = time.perf_counter()
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
                 else:
-                    # Only natural `StopAsyncIteration` flips `_finished`. Early
-                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
-                    # `yield`) and any in-flight exception leave `_finished=False`
-                    # so `get()` reports the truncated response as `'incomplete'`
-                    # rather than silently stamping it `'complete'`. The cancel
-                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
-                    self._finished = True
+                    # Only natural `StopAsyncIteration` on a stream that wasn't
+                    # cancelled flips `_finished`. Early `break` / `aclose()` (raising
+                    # `GeneratorExit` at the suspended `yield`) and any in-flight error
+                    # leave `_finished=False` so `get()` reports the truncated response
+                    # as `'incomplete'` rather than silently stamping it `'complete'`.
+                    # A `cancel()` mid-stream that still drains to a natural completion
+                    # (e.g. a local model with no live connection to tear down) must not
+                    # be recorded as finished either: `_cancelled` wins so `get()`
+                    # reports `'interrupted'`. A defensive `cancel()` *after* the stream
+                    # already finished naturally leaves `_finished=True` (set here before
+                    # `_cancelled`), so `get()` keeps `'complete'`.
+                    if not self._cancelled:
+                        self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -844,8 +877,16 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._finished:
-            state: ModelResponseState = 'complete'
+        # `'suspended'` is the one state a provider stamps that `get()` can't otherwise derive, so it wins.
+        # A finished iteration only means `'complete'` if the provider didn't leave an explicit `'incomplete'`
+        # hint (e.g. a foreground OpenAI Responses stream that EOF'd without a terminal event). An explicit
+        # `cancel()` outranks that in-flight `'incomplete'` hint, so a cancelled foreground stream reports
+        # `'interrupted'` rather than `'incomplete'`.
+        state: ModelResponseState
+        if self.state == 'suspended':
+            state = 'suspended'
+        elif self._finished and self.state != 'incomplete':
+            state = 'complete'
         elif self._cancelled:
             state = 'interrupted'
         else:
@@ -861,6 +902,7 @@ class StreamedResponse(ABC):
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
             state=state,
+            metadata=self.metadata,
         )
 
     @property
@@ -896,6 +938,18 @@ class StreamedResponse(ABC):
     def cancelled(self) -> bool:
         """Whether the stream has been cancelled via `cancel()`."""
         return self._cancelled
+
+    def time_to_first_chunk(self, request_start: float) -> float | None:
+        """Seconds from `request_start` to the first chunk surfaced to the consumer, or `None` if nothing was yielded.
+
+        `request_start` must be a `time.perf_counter()` reading taken when the request was issued.
+        The first-chunk instant is stamped on the first `async for` pull, so the result reflects when
+        the consumer *received* the first event: it includes any consumer-side iteration delay
+        (debouncing, batching, or awaiting other work) on top of the chunk's transit time, which for
+        eager consumers is negligible.
+        """
+        first_chunk = self._first_chunk_monotonic
+        return first_chunk - request_start if first_chunk is not None else None
 
 
 ALLOW_MODEL_REQUESTS = True
@@ -1037,7 +1091,7 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses'):
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

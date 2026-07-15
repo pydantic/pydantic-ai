@@ -22,6 +22,7 @@ from ._deferred import (
     ToolDenied as ToolDenied,
 )
 from ._run_context import AgentDepsT, RunContext
+from .exceptions import UserError
 from .function_signature import FunctionSignature
 from .messages import ToolPartKind
 from .native_tools import AbstractNativeTool
@@ -275,6 +276,16 @@ ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
 
+def _validate_max_retries(max_retries: int | None) -> None:
+    if max_retries is not None and max_retries < 0:
+        raise UserError(f'max_retries must be >= 0, got {max_retries}')
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and timeout <= 0:
+        raise UserError(f'timeout must be > 0, got {timeout}')
+
+
 @dataclass(init=False)
 class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
@@ -393,6 +404,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.function = function
         self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
