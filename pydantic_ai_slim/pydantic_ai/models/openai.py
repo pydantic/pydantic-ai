@@ -4118,7 +4118,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.provider_response_id = chunk.response.id
                     self._store_conversation_id(chunk.response)
 
-                elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -4137,7 +4137,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
-                elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseIncompleteEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
