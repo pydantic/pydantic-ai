@@ -591,7 +591,7 @@ from pydantic_ai import prices
 prices.update_in_background()
 ```
 
-This helper retains shared ownership of the updater for the process lifetime. Call it after any `os.fork()` because inheriting a running updater in a child process is unsupported. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly.
+This helper retains shared ownership of the updater for the process lifetime. Do not call it before `os.fork()`; call it for the first time in each final child process because it cannot recover updater state inherited from a parent. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices) directly.
 
 #### Usage Limits
 
