@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable, Sequence
 from typing import Literal, cast
 
 import httpx
 
 try:
-    from google.auth.credentials import Credentials, Scoped
+    from google.auth import credentials as google_auth_credentials
+    from google.auth.credentials import Credentials
     from google.genai.client import Client
     from google.genai.types import HttpRetryOptions
 
@@ -16,6 +18,13 @@ except ImportError as _import_error:
         'Please install the `google-genai` package to use the Google Cloud provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+
+# `google-auth` does not provide complete type information for this helper.
+_with_scopes_if_required = cast(
+    'Callable[[Credentials, Sequence[str]], Credentials]',
+    google_auth_credentials.with_scopes_if_required,  # pyright: ignore[reportUnknownMemberType]
+)
 
 
 class GoogleCloudProvider(BaseGoogleProvider):
@@ -41,16 +50,15 @@ class GoogleCloudProvider(BaseGoogleProvider):
 
         Args:
             api_key: The [Vertex AI Express Mode API key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode)
-                to use for authentication. Must be passed explicitly — unlike `GoogleProvider`, `GoogleCloudProvider`
-                does not read `GOOGLE_API_KEY`/`GEMINI_API_KEY` from the environment, so Application Default
-                Credentials remain the default authentication path. Cannot be combined with
-                `credentials`/`project`/`location` (those use Application Default Credentials).
+                to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
+                Explicit `credentials` use credential-based authentication instead.
+                Explicit `project`/`location` use Application Default Credentials.
+                Google Cloud configuration from the environment takes precedence over an API key from the environment.
             credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
                 be obtained from environment variables and default credentials. For more information, see
                 [Set up Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
-                Credentials without existing scopes are automatically scoped with
-                `https://www.googleapis.com/auth/cloud-platform`, matching the google-genai SDK's own credential
-                loading.
+                Credentials that require scopes are automatically scoped with
+                `https://www.googleapis.com/auth/cloud-platform`.
             project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
                 (for example, `GOOGLE_CLOUD_PROJECT`).
             location: The location to send API requests to (for example, `us-central1`). Can be obtained from
@@ -65,18 +73,16 @@ class GoogleCloudProvider(BaseGoogleProvider):
             self._client = client
             return
 
-        # `GoogleCloudProvider` intentionally does NOT read `GOOGLE_API_KEY`/`GEMINI_API_KEY`
-        # from the environment. Those belong to the Gemini API (`GoogleProvider`) and would
-        # otherwise override Application Default Credentials in Vertex mode — the SDK's
-        # `load_auth()` (which calls `google.auth.default(scopes=[...])`) only runs when
-        # `api_key` and `credentials` are both `None`. Require an explicit `api_key=` kwarg
-        # for Vertex AI Express Mode so ADC stays the default Google Cloud auth path.
-        # See https://github.com/pydantic/pydantic-ai/issues/6499.
-
         # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
         # the SDK uses Vertex AI Express Mode.
         if credentials is not None or project is not None or location is not None:
             api_key = None
+        elif api_key is None and not any(
+            os.getenv(name)
+            for name in ('GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION')
+        ):
+            # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+            api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
         if api_key is None:
             project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
@@ -87,17 +93,8 @@ class GoogleCloudProvider(BaseGoogleProvider):
             # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
             location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
 
-            # The google-genai SDK scopes credentials it loads itself via
-            # `google.auth.default(scopes=[...])`, but does NOT scope credentials passed
-            # externally. Scope them here so service account credentials work without
-            # requiring the caller to scope them first, mirroring the SDK's own
-            # `load_auth()` scoping guard (`isinstance(..., Scoped) and requires_scopes`).
-            # See https://github.com/pydantic/pydantic-ai/issues/6499.
-            if isinstance(credentials, Scoped) and credentials.requires_scopes:
-                credentials = cast(
-                    Credentials,
-                    credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform']),  # type: ignore[reportUnknownMemberType]
-                )
+            if credentials is not None:
+                credentials = _with_scopes_if_required(credentials, ['https://www.googleapis.com/auth/cloud-platform'])
 
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(
