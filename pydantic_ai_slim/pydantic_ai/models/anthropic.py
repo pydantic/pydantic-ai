@@ -679,6 +679,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
 
+        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
+        # strict-forcing check below also applies when native mode is reached via the profile default
+        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
+        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self.profile.get('default_structured_output_mode', 'tool')
+        )
+
         if model_request_parameters.output_mode == 'native':
             assert model_request_parameters.output_object is not None
             if model_request_parameters.output_object.strict is False:
