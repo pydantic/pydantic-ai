@@ -4475,6 +4475,63 @@ def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None,
     )
 
 
+def test_provider_metadata_tool_call_ids_are_deduplicated() -> None:
+    """The serialized marker must remain a set-like list when the same provider metadata is processed twice.
+
+    This is a pure metadata helper with no model or HTTP boundary, so a VCR test cannot exercise it.
+    """
+    metadata = _utils.add_provider_metadata_tool_call_id(None, 'web-search-call')
+
+    assert _utils.add_provider_metadata_tool_call_id(metadata, 'web-search-call') == snapshot(
+        {'__pydantic_ai__': {'provider_metadata_tool_call_ids': ['web-search-call']}}
+    )
+
+
+async def test_existing_text_deltas_separate_native_tool_pair() -> None:
+    """Already-buffered text around a native tool pair retains the same separator as live stream events.
+
+    This directly tests in-memory stream assembly before iteration starts, which has no HTTP boundary to record.
+    """
+    response = ModelResponse(
+        parts=[
+            TextPart('first'),
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['query']},
+                tool_call_id='web-search-call',
+                provider_name='test',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'uri': 'https://example.com', 'title': 'Example'}],
+                tool_call_id='web-search-call',
+                provider_name='test',
+            ),
+            TextPart('second'),
+        ]
+    )
+    stream_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+    stream = AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=TextOutputSchema[str](
+            text_processor=TextOutputProcessor(),
+            allows_deferred_tools=False,
+            allows_image=False,
+            allows_none=False,
+        ),
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=CombinedCapability([]),
+    )
+
+    assert [text async for text in stream.stream_text(delta=True, debounce_by=None)] == snapshot(
+        ['first', '\n\n', 'second']
+    )
+
+
 def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
     tool_return = NativeToolReturnPart(
         tool_name='web_search',
