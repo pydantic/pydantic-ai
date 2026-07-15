@@ -45,7 +45,8 @@ class GoogleCloudProvider(BaseGoogleProvider):
                 to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
                 Explicit `credentials` use credential-based authentication instead.
                 Explicit `project`/`location` use Application Default Credentials.
-                Google Cloud configuration from the environment takes precedence over an API key from the environment.
+                The `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`
+                environment variables take precedence over an API key from the environment.
             credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
                 be obtained from environment variables and default credentials. For more information, see
                 [Set up Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
@@ -66,7 +67,8 @@ class GoogleCloudProvider(BaseGoogleProvider):
             return
 
         # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
-        # the SDK uses Vertex AI Express Mode.
+        # the SDK uses Vertex AI Express Mode. The SDK reads `GOOGLE_API_KEY`/`GEMINI_API_KEY` itself,
+        # but drops them because the ADC path below always passes an explicit `location`.
         if credentials is not None or project is not None or location is not None:
             api_key = None
         elif api_key is None and not any(

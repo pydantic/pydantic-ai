@@ -14,16 +14,18 @@ with try_import() as imports_successful:
     from google.genai.types import HttpRetryOptions
     from google.oauth2 import service_account
 
+    from pydantic_ai.models import infer_model
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
     class FakeSigner(crypt.Signer):
         @property
         def key_id(self) -> str | None:
-            return None  # pragma: no cover
+            raise NotImplementedError
 
         def sign(self, message: str | bytes) -> bytes:
-            return b''  # pragma: no cover
+            raise NotImplementedError
 
     def service_account_credentials(*, scopes: Sequence[str] | None = None) -> service_account.Credentials:
         return service_account.Credentials(
@@ -218,3 +220,58 @@ def test_google_cloud_provider_explicit_api_key_still_passed(env: TestEnv):
     assert api_client.vertexai is True
     assert api_client.project is None
     assert api_client.location is None
+
+
+def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key():
+    """Explicit `credentials` select credential-based authentication even when `api_key` is also passed.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    credentials = service_account_credentials()
+    provider = GoogleCloudProvider(
+        api_key='your-api-key', credentials=credentials, project='pydantic-ai', location='us-central1'
+    )
+    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key is None
+    forwarded_credentials = cast(
+        'service_account.Credentials',
+        api_client._credentials,  # pyright: ignore[reportPrivateUsage]
+    )
+    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
+
+
+def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_key(env: TestEnv):
+    """`GOOGLE_API_KEY` wins when both environment API keys are set, matching the SDK.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    for name in ('GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'):
+        env.remove(name)
+    env.set('GOOGLE_API_KEY', 'google-api-key')
+    env.set('GEMINI_API_KEY', 'gemini-api-key')
+
+    provider = GoogleCloudProvider()
+    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key == 'google-api-key'
+
+
+def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
+    """The `google-cloud:` model string picks up `GOOGLE_APPLICATION_CREDENTIALS` despite environment API keys.
+
+    Regression test for issue #6499, which reported the failure through this shortcut.
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    env.set('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/service-account.json')
+    env.set('GOOGLE_API_KEY', 'should-be-ignored')
+    env.set('GEMINI_API_KEY', 'also-ignored')
+    env.remove('GOOGLE_CLOUD_PROJECT')
+    env.remove('GOOGLE_CLOUD_LOCATION')
+    credentials = AnonymousCredentials()
+
+    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
+        model = infer_model('google-cloud:gemini-3-flash-preview')
+
+    assert isinstance(model, GoogleModel)
+    api_client = model.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key is None
+    assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
