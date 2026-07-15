@@ -37,7 +37,7 @@ with try_import() as otel_sdk_imports_successful:
                     return SamplingResult(Decision.DROP)
             return SamplingResult(Decision.RECORD_AND_SAMPLE)
 
-        def get_description(self) -> str:
+        def get_description(self) -> str:  # pragma: no cover - required by the ABC, never called here
             return 'DropFirstChatSpanSampler'
 
 
