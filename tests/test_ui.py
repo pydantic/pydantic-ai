@@ -1571,8 +1571,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert len(captured) == 1
     history_seen_by_model = captured[0]
     assert not any(
-        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
-        for message in history_seen_by_model
+        isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
 
 

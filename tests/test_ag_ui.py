@@ -85,7 +85,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -1805,9 +1805,7 @@ def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
     ]
 
     reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13'))
-    reloaded_return = next(
-        part for message in reloaded for part in message.parts if isinstance(part, NativeToolReturnPart)
-    )
+    reloaded_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert reloaded_return.outcome == 'failed'
 
 
@@ -4183,9 +4181,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     assert isinstance(tool_msgs[0].content, str)
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4206,9 +4202,7 @@ def test_dump_tool_return_none_content_becomes_empty_string() -> None:
     assert tool_msgs[0].content == ''
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
     )
@@ -4230,9 +4224,7 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     ]
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4264,9 +4256,7 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
     assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4302,9 +4292,7 @@ def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
     ]
 
     reloaded = AGUIAdapter.load_messages(raw)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4440,9 +4428,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
             ToolMessage(id='msg_3', content=result_content, tool_call_id='call_1'),
         ]
     )
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -4901,7 +4887,7 @@ def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
         [ActivityMessage(id='activity-1', activity_type='pydantic_ai_file', content=content)],
         preserve_file_data=True,
     )
-    file_parts = [part for message in reloaded for part in message.parts if isinstance(part, FilePart)]
+    file_parts = list(iter_message_parts(reloaded, ModelResponse, FilePart))
     assert len(file_parts) == 1
     assert file_parts[0].content.vendor_metadata is None
 
@@ -5922,8 +5908,7 @@ async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
     assert len(captured) == 1
     history_seen_by_model = captured[0]
     assert not any(
-        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
-        for message in history_seen_by_model
+        isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
 
 
