@@ -1380,6 +1380,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
         # name still lives in history; it just isn't worth replaying as a tool reference.
         available_tool_names = {t.name for t in model_request_parameters.function_tools}
+        enabled_native_tool_kinds = {t.kind for t in model_request_parameters.native_tools}
+        orphan_native_call_ids = _collect_orphan_native_call_ids(messages, enabled_native_tool_kinds)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1529,6 +1531,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
+                            if tool_use_id in orphan_native_call_ids:
+                                continue
                             if response_part.tool_name == WebSearchTool.kind:
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
@@ -2800,6 +2804,33 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     if item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     assert_never(item.name)
+
+
+def _collect_orphan_native_call_ids(
+    messages: list[ModelMessage], enabled_kinds: set[str]
+) -> set[str]:
+    """Collect tool_call_ids of NativeToolCallParts whose tool kind is NOT in the
+    enabled set for this request AND that have no paired NativeToolReturnPart
+    anywhere in history.
+
+    Anthropic can hallucinate a server_tool_use block for a native tool that
+    wasn't requested (e.g. code_execution when no tools are configured). On
+    retry pydantic-ai replays the block verbatim, but without a corresponding
+    result block Anthropic rejects with HTTP 400. Dropping the unpaired call
+    from the wire payload is safe because the tool was never enabled — no
+    legitimate result can arrive in a later turn. See #6401.
+    """
+    call_ids: dict[str, str] = {}  # tool_call_id -> tool_name
+    return_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, NativeToolCallPart) and part.tool_call_id:
+                    if part.tool_name not in enabled_kinds:
+                        call_ids[part.tool_call_id] = part.tool_name
+                elif isinstance(part, NativeToolReturnPart) and part.tool_call_id:
+                    return_ids.add(part.tool_call_id)
+    return set(call_ids.keys()) - return_ids
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:
