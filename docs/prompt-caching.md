@@ -13,17 +13,7 @@ Provider prompt caching reuses a processed prompt prefix and charges a steeply d
 | [Google](models/google.md) | Implicit caching is automatic | Nothing to enable |
 | Other providers | Typically implicit where supported | Consult the provider documentation |
 
-OpenAI applies caching automatically to eligible prompts. No model setting or marker is required.
-
-Anthropic supports `anthropic_cache`, `anthropic_cache_instructions`, `anthropic_cache_tool_definitions`, and `anthropic_cache_messages`, as well as explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers. The default TTL is 5 minutes; use `'1h'` where supported to opt into a 1-hour TTL. See [Anthropic prompt caching](models/anthropic.md#prompt-caching) for configuration details.
-
-Bedrock represents [`CachePoint`][pydantic_ai.messages.CachePoint] markers as Converse `cachePoint` blocks, and applies provider-specific minimum-token thresholds. See [Bedrock prompt caching](models/bedrock.md#prompt-caching) for the available settings and constraints.
-
-OpenRouter passes cache settings and [`CachePoint`][pydantic_ai.messages.CachePoint] markers through to supported Anthropic and Gemini models. See [OpenRouter prompt caching](models/openrouter.md#prompt-caching) for the differences between downstream providers.
-
-Google Gemini applies implicit caching automatically. Explicit `CachedContent` is separate provider infrastructure and is not covered here.
-
-Other providers, including Groq and DeepSeek, typically apply caching implicitly where they support it. Consult the provider's documentation for eligibility and retention details.
+The provider pages linked in the table document the configuration mechanics — for example, Anthropic's [`anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache], [`anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions], [`anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions], and [`anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] settings, Bedrock's minimum-token thresholds, and OpenRouter's per-downstream-provider differences.
 
 ## Prefix-stability guarantees
 
@@ -32,7 +22,7 @@ Pydantic AI makes the following guarantees about the prompt prefix it sends to p
 - [Instructions are assembled deterministically](agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
 - Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. User-controlled [history processors](message-history.md#processing-message-history) are the exception.
 - Internal bookkeeping such as run IDs, message timestamps, and deferred-tool flags does not reach the provider wire and therefore cannot move the prompt prefix.
-- [Vercel AI](ui/vercel-ai.md) and [AG-UI](ui/ag-ui.md) adapter round-trips reconstruct histories that serialize back to the same provider request bytes.
+- [Vercel AI](ui/vercel-ai.md) and [AG-UI](ui/ag-ui.md) adapter round-trips are tested to reconstruct histories that serialize back to the same provider request bytes for the wire-relevant fields (tool call arguments, thinking signatures). Older UI protocol versions can be lossy — for example, AG-UI versions without a reasoning carrier drop thinking parts, which moves the prefix — so keep the client packages current.
 - Every recorded provider conversation in CI is checked for wire-level prefix stability, so a framework change that starts moving prefixes fails CI in the pull request that introduces it.
 
 ## What invalidates a cache
@@ -52,7 +42,7 @@ Provider caches expire after idle gaps. This is unavoidable, but it creates a us
 
 Every response's [`RequestUsage`][pydantic_ai.usage.RequestUsage] normalizes `cache_read_tokens` and `cache_write_tokens` across providers. `input_tokens` always includes cached reads, so `cache_read_tokens / input_tokens` is a comparable hit ratio per request and, through [`RunUsage`][pydantic_ai.usage.RunUsage], per run.
 
-When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'ttl-expired'`, `'unknown'`, or `'unexpected'`. An unexpected collapse — one not explained by TTL expiry or a model switch — additionally emits a `pydantic_ai.cache.collapse` span event. See the [Logfire documentation](logfire.md) for the authoritative attribute definitions.
+When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'ttl-expired'`, `'unknown'`, or `'unexpected'`. Only an `'unexpected'` collapse — one that happens while the provider's documented retention window should still be active — additionally emits a `pydantic_ai.cache.collapse` span event; model switches never register as collapses at all, since each provider and model's cache is tracked separately. See the [Logfire documentation](logfire.md) for the authoritative attribute definitions.
 
 ## Rules for extension authors
 
