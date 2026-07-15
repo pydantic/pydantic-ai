@@ -77,14 +77,22 @@ Reach for this when there is no need for tools, retries, or agent loop state.
 Use `OpenAIResponsesModel.connect()` to reuse one persistent connection for sequential OpenAI Responses requests:
 
 ```python
+import asyncio
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
 model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model)
 
-async with model.connect():
-    result = await agent.run('Summarize these release notes')
+
+async def main():
+    async with model.connect():
+        result = await agent.run('Summarize these release notes')
+        print(result.output)
+
+
+asyncio.run(main())
 ```
 
 Install `openai[realtime]` first. One connection supports one in-flight response, so use a separate `connect()` context for each concurrent run. Requests outside the context use HTTP. Do not combine WebSocket mode with durable execution or `openai_background=True`.
