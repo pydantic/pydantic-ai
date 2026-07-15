@@ -945,12 +945,12 @@ async def test_disable_streaming_events(allow_model_requests: None):
     )
 
 
-async def test_disable_streaming_get_before_iteration(allow_model_requests: None):
-    """`get()` reports the whole response even if the consumer stops early.
+async def test_disable_streaming_get_after_early_break(allow_model_requests: None):
+    """`get()` reports the whole response even if the consumer stops reading early.
 
     A mock is used rather than a cassette because this pins internal wrapper behavior: the response
-    is fetched in full (and billed) before replay begins, so a consumer that breaks after the first
-    event must not record a truncated response that drops the tool call the model actually made.
+    is fetched in full before replay begins, so a consumer that breaks after the first event must
+    not record a truncated response that drops the tool call the model actually made.
     """
     c = completion_message(
         ChatCompletionMessage(
@@ -987,6 +987,52 @@ async def test_disable_streaming_get_before_iteration(allow_model_requests: None
         ]
     )
     assert response.usage == snapshot(RequestUsage(input_tokens=3, output_tokens=5))
+    # The consumer stopped reading, so the stream is still reported as truncated even though every
+    # part is recorded.
+    assert response.state == snapshot('incomplete')
+
+
+async def test_disable_streaming_ignores_leading_whitespace(allow_model_requests: None):
+    """A whitespace-only text part ahead of tool calls does not end the run early.
+
+    Qwen3 on Ollama emits `<think>...</think>\\n\\n` before its tool calls. The streamed path drops
+    that whitespace via `ignore_streamed_leading_whitespace`, and the replayed path must too, or
+    `run_stream` returns the whitespace as the final result and never calls the tool. A mock is used
+    rather than a cassette to pin this exact response shape, which a live model emits only sometimes.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content='<think>I should check the weather.</think>\n\n',
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1',
+                        function=Function(arguments='{"city": "Mexico City"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        completion_message(ChatCompletionMessage(content='It is sunny in Mexico City.', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'qwen3',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=ModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_disable_streaming=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    async with agent.run_stream('What is the weather in Mexico City?') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('It is sunny in Mexico City.')
+    assert result.usage == snapshot(RunUsage(requests=2, tool_calls=1))
 
 
 async def test_disable_streaming(allow_model_requests: None):

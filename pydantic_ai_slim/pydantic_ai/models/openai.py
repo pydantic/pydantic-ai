@@ -439,6 +439,25 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _drop_leading_whitespace_text(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
+    """Drop text parts that are empty or whitespace-only and have no text part before them.
+
+    Mirrors `ModelResponsePartsManager.handle_text_delta(ignore_leading_whitespace=True)` for
+    responses that were not streamed: models like Ollama + Qwen3 emit `<think>\\n</think>\\n\\n` or an
+    empty text part ahead of tool calls, which `run_stream` would otherwise treat as a final result,
+    ending the run before the tool calls are executed.
+    """
+    kept: list[ModelResponsePart] = []
+    seen_text = False
+    for part in parts:
+        if isinstance(part, TextPart):
+            if not seen_text and (not part.content or part.content.isspace()):
+                continue
+            seen_text = True
+        kept.append(part)
+    return kept
+
+
 def _merge_leading_system_messages(
     openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
 ) -> list[chat.ChatCompletionMessageParam]:
@@ -953,8 +972,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         if model_settings_cast.get('openai_disable_streaming'):
             # Fetch the complete response without streaming (some models mangle tool calls when
-            # streaming) and replay it as a single chunk so streaming consumers keep working.
+            # streaming) and replay its parts so streaming consumers keep working.
             model_response = await self._request(messages, model_settings_cast, model_request_parameters)
+            if self.profile.get('ignore_streamed_leading_whitespace', False):
+                model_response = replace(model_response, parts=_drop_leading_whitespace_text(model_response.parts))
             yield _ModelResponseStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_response=model_response,
