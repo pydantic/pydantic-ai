@@ -28,12 +28,21 @@ class UsageBase:
         # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
     ] = 0
-    """Number of input/prompt tokens."""
+    """Total number of input/prompt tokens, across all modalities.
+
+    Token counts form inclusive parent/child buckets, not disjoint ones: this total includes cached
+    tokens (`cache_read_tokens`, `cache_write_tokens`) and audio tokens (`input_audio_tokens`).
+    Usage extraction normalizes providers that report these separately (e.g. Anthropic and Bedrock,
+    whose raw `input_tokens` exclude cache reads/writes) so the convention holds everywhere.
+    """
 
     cache_write_tokens: int = 0
-    """Number of tokens written to the cache."""
+    """Number of tokens written to the cache. Included in `input_tokens`."""
     cache_read_tokens: int = 0
-    """Number of tokens read from the cache."""
+    """Number of tokens read from the cache, across all modalities (includes `cache_audio_read_tokens`).
+
+    Included in `input_tokens`.
+    """
 
     output_tokens: Annotated[
         int,
@@ -43,11 +52,11 @@ class UsageBase:
     """Number of output/completion tokens."""
 
     input_audio_tokens: int = 0
-    """Number of audio input tokens."""
+    """Number of audio input tokens. Included in `input_tokens`."""
     cache_audio_read_tokens: int = 0
-    """Number of audio tokens read from the cache."""
+    """Number of audio tokens read from the cache. Included in `cache_read_tokens` and `input_audio_tokens`."""
     output_audio_tokens: int = 0
-    """Number of audio output tokens."""
+    """Number of audio output tokens. Included in `output_tokens`."""
 
     details: Annotated[
         dict[str, int],
@@ -73,9 +82,11 @@ class UsageBase:
     def cache_hit_ratio(self) -> float:
         """Fraction of input tokens that were read from the provider's prompt cache.
 
-        Computed as `cache_read_tokens / input_tokens`. `input_tokens` includes cached reads for every provider, so the
-        ratio is comparable across providers: `0.0` means no prompt-cache hits, while values approaching `1.0` mean
-        nearly the entire prompt was served from cache. Returns `0.0` when there are no input tokens.
+        Computed as `cache_read_tokens / input_tokens`. Both counts span all modalities — cached audio tokens are
+        included in `cache_read_tokens` just as audio input tokens are included in `input_tokens` — and
+        `input_tokens` includes cached reads for every provider, so the ratio is comparable across providers:
+        `0.0` means no prompt-cache hits, while values approaching `1.0` mean nearly the entire prompt was served
+        from cache. Returns `0.0` when there are no input tokens.
 
         On [`RequestUsage`][pydantic_ai.usage.RequestUsage] this is the hit ratio of a single request; on
         [`RunUsage`][pydantic_ai.usage.RunUsage] it aggregates all requests in the run.
