@@ -49,6 +49,7 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
         self,
         *,
         region_name: str | None = None,
+        base_url: str | None = None,
         api_key: str | None = None,
         openai_client: None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -58,12 +59,24 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
         self,
         *,
         region_name: str | None = None,
+        base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Create a Bedrock Mantle provider.
+
+        Args:
+            region_name: The AWS region used to construct the default `openai/v1` endpoint.
+            base_url: A complete Mantle base URL. Use this for models served from another path, such as `v1`.
+            api_key: A Bedrock API key. If omitted, `AWS_BEARER_TOKEN_BEDROCK` is used.
+            openai_client: An existing [`AsyncOpenAI`](https://github.com/openai/openai-python) client. If provided,
+                `region_name`, `base_url`, `api_key`, and `http_client` must be `None`.
+            http_client: An existing `httpx.AsyncClient` used to make requests.
+        """
         if openai_client is not None:
             assert region_name is None, 'Cannot provide both `openai_client` and `region_name`'
+            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
@@ -76,14 +89,15 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
                 '`BedrockMantleProvider(api_key=...)` to use the Bedrock Mantle provider.'
             )
 
-        region_name = region_name or os.getenv('AWS_DEFAULT_REGION') or os.getenv('AWS_REGION')
-        if not region_name:
-            raise UserError(
-                'Set the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable or pass it via '
-                '`BedrockMantleProvider(region_name=...)` to use the Bedrock Mantle provider.'
-            )
+        if base_url is None:
+            region_name = region_name or os.getenv('AWS_DEFAULT_REGION') or os.getenv('AWS_REGION')
+            if not region_name:
+                raise UserError(
+                    'Set the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable or pass it via '
+                    '`BedrockMantleProvider(region_name=...)` to use the Bedrock Mantle provider.'
+                )
+            base_url = f'https://bedrock-mantle.{region_name}.api.aws/openai/v1'
 
-        base_url = f'https://bedrock-mantle.{region_name}.api.aws/openai/v1'
         if http_client is not None:
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:

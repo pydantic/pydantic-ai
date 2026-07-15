@@ -4,11 +4,12 @@ import re
 
 import httpx
 import pytest
-from pytest_mock import MockerFixture
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -37,6 +38,13 @@ def test_bedrock_mantle_aws_region_fallback(env: TestEnv) -> None:
     env.set('AWS_REGION', 'eu-west-1')
     provider = BedrockMantleProvider(api_key='api-key')
     assert provider.base_url == 'https://bedrock-mantle.eu-west-1.api.aws/openai/v1/'
+
+
+def test_bedrock_mantle_custom_base_url(env: TestEnv) -> None:
+    env.remove('AWS_DEFAULT_REGION')
+    env.remove('AWS_REGION')
+    provider = BedrockMantleProvider(base_url='https://bedrock-mantle.us-east-1.api.aws/v1', api_key='api-key')
+    assert provider.base_url == 'https://bedrock-mantle.us-east-1.api.aws/v1/'
 
 
 def test_bedrock_mantle_provider_need_api_key(env: TestEnv) -> None:
@@ -76,12 +84,11 @@ async def test_bedrock_mantle_provider_reopens_http_client() -> None:
         assert not provider.client._client.is_closed  # pyright: ignore[reportPrivateUsage]
 
 
-def test_bedrock_mantle_model_profile(mocker: MockerFixture) -> None:
-    profile_mock = mocker.patch('pydantic_ai.providers.bedrock_mantle.openai_model_profile', wraps=openai_model_profile)
-    profile = BedrockMantleProvider.model_profile('openai.gpt-5.6-luna')
-    profile_mock.assert_called_once_with('gpt-5.6-luna')
-    assert profile is not None
-    assert profile.get('tool_call_id_scope') == 'response'
+@pytest.mark.parametrize('model_name', ['gpt-5.6-luna', 'gpt-oss-120b'])
+def test_bedrock_mantle_model_profile(model_name: str) -> None:
+    assert BedrockMantleProvider.model_profile(f'openai.{model_name}') == merge_profile(
+        openai_model_profile(model_name), ModelProfile(tool_call_id_scope='response')
+    )
 
 
 def test_bedrock_mantle_infer_model(env: TestEnv) -> None:

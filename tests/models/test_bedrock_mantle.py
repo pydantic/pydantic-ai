@@ -50,9 +50,10 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
         if isinstance(part, ToolCallPart)
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
-    assert all(
-        response_id is not None and call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls
-    )
+    raw_call_ids = ['call_0', 'call_1' if stream else 'call_0']
+    assert [call.tool_call_id for _, call in tool_calls] == [
+        f'{response_id}:{raw_call_id}' for (response_id, _), raw_call_id in zip(tool_calls, raw_call_ids, strict=True)
+    ]
 
     if not stream:
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
