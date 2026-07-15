@@ -162,9 +162,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/uv.lock') }}
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it offline (see the
