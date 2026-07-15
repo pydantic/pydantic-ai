@@ -37,7 +37,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
-    ModelResponsePart,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -6378,14 +6377,11 @@ async def test_replay_streamed_response_events(
     )
 
     # Round-trip: a standard reducer applies `PartStartEvent.part` as the initial state and then
-    # each `PartDeltaEvent`. The synthesized events must reconstruct `response.parts` exactly; a
-    # full-content start followed by a full-content delta would double the text/thinking/args.
-    reduced: dict[int, ModelResponsePart] = {}
-    for event in events:
-        if isinstance(event, PartStartEvent):
-            reduced[event.index] = event.part
-        elif isinstance(event, PartDeltaEvent):
-            reduced[event.index] = event.delta.apply(reduced[event.index])
+    # each `PartDeltaEvent`. Synthesis must emit no deltas — a full-content start followed by a
+    # full-content delta would double the text/thinking/args — so reducing the starts alone must
+    # reconstruct `response.parts` exactly.
+    assert not any(isinstance(event, PartDeltaEvent) for event in events)
+    reduced = {event.index: event.part for event in events if isinstance(event, PartStartEvent)}
     assert [reduced[index] for index in sorted(reduced)] == replay_response.parts
 
 

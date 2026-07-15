@@ -47,6 +47,7 @@ from pydantic_ai.models import ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
 
@@ -2157,6 +2158,34 @@ async def test_dbos_durability_unrebuildable_runtime_model_errors(dbos: DBOS) ->
         await agent.run('hello', model=TestModel())
 
 
+async def test_dbos_durability_string_default_model(dbos: DBOS) -> None:
+    """A string default that `infer_model` can build is registered under its own id as well as `'default'`.
+
+    Passing the same string at run time then resolves to the bound default instance via the
+    registry, instead of building a fresh instance that would round-trip as a runtime override.
+    """
+    agent = Agent('test', name='durability_string_default', capabilities=[DBOSDurability()])
+
+    result = await agent.run('hello')
+    assert result.output == 'success (no tool calls)'
+
+    result = await agent.run('hello', model='test')
+    assert result.output == 'success (no tool calls)'
+
+
+async def test_dbos_durability_wrapped_default_model(dbos: DBOS) -> None:
+    """A `WrapperModel` around the agent's own model still takes the default's fast path.
+
+    Models are identity-matched after stripping wrapper layers (e.g. the `InstrumentedModel`
+    an `Instrumentation` capability wraps around the model before the request runs), so a
+    wrapped default isn't mistaken for a runtime override that would round-trip through
+    `infer_model` and fail to rebuild.
+    """
+    agent = Agent(_durability_fn_model, name='durability_wrapped_default', capabilities=[DBOSDurability()])
+    result = await agent.run('hello', model=WrapperModel(_durability_fn_model))
+    assert result.output == 'Echo: hello'
+
+
 def _dbos_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
     """Resolve the 'tenant-model' alias to a model built from the run's deps.
 
@@ -2186,8 +2215,12 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
         result = await agent.run('hi', model='tenant-model', deps=tenant)
         assert result.output == f'tenant:{tenant}'
 
+    # A string the resolver doesn't recognize defers to the default `infer_model` flow.
+    result = await agent.run('hi', model='test', deps='acme')
+    assert result.output == 'success (no tool calls)'
 
-def _dbos_broken_resolver(ctx: ModelResolutionContext[None], model_id: str) -> FunctionModel | None:
+
+def _dbos_broken_resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
     if model_id == 'broken-model':
         raise ValueError('resolver exploded')
     return None  # pragma: no cover - only 'broken-model' flows through this test

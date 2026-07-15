@@ -1874,6 +1874,10 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         result = await agent.run('hi', model='tenant-model', deps=tenant)
         assert result.output == f'tenant:{tenant}'
 
+    # A string the resolver doesn't recognize defers to the default `infer_model` flow.
+    result = await agent.run('hi', model='test', deps='acme')
+    assert result.output == 'success (no tool calls)'
+
 
 async def test_prefect_durability_alias_default_model() -> None:
     """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.

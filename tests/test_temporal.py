@@ -5329,7 +5329,9 @@ class TenantModelWorkflow:
     @workflow.run
     async def run(self, tenant: str) -> str:
         result = await _tenant_agent.run('hi', model='tenant-model', deps=tenant)
-        return result.output
+        # A string the resolver doesn't recognize defers to the default `infer_model` flow.
+        fallthrough = await _tenant_agent.run('hi', model='test', deps=tenant)
+        return f'{result.output} | {fallthrough.output}'
 
 
 async def test_durability_resolve_model_id_capability_is_deps_aware(client: Client):
@@ -5354,7 +5356,7 @@ async def test_durability_resolve_model_id_capability_is_deps_aware(client: Clie
                 id=f'TenantModelWorkflow-{tenant}',
                 task_queue=TASK_QUEUE,
             )
-            assert output == f'tenant:{tenant}'
+            assert output == f'tenant:{tenant} | success (no tool calls)'
 
 
 _alias_default_agent = Agent(

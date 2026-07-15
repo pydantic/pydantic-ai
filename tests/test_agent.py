@@ -52,7 +52,7 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
-from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._agent_graph import ModelRequestNode, _check_continuation_usage  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -13213,6 +13213,17 @@ def test_continuation_merges_parts_and_usage_across_response_ids() -> None:
     assert [part.content for part in merged.parts if isinstance(part, TextPart)] == ['first ', 'second']
     assert merged.provider_response_id == 'resp-2'
     assert merged.usage == RequestUsage(input_tokens=18, output_tokens=7)
+
+
+def test_check_continuation_usage_without_limits() -> None:
+    """`_check_continuation_usage` is a no-op on a `RunContext` with no `usage_limits`.
+
+    Not reachable end-to-end: every public run entry point enforces at least the default
+    `UsageLimits()`. The guard covers bare/synthetic run contexts that aren't backed by a
+    run, such as hand-built contexts passed to the durable `model_request` helpers.
+    """
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    _check_continuation_usage(run_context, RequestUsage(input_tokens=1))
 
 
 class _DelayFunctionModel(FunctionModel):
