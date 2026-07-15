@@ -32,11 +32,11 @@ result = agent.run_sync('Who let the dogs out?')
 
 ## API Key Configuration
 
-### `UserError: Set the [PROVIDER]_API_KEY environment variable or pass it via [Provider](api_key=...)`
+### [`UserError`][pydantic_ai.exceptions.UserError]: Set the `[PROVIDER]_API_KEY` environment variable or pass it via the provider's `api_key=...` argument
 
 If you're running into issues with setting the API key for your model, visit the [Models](models/overview.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
 
-To try Pydantic AI without an API key, use the built-in [`'test'` model](testing.md#unit-testing-with-testmodel): `Agent('test')`.
+To try Pydantic AI without an API key, use the built-in [`'test'` model](testing.md#unit-testing-with-testmodel): [`Agent('test')`][pydantic_ai.agent.Agent].
 
 ## Monitoring HTTPX Requests
 

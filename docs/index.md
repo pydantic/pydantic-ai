@@ -108,7 +108,7 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
     #> success (no tool calls)
     ```
 
-    1. [`TestModel`](testing.md#unit-testing-with-testmodel) returns canned responses so you can exercise your agent, tools, and outputs without a key.
+    1. [`TestModel`][pydantic_ai.models.test.TestModel] returns canned responses so you can exercise your agent, tools, and outputs without a key.
 
     When you're ready to use a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
 
