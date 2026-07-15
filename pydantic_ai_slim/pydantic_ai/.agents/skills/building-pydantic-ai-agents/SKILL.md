@@ -227,6 +227,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Work with multimodal input, message history, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
+| Reuse an OpenAI Responses WebSocket connection | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#reuse-an-openai-responses-websocket-connection) |
 | Call the model directly, expose A2A, use durable execution, embeddings, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Compare abstractions, output modes, decorators, or model-string patterns | [Architecture and Decision Guide](./references/ARCHITECTURE.md) |
 | Follow an older link into `COMMON-TASKS.md` | [Task Reference Map](./references/COMMON-TASKS.md) |
