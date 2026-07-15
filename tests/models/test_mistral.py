@@ -965,26 +965,60 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 
 
 @pytest.mark.parametrize(
-    'output_type, json_value, expected',
+    'output_type, json_chunks, expected',
     [
-        pytest.param(float, '20', 20.0, id='number-accepts-integer'),
-        pytest.param(int, '1.0', 1, id='integer-accepts-zero-fraction'),
+        pytest.param(float, ('{"response":20', '}'), 20.0, id='number-accepts-integer'),
+        pytest.param(float, ('{"response":1', '.5}'), 1.5, id='number-accepts-decimal-continuation'),
+        pytest.param(int, ('{"response":1.0', '}'), 1, id='integer-accepts-zero-fraction'),
     ],
 )
 async def test_stream_result_type_numeric_json(
     allow_model_requests: None,
     output_type: type[int] | type[float],
-    json_value: str,
+    json_chunks: tuple[str, ...],
     expected: int | float,
 ) -> None:
-    """Use mock chunks because a live model cannot reliably emit the exact numeric spellings this regression requires."""
-    stream = [text_chunk(f'{{"response":{json_value}}}'), chunk([])]
+    """Use mock chunks because a live model cannot reliably emit the exact numeric spellings and boundaries."""
+    stream = [text_chunk(text) for text in json_chunks[:-1]]
+    stream.append(text_chunk(json_chunks[-1], finish_reason='stop'))
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model, output_type=output_type)
 
     async with agent.run_stream('User prompt value') as result:
         assert await result.get_output() == expected
+
+
+@pytest.mark.parametrize(
+    'output_type, partial_value, valid_value, expected',
+    [
+        pytest.param(float, '1', '2.5', 2.5, id='number-with-integer-prefix'),
+        pytest.param(int, '1.0', '2', 2, id='integer-with-integral-float-prefix'),
+    ],
+)
+async def test_stream_result_type_numeric_json_retries_malformed_continuation(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    partial_value: str,
+    valid_value: str,
+    expected: int | float,
+) -> None:
+    """Reject a compatible numeric prefix when the completed JSON is malformed.
+
+    A live model cannot reliably reproduce the exact chunk boundary and malformed retry sequence.
+    """
+    streams = [
+        [text_chunk(f'{{"response":{partial_value}'), text_chunk('x}', finish_reason='stop')],
+        [text_chunk(f'{{"response":{valid_value}}}', finish_reason='stop')],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(streams)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 2
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
