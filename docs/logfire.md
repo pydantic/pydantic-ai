@@ -249,6 +249,20 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Prompt-cache health
+
+Instrumented agent runs report prompt-cache health without additional configuration:
+
+| Attribute | Description |
+|-----------|-------------|
+| `pydantic_ai.cache.hit_ratio` | Fraction of input tokens read from the prompt cache, on model-request spans and on agent-run spans with cache reads. |
+| `pydantic_ai.cache.established_tokens` | Established cached-prefix size for the response's provider and model. |
+| `pydantic_ai.cache.collapsed` | `true` when a sufficiently large established prefix falls below half its previous size. |
+| `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
+| `pydantic_ai.cache.collapse_reason` | Collapse classification: `ttl-expired`, `unknown`, or `unexpected`. |
+
+An unexpected collapse means the provider's documented retention window should still have been active. It emits a `pydantic_ai.cache.collapse` span event for alerting and investigation. Expired retention windows and providers without a documented window are classified on the span but do not emit the event. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend the expected retention window.
+
 ### Emitted metrics
 
 In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:
