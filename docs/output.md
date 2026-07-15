@@ -934,7 +934,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter]; to abort the whole run from an `event_stream_handler` or tool, use [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] (see [Cancelling the Whole Run](#cancelling-the-whole-run)).
+The yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle exposes `cancel()` to cancel the whole run (see [Cancelling the Whole Run](#cancelling-the-whole-run)); continued iteration then raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]. It also provides `all_messages()`, `new_messages()`, `usage`, and the completed `result`. From inside a tool or `event_stream_handler`, use [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] instead. As a response-level alternative, [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] from `run_stream()` stops only the current model response.
 
 #### Cancelling `run_stream`
 
@@ -999,7 +999,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Cancelling the Whole Run
 
-The methods above stop the current model response but let the run continue (e.g. into tool execution). To abort the run itself, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter], or [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] from inside a tool, an `event_stream_handler`, or a capability hook. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]:
+The methods above stop the current model response but let the run continue (e.g. into tool execution). To abort the run itself, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter], [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] on the handle returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], or [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run] from inside a tool, an `event_stream_handler`, or a capability hook. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]:
 
 ```python {title="run_cancel.py"}
 from pydantic_ai import Agent, RunCancelled

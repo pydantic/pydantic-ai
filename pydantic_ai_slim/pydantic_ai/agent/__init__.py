@@ -26,6 +26,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _cancel,
     _instructions,
     _output,
     _system_prompt,
@@ -93,6 +94,7 @@ from .abstract import (
     AgentMetadata,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -113,6 +115,7 @@ __all__ = (
     'AgentModelSettings',
     'AgentRetries',
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'NativeToolFunc',
     'CallToolsNode',
@@ -1408,6 +1411,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
+        binding = _cancel.take_run_binding()
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1432,6 +1436,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            cancellation=binding.cancellation if binding is not None else _cancel.RunCancellation(),
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1460,9 +1465,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             agent_run = AgentRun(graph_run)
-            # Bind the run's cancellation controller to this task, and neutralize `cancel()`
-            # once the run is over so it can never cancel unrelated later work on this task.
-            graph_deps.cancellation.bind()
+            if binding is not None:
+                binding.agent_run = agent_run
+            # Neutralize `cancel()` once the run is over so it can never cancel unrelated later
+            # work on this task. Binding happens immediately before the run is handed to its
+            # driver, ensuring a pre-start request lands at a run boundary that can translate it.
             stack.callback(graph_deps.cancellation.finish)
             self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
@@ -1567,6 +1574,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if _short_circuited:
                 await _finalize_result(_wrap_task.result())
 
+            graph_deps.cancellation.bind()
             try:
                 yield agent_run
             except BaseException as _exc:

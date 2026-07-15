@@ -27,7 +27,7 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunCancelled, UserError, capture_run_messages
+from pydantic_ai import Agent, AgentRunResultEvent, RunCancelled, UserError, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -313,6 +313,142 @@ async def test_cancel_run_under_run_stream_events():
                 events.append(type(event).__name__)
 
     assert events  # events streamed before the cancellation are delivered
+
+
+async def test_run_stream_events_cancel_mid_iteration():
+    """The public event handle cancels its run while preserving events and live history."""
+    agent = Agent(TestModel(custom_output_text='several words of output'))
+    received: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+
+    async with agent.run_stream_events('go') as events:
+        with pytest.raises(RunCancelled):
+            async for event in events:
+                received.append(event)
+                events.cancel()
+
+        assert received
+        assert events.all_messages()
+        assert events.result is None
+
+
+async def test_run_stream_events_cancel_from_sibling_task():
+    """A sibling task can cancel while the consumer is blocked waiting for its next event."""
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return 'never reached'  # pragma: no cover
+
+    async with agent.run_stream_events('go') as events:
+        consumer = asyncio.create_task(_consume_events(events))
+        await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        events.cancel()
+        with pytest.raises(RunCancelled):
+            await asyncio.wait_for(consumer, timeout=READINESS_WAIT_TIMEOUT)
+
+
+async def _consume_events(events: AsyncIterable[AgentStreamEvent | AgentRunResultEvent[Any]]) -> None:
+    async for _event in events:
+        pass
+
+
+async def test_run_stream_events_cancel_before_iteration():
+    """A pre-start cancellation is delivered as soon as lazy iteration starts the run."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('go') as events:
+        with pytest.raises(RunCancelled):
+            events.cancel()
+            async for _event in events:
+                pass
+
+        assert events.result is None
+
+
+async def test_run_stream_events_cancel_without_iteration():
+    """Cancelling and closing an unstarted handle remains quiet and does not create run state."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('go') as events:
+        events.cancel()
+
+    assert events.result is None
+    with pytest.raises(UserError, match='run has not started; iterate the events first'):
+        events.all_messages()
+
+
+async def test_run_stream_events_state_before_and_after_completion():
+    """State access rejects an unstarted run and exposes the successful final result."""
+    agent = Agent(TestModel())
+    result_event: AgentRunResultEvent[str] | None = None
+
+    async with agent.run_stream_events('go') as events:
+        with pytest.raises(UserError, match='run has not started; iterate the events first'):
+            events.all_messages()
+        with pytest.raises(UserError, match='run has not started; iterate the events first'):
+            _ = events.usage
+        async for event in events:
+            if isinstance(event, AgentRunResultEvent):
+                result_event = event
+
+    assert result_event is not None
+    assert events.all_messages()
+    assert events.new_messages()
+    assert events.usage.requests == 1
+    assert events.result is not None
+    assert events.result.output == result_event.result.output
+
+
+async def test_run_stream_events_cancel_after_completion_is_noop():
+    """Cancelling a completed event handle cannot disturb later work in the consumer task."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('go') as events:
+        async for _event in events:
+            pass
+
+    result = events.result
+    events.cancel()
+    await asyncio.sleep(0)
+    assert events.result is result
+
+
+async def test_run_stream_events_early_break_has_no_result():
+    """Leaving after an early break quietly tears down the background run without a result."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('go') as events:
+        await anext(events)
+
+    assert events.result is None
+
+
+async def test_run_stream_events_binding_does_not_leak_to_nested_run():
+    """A plain nested run completes independently before cancellation targets the outer run."""
+    inner_completed = asyncio.Event()
+    outer_blocked = asyncio.Event()
+    inner_agent = Agent(TestModel(custom_output_text='inner complete'))
+    outer_agent = Agent(TestModel())
+
+    @outer_agent.tool_plain
+    async def nested_run() -> str:
+        result = await inner_agent.run('inner')
+        inner_completed.set()
+        outer_blocked.set()
+        await asyncio.Event().wait()
+        return result.output  # pragma: no cover
+
+    async with outer_agent.run_stream_events('outer') as events:
+        consumer = asyncio.create_task(_consume_events(events))
+        await asyncio.wait_for(outer_blocked.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        events.cancel()
+        with pytest.raises(RunCancelled):
+            await asyncio.wait_for(consumer, timeout=READINESS_WAIT_TIMEOUT)
+
+    assert inner_completed.is_set()
 
 
 @requires_task_cancelling

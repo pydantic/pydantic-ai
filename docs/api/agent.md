@@ -8,6 +8,7 @@
             - WrapperAgent
             - AgentRetries
             - AgentRun
+            - AgentRunEvents
             - AgentRunResult
             - EndStrategy
             - RunOutputDataT

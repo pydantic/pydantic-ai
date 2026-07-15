@@ -26,6 +26,7 @@ from pydantic_graph import End
 
 from .. import (
     _agent_graph,
+    _cancel,
     _instructions,
     _utils,
     exceptions,
@@ -117,11 +118,13 @@ class AgentRetries(TypedDict, total=False):
     output: int
 
 
-_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[Any]]]
+_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[OutputDataT]]]
 """Starts the background agent run with the internal event-forwarding handler and returns its result."""
 
 
-class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]):
+class AgentRunEvents(
+    Generic[OutputDataT], AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]
+):
     """The event iterator returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
@@ -133,22 +136,26 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
     error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
+
+    The handle can cancel the whole run and exposes its live messages and usage after iteration has
+    started. After successful completion, `result` contains the final run result.
     """
 
-    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+    def __init__(self, run_agent: _RunStreamEventsRunner[OutputDataT]) -> None:
         self._run_agent = run_agent
+        self._binding = _cancel.RunBinding()
         self._receive_stream: (
-            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
+            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]] | None
         ) = None
-        self._task: asyncio.Task[AgentRunResult[Any]] | None = None
+        self._task: asyncio.Task[AgentRunResult[OutputDataT]] | None = None
         # Set once the trailing `AgentRunResultEvent` has been produced, so further `__anext__()` calls stop.
         self._result_yielded = False
         self._closed = False
 
-    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
         return self
 
-    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
         if self._closed or self._result_yielded:
             raise StopAsyncIteration
 
@@ -165,6 +172,45 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             self._result_yielded = True
             result = await self._task
             return AgentRunResultEvent(result)
+
+    def cancel(self) -> None:
+        """Request cancellation of the whole run.
+
+        This method is idempotent, is a no-op after completion, and is safe to call from another
+        task (e.g. a TUI's key handler), but not from another thread — marshal onto the event loop
+        first (e.g. `loop.call_soon_threadsafe(events.cancel)`). It does not affect external
+        cancellation of the consumer task. If iteration continues, cancellation surfaces as
+        [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]; leaving the context instead performs
+        quiet teardown.
+        """
+        self._binding.cancellation.cancel()
+
+    def all_messages(self) -> list[_messages.ModelMessage]:
+        """Return all messages from the run, including messages supplied as history."""
+        return self._agent_run().all_messages()
+
+    def new_messages(self) -> list[_messages.ModelMessage]:
+        """Return only messages created by the run."""
+        return self._agent_run().new_messages()
+
+    @property
+    def usage(self) -> _usage.RunUsage:
+        """Return the run's current usage."""
+        return self._agent_run().usage
+
+    @property
+    def result(self) -> AgentRunResult[OutputDataT] | None:
+        """Return the successful run result once complete, otherwise `None`."""
+        task = self._task
+        if task is not None and task.done() and not task.cancelled() and task.exception() is None:
+            return task.result()
+        return None
+
+    def _agent_run(self) -> AgentRun[Any, OutputDataT]:
+        agent_run = self._binding.agent_run
+        if agent_run is None:
+            raise exceptions.UserError('The run has not started; iterate the events first.')
+        return agent_run
 
     async def aclose(self) -> None:
         """Cancel the background run (if started) and close the receive stream, idempotently."""
@@ -192,7 +238,7 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         # Zero-buffer stream: the run blocks on `send` until this iterator pulls, giving natural backpressure
         # and keeping the run no more than one event ahead of the consumer.
         send_stream, receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
+            _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]
         ]()
         self._receive_stream = receive_stream
 
@@ -200,10 +246,11 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             async for event in events:
                 await send_stream.send(event)
 
-        async def run_agent() -> AgentRunResult[Any]:
+        async def run_agent() -> AgentRunResult[OutputDataT]:
             # Closing the send stream on exit is what surfaces `EndOfStream` to the consumer once the run ends.
             async with send_stream:
-                result = await self._run_agent(event_stream_handler)
+                with _cancel.provide_run_binding(self._binding):
+                    result = await self._run_agent(event_stream_handler)
                 # This background task owns the run: if a step absorbed an external cancellation
                 # of this task, re-assert it here so a cancelled run never yields a normal
                 # `AgentRunResultEvent` to the consumer.
@@ -213,26 +260,24 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         self._task = asyncio.create_task(run_agent())
 
 
-class _RunStreamEventsContext(
-    AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]
-):
+class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]):
     """The async context manager returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
-    Hands out a single `_RunStreamEventsIterator` on entry and closes it on exit, so an early `break` out of
+    Hands out a single `AgentRunEvents` on entry and closes it on exit, so an early `break` out of
     the event loop still cancels and drains the background run.
     """
 
-    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+    def __init__(self, run_agent: _RunStreamEventsRunner[OutputDataT]) -> None:
         self._run_agent = run_agent
-        self._iterator: _RunStreamEventsIterator | None = None
+        self._iterator: AgentRunEvents[OutputDataT] | None = None
 
-    async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    async def __aenter__(self) -> AgentRunEvents[OutputDataT]:
         # Single-entry: re-entering would orphan a first iterator that had already started (and leak its
         # background task), so fail loudly instead of silently. `__aexit__` still cleans up the one live
         # iterator.
         if self._iterator is not None:
             raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
-        self._iterator = _RunStreamEventsIterator(self._run_agent)
+        self._iterator = AgentRunEvents(self._run_agent)
         return self._iterator
 
     async def __aexit__(
@@ -1176,7 +1221,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
     @overload
     def run_stream_events(
@@ -1199,9 +1244,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[
-        AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
-    ]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
@@ -1223,14 +1266,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
+    ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
 
-        The background run starts on the first iteration of the event stream, not on entering the
+        The background run starts on the first iteration of the event handle, not on entering the
         context manager, so entering and exiting without iterating never calls the model.
+
+        The handle can cancel the whole run and access its messages, usage, and completed result.
 
         Must be used as an async context manager so the background run task is deterministically
         cleaned up when the consumer stops iterating early.
@@ -1293,8 +1338,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
-            `AgentRunResultEvent` carrying the run result.
+            An async context manager that yields an [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents]
+            handle over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
