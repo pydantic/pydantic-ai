@@ -36,7 +36,7 @@ from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
-__all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel', 'CostCalculationFailedWarning'
+__all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:

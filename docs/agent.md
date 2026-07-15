@@ -429,26 +429,9 @@ You can retrieve usage statistics (tokens, requests, etc.) at any time from the 
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
-#### Cost Estimation
+#### Updating model prices
 
-Pydantic AI uses [`genai-prices`](https://github.com/pydantic/genai-prices) to estimate the cost of model requests. The calculation applies the provider's published rates per token type, so cached input tokens ([`cache_read_tokens`][pydantic_ai.usage.RequestUsage]), cache writes ([`cache_write_tokens`][pydantic_ai.usage.RequestUsage]), and audio tokens are billed separately from regular input/output tokens when the provider differentiates them. The same cost is also surfaced in OpenTelemetry/Logfire as the `operation.cost` span attribute — see [LLM Cost](logfire.md#llm-cost).
-
-You can call the [`.cost()`][pydantic_ai.messages.ModelResponse.cost] method on any [`ModelResponse`][pydantic_ai.messages.ModelResponse] in the message history to get a cost breakdown:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse
-
-agent = Agent('openai:gpt-5.2')
-result = agent.run_sync('What is the capital of France?')
-
-for message in result.all_messages():
-    if isinstance(message, ModelResponse):
-        cost = message.cost()
-        print(f'Input: ${cost.input_price:.6f}, Output: ${cost.output_price:.6f}, Total: ${cost.total_price:.6f}')
-```
-
-By default, pricing data comes from the version of `genai-prices` you have installed. To keep prices up-to-date without waiting for a new PyPI release, call [`update_in_background()`][pydantic_ai.prices.update_in_background] once at application startup — it fetches the latest pricing data from GitHub in a background thread, refreshing hourly:
+Price calculations use the data bundled with [`genai-prices`](https://github.com/pydantic/genai-prices). To refresh that data hourly in a background thread, call [`update_in_background()`][pydantic_ai.prices.update_in_background] at application startup:
 
 ```python {test="skip"}
 from pydantic_ai import prices
@@ -456,32 +439,7 @@ from pydantic_ai import prices
 prices.update_in_background()
 ```
 
-If the fetch fails (e.g. no network access), pricing silently falls back to the data bundled with the installed `genai-prices` package.
-
-If you need more control over the background thread (e.g. stopping it, configuring the update interval, or waiting for the first fetch to complete), use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly. It can be used as a context manager for automatic cleanup:
-
-```python {test="skip"}
-from genai_prices import UpdatePrices
-
-with UpdatePrices(update_interval=1800) as updater:
-    # Pricing data is refreshed every 30 minutes in the background.
-    # The background thread is automatically stopped when the context exits.
-    ...
-```
-
-Or managed manually with `start()` and `stop()`:
-
-```python {test="skip"}
-from genai_prices import UpdatePrices
-
-updater = UpdatePrices()
-updater.start(wait=True)  # Wait for the first fetch to complete before continuing.
-# ...
-updater.stop()
-```
-
-!!! note
-    Only one updater can be active per process, so don't combine [`update_in_background()`][pydantic_ai.prices.update_in_background] with a [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) you manage yourself. If `update_in_background()` runs second, the redundant call is silently ignored; if it runs first, your own `UpdatePrices.start()` raises `RuntimeError`.
+This helper retains shared ownership of the updater for the process lifetime. For configuration, waiting, or shutdown, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly.
 
 #### Streaming All Events and Output
 

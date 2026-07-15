@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from ._inline_snapshot import snapshot, warns
+from ._inline_snapshot import snapshot
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -1843,31 +1843,3 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
-
-
-@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-async def test_embedding_cost_unknown_model_warns(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
-    """An embedding model unknown to genai-prices warns once instead of silently skipping cost."""
-    monkeypatch.setattr('pydantic_ai._instrumentation._warned_unknown_cost_models', set[str]())
-
-    def raise_lookup(self: EmbeddingResult) -> None:
-        raise LookupError('no pricing data')
-
-    monkeypatch.setattr(EmbeddingResult, 'cost', raise_lookup)
-
-    embedder = Embedder(TestEmbeddingModel(), instrument=True)
-
-    with warns(
-        snapshot(
-            [
-                'CostCalculationFailedWarning: No pricing data found for test:test; '
-                '`operation.cost` will not be set. Upgrade `genai-prices` or call '
-                '`pydantic_ai.prices.update_in_background()` to keep pricing up to date.'
-            ]
-        )
-    ):
-        await embedder.embed_query('Hello, world!')
-        await embedder.embed_query('Hello, world!')
-
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    assert all('operation.cost' not in span['attributes'] for span in spans)

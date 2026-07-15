@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -12,8 +13,7 @@ from opentelemetry.util.types import AttributeValue
 from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
-    warn_cost_calculation_failed,
-    warn_unknown_cost_model,
+    CostCalculationFailedWarning,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
@@ -144,9 +144,12 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     try:
                         price_calculation = result.cost()
                     except LookupError:
-                        warn_unknown_cost_model(f'{provider_name}:{response_model}')
+                        # The cost of this provider/model is unknown, which is common.
+                        pass
                     except Exception as e:  # pragma: no cover
-                        warn_cost_calculation_failed(e)
+                        warnings.warn(
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                        )
 
                     if not span.is_recording():
                         return  # pragma: lax no cover
