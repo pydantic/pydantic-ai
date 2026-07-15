@@ -69,6 +69,19 @@ class UsageBase:
         """Sum of `input_tokens + output_tokens`."""
         return self.input_tokens + self.output_tokens
 
+    @property
+    def cache_hit_ratio(self) -> float:
+        """Fraction of input tokens that were read from the provider's prompt cache.
+
+        Computed as `cache_read_tokens / input_tokens`. `input_tokens` includes cached reads for every provider, so the
+        ratio is comparable across providers: `0.0` means no prompt-cache hits, while values approaching `1.0` mean
+        nearly the entire prompt was served from cache. Returns `0.0` when there are no input tokens.
+
+        On [`RequestUsage`][pydantic_ai.usage.RequestUsage] this is the hit ratio of a single request; on
+        [`RunUsage`][pydantic_ai.usage.RunUsage] it aggregates all requests in the run.
+        """
+        return self.cache_read_tokens / self.input_tokens if self.input_tokens else 0.0
+
     def opentelemetry_attributes(self) -> dict[str, int]:
         """Get the token usage values as OpenTelemetry attributes."""
         result: dict[str, int] = {}

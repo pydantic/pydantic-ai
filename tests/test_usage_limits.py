@@ -432,6 +432,17 @@ def test_request_usage_basics():
     assert usage.requests == 1
 
 
+def test_cache_hit_ratio():
+    assert RequestUsage(input_tokens=1000, cache_read_tokens=900).cache_hit_ratio == 0.9
+    assert RequestUsage().cache_hit_ratio == 0.0
+    assert RequestUsage(input_tokens=1000).cache_hit_ratio == 0.0
+
+    run_usage = RunUsage()
+    run_usage.incr(RequestUsage(input_tokens=1000, cache_read_tokens=900))
+    run_usage.incr(RequestUsage(input_tokens=500, cache_read_tokens=300))
+    assert run_usage.cache_hit_ratio == 0.8
+
+
 def test_add_usages():
     usage = RunUsage(
         requests=2,
