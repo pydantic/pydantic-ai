@@ -445,9 +445,12 @@ def _drop_whitespace_text_parts(parts: Sequence[ModelResponsePart]) -> list[Mode
     Mirrors `ModelResponsePartsManager.handle_text_delta(ignore_leading_whitespace=True)` for
     responses that were not streamed: models like Ollama + Qwen3 emit `<think>\\n</think>\\n\\n` or an
     empty text part ahead of tool calls, which `run_stream` would otherwise treat as a final result,
-    ending the run before the tool calls are executed. Whitespace that a model returns as part of a
-    larger text part is kept, matching the streamed path, which only skips a delta that is entirely
-    whitespace.
+    ending the run before the tool calls are executed. Streaming can never build a whitespace-only
+    text part under that setting, so dropping them here reproduces its end state.
+
+    Whitespace leading a part that also holds real text is kept, as `run()` keeps it: streaming would
+    have skipped it only if the model happened to put it in a delta of its own, and a complete
+    response carries no delta boundaries to recover.
     """
     return [part for part in parts if not (isinstance(part, TextPart) and (not part.content or part.content.isspace()))]
 

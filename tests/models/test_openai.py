@@ -1035,6 +1035,38 @@ async def test_disable_streaming_ignores_leading_whitespace(allow_model_requests
     assert result.usage == snapshot(RunUsage(requests=2, tool_calls=1))
 
 
+async def test_disable_streaming_ignores_whitespace_after_thinking(allow_model_requests: None):
+    """Whitespace following a thinking part is dropped even when text came before it.
+
+    The streamed path stops tracking the text part at the closing thinking tag, so the whitespace
+    that follows starts a fresh text part and is skipped there too. A mock is used rather than a
+    cassette to pin this exact part sequence, which depends on where the model puts its thinking tags.
+    """
+    c = completion_message(
+        ChatCompletionMessage(content='Sure.<think>I should check the weather.</think>\n\n', role='assistant')
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'qwen3',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=ModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather in Mexico City?')],
+        OpenAIChatModelSettings(openai_disable_streaming=True),
+        ModelRequestParameters(allow_text_output=True),
+    ) as stream:
+        [event async for event in stream]
+
+    assert stream.get().parts == snapshot(
+        [
+            TextPart(content='Sure.'),
+            ThinkingPart(content='I should check the weather.', id='content', provider_name='openai'),
+        ]
+    )
+
+
 async def test_disable_streaming(allow_model_requests: None):
     """Streaming an agent run with `openai_disable_streaming` still drives tools and final output.
 
