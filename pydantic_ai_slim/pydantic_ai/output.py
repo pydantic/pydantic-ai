@@ -140,6 +140,8 @@ class ToolOutput(Generic[OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
     ):
+        if max_retries is not None and max_retries < 0:
+            raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
         self.output = type_
         self.name = name
         self.description = description

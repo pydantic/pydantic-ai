@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import re
 
 import pytest
@@ -15,7 +16,10 @@ from pydantic_ai import (
     ToolOutput,
     UserError,
 )
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import OutputObjectDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import remove_schema_descriptions
@@ -177,6 +181,51 @@ async def test_native_output_json_schema():
             },
         }
     )
+
+
+class Fruit(BaseModel):
+    """A fruit"""
+
+    name: str
+    color: str
+
+
+class Vehicle(BaseModel):
+    """A vehicle"""
+
+    name: str
+    wheels: int
+
+
+async def test_native_output_union_preserves_description():
+    """A union `NativeOutput` keeps its own `name`/`description`, not the last member's title/docstring (issue #6262).
+
+    Taps the internal `output_object` rather than being a VCR test because a cassette matcher isn't sensitive to the
+    request-body schema `description` field, so a VCR test asserting only `result.output` would pass green even with the bug.
+    """
+    captured: OutputObjectDefinition | None = None
+
+    async def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal captured
+        captured = info.model_request_parameters.output_object
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    content=json.dumps({'result': {'kind': 'Fruit', 'data': {'name': 'banana', 'color': 'yellow'}}})
+                )
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(function=capture),
+        output_type=NativeOutput([Fruit, Vehicle], name='Fruit or vehicle', description='Return a fruit or vehicle.'),
+    )
+    result = await agent.run('What is a banana?')
+
+    assert result.output == Fruit(name='banana', color='yellow')
+    assert captured is not None
+    assert captured.name == 'Fruit or vehicle'
+    assert captured.description == 'Return a fruit or vehicle.'
 
 
 async def test_prompted_output_json_schema():

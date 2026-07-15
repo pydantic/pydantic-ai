@@ -1,3 +1,4 @@
+import json
 import re
 import sys
 import warnings
@@ -11,6 +12,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -26,6 +28,7 @@ from pydantic_ai import (
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     RequestUsage,
     RetryPromptPart,
     TextContent,
@@ -38,6 +41,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
@@ -47,6 +51,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
     narrow_message_parts,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
@@ -473,6 +478,45 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
+def test_thinking_part_delta_callable_provider_details_serializable():
+    # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
+    # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
+    # (see `_make_raw_content_updater` in models/openai.py). Such an event must still serialize, e.g.
+    # when crossing a Temporal activity boundary in durable execution.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    list(manager.handle_thinking_delta(vendor_part_id='t', content='reasoning', provider_details={'raw_content': ['']}))
+
+    def update_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = {**(existing or {})}
+        details['raw_content'] = [*details.get('raw_content', []), 'tok']
+        return details
+
+    events = list(manager.handle_thinking_delta(vendor_part_id='t', content=' more', provider_details=update_details))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartDeltaEvent)
+    assert isinstance(event.delta, ThinkingPartDelta)
+    assert callable(event.delta.provider_details)
+
+    adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
+
+    # The callable merge callback can't be JSON-serialized, so it is emitted as `null` instead of raising.
+    serialized = adapter.dump_json(event)
+    assert json.loads(serialized)['delta']['provider_details'] is None
+    # The serialized event round-trips back into an `AgentStreamEvent`.
+    assert isinstance(adapter.validate_json(serialized), PartDeltaEvent)
+
+    # Serialization is scoped to JSON mode, so Python-mode `model_dump()` keeps the callable intact.
+    assert callable(adapter.dump_python(event)['delta']['provider_details'])
+
+    # A plain dict `provider_details` is preserved as-is.
+    dict_event = PartDeltaEvent(
+        index=0,
+        delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
+    )
+    assert json.loads(adapter.dump_json(dict_event))['delta']['provider_details'] == {'provider': 'detail'}
+
+
 def test_pre_usage_refactor_messages_deserializable():
     # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
     # but we as tell people to store those in the DB we want to be very careful not to break deserialization.
@@ -676,10 +720,10 @@ def test_file_part_serialization_roundtrip():
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'state': 'complete',
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
-                'state': 'complete',
             }
         ]
     )

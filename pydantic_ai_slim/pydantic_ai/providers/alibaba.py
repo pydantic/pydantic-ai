@@ -42,9 +42,15 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
 
-        # Wrap/merge into OpenAIModelProfile
+        # Wrap/merge into OpenAIModelProfile.
+        # Alibaba's compatible-mode Chat Completions API rejects OpenAI `type:file` content parts,
+        # so document input must fail client-side with a clear UserError.
         openai_profile = merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), base_profile
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                openai_chat_supports_document_input=False,
+            ),
+            base_profile,
         )
 
         # For Qwen Omni models, force URI audio input encoding

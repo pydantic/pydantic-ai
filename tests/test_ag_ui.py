@@ -1730,6 +1730,112 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
     assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
 
 
+@pytest.mark.parametrize('outcome', ['failed', 'denied', 'interrupted'])
+def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'denied', 'interrupted']) -> None:
+    """A tool return keeps its non-`'success'` outcome through dump/load on >= 0.1.11.
+
+    `ToolMessage` has no outcome slot, so the claim rides the `encrypted_value` carrier like
+    `tool_kind` does — losing it would change how the return serializes to the provider (e.g. a
+    native error channel) and break prompt-cache prefix stability. Below 0.1.11 there is no
+    carrier, so the outcome silently degrades to `'success'`.
+
+    Not VCR-backed: this pins local adapter serialization (including the exact wire payload)
+    and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='c1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='c1',
+                    content='The tool call did not produce a regular result.',
+                    outcome=outcome,
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_msg.encrypted_value == f'{{"pydantic_ai": {{"outcome": "{outcome}"}}}}'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == outcome
+
+    old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
+    assert 'encrypted_value' not in old_tool_msg.model_fields_set
+    old_reloaded = AGUIAdapter.load_messages(old_msgs)
+    old_return = next(
+        part
+        for message in old_reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert old_return.outcome == 'success'
+
+
+def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
+    """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(tool_name='web_search', tool_call_id='s1', args='{}', provider_name='anthropic'),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='s1',
+                    content='The search failed.',
+                    provider_name='anthropic',
+                    outcome='failed',
+                ),
+            ]
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13'))
+    reloaded_return = next(
+        part for message in reloaded for part in message.parts if isinstance(part, NativeToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'failed'
+
+
+def test_load_forged_encrypted_outcome_stays_success() -> None:
+    """An unrecognized client-supplied outcome claim is ignored and loads as a successful return.
+
+    Not VCR-backed: this pins local handling of untrusted client input and makes no model request.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[ToolCall(id='c1', function=FunctionCall(name='my_tool', arguments='{}'))],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='c1',
+                content='done',
+                encrypted_value='{"pydantic_ai": {"outcome": "exploded"}}',
+            ),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert isinstance(return_part, ToolReturnPart)
+    assert return_part.outcome == 'success'
+
+
 def test_load_tool_kind_falls_back_to_call_claim() -> None:
     """A ToolMessage without its own `encrypted_value` narrows via the paired call's claim.
 
@@ -5122,6 +5228,72 @@ def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
             )
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True),
+            id='image-true',
+        ),
+        pytest.param(
+            AudioUrl(url='https://example.com/audio.mp3', media_type='audio/mpeg', force_download='allow-local'),
+            id='audio-allow-local',
+        ),
+        pytest.param(
+            VideoUrl(url='https://example.com/video.mp4', media_type='video/mp4', force_download=True),
+            id='video-true',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf', force_download='allow-local'),
+            id='document-allow-local',
+        ),
+    ],
+)
+def test_multimodal_roundtrip_preserves_file_url_force_download(
+    content: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+) -> None:
+    """`FileUrl.force_download` survives an AG-UI multimodal dump -> load round-trip."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    user_msg = ag_ui_msgs[0]
+    assert isinstance(user_msg, UserMessage)
+    assert isinstance(user_msg.content, list)
+    dumped_content = user_msg.content[0]
+    assert isinstance(dumped_content, ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent)
+    assert dumped_content.metadata == {'force_download': content.force_download}
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(messages, loaded)
+    assert loaded == messages
+
+
+def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> None:
+    """`FileUrl.force_download` is dropped when dumping to AG-UI versions before `0.1.15`.
+
+    Legacy `BinaryInputContent` (emitted for `ag_ui_version < '0.1.15'`) has no `metadata`
+    carrier, so there is nowhere to stash `force_download` and it silently resets to `False`
+    on reload — the security-conservative default, matching the other legacy-version drops.
+    """
+    content = ImageUrl(url='https://example.com/image.png', media_type='image/png', force_download=True)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[content])])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.14')
+    user_msg = ag_ui_msgs[0]
+    assert isinstance(user_msg, UserMessage)
+    assert isinstance(user_msg.content, list)
+    dumped_content = user_msg.content[0]
+    assert isinstance(dumped_content, BinaryInputContent)
+    assert not hasattr(dumped_content, 'metadata')
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    user_part = message_part(loaded, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    loaded_content = user_part.content[0]
+    assert isinstance(loaded_content, ImageUrl)
+    assert loaded_content.force_download is False
 
 
 def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:

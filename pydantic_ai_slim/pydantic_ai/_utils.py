@@ -21,7 +21,7 @@ from collections.abc import (
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
@@ -550,10 +550,31 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
-    """Exclude fields with values equal to the field default."""
-    kv_pairs = (
-        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
-    )
+    """Exclude fields with values equal to the field default.
+
+    A field is shown when its value differs from an explicit `default`. Fields that are
+    required or that only have a `default_factory` have no plain default to compare against
+    here, so they are always shown (the `default_factory` is deliberately not called: some
+    factories are impure, e.g. `uuid7()` or `now_utc()`, and `repr()` must stay observational).
+
+    The comparison is guarded because a value whose `__ne__`/`__bool__` does not return a plain
+    `bool` (e.g. a numpy array or pandas `Series`/`DataFrame`) would otherwise make `repr()`
+    raise `ValueError`, which breaks logging and traceback formatting of the message history.
+    """
+
+    def include_field(f: Any) -> bool:
+        if not f.repr:
+            return False
+        if f.default is MISSING:
+            return True
+        try:
+            return bool(getattr(self, f.name) != f.default)
+        except Exception:
+            # `repr()` must never raise, regardless of how a field value implements `__ne__`/`__bool__`
+            # (e.g. numpy/pandas return non-bool comparisons), so the broad catch here is intentional.
+            return True
+
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 

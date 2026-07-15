@@ -121,9 +121,14 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
+            schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        if type_ is not None:
+            for union_kind in ('allOf', 'anyOf', 'oneOf'):
+                if members := schema.get(union_kind):
+                    schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         schema = self.transform(schema)
 
@@ -162,7 +167,7 @@ class JsonSchemaTransformer(ABC):
 
         return schema
 
-    def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
+    def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         members = schema.get(union_kind)
         if members is None:
             return schema

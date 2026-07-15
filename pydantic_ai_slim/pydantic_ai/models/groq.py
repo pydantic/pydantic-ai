@@ -69,6 +69,7 @@ try:
     from groq.types.chat.chat_completion_message import ExecutedTool
     from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
+    from groq.types.chat.completion_create_params import SearchSettings
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -104,7 +105,6 @@ PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
-    'moonshotai/kimi-k2-instruct-0905',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
@@ -318,7 +318,8 @@ class GroqModel(Model[AsyncGroq]):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
-        tools += self._get_native_tools(model_request_parameters)
+        native_tools, search_settings = self._get_native_tools(model_request_parameters)
+        tools += native_tools
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -396,6 +397,7 @@ class GroqModel(Model[AsyncGroq]):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
+                search_settings=search_settings,
             )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
@@ -500,17 +502,29 @@ class GroqModel(Model[AsyncGroq]):
 
         return tools, tool_choice
 
-    def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+    def _get_native_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[chat.ChatCompletionToolParam], SearchSettings | NotGiven]:
         tools: list[chat.ChatCompletionToolParam] = []
+        search_settings: SearchSettings | NotGiven = NOT_GIVEN
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
+                # Compound models run web search implicitly, so we forward only the domain filters
+                # (as `search_settings`) rather than emitting a tool definition.
+                ss: SearchSettings = {}
+                if tool.allowed_domains:
+                    ss['include_domains'] = tool.allowed_domains
+                if tool.blocked_domains:
+                    ss['exclude_domains'] = tool.blocked_domains
+                if ss:
+                    search_settings = ss
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
-        return tools
+        return tools, search_settings
 
     async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -823,11 +837,9 @@ def _map_usage(
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
-    # `completion_tokens_details` carries `reasoning_tokens`, which the genai-prices
-    # extractors don't surface, so lift its integer fields into `details` here.
-    # `cached_tokens` (from `prompt_tokens_details`) is intentionally left to the
-    # genai-prices extractors invoked by `RequestUsage.extract`; see
-    # https://github.com/pydantic/genai-prices/issues/414.
+    # Lift only `completion_tokens_details` (reasoning_tokens) into `details`: genai-prices
+    # doesn't surface those, but it does map `prompt_tokens_details.cached_tokens` to
+    # first-class `cache_read_tokens`, so lifting that too would double-report it.
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
@@ -917,5 +929,5 @@ def _map_executed_tool(
                 return call_part, None
         else:
             return call_part, return_part
-    else:  # pragma: no cover
+    else:
         return None, None

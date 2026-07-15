@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
@@ -52,7 +53,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -835,6 +836,91 @@ async def test_bedrock_unified_service_tier_auto_omits(
 
     _, kwargs = mock_converse.call_args
     assert 'serviceTier' not in kwargs
+
+
+async def test_bedrock_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic fields are needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {
+            'inputTokens': 13,
+            'outputTokens': 5,
+            'totalTokens': 1529,
+            'cacheReadInputTokens': 1504,
+            'cacheWriteInputTokens': 7,
+            'cacheDetails': [],
+            'futureBillableTokens': 11,
+        },
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    assert result.output == 'hello'
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
+
+
+async def test_bedrock_stream_usage_with_cached_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because synthetic stream metadata is needed to isolate the internal usage mapping."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+        yield {
+            'metadata': {
+                'usage': {
+                    'inputTokens': 13,
+                    'outputTokens': 5,
+                    'totalTokens': 1529,
+                    'cacheReadInputTokens': 1504,
+                    'cacheWriteInputTokens': 7,
+                    'cacheDetails': [],
+                    'futureBillableTokens': 11,
+                }
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=1524,
+            cache_write_tokens=7,
+            cache_read_tokens=1504,
+            output_tokens=5,
+            requests=1,
+            details={'futureBillableTokens': 11},
+        )
+    )
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -5384,6 +5470,358 @@ async def test_bedrock_llama_tool_result_followed_by_text_accepted(
     )
 
     assert result.output == snapshot('DONE')
+
+
+@pytest.mark.vcr()
+async def test_bedrock_writer_tool_result_followed_by_text_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Writer Palmyra rejects any content sharing a `toolResult` turn; the reshaped history must be accepted (#6081).
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted: Writer
+    returns a `ValidationException` ("Conversation blocks and tool result blocks cannot be provided in the
+    same turn") if the `toolResult` isn't isolated into its own turn.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        'Thanks. Now just say the word DONE.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
+    )
+
+    assert result.output == snapshot('DONE')
+
+
+async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: BedrockProvider):
+    """Writer Palmyra rejects the `status` field on a `toolResult`, so it's omitted from both success and error results.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a `status` field
+    slipping back in could still match a recording and pass green. Asserting the mapped shape pins it.
+    """
+    model = BedrockConverseModel('us.writer.palmyra-x4-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='call the tools')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='ok_tool', args={}, tool_call_id='okcall1'),
+                ToolCallPart(tool_name='bad_tool', args={}, tool_call_id='badcall1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='ok_tool', content='done', tool_call_id='okcall1'),
+                RetryPromptPart(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    tool_results = [
+        block['toolResult'] for message in bedrock_messages for block in message['content'] if 'toolResult' in block
+    ]
+    assert tool_results == snapshot(
+        [
+            {'toolUseId': 'okcall1', 'content': [{'text': 'done'}]},
+            {
+                'toolUseId': 'badcall1',
+                'content': [{'text': 'boom\n\nFix the errors and try again.'}],
+            },
+        ]
+    )
+    assert all('status' not in result for result in tool_results)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_zai_native_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Z.AI GLM via Bedrock supports native structured output (`supports_json_schema_output=True`).
+
+    `NativeOutput` exercises Bedrock's `outputConfig` path rather than the default tool-output mode, so
+    the response arrives as structured output with no `final_result` output-tool call in the history.
+    """
+    model = BedrockConverseModel('zai.glm-4.7-flash', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'output': 5})
+
+    class City(TypedDict):
+        city: str
+        country: str
+
+    result = await agent.run('Where is the Eiffel Tower?', output_type=NativeOutput(City))
+    assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
+    # Native output travels via `outputConfig`, so there is no output-tool call in the message history.
+    assert not any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_moonshotai_tool_call(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Moonshot AI Kimi via Bedrock supports tool calls (registered under the `moonshot.` prefix here)."""
+    model = BedrockConverseModel('moonshot.kimi-k2-thinking', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot. Use tools when helpful.')
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> str:
+        """Get the current temperature in a city."""
+        return '30°C'
+
+    result = await agent.run('What is the temperature in London? Use the tool.')
+    assert '30' in result.output
+    assert any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
+
+
+def _tool_return_image_history(count: int = 1) -> list[ModelMessage]:
+    """A completed tool-use turn whose result(s) carry an image the model can't place in a `toolResult`.
+
+    Mistral (pixtral) rejects an image inside a `toolResult` and also rejects anything sharing the
+    `toolResult`'s turn, so the image ends up as sibling media that must be deferred to a later turn.
+    """
+    image = ImageUrl(url='s3://bucket/photo.jpg', media_type='image/jpeg')
+    calls = [ToolCallPart(tool_name='get_photo', args={}, tool_call_id=f'getphoto{i}') for i in range(1, count + 1)]
+    returns = [
+        ToolReturnPart(tool_name='get_photo', content=['Here it is:', image], tool_call_id=f'getphoto{i}')
+        for i in range(1, count + 1)
+    ]
+    return [
+        ModelRequest(parts=[UserPromptPart(content='show me the photo')]),
+        ModelResponse(parts=calls),
+        ModelRequest(parts=returns),
+    ]
+
+
+async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedrock_provider: BedrockProvider):
+    """Mistral can't place tool-return image media in or beside its `toolResult`, so it's deferred to its own turn.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    in this reshaping could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_image_history()), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The `toolResult` stays alone in its turn; the image is deferred behind a synthetic assistant turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the photo'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'getphoto1', 'name': 'get_photo', 'input': {}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bedrock_provider: BedrockProvider):
+    """With two image-carrying tool returns, Mistral needs both `toolResult`s grouped and the media deferred after.
+
+    Mistral requires every `toolResult` for a tool-use turn to sit together in the message immediately
+    following it; splitting them (e.g. interleaving each result with its media) is rejected. So the two
+    results stay grouped and both images are deferred to a single following user turn.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    in this reshaping could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_image_history(count=2)), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the photo'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {'toolUse': {'toolUseId': 'getphoto1', 'name': 'get_photo', 'input': {}}},
+                    {'toolUse': {'toolUseId': 'getphoto2', 'name': 'get_photo', 'input': {}}},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'getphoto2',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file d003ad.'}],
+                            'status': 'success',
+                        }
+                    },
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': 'This is file d003ad:'},
+                    {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: BedrockProvider):
+    """Nova allows media beside a `toolResult`, so tool-return media stays co-located in the same turn (unchanged).
+
+    Guards against over-applying the deferral to permissive models: Nova doesn't accept a document inside
+    a `toolResult`, so it becomes sibling media, but since Nova has no co-location constraint the media
+    must remain in the `toolResult`'s own turn exactly as before.
+
+    Unit test (not VCR): our Bedrock cassette matcher isn't sensitive to the request body, so a regression
+    could still match a recording and pass green. Asserting the mapped sequence pins it.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    document = DocumentUrl(url='s3://bucket/report.csv', media_type='text/csv')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me the report')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_report', args={}, tool_call_id='t1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_report', content=['Here it is:', document], tool_call_id='t1')]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # The document sibling stays in the same user turn as the `toolResult`; no deferral, no synthetic turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me the report'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get_report', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 't1',
+                            'content': [{'text': 'Here it is:'}, {'text': 'See file 49d492.'}],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': 'This is file 49d492:'},
+                    {
+                        'document': {
+                            'name': 'Document 1',
+                            'format': 'csv',
+                            'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mistral_tool_return_image_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Mistral must accept a tool-return image once it's deferred to its own turn behind a synthetic assistant turn.
+
+    VCR (not unit) because only a real Converse request proves the reshaped history is accepted end-to-end.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_photo() -> BinaryContent:
+        return image_content  # pragma: no cover
+
+    result = await agent.run(
+        'What fruit is in the photo? Answer with one word.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me the photo')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto1')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto1'
+                    )
+                ]
+            ),
+        ],
+    )
+
+    assert result.output == snapshot('Kiwi')
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mistral_two_tool_returns_images_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Mistral must accept two grouped image-carrying tool returns with both images deferred to one following turn.
+
+    VCR (not unit) because only a real Converse request proves the reshaped multi-result history is accepted.
+    """
+    model = BedrockConverseModel('us.mistral.pixtral-large-2502-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_photo() -> BinaryContent:
+        return image_content  # pragma: no cover
+
+    result = await agent.run(
+        'What fruit is in the photos? Answer with one word.',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me the photos')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto1'),
+                    ToolCallPart(tool_name='get_photo', args={}, tool_call_id='getphoto2'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto1'
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_photo', content=['Here it is:', image_content], tool_call_id='getphoto2'
+                    ),
+                ]
+            ),
+        ],
+    )
+
+    assert result.output == snapshot('Kiwi')
 
 
 async def test_bedrock_leading_assistant_message_not_prepended_for_anthropic(bedrock_provider: BedrockProvider):
