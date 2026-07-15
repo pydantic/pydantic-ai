@@ -536,7 +536,10 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                         tool_call_id='93z4z1x3',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                 ],
                 usage=RequestUsage(
@@ -855,7 +858,10 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                         tool_call_id='jtmvhz2z',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                     ToolCallPart(
                         tool_name='final_result',
@@ -966,7 +972,10 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                         tool_call_id='4f244mfi',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                     ToolCallPart(
                         tool_name='final_result',

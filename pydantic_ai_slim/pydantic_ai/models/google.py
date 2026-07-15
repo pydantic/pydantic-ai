@@ -1242,7 +1242,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _has_content_filter: bool = field(default=False, init=False)
     _native_tool_invocation_types: set[ToolType] = field(default_factory=set[ToolType], init=False)
     _grounding_metadata: GroundingMetadata | None = field(default=None, init=False)
-    _url_context_metadata: UrlContextMetadata | None = field(default=None, init=False)
+    _emitted_url_context_metadata: bool = field(default=False, init=False)
     # Native tool returns whose grounded results are still to arrive in `grounding_metadata` (see
     # `_fill_native_tool_return_from_grounding`). Each is reserved in the parts manager keyed by its
     # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
@@ -1322,11 +1322,22 @@ class GeminiStreamedResponse(StreamedResponse):
                 self._grounding_metadata = _merge_grounding_metadata(
                     self._grounding_metadata, candidate.grounding_metadata
                 )
-                if candidate.url_context_metadata is not None:
-                    self._url_context_metadata = candidate.url_context_metadata
-
                 parts = candidate.content.parts if candidate.content and candidate.content.parts else []
                 self._native_tool_invocation_types.update(_native_tool_invocation_types(parts))
+
+                # URL Context metadata arrives before text. Preserve that established event and part
+                # order, while suppressing reconstruction only when this specific tool type is explicit.
+                if (
+                    not self._emitted_url_context_metadata
+                    and ToolType.URL_CONTEXT not in self._native_tool_invocation_types
+                ):
+                    web_fetch_call, web_fetch_return = _map_url_context_metadata(
+                        candidate.url_context_metadata, self.provider_name
+                    )
+                    if web_fetch_call and web_fetch_return:
+                        self._emitted_url_context_metadata = True
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
                 for part in parts:
                     provider_details: dict[str, Any] | None = None
@@ -1392,7 +1403,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
-                        tool_response_part.provider_details = provider_details
+                        tool_response_part.provider_details = {
+                            **(tool_response_part.provider_details or {}),
+                            **(provider_details or {}),
+                        } or None
                         if tool_response_part.tool_name == WebSearchTool.kind or (
                             tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None
                         ):
@@ -1429,6 +1443,9 @@ class GeminiStreamedResponse(StreamedResponse):
                     self._grounding_metadata, self.provider_name
                 )
                 if web_search_call and web_search_return:
+                    self.metadata = _utils.add_provider_metadata_tool_call_id(
+                        self.metadata, web_search_call.tool_call_id
+                    )
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_return)
 
@@ -1436,13 +1453,6 @@ class GeminiStreamedResponse(StreamedResponse):
             if file_search_part is not None:
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
 
-            if ToolType.URL_CONTEXT not in self._native_tool_invocation_types:
-                web_fetch_call, web_fetch_return = _map_url_context_metadata(
-                    self._url_context_metadata, self.provider_name
-                )
-                if web_fetch_call and web_fetch_return:
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1677,7 +1687,7 @@ def _native_tool_return_part_dict(
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     provider_details = item.provider_details or {}
-    if item.tool_name == WebSearchTool.kind and 'raw_tool_response' in provider_details:
+    if 'raw_tool_response' in provider_details:
         response = cast(dict[str, Any] | None, provider_details['raw_tool_response'])
     else:
         response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
@@ -1774,19 +1784,30 @@ def _process_response_from_parts(
     url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
+    trailing_metadata_items: list[ModelResponsePart] = []
+    response_metadata: dict[str, Any] | None = None
 
     native_tool_invocation_types = _native_tool_invocation_types(parts)
+    grounding_items = trailing_metadata_items if native_tool_invocation_types else items
     if ToolType.GOOGLE_SEARCH_WEB not in native_tool_invocation_types:
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
         if web_search_call and web_search_return:
-            items.append(web_search_call)
-            items.append(web_search_return)
+            if grounding_items is trailing_metadata_items:
+                response_metadata = _utils.add_provider_metadata_tool_call_id(
+                    response_metadata, web_search_call.tool_call_id
+                )
+            grounding_items.append(web_search_call)
+            grounding_items.append(web_search_return)
 
     if ToolType.FILE_SEARCH not in native_tool_invocation_types:
         file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
         if file_search_call and file_search_return:
-            items.append(file_search_call)
-            items.append(file_search_return)
+            if grounding_items is trailing_metadata_items:
+                response_metadata = _utils.add_provider_metadata_tool_call_id(
+                    response_metadata, file_search_call.tool_call_id
+                )
+            grounding_items.append(file_search_call)
+            grounding_items.append(file_search_return)
 
     if ToolType.URL_CONTEXT not in native_tool_invocation_types:
         web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
@@ -1803,12 +1824,15 @@ def _process_response_from_parts(
                 _fill_native_tool_return_from_grounding(item, grounding_metadata)
             items.append(item)
 
+    items.extend(trailing_metadata_items)
+
     return ModelResponse(
         parts=items,
         model_name=model_name,
         usage=usage,
         provider_response_id=provider_response_id,
         provider_details=provider_details,
+        metadata=response_metadata,
         provider_name=provider_name,
         provider_url=provider_url,
         finish_reason=finish_reason,
@@ -1839,16 +1863,13 @@ def _native_tool_invocation_types(parts: list[Part]) -> set[ToolType]:
 def _merge_grounding_metadata(
     accumulated: GroundingMetadata | None, current: GroundingMetadata | None
 ) -> GroundingMetadata | None:
-    """Accumulate streamed grounding chunks and queries without duplicating repeated metadata."""
+    """Accumulate streamed grounding chunks in API order and unique search queries."""
     if current is None:
         return accumulated
     if accumulated is None:
         return current.model_copy(deep=True)
 
-    chunks = list(accumulated.grounding_chunks or [])
-    for chunk in current.grounding_chunks or []:
-        if chunk not in chunks:
-            chunks.append(chunk)
+    chunks = [*(accumulated.grounding_chunks or []), *(current.grounding_chunks or [])]
 
     queries = list(accumulated.web_search_queries or [])
     for query in current.web_search_queries or []:
@@ -1981,12 +2002,15 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
 
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
-    return NativeToolReturnPart(
+    item = NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=_resolve_native_tool_name(tool_response.tool_type),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
+    if item.tool_name == WebSearchTool.kind or item.content is None:
+        item.provider_details = {'raw_tool_response': item.content}
+    return item
 
 
 def _map_grounding_metadata(
@@ -2000,7 +2024,6 @@ def _map_grounding_metadata(
             tool_call_id=tool_call_id,
             content=_web_search_grounding_chunks(grounding_metadata),
         )
-        _utils.mark_as_provider_metadata(tool_return)
         return (
             NativeToolCallPart(
                 provider_name=provider_name,
@@ -2072,11 +2095,9 @@ def _fill_native_tool_return_from_grounding(
             item.content = retrieved_contexts
         return item.content is not None
     elif item.tool_name == WebSearchTool.kind:
-        _utils.mark_as_provider_metadata(item)
-        if 'raw_tool_response' in (item.provider_details or {}):
-            return True
         if sources := _web_search_grounding_chunks(grounding_metadata):
-            item.provider_details = {**(item.provider_details or {}), 'raw_tool_response': item.content}
+            if 'raw_tool_response' not in (item.provider_details or {}):
+                item.provider_details = {**(item.provider_details or {}), 'raw_tool_response': item.content}
             item.content = sources
             return True
         return False
@@ -2102,7 +2123,6 @@ def _map_file_search_grounding_metadata(
         tool_call_id=tool_call_id,
         content=retrieved_contexts,
     )
-    _utils.mark_as_provider_metadata(tool_return)
     return (
         NativeToolCallPart(
             provider_name=provider_name,
@@ -2125,7 +2145,6 @@ def _map_url_context_metadata(
             tool_call_id=tool_call_id,
             content=[meta.model_dump(mode='json') for meta in url_metadata],
         )
-        _utils.mark_as_provider_metadata(tool_return)
         # Extract URLs from the metadata
         urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
         return (

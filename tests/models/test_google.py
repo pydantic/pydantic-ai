@@ -1288,6 +1288,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'provider_metadata_tool_call_ids': [IsStr()]}},
             ),
         ]
     )

@@ -34,6 +34,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
@@ -4434,11 +4435,13 @@ async def test_agent_stream_text_output_with_native_tool_parts(
             provider_name='test',
         ),
     ]
-    if provider_metadata:
-        _utils.mark_as_provider_metadata(cast(NativeToolReturnPart, parts[-1]))
     if trailing_text is not None:
         parts.append(TextPart(trailing_text))
     response = ModelResponse(parts=parts, model_name='test')
+    if provider_metadata:
+        response.metadata = _utils.add_provider_metadata_tool_call_id(response.metadata, 'web-search-call')
+        [round_tripped] = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+        response = cast(ModelResponse, round_tripped)
 
     assert await _make_text_output_agent_stream(response).validate_response_output(response) == expected
 
@@ -4470,15 +4473,13 @@ def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None,
     )
 
 
-def _native_pair_parts(n: int, *, provider_metadata: bool = False) -> list[BuiltinToolCallsReturns]:
+def _native_pair_parts(n: int) -> list[BuiltinToolCallsReturns]:
     tool_return = NativeToolReturnPart(
         tool_name='web_search',
         content=[{'uri': 'https://example.com', 'title': 'Example'}],
         tool_call_id=f'web-search-call-{n}',
         provider_name='function',
     )
-    if provider_metadata:
-        _utils.mark_as_provider_metadata(tool_return)
     return [
         {
             2 * n: NativeToolCallPart(
@@ -4515,27 +4516,6 @@ async def test_agent_stream_text_separator_when_text_resumes_as_deltas() -> None
         deltas = [text async for text in result.stream_text(delta=True, debounce_by=None)]
 
     assert deltas == snapshot(['first', '\n\n', 'second', '\n\n', 'third'])
-
-
-async def test_agent_stream_output_with_trailing_provider_metadata_pair() -> None:
-    """Partial outputs reset while a native tool pair streams in (mid-stream, a pair trailing the
-    text so far is indistinguishable from one interrupting it, and clearing pre-tool text from
-    partials is pinned for Anthropic web search), but the final output keeps the answer the pair
-    trails (e.g. Google grounding metadata arriving after the streamed answer)."""
-
-    async def stream_function(
-        _messages: list[ModelMessage], _info: AgentInfo
-    ) -> AsyncIterator[str | BuiltinToolCallsReturns]:
-        yield 'answer'
-        for part in _native_pair_parts(1, provider_metadata=True):
-            yield part
-
-    agent = Agent(FunctionModel(stream_function=stream_function))
-
-    async with agent.run_stream('hello') as result:
-        outputs = [output async for output in result.stream_output(debounce_by=None)]
-
-    assert outputs == snapshot(['answer', '', '', 'answer'])
 
 
 async def test_agent_does_not_treat_text_before_trailing_native_pair_as_output() -> None:

@@ -1652,7 +1652,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if not is_trailing_provider_metadata_native_tool_call(self.model_response.parts, index):
+                        if not is_trailing_provider_metadata_native_tool_call(self.model_response, index):
                             # Text parts before a native tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
                             # A provider may append a synthetic native tool pair after streamed text

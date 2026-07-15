@@ -25,7 +25,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import models
+from pydantic_ai import _utils, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import CombinedCapability
@@ -543,6 +543,22 @@ async def test_gemini_streamed_response_web_search_grounding_metadata_does_not_t
     assert ''.join(deltas) == stream.response.text
 
 
+async def test_gemini_streamed_response_grounding_metadata_keeps_partial_text_output():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Answer.'}]),
+            _generate_stream_response(
+                'stream-2', grounding_metadata=_GROUNDING_METADATA, finish_reason=GoogleFinishReason.STOP
+            ),
+        ]
+    )
+
+    outputs = [output async for output in _text_output_agent_stream(streamed_response).stream_output(debounce_by=None)]
+
+    assert outputs
+    assert set(outputs) == {'Answer.'}
+
+
 async def test_gemini_streamed_response_web_search_grounding_metadata_reconstructed_once():
     """Grounding metadata repeated on a trailing chunk must not emit a duplicate web-search pair."""
     streamed_response = _gemini_streamed_response_from_chunks(
@@ -606,6 +622,41 @@ async def test_gemini_streamed_response_accumulates_web_search_grounding_chunks(
         [
             {'domain': None, 'title': 'First source', 'uri': 'https://first.example/'},
             {'domain': None, 'title': 'Second source', 'uri': 'https://second.example/'},
+        ]
+    )
+
+
+async def test_gemini_streamed_response_preserves_equal_grounding_chunks():
+    grounding_chunk = {'web': {'uri': 'https://same.example/', 'title': 'Same source'}}
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response(
+                'stream-1',
+                grounding_metadata={
+                    'webSearchQueries': ['metadata query'],
+                    'groundingChunks': [grounding_chunk],
+                },
+            ),
+            _generate_stream_response(
+                'stream-2',
+                grounding_metadata={'groundingChunks': [grounding_chunk]},
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ]
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    [tool_return] = [
+        part
+        for part in streamed_response.get().parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == WebSearchTool.kind
+    ]
+    assert tool_return.content == snapshot(
+        [
+            {'domain': None, 'title': 'Same source', 'uri': 'https://same.example/'},
+            {'domain': None, 'title': 'Same source', 'uri': 'https://same.example/'},
         ]
     )
 
@@ -709,9 +760,8 @@ async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web
 
 
 def test_fill_web_search_return_preserves_raw_tool_response_once_filled():
-    """Defensive re-entry guard: a web-search return that already carries `raw_tool_response`
-    reports grounded and is left untouched, so a repeated fill can't overwrite the preserved
-    raw API response with the source list. Unit, not VCR: no real flow calls the fill twice.
+    """Defensive idempotence: a repeated fill can't overwrite the preserved raw API response
+    with the normalized source list. Unit, not VCR: no real flow calls the fill twice.
     """
     part = NativeToolReturnPart(
         tool_name=WebSearchTool.kind,
@@ -768,6 +818,25 @@ async def test_gemini_response_uses_grounding_sources_with_explicit_web_search_p
             ),
         ]
     )
+
+
+async def test_gemini_streamed_response_preserves_trailing_web_search_metadata_marker_after_round_trip():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Answer.'}]),
+            _generate_stream_response(
+                'stream-2', grounding_metadata=_GROUNDING_METADATA, finish_reason=GoogleFinishReason.STOP
+            ),
+        ]
+    )
+    async for _ in streamed_response:
+        pass
+
+    response = streamed_response.get()
+    response.timestamp = _utils.now_utc()
+    [round_tripped] = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+    assert isinstance(round_tripped, ModelResponse)
+    assert _utils.is_trailing_provider_metadata_native_tool_call(round_tripped, 1)
 
 
 async def test_gemini_streamed_response_with_explicit_web_fetch_parts():
@@ -883,9 +952,10 @@ async def test_gemini_response_reconstructs_web_search_with_explicit_web_fetch_p
             raw_response.response_id,
         )
 
-    assert [part.tool_name for part in response.parts if isinstance(part, NativeToolCallPart)] == (
-        ['web_fetch', 'web_search'] if stream else ['web_search', 'web_fetch']
-    )
+    assert [part.tool_name for part in response.parts if isinstance(part, NativeToolCallPart)] == [
+        'web_fetch',
+        'web_search',
+    ]
 
 
 # On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
@@ -920,6 +990,23 @@ def _process_response(parts: list[dict[str, Any]], *, grounding: dict[str, Any])
     )
 
 
+def test_web_search_none_tool_response_round_trips_unchanged():
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'web_search_call', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+            {'tool_response': {'id': 'web_search_call', 'tool_type': 'GOOGLE_SEARCH_WEB'}},
+        ],
+        grounding={},
+    )
+
+    _, web_search_return = response.parts
+    assert isinstance(web_search_return, NativeToolReturnPart)
+    assert web_search_return.provider_details == {'raw_tool_response': None}
+    mapped = _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True)
+    assert mapped is not None
+    assert cast(Any, mapped)['parts'][1]['tool_response']['response'] is None
+
+
 def test_file_search_grounding_fills_empty_tool_response():
     """The empty file_search `tool_response` is filled from `grounding_metadata`, incl. each doc's source_url."""
     response = _process_response(
@@ -932,6 +1019,7 @@ def test_file_search_grounding_fills_empty_tool_response():
 
     _, file_search_return = response.parts
     assert isinstance(file_search_return, NativeToolReturnPart)
+    assert file_search_return.provider_details == {'raw_tool_response': None}
     assert file_search_return.content == snapshot(
         [
             {
@@ -942,6 +1030,9 @@ def test_file_search_grounding_fills_empty_tool_response():
             }
         ]
     )
+    mapped = _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True)
+    assert mapped is not None
+    assert cast(Any, mapped)['parts'][1]['tool_response']['response'] is None
 
 
 def test_file_search_populated_tool_response_not_overwritten():

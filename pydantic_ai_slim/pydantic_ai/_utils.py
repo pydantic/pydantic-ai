@@ -17,7 +17,6 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
-    Sequence,
 )
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -32,6 +31,7 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -842,26 +842,43 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
-def mark_as_provider_metadata(part: _messages.NativeToolReturnPart) -> None:
-    """Mark a native tool return as provider metadata without changing its public wire shape."""
-    setattr(part, '_pydantic_ai_provider_metadata', True)
+def is_str_list(obj: Any) -> TypeGuard[list[str]]:
+    """Check if obj is a list containing only strings."""
+    return isinstance(obj, list) and all(isinstance(item, str) for item in cast(list[Any], obj))
 
 
-def is_trailing_provider_metadata_native_tool_call(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
-    """Whether `parts[index]` starts a trailing native-tool pair synthesized from provider metadata."""
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_PROVIDER_METADATA_TOOL_CALL_IDS_KEY = 'provider_metadata_tool_call_ids'
+
+
+def add_provider_metadata_tool_call_id(metadata: dict[str, Any] | None, tool_call_id: str) -> dict[str, Any]:
+    """Add a provider-metadata tool call ID to the framework's serialized response metadata."""
+    metadata = {**(metadata or {})}
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    namespace = {**namespace} if is_str_dict(namespace) else {}
+    existing_tool_call_ids = namespace.get(_PROVIDER_METADATA_TOOL_CALL_IDS_KEY)
+    tool_call_ids = list(existing_tool_call_ids) if is_str_list(existing_tool_call_ids) else []
+    if tool_call_id not in tool_call_ids:
+        tool_call_ids.append(tool_call_id)
+    namespace[_PROVIDER_METADATA_TOOL_CALL_IDS_KEY] = tool_call_ids
+    metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    return metadata
+
+
+def is_trailing_provider_metadata_native_tool_call(response: _messages.ModelResponse, index: int) -> bool:
+    """Whether `response.parts[index]` starts a trailing native-tool pair synthesized from provider metadata."""
     from . import messages
 
+    parts = response.parts
     call = parts[index]
     if not isinstance(call, messages.NativeToolCallPart):  # pragma: no cover
         return False
     if any(isinstance(part, messages.TextPart) for part in parts[index + 1 :]):
         return False
-    return any(
-        isinstance(part, messages.NativeToolReturnPart)
-        and part.tool_call_id == call.tool_call_id
-        and getattr(part, '_pydantic_ai_provider_metadata', False) is True
-        for part in parts[index + 1 :]
-    )
+    metadata = response.metadata
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY) if is_str_dict(metadata) else None
+    tool_call_ids = namespace.get(_PROVIDER_METADATA_TOOL_CALL_IDS_KEY) if is_str_dict(namespace) else None
+    return isinstance(tool_call_ids, list) and call.tool_call_id in tool_call_ids
 
 
 def is_text_like_media_type(media_type: str) -> bool:
