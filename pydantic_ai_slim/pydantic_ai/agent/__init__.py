@@ -1460,6 +1460,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             agent_run = AgentRun(graph_run)
+            # Bind the run's cancellation controller to this task, and neutralize `cancel()`
+            # once the run is over so it can never cancel unrelated later work on this task.
+            graph_deps.cancellation.bind()
+            stack.callback(graph_deps.cancellation.finish)
             self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
             # Build RunContext for run lifecycle hooks
@@ -1621,7 +1625,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # If on_run_error didn't recover either, re-raise.
             # In an @asynccontextmanager, not re-raising suppresses the exception.
             if _run_error is not None:
-                raise _run_error
+                # A `CancelledError` that landed outside a graph step boundary (e.g. in the
+                # caller's own code inside the `iter()` block) hasn't been resolved yet: if it
+                # was requested via `cancel()`, surface it as `RunCancelled` here.
+                raise agent_run._translated_cancellation(_run_error)  # pyright: ignore[reportPrivateUsage]
 
     def _get_metadata(
         self,

@@ -17,6 +17,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
 
 if TYPE_CHECKING:
+    from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
@@ -123,6 +124,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
+    """
+
+    _cancellation: RunCancellation | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's cancellation controller, used by [`cancel_run`][pydantic_ai.tools.RunContext.cancel_run].
+    Holds a live task reference, so it is runtime-only: `None` in synthetic contexts that aren't
+    backed by a running agent, and not available across durable-execution serialization boundaries
+    (e.g. inside a Temporal activity).
     """
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
@@ -294,6 +304,33 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if pending is None:
             return
         self.pending_messages.append(pending)
+
+    def cancel_run(self) -> None:
+        """Cancel the agent run this context belongs to.
+
+        Safe to call from anywhere a `RunContext` is available — tools, `event_stream_handler`s,
+        and capability hooks. The run stops what it is doing (the in-flight model request is torn
+        down, sibling tool tasks are cancelled and drained, a suspended server-side job is
+        best-effort cancelled) and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled],
+        preserving everything that completed before the cancellation took effect in message
+        history. Idempotent; a no-op once the run has finished.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
+                context from `Agent.system_prompt_parts`, or across a durable-execution
+                serialization boundary such as a Temporal activity).
+        """
+        # Read via `__dict__` because `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself `UserError` for absent fields, which would be misleading here:
+        # the controller holds a live task reference and can never cross an activity boundary.
+        cancellation: RunCancellation | None = self.__dict__.get('_cancellation')
+        if cancellation is None:
+            raise UserError(
+                '`cancel_run` is only available during an agent run (from tools, event stream handlers, '
+                'or capability hooks) in the same process as the run itself. '
+                'This `RunContext` has no run to cancel.'
+            )
+        cancellation.cancel()
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

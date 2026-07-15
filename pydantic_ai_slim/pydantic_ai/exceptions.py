@@ -14,7 +14,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelResponse, RetryPromptPart
+    from .messages import ModelMessage, ModelResponse, RetryPromptPart
 
 __all__ = (
     'ModelRetry',
@@ -26,6 +26,7 @@ __all__ = (
     'UserError',
     'UndrainedPendingMessagesError',
     'AgentRunError',
+    'RunCancelled',
     'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -191,6 +192,42 @@ class AgentRunError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+class RunCancelled(AgentRunError):
+    """Raised when the agent run was cancelled by the application itself.
+
+    Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
+    [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run].
+    This is a normal, catchable application-level outcome: the run stopped because your own code
+    asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
+    a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
+    keeps propagating as `asyncio.CancelledError` instead — it is never translated into this
+    exception, and when both race, the external cancellation wins. (On Python 3.10, which lacks
+    `Task.uncancel()`, the race cannot be disambiguated and a requested first-party cancellation
+    wins instead.)
+
+    Everything the run completed before the cancellation took effect — including the partial
+    response of an interrupted stream and the results of tool calls that finished — is preserved
+    in [`messages`][pydantic_ai.exceptions.RunCancelled.messages]: pass it as `message_history`
+    to a new run (with a new user prompt or not) to resume the conversation; any tool calls that
+    never produced a result are automatically closed out with synthesized
+    `outcome='interrupted'` returns before the history is sent to a model.
+    """
+
+    messages: list[ModelMessage]
+    """The cancelled run's message history.
+
+    This is the run's live history list: teardown may still append to it (e.g. completed
+    sibling tool results recorded in an interrupted request) while the exception propagates.
+    By the time it escapes `agent.run()` (or the `agent.iter()` context) the run is over and
+    the list is final and complete; only if you catch it *inside* the `iter()` block, before
+    the run context has exited, may it still grow.
+    """
+
+    def __init__(self, message: str, messages: list[ModelMessage]):
+        self.messages = messages
+        super().__init__(message)
 
 
 class SuspendedResponseExpired(AgentRunError):
