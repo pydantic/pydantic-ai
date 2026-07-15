@@ -13116,7 +13116,10 @@ async def test_background_mode_streaming_without_starting_after_vcr(
 
 
 async def test_background_queued_then_completed(allow_model_requests: None):
-    """Background mode: create returns status='queued', retrieve returns status='completed'."""
+    """Background mode: create returns status='queued', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
     mock_client = MockOpenAIResponses(
         response=_text_response('', status='queued', background=True),
         retrieve_responses=[_text_response('The answer is 42.', background=True)],
@@ -13158,7 +13161,10 @@ async def test_background_queued_then_completed(allow_model_requests: None):
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
-    """Background mode: create returns status='in_progress', retrieve returns status='completed'."""
+    """Background mode: create returns status='in_progress', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
     mock_client = MockOpenAIResponses(
         response=_text_response('thinking...', status='in_progress', background=True),
         retrieve_responses=[_text_response('Done!', background=True)],
@@ -13220,6 +13226,7 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
     Re-polling one background job is a `merge_mode` *replace* re-suspension, so it's bounded by the far
     larger `MAX_BACKGROUND_POLLS` backstop (not the small `MAX_GENERATION_CONTINUATIONS` cap), which
     is why a legitimately long job isn't killed after 10 generation continuations. Patch it small here.
+    Scripted responses are required because a live VCR recording cannot deterministically reach the backstop.
     """
     monkeypatch.setattr('pydantic_ai._agent_graph.MAX_BACKGROUND_POLLS', 3)
     retrieve_response = _text_response('still working...', status='in_progress', background=True)
@@ -13245,7 +13252,10 @@ async def test_background_max_polls(allow_model_requests: None, monkeypatch: pyt
 
 
 async def test_background_retrieve_uses_response_id(allow_model_requests: None):
-    """Verify that the retrieve call uses the response ID from the create response."""
+    """Verify that the retrieve call uses the response ID from the create response.
+
+    The mock client exposes exact retrieve arguments, which the VCR request matcher does not assert.
+    """
     queued_response = _text_response('', status='queued', background=True)
     queued_response.id = 'resp_bg_123'
 
