@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
 import httpx
@@ -62,7 +63,16 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return merge_profile(AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer), profile)
+        return merge_profile(
+            AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
+            profile,
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                prompt_cache_retention=timedelta(minutes=5)
+            ),
+        )
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

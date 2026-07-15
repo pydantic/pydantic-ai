@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..messages import CachePoint, ModelRequest, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
@@ -127,13 +128,17 @@ class ModelProfile(TypedDict, total=False):
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
     prompt_cache_retention: timedelta | None
-    """A conservative floor on how long the provider retains a prompt-cache prefix after the last request. Default: `None`.
+    """How long after the last request the provider can still be expected to have the cached prefix available. Default: `None`.
 
-    This is a *documented lower bound*, not a guarantee: a request made within this window past the
-    previous one has a good chance of hitting the provider's cache; a request made after it should be
-    assumed to pay full input price. Only documented values are populated (see the per-provider profile
-    modules); where a provider does not publish a retention figure the field is left `None`, meaning
-    "unknown — never predict the cache is cold".
+    Only documented values are populated. When a provider documents a range, the higher end is used:
+    consumers of a `'cold'` outlook are about to pay for a full prefix re-write, so a false `'cold'`
+    sacrifices a live cache hit while a false `'warm'` merely defers maintenance. Because retention is
+    provider infrastructure, providers populate this field; model-family profile functions must never
+    set it. Providers without an honest documented expectation boundary leave it `None`.
+
+    OpenAI's Responses API also has a `prompt_cache_retention` request parameter (`'in_memory' | '24h'`)
+    that requests a retention policy; this profile field describes the resulting provider behavior. If
+    you request extended retention, pass `retention=` to `prompt_cache_outlook` explicitly.
 
     Consumed by [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] to classify, from a
     message history alone, whether the next request is likely to hit a warm cache. A `'cold'` outlook is
@@ -189,7 +194,7 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
 PromptCacheOutlook: TypeAlias = Literal['warm', 'cold', 'unknown']
 """Predicted state of the provider's prompt cache for the *next* request built on a message history.
 
-- `'warm'`: the last request happened within the provider's documented retention window, so the cached
+- `'warm'`: the last request happened within the provider's documented expectation boundary, so the cached
   prefix is likely still available and the next request should hit it.
 - `'cold'`: the last request happened longer ago than the retention window, so the prefix has likely
   been evicted and the next request will pay full input price regardless — a free moment to mutate history.
@@ -207,7 +212,7 @@ def prompt_cache_outlook(
 ) -> PromptCacheOutlook:
     """Predict whether the provider's prompt cache is still warm for the next request on this history.
 
-    This is a pure function of the message history and a retention floor — it holds no state and makes no
+    This is a pure function of the message history and an expectation boundary — it holds no state and makes no
     requests, so a history processor, capability, or plain application code can call it with just a
     message history to decide whether the next turn is a cheap moment for history-mutating maintenance
     (compaction, pruning, repair). When the outlook is `'cold'` the next request pays a full prefix
@@ -220,9 +225,10 @@ def prompt_cache_outlook(
     Args:
         messages: The message history the next request would be built on, oldest first.
         profile: The model profile whose [`prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention]
-            is used as the retention floor. Ignored when `retention` is passed explicitly.
-        retention: An explicit retention floor, overriding the profile's. Use this to model the paid
-            extended-TTL tiers (e.g. Anthropic's 1h cache) that the conservative profile floor doesn't assume.
+            is used as the expectation boundary. When present, cache points in the history extend this
+            boundary to their largest TTL, assuming they were honored by the provider that served the requests.
+        retention: An explicit expectation boundary, overriding both the profile and cache-point TTLs.
+            Use this for settings-based extended retention that is not reflected in the profile.
         now: The reference time to measure idleness against. Defaults to the current UTC time; inject a
             fixed value for deterministic tests.
 
@@ -231,6 +237,8 @@ def prompt_cache_outlook(
     """
     if retention is None and profile is not None:
         retention = profile.get('prompt_cache_retention')
+        if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages)) is not None:
+            retention = max(retention, cache_point_ttl)
     if retention is None:
         return 'unknown'
 
@@ -248,6 +256,23 @@ def prompt_cache_outlook(
 
     idle = now - last_timestamp
     return 'warm' if idle <= retention else 'cold'
+
+
+_CACHE_POINT_TTLS: dict[str, timedelta] = {'5m': timedelta(minutes=5), '1h': timedelta(hours=1)}
+
+
+def _max_cache_point_ttl(messages: Sequence[ModelMessage]) -> timedelta | None:
+    """The largest [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the history, or `None` if there are none."""
+    ttls = [
+        _CACHE_POINT_TTLS[content.ttl]
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for content in part.content
+        if isinstance(content, CachePoint)
+    ]
+    return max(ttls) if ttls else None
 
 
 def _last_message_timestamp(messages: Sequence[ModelMessage]) -> datetime | None:

@@ -762,7 +762,7 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 
-Providers publish a retention window for their prompt cache (Anthropic's default is 5 minutes, OpenAI's is 5-10 minutes). Where the figure is documented, it's recorded as a conservative floor on the model's [`ModelProfile.prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
+Providers publish retention windows for their prompt caches. Pydantic AI records the documented expectation boundary at the provider layer: 5 minutes for Anthropic, 10 minutes for most OpenAI models, and 30 minutes for GPT-5.6. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses [`ModelProfile.prompt_cache_retention`][pydantic_ai.profiles.ModelProfile.prompt_cache_retention] to predict, from a message history alone, whether the next request is likely to hit a warm cache:
 
 ```python {title="cache_cold_maintenance.py"}
 from datetime import datetime, timedelta, timezone
@@ -779,7 +779,7 @@ history = [
     ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
 ]
 
-# The last exchange was 30 minutes ago, well past Anthropic's 5-minute retention floor.
+# The last exchange was 30 minutes ago, well past Anthropic's 5-minute expectation boundary.
 outlook = prompt_cache_outlook(history, profile=profile, now=now)
 print(outlook)
 #> cold
@@ -805,7 +805,7 @@ async def compact_when_cold(ctx: RunContext, messages: list[ModelMessage]) -> li
 agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ProcessHistory(compact_when_cold)])
 ```
 
-Because the field is a conservative floor and unknown providers leave it `None`, the outlook never over-eagerly declares a cache cold: providers without a documented retention window always return `'unknown'`.
+`CachePoint(ttl='1h')` markers in history automatically extend a provider's base boundary when the provider supports them. For settings-based extensions such as `anthropic_cache='1h'`, OpenAI's extended retention, or Azure retention, pass `retention=` explicitly. Azure and providers without a single documented expectation boundary leave the field `None`, producing `'unknown'` unless an explicit retention is supplied.
 
 ### Testing History Processors
 

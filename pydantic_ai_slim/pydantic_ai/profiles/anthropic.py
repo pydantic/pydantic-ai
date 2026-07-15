@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from datetime import timedelta
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
@@ -261,10 +260,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
-        # Anthropic's prompt cache has a documented default TTL of 5 minutes, refreshed for free on each
-        # hit. A paid 1-hour tier exists (`cache_control.ttl='1h'`), but the conservative floor is 5m.
-        # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
-        prompt_cache_retention=timedelta(minutes=5),
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,

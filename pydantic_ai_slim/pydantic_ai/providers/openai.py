@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
@@ -36,7 +38,12 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        # GPT-5.6 explicit caching keeps eligible prefixes for at least 30 minutes.
+        # Other models generally retain them for 5–10 minutes of inactivity, so the expectation boundary
+        # uses the upper end. Opt-in 24-hour retention must be passed explicitly to `prompt_cache_outlook`.
+        # https://developers.openai.com/api/docs/guides/prompt-caching
+        retention = timedelta(minutes=30 if model_name.startswith('gpt-5.6') else 10)
+        return merge_profile(openai_model_profile(model_name), ModelProfile(prompt_cache_retention=retention))
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
