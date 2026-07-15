@@ -666,7 +666,7 @@ embedder = Embedder(model)
 
 ### Sentence Transformers (Local)
 
-[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [Sentence Transformers](https://huggingface.co/docs/hub/sentence-transformers) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [Sentence Transformers](https://www.sbert.net/) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
 
 - **Privacy** — Data never leaves your infrastructure
 - **Cost** — No API charges for high-volume workloads
@@ -698,7 +698,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See [Using Sentence Transformers at Hugging Face](https://huggingface.co/docs/hub/sentence-transformers), the [Hugging Face Sentence Transformers models](https://huggingface.co/models?library=sentence-transformers), and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
+[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
 #### Device Selection
 
