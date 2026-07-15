@@ -11,7 +11,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from itertools import count
-from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -136,15 +135,14 @@ class _BotocoreRequestParams(TypedDict):
 _EXTRA_HEADERS: ContextVar[tuple[weakref.ReferenceType[BedrockRuntimeClient], dict[str, str]] | None] = ContextVar(
     'bedrock_extra_headers', default=None
 )
-_CLIENTS_WITH_EXTRA_HEADERS_HANDLER: weakref.WeakSet[BedrockRuntimeClient] = weakref.WeakSet()
-_EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
+_EXTRA_HEADERS_UNIQUE_ID = 'pydantic-ai-extra-headers'
 
 
 def _inject_extra_headers(
     client_ref: weakref.ReferenceType[BedrockRuntimeClient], params: _BotocoreRequestParams, **kwargs: Any
 ) -> None:
     active_request = _EXTRA_HEADERS.get()
-    if active_request is None or active_request[0]() is not client_ref():
+    if active_request is None or (client := client_ref()) is None or active_request[0]() is not client:
         return
 
     headers = params['headers']
@@ -155,24 +153,25 @@ def _inject_extra_headers(
         headers[key] = value
 
 
-def _register_extra_headers_handler(client: BedrockRuntimeClient) -> None:
-    """Register the pre-signing header injector on a client once."""
-    with _EXTRA_HEADERS_REGISTRATION_LOCK:
-        if client not in _CLIENTS_WITH_EXTRA_HEADERS_HANDLER:
-            handler = functools.partial(_inject_extra_headers, weakref.ref(client))
-            for operation in ('Converse', 'ConverseStream', 'CountTokens'):
-                client.meta.events.register(f'before-call.bedrock-runtime.{operation}', handler)
-            _CLIENTS_WITH_EXTRA_HEADERS_HANDLER.add(client)
-
-
 @contextmanager
 def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str, str] | None) -> Generator[None]:
-    """Send `extra_headers` with the Bedrock request made inside this context."""
+    """Send `extra_headers` with the Bedrock request made inside this context.
+
+    The injector is registered from every request path, not just those with `extra_headers`: botocore's emitter
+    caches handler lookups without locking, so registering on a client that is already serving requests can poison
+    that cache and silently drop the handler. Registering before every call means an emitting thread has always
+    completed its own registration first, so the injector is present in any lookup it caches. `unique_id` makes
+    re-registration a no-op inside botocore.
+    """
+    client.meta.events.register(
+        'before-call.bedrock-runtime',
+        functools.partial(_inject_extra_headers, weakref.ref(client)),
+        unique_id=_EXTRA_HEADERS_UNIQUE_ID,
+    )
     if not extra_headers:
         yield
         return
 
-    _register_extra_headers_handler(client)
     token = _EXTRA_HEADERS.set((weakref.ref(client), extra_headers))
     try:
         yield
@@ -970,8 +969,7 @@ class BedrockConverseModel(Model[BaseClient]):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
         client = self.client
-        extra_headers = model_settings.get('extra_headers') if model_settings else None
-        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, extra_headers):
+        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
             if stream:
                 model_response = await anyio.to_thread.run_sync(functools.partial(client.converse_stream, **params))
             else:
