@@ -209,6 +209,11 @@ def test_submit_message_accepts_tool_parent_fields(part: dict[str, object], part
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
+    """The streamed tool-input JSON preserves SDK model serialization order.
+
+    OpenAI SDK 2.45 emits the `type` key before `query`; the ordering-only snapshot update is a
+    consequence of the minimum SDK version required for GPT-5.6 request fields.
+    """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
@@ -447,7 +452,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OpenTelemetry FastAPI instrumentation capture request and response body"}',
             },
             {
                 'type': 'tool-input-available',
@@ -508,7 +513,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -566,7 +571,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python"}',
             },
             {
                 'type': 'tool-input-available',
@@ -624,7 +629,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY"}',
             },
             {
                 'type': 'tool-input-available',
@@ -801,7 +806,7 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
+                'inputTextDelta': '{"type":"search","query":"OTEL_PYTHON_LOG_CORRELATION environment variable"}',
             },
             {
                 'type': 'tool-input-available',
@@ -8741,6 +8746,111 @@ async def test_event_stream_function_tool_return_error():
                 'type': 'tool-output-error',
                 'toolCallId': 'tc_err',
                 'errorText': 'Something went wrong',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error,
+    and the outcome claim in the metadata channel survives a dump/load round-trip.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_int'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='tc_int',
+                    outcome='interrupted',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant_parts = [msg.model_dump() for msg in ui_messages if msg.role == 'assistant'][0]['parts']
+    assert assistant_parts == snapshot(
+        [
+            {
+                'type': 'tool-my_tool',
+                'tool_call_id': 'tc_int',
+                'title': None,
+                'state': 'output-available',
+                'input': {'x': 1},
+                'output': 'The tool call was interrupted before a result was produced.',
+                'provider_executed': False,
+                'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'preliminary': None,
+                'approval': None,
+            }
+        ]
+    )
+
+    # Round-trip: the metadata claim restores the interrupted outcome on load instead of
+    # upgrading it to 'success'.
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'interrupted'
+    assert reloaded_return.tool_kind is None
+
+
+async def test_event_stream_function_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` streams as neutral output, not an error.
+
+    Not VCR-backed: this pins a local event-stream transformation and makes no model request.
+    """
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name='my_tool',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='tc_int',
+                outcome='interrupted',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Do something')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'tc_int',
+                'output': 'The tool call was interrupted before a result was produced.',
             },
             {'type': 'finish-step'},
             {'type': 'finish'},

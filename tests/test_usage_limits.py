@@ -185,6 +185,21 @@ def test_usage_so_far() -> None:
         )
 
 
+def test_usage_has_values_ignores_zero_details() -> None:
+    """`has_values()` must treat an all-zero `details` dict as no values, per its docstring.
+
+    A non-empty `details` dict is truthy, so the previous `any(asdict(...).values())` returned True
+    even when every count was zero. This pins the pure-method behavior directly; no model is involved,
+    so there is no VCR test to write.
+    """
+    assert RunUsage().has_values() is False
+    assert RunUsage(details={'reasoning_tokens': 0}).has_values() is False
+    assert RunUsage(input_tokens=1).has_values() is True
+    assert RunUsage(details={'reasoning_tokens': 3}).has_values() is True
+    # RequestUsage shares the same UsageBase implementation.
+    assert RequestUsage(details={'x': 0}).has_values() is False
+
+
 async def test_multi_agent_usage_no_incr():
     delegate_agent = Agent(TestModel(), output_type=int)
 

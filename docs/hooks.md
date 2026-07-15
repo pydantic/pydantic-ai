@@ -74,40 +74,34 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 
 ### On-demand hooks
 
-[`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
+[`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability. This is useful for optional, user-requested behavior such as verbose request logging:
 
 ```python {title="deferred_hooks_capability.py"}
-from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 
-approval_hooks = Hooks(
-    id='approval-hooks',
-    description='Use when a workflow needs approval before destructive actions.',
+request_logging_hooks = Hooks(
+    id='request-logging',
+    description='Use when the user asks for verbose request diagnostics.',
     defer_loading=True,
 )
 
 
-@approval_hooks.on.before_tool_execute
-async def require_approval(
+@request_logging_hooks.on.before_model_request
+async def log_request(
     ctx: RunContext[None],
-    *,
-    call: ToolCallPart,
-    tool_def: ToolDefinition,
-    args: ValidatedToolArgs,
-) -> ValidatedToolArgs:
-    # Runs only after the model loads `approval-hooks`.
-    return args
+    request_context: ModelRequestContext,
+) -> ModelRequestContext:
+    print(f'Model request at step {ctx.run_step}: {len(request_context.messages)} messages')
+    return request_context
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
+agent = Agent('openai-responses:gpt-5.4', capabilities=[request_logging_hooks])
 ```
 
-You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
+Pydantic AI skips hooks owned by a deferred `Hooks` instance until its capability is loaded.
 
-If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
-
-The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's per-step hooks (node, model-request, tool, output) fire from the next step onwards once it has loaded, and `after_run` fires at the end of the run if it was loaded at any point during it.
+Use on-demand hooks for optional behavior that only applies after the capability is loaded. For human-in-the-loop tool approval, pass [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) when registering a tool, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] for conditional approval, or wrap a toolset with [`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset].
 
 ## Hook types
 
@@ -148,6 +142,9 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNo
 Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
+
+!!! note
+    These hooks fire **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `before_model_request` runs before the turn starts, `wrap_model_request` wraps the whole turn including any continuations, and `after_model_request` receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
 ### Tool validation hooks
 

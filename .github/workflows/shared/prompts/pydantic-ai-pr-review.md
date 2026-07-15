@@ -174,6 +174,9 @@ bot reviewing another bot's PR. If the PR author is a bot, submit a
   it.
 - Don't post speculative "this might break" findings without a concrete
   trigger.
+- Don't flag coverage-gate or `# pragma: no cover` outcomes — the
+  `fail_under = 100` CI job reports uncovered lines (and wrongly-placed
+  pragmas) deterministically; predicting them is noise.
 - Don't comment on lines without an `NL:` prefix in the per-file diff.
 - Don't write to the workspace — every output is a safe-output call.
 - Don't exceed 30 inline comments — pick the top-severity 30 and put the
