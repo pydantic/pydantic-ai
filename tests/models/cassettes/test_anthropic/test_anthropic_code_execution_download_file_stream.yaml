@@ -1,0 +1,252 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '422'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Write and run Python code using pandas that creates a CSV file with the numbers 1 to 5 and their squares,
+            then save it to disk so it can be downloaded.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: true
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-6\",\"id\":\"msg_011CcqiMuJTNG4McpvbivZWb\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":2310,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":6,\"service_tier\":\"standard\",\"inference_geo\":\"global\"}}
+        }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}
+        \              }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"The
+        user wants me to write\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"
+        Python code using pandas to create a CSV file with numbers 1-5 and their squares, then save it for download.\"}               }\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"EvYCCosBCA8YAipAgA23yHWSoXxwMfIL8rGmPFmEMP4iYPHzfy3dkplPc6vmkMEfZC1Dnp8gAvPRNiv2GF+EKwHDI6NfVLCDiP/hYTIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YhIM3MhXapMVwoM5iqqLGgywtRdB6+FIjs+9Ch4iMKMSSBbdA8fJm1fEX92QVjRBxx594oE/32i5N7/wEogDPgzs7U1yCnZglE1PQMNjWCqXAXj1q/jwiIscYmTdgHdgzSyITdnk9YShg7CIAu7d1F6/n4xw3YxeKsx2MG/7BB5RffP1AfQTZ5tCeu1w5GFk+NgKTVoud09F9U4c6GyVrWzLUZiiTqbh/CKkPZLXr/qKt+7cJVNYe0ZaZYU3PtR6a0GaJJc3IRilsQGSZQaNWM5aQpsSh2jMuIFxBCcvmTS9LEZFzNM6UD4YAQ==\"}
+        \              }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata:
+        {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}           }\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Sure!
+        I'll write and run the\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"
+        Python code right away.\"}              }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1
+        \        }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_015FmArMn3qVhJx2L5V4YzjB\",\"name\":\"text_editor_code_execution\",\"input\":{}}
+        \   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}
+        \            }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\"}
+        \             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\":
+        \\\"create\\\"\"} }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\",
+        \\\"path\\\":\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        \\\"/tmp/squa\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"res.py\\\"\"}
+        \           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\",
+        \\\"file_\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"text\\\":
+        \"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"impo\"}
+        \           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"rt
+        pand\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"as
+        as pd\\\\n\\\\\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n#
+        Cre\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ate
+        the data\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\\ndata
+        = {\\\\\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n
+        \   \\\\\\\"\"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"Numb\"}
+        \     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"er\\\\\\\":
+        l\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ist(range(\"}
+        \ }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"1,
+        6)),\\\\n   \"} }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        \\\\\\\"Squa\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"re\\\\\\\":
+        [x\"}  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"**\"}
+        \ }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"2
+        for x i\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n
+        range\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"(1\"}
+        \     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\",
+        6)]\\\\n}\\\\n\\\\\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n#
+        Build\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        t\"}             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"he
+        Data\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"Frame\\\\ndf
+        =\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        pd.DataFra\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"me(d\"}
+        \         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ata)\\\\\"}
+        \  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n\\\\n#
+        Save to\"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        CSV\\\\noutput\"}   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"_path
+        = \\\\\\\"/\"}            }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"tmp/numbers\"}
+        \             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"_and_squ\"}
+        \              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"ares.cs\"}
+        \      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"v\\\\\\\"\\\\ndf.to_\"}
+        \             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"csv(output\"}}\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"_path,
+        in\"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"dex=False)\\\\\"}
+        \   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n\\\\npri\"}
+        \              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"nt(\\\\\\\"Data\"}
+        \       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"Fram\"}
+        \       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"e
+        preview:\\\\\\\"\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\")\\\\npr\"}
+        \    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"int(df.to_\"}
+        \        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"string(in\"}
+        \            }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"dex=False))\"}
+        \          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\\nprint(f\"}
+        \         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\\\\\"\"}
+        \          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\\\\\\nCSV
+        \"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"saved
+        to:\"}  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"
+        {outpu\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"t_path}\\\\\\\")\\\\\"}
+        \             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"n\\\"}\"}
+        \              }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2            }\n\nevent:
+        content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"text_editor_code_execution_tool_result\",\"tool_use_id\":\"srvtoolu_015FmArMn3qVhJx2L5V4YzjB\",\"content\":{\"type\":\"text_editor_code_execution_create_result\",\"is_file_update\":false}}
+        \        }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":3      }\n\nevent: content_block_start\ndata:
+        {\"type\":\"content_block_start\",\"index\":4,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_018RTsaxGpA4a34we6KCDQ2i\",\"name\":\"bash_code_execution\",\"input\":{}}
+        \  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}
+        \      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"co\"}
+        \       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"mmand\\\":
+        \\\"p\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"yth\"}
+        \ }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"on3
+        \"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"/tmp/square\"}
+        \     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"s.py
+        && \"}   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"cp
+        /tmp\"}             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"/nu\"}
+        \       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"mbers_and_\"}
+        \     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"squa\"}
+        \ }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"re\"}
+        \       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"s.cs\"}}\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"v
+        $OUTPU\"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"T_DIR/number\"}
+        \          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"s_and\"}
+        \              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"_squares.cs\"}
+        \          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"v\\\"}\"}
+        \        }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":4        }\n\nevent: content_block_start\ndata:
+        {\"type\":\"content_block_start\",\"index\":5,\"content_block\":{\"type\":\"bash_code_execution_tool_result\",\"tool_use_id\":\"srvtoolu_018RTsaxGpA4a34we6KCDQ2i\",\"content\":{\"type\":\"bash_code_execution_result\",\"stdout\":\"DataFrame
+        preview:\\n Number  Square\\n      1       1\\n      2       4\\n      3       9\\n      4      16\\n      5      25\\n\\nCSV
+        saved to: /tmp/numbers_and_squares.csv\\n\",\"stderr\":\"\",\"return_code\":0,\"content\":[{\"type\":\"bash_code_execution_output\",\"file_id\":\"file_011CcqiP31aKcpFs9gKSoAet\"}]}}}\n\nevent:
+        content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":5         }\n\nevent: content_block_start\ndata:
+        {\"type\":\"content_block_start\",\"index\":6,\"content_block\":{\"type\":\"text\",\"text\":\"\"}            }\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"Everything\"}
+        \ }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"
+        ran successfully! Here's a breakdown of what the code does:\\n\\n| Step | Description |\\n|---|---|\\n| **\"}        }\n\nevent:
+        content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"Data
+        creation** | A dictionary holds two lists — `Number` (1–\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"5)
+        and `Square` (each number squared) |\\n| **DataFrame** | `pd.DataFrame(data)` converts the dictionary into a structured
+        table\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"
+        |\\n| **CSV export** | `df.to_csv(..., index=False)` saves it without the default row\"}       }\n\nevent: content_block_delta\ndata:
+        {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\" index column |\\n\\n###
+        \U0001F4C4 CSV Contents (`numbers_and_squares.csv`)\"}            }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n```\\nNumber,Square\\n1,1\\n2,4\\n3,9\\n4,16\\n5,25\\n```\\n\\nThe
+        file has been exported and\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":6,\"delta\":{\"type\":\"text_delta\",\"text\":\"
+        is ready to download! ⬆️\"}     }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":6}\n\nevent:
+        message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"container\":{\"id\":\"container_01XMfnsbapHXTAkshto8UT7y\",\"expires_at\":\"2026-07-09T03:43:12.709399Z\"}},\"usage\":{\"input_tokens\":7684,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":544,\"output_tokens_details\":{\"thinking_tokens\":37},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0}}
+        \     }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '17184'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-576699255c3ac83cc0be67a4d892c935-58124b6e0ee04612-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CcqiP31aKcpFs9gKSoAet/content?beta=true
+  response:
+    body:
+      string: |
+        Number,Square
+        1,1
+        2,4
+        3,9
+        4,16
+        5,25
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''numbers_and_squares.csv
+      content-length:
+      - '36'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/csv
+      server-timing:
+      - x-originResponse;dur=325
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CcqiP31aKcpFs9gKSoAet?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '204'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=236
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-07-09T02:43:12.227000Z'
+      downloadable: true
+      filename: numbers_and_squares.csv
+      id: file_011CcqiP31aKcpFs9gKSoAet
+      mime_type: text/csv
+      size_bytes: 36
+      type: file
+    status:
+      code: 200
+      message: OK
+version: 1

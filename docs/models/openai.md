@@ -338,6 +338,12 @@ Because the request is queued server-side, the time to the first token is higher
 !!! note
     If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
 
+### Downloading code execution files
+
+When you use the [`CodeExecutionTool`](../native-tools.md#code-execution-tool) native tool, the code interpreter can save files to disk in its sandbox. Enable [`openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files] to automatically download those files from OpenAI's container files API and return them as [`FilePart`][pydantic_ai.messages.FilePart] objects, available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]. See [the `CodeExecutionTool` docs](../native-tools.md#code-execution-tool) for a usage example.
+
+This is distinct from [`openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs], which asks the API to return the outputs the interpreter produces inline — its logs and any generated images — without extra requests. Images surfaced that way are available as [`BinaryImage`][pydantic_ai.messages.BinaryImage] on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images]. Enable both settings when you want inline images as well as the files written to disk.
+
 ## Chat Completions API
 
 If you need the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead of the default [Responses API](https://platform.openai.com/docs/api-reference/responses), pin to it with the `'openai-chat:'` prefix or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]:

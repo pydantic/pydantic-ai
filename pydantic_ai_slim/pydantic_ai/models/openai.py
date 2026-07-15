@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import itertools
 import json
+import mimetypes
 import warnings
 from collections.abc import (
     AsyncGenerator,
@@ -753,6 +754,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
     sets this automatically in its default (stateful) mode.
+    """
+
+    openai_download_code_execution_files: bool
+    """Whether to automatically download files that the [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] wrote to disk in its sandbox.
+
+    When the code interpreter saves a file to disk, the model references it as a citation rather than including its
+    contents in the response. When this setting is enabled, each referenced file is downloaded from the container files
+    API and returned as a [`FilePart`][pydantic_ai.messages.FilePart]. This costs one extra API call per file.
+
+    This is distinct from
+    [`openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs],
+    which returns the outputs the interpreter produces inline (logs and generated images) without any extra API calls.
     """
 
     openai_background: bool
@@ -1755,6 +1768,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+responses_output_text_annotation_ta: TypeAdapter[responses.response_output_text.Annotation] = TypeAdapter(
+    responses.response_output_text.Annotation
+)
 
 
 @dataclass(init=False)
@@ -1966,7 +1982,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(response, settings, model_request_parameters)
+        # When downloading is enabled, `_process_response` collects the citations for files the code interpreter
+        # wrote to disk as it maps the response, so we can download them here (it's sync, downloading is async).
+        container_file_citations: list[responses.response_output_text.AnnotationContainerFileCitation] | None = (
+            [] if settings.get('openai_download_code_execution_files') else None
+        )
+        model_response = self._process_response(
+            response,
+            settings,
+            model_request_parameters,
+            container_file_citations=container_file_citations,
+        )
+
+        if container_file_citations:
+            file_parts = await _download_container_files(
+                self.client, container_file_citations, provider_name=self.system
+            )
+            model_response.parts = [*model_response.parts, *file_parts]
+
+        return model_response
 
     async def count_tokens(
         self,
@@ -2074,8 +2108,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response: responses.Response,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        container_file_citations: list[responses.response_output_text.AnnotationContainerFileCitation] | None = None,
     ) -> ModelResponse:
-        """Process a non-streamed response, and prepare a message to return."""
+        """Process a non-streamed response, and prepare a message to return.
+
+        If `container_file_citations` is provided, the citations for files the code interpreter wrote to disk are
+        collected into it as the response is mapped, so the caller can download them (see
+        `openai_download_code_execution_files`).
+        """
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         # Index tool_search_output items by call_id so we can pair them with the
@@ -2132,6 +2173,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details = part_provider_details or {}
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
+                            )
+                        if container_file_citations is not None:
+                            container_file_citations.extend(
+                                annotation
+                                for annotation in content.annotations
+                                if isinstance(
+                                    annotation, responses.response_output_text.AnnotationContainerFileCitation
+                                )
                             )
                         if item.phase is not None:
                             part_provider_details = part_provider_details or {}
@@ -2241,6 +2290,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = 'content_filter'
             provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
+            if container_file_citations is not None:
+                container_file_citations.clear()
 
         return ModelResponse(
             parts=items,
@@ -2298,6 +2349,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _client=self.client,
             _provider_timestamp=provider_timestamp,
         )
         streamed_response.state = initial_state
@@ -3640,6 +3692,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
+    _client: AsyncOpenAI
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
@@ -3674,6 +3727,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            # Track citations for files the code interpreter wrote to disk, by item_id, so they can be
+            # downloaded as `FilePart`s after the stream completes when `openai_download_code_execution_files` is set.
+            _file_citations_by_item: dict[
+                str, list[responses.response_output_text.AnnotationContainerFileCitation]
+            ] = {}
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
@@ -4030,9 +4088,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # content already accumulated via delta events
 
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # Collect annotations if the setting is enabled
+                    # Collect raw annotations for `provider_details` if the setting is enabled.
                     if self._model_settings.get('openai_include_raw_annotations'):
                         _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
+                    # Separately, collect the citations for files the code interpreter wrote to disk, so we can
+                    # download them below. The event types the annotation as `object`, so validate it to a typed
+                    # annotation rather than reaching into a raw dict.
+                    if self._model_settings.get('openai_download_code_execution_files'):
+                        try:
+                            annotation = responses_output_text_annotation_ta.validate_python(chunk.annotation)
+                        except ValidationError:
+                            annotation = None
+                        if isinstance(annotation, responses.response_output_text.AnnotationContainerFileCitation):
+                            _file_citations_by_item.setdefault(chunk.item_id, []).append(annotation)
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
@@ -4189,6 +4257,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if not self._has_refusal and self._model_settings.get('openai_download_code_execution_files'):
+                # Download the files the code interpreter wrote to disk after the stream completes, so the resulting
+                # `parts` ordering matches the non-streaming path. Skip it entirely on a refused response.
+                citations = [citation for citations in _file_citations_by_item.values() for citation in citations]
+                for file_part in await _download_container_files(
+                    self._client, citations, provider_name=self._provider_name
+                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{file_part.id}-file', part=file_part)
 
         # This is used to resume suspended background streams with `starting_after`.
         if self.state == 'suspended' and self._last_sequence_number is not None:
@@ -4948,4 +5024,53 @@ def _map_mcp_call(
             },
             provider_name=provider_name,
         ),
+    )
+
+
+async def _download_container_files(
+    client: AsyncOpenAI,
+    citations: list[responses.response_output_text.AnnotationContainerFileCitation],
+    *,
+    provider_name: str | None,
+) -> list[FilePart]:
+    """Download the files the code interpreter wrote to disk, downloading each only once even if cited repeatedly."""
+    file_parts: list[FilePart] = []
+    downloaded_file_ids: set[str] = set()
+    for citation in citations:
+        if citation.file_id in downloaded_file_ids:
+            continue
+        downloaded_file_ids.add(citation.file_id)
+        if file_part := await _download_container_file(client, citation, provider_name=provider_name):
+            file_parts.append(file_part)
+    return file_parts
+
+
+async def _download_container_file(
+    client: AsyncOpenAI,
+    citation: responses.response_output_text.AnnotationContainerFileCitation,
+    *,
+    provider_name: str | None,
+) -> FilePart | None:
+    """Download a file the code interpreter wrote to its container, or `None` if it can no longer be retrieved.
+
+    Containers are short-lived, so a download can fail (expired container, rate limit, transient error). In that case
+    we skip the file with a warning rather than discarding the otherwise-successful response.
+    """
+    try:
+        file = await client.containers.files.content.retrieve(
+            file_id=citation.file_id, container_id=citation.container_id
+        )
+    except (APIStatusError, APIConnectionError) as e:
+        warnings.warn(
+            f'Failed to download code execution file {citation.filename!r} ({citation.file_id}): {e}',
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    media_type = mimetypes.guess_type(citation.filename)[0] or 'application/octet-stream'
+    content = BinaryContent(media_type=media_type, data=file.content)
+    return FilePart(
+        content=BinaryContent.narrow_type(content),
+        id=citation.file_id,
+        provider_name=provider_name,
     )

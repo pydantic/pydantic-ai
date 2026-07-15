@@ -258,9 +258,9 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
+| OpenAI | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. To automatically download the files that code execution produces and references and return them as [`FilePart`][pydantic_ai.messages.FilePart] objects, enable the [`OpenAIResponsesModelSettings.openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files] [model setting](agent.md#model-run-settings). |
 | Google | ✅ | Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. To automatically download the files that code execution produces and references and return them as [`FilePart`][pydantic_ai.messages.FilePart] objects, enable the [`AnthropicModelSettings.anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files] [model setting](agent.md#model-run-settings). |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -307,6 +307,27 @@ print(result.response.native_tool_calls)
     )
 ]
 """
+```
+
+_(This example is complete, it can be run "as is")_
+
+When the model runs code that writes a file to disk in the execution sandbox, Pydantic AI can automatically download that file and return it as a [`FilePart`][pydantic_ai.messages.FilePart], available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]. Enable this for OpenAI with [`OpenAIResponsesModelSettings.openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files] or for Anthropic with [`AnthropicModelSettings.anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files]. See [Downloading code execution files](models/openai.md#downloading-code-execution-files) (OpenAI) and [Downloading code execution files](models/anthropic.md#downloading-code-execution-files) (Anthropic) for what each provider supports.
+
+```py {title="code_execution_download_files.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[NativeTool(CodeExecutionTool())],
+    model_settings=AnthropicModelSettings(anthropic_download_code_execution_files=True),
+)
+
+result = agent.run_sync('Create a CSV file with the numbers 1 to 5 and their squares.')
+files = result.response.files
+assert len(files) > 0
+assert files[0].media_type == 'text/csv'
 ```
 
 _(This example is complete, it can be run "as is")_
