@@ -65,9 +65,13 @@ class WebSocketCassette:
 def ws_cassette_plan(
     *,
     cassette_exists: bool,
+    cassette_synthetic: bool = False,
     record_mode: str | None,
 ) -> Literal['replay', 'record', 'error_missing', 'error_unsupported']:
     """Decide replay vs record behavior, mirroring VCR cassette plan logic."""
+    if cassette_synthetic:
+        return 'replay'
+
     if record_mode is None:
         record_mode = 'none'
 
@@ -160,7 +164,7 @@ class ReplayConnect:
         return _resolve().__await__()
 
     async def __aenter__(self) -> Any:
-        return self._ws  # pragma: no cover
+        return self._ws
 
     async def __aexit__(self, *args: Any) -> None:
         pass

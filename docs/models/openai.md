@@ -143,10 +143,14 @@ Use `connect()` around the runs that should use the persistent connection. Reque
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel('gpt-5.2')
-agent = Agent(model)
+model_settings = OpenAIResponsesModelSettings(
+    openai_previous_response_id='auto',
+    openai_store=False,
+)
+agent = Agent(model, model_settings=model_settings)
 
 
 async def main():
@@ -160,6 +164,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+Setting `openai_previous_response_id='auto'` makes tool-call continuations and retries send only their new input plus the latest response ID. The active WebSocket keeps that response in connection-local memory, so this incremental path works with `openai_store=False` and Zero Data Retention. If the connection closes, the in-memory state is lost; after reconnecting, send the full input context unless the response was stored.
 
 WebSocket mode has a few constraints:
 
@@ -301,7 +307,7 @@ print(result.output)
 ```
 
 !!! note
-    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
+    Over HTTP, referencing a response requires it to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, the full message history must be sent on every request. An active [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] context can instead chain to its most recent response from connection-local memory. This in-memory state does not survive reconnecting.
 
 #### Using durable conversations
 

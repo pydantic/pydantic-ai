@@ -20,6 +20,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+    from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.datastructures import Headers
     from websockets.exceptions import ConnectionClosedOK, InvalidStatus, WebSocketException
     from websockets.http11 import Response
@@ -254,6 +255,43 @@ async def test_connect_respects_allow_model_requests(openai_api_key: str) -> Non
             pass  # pragma: no cover
 
 
+async def test_connect_forwards_handshake_options(openai_model: OpenAIResponsesModel) -> None:
+    extra_query = {'trace': 'request-123'}
+    extra_headers = {'X-Test-Header': 'header-value'}
+    websocket_connection_options = WebSocketConnectionOptions(compression=None, max_size=1024)
+    manager = ReplayConnect(ReplayWebSocket(WebSocketCassette()))
+
+    with patch.object(openai_model.client.responses, 'connect', return_value=manager) as connect:
+        async with openai_model.connect(
+            extra_query=extra_query,
+            extra_headers=extra_headers,
+            websocket_connection_options=websocket_connection_options,
+        ):
+            pass
+
+    connect.assert_called_once_with(
+        extra_query=extra_query,
+        extra_headers=extra_headers,
+        websocket_connection_options=websocket_connection_options,
+    )
+
+
+async def test_connect_requires_websockets(openai_model: OpenAIResponsesModel) -> None:
+    real_import = __import__
+
+    def import_without_websockets(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'websockets':
+            raise ImportError
+        return real_import(name, *args, **kwargs)
+
+    assert import_without_websockets('asyncio') is asyncio
+
+    with patch('builtins.__import__', import_without_websockets):
+        with pytest.raises(ImportError, match=r'pip install "openai\[realtime\]"'):
+            async with openai_model.connect():
+                pass  # pragma: no cover
+
+
 async def test_ws_concurrent_requests_error(openai_model: OpenAIResponsesModel) -> None:
     agent: Agent[None, str] = Agent(openai_model)
     sent = asyncio.Event()
@@ -444,6 +482,52 @@ async def test_ws_request_with_tools(openai_ws_model: OpenAIResponsesModel) -> N
     ]
     assert len(tool_calls) >= 1
     assert tool_calls[0].tool_name == 'get_temperature'
+
+
+async def test_ws_tool_continuation_uses_connection_local_state(openai_model: OpenAIResponsesModel) -> None:
+    cassette = deepcopy(_load_cassette('test_ws_request_with_tools.yaml'))
+    sent = [interaction for interaction in cassette.interactions if interaction.direction == 'sent']
+    assert len(sent) == 2
+    first_response_id = next(
+        interaction.data['response']['id']
+        for interaction in cassette.interactions
+        if interaction.data.get('type') == 'response.completed'
+    )
+
+    sent[0].data['store'] = False
+    tool_output = next(item for item in sent[1].data['input'] if item.get('type') == 'function_call_output')
+    sent[1].data['input'] = [tool_output]
+    sent[1].data['previous_response_id'] = first_response_id
+    sent[1].data['store'] = False
+
+    after_first_response = False
+    for interaction in cassette.interactions:
+        if interaction is sent[1]:
+            after_first_response = True
+        response = interaction.data.get('response')
+        if isinstance(response, dict):
+            response['store'] = False
+            if after_first_response:
+                response['previous_response_id'] = first_response_id
+
+    def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:
+        return ReplayConnect(ReplayWebSocket(cassette))
+
+    agent = Agent(
+        openai_model,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_store=False),
+    )
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        """Get the current temperature for a city."""
+        return f'25°C in {city}'
+
+    with patch('websockets.asyncio.client.connect', fake_connect):
+        async with openai_model.connect():
+            result = await agent.run('What is the temperature in Paris?')
+
+    assert result.output
 
 
 @pytest.mark.ws_cassette

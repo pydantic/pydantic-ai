@@ -112,7 +112,12 @@ def openai_ws_model(
     cassette_path = _ws_cassette_dir_for(request) / f'{cassette_name}.yaml'
     record_mode = _get_record_mode(request)
 
-    plan = ws_cassette_plan(cassette_exists=cassette_path.exists(), record_mode=record_mode)
+    existing_cassette = WebSocketCassette.load(cassette_path) if cassette_path.exists() else None
+    plan = ws_cassette_plan(
+        cassette_exists=existing_cassette is not None,
+        cassette_synthetic=bool(existing_cassette and existing_cassette.synthetic),
+        record_mode=record_mode,
+    )
 
     if plan == 'error_missing':  # pragma: no cover
         raise RuntimeError(
@@ -125,7 +130,8 @@ def openai_ws_model(
             'use `--record-mode=rewrite` to replace the cassette.'
         )
 
-    cassette = WebSocketCassette.load(cassette_path) if plan == 'replay' else WebSocketCassette()
+    cassette = existing_cassette if plan == 'replay' else WebSocketCassette()
+    assert cassette is not None
     replay_websockets: list[ReplayWebSocket] = []
 
     def fake_connect(*args: Any, **kwargs: Any) -> ReplayConnect:

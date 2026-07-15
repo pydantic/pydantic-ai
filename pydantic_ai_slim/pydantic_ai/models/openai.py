@@ -754,9 +754,13 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state.
 
-    Requires the referenced response to have been stored (see
+    Over HTTP, the referenced response must have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
-    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+    which defaults to `True` on OpenAI's side). Inside an active
+    [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
+    context, the most recent response is kept in connection-local memory, so chaining works with
+    `openai_store=False` and Zero Data Retention. That in-memory state is lost when the connection
+    closes; after reconnecting, send the full input context unless the response was stored.
 
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.

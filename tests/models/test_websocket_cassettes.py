@@ -56,6 +56,11 @@ def test_plan_new_episodes_mode() -> None:
     assert ws_cassette_plan(cassette_exists=False, record_mode='new_episodes') == 'error_unsupported'
 
 
+@pytest.mark.parametrize('record_mode', ['rewrite', 'all', 'new_episodes'])
+def test_plan_synthetic_cassette_always_replays(record_mode: str) -> None:
+    assert ws_cassette_plan(cassette_exists=True, cassette_synthetic=True, record_mode=record_mode) == 'replay'
+
+
 def test_plan_unknown_mode_with_cassette() -> None:
     assert ws_cassette_plan(cassette_exists=True, record_mode='unknown') == 'replay'
 
@@ -201,8 +206,9 @@ class _FakeRealWebSocket:
 
 
 @pytest.mark.anyio
-async def test_recording_websocket_and_cassette_roundtrip(tmp_path: Path) -> None:
-    cassette = WebSocketCassette(synthetic=True)
+@pytest.mark.parametrize('synthetic', [False, True])
+async def test_recording_websocket_and_cassette_roundtrip(tmp_path: Path, synthetic: bool) -> None:
+    cassette = WebSocketCassette(synthetic=synthetic)
     real = _FakeRealWebSocket([b'{"type": "received_bytes"}', '{"type": "received_text"}'])
     ws = RecordingWebSocket(real, cassette)
 
@@ -251,3 +257,5 @@ async def test_recording_connect_wraps_and_closes_real_socket() -> None:
     connect.assert_called_once_with('wss://example.test', option=True)
     assert real.close_args == (1000, '')
     assert cassette.interactions == [CassetteInteraction(direction='sent', data={'type': 'sent'})]
+
+    await _RecordingConnect().__aexit__()
