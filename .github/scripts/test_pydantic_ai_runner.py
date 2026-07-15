@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import os
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -72,6 +73,57 @@ def test_parses_full_claude_argv_without_error():
     assert args.prompt_file == '/tmp/gh-aw/aw-prompts/prompt.txt'
     assert args.prompt_positional == 'do the thing'
     assert args.permission_mode == 'bypassPermissions'
+
+
+def test_launcher_rejects_unsupported_continuation_without_output():
+    launcher = Path(__file__).with_name('pydantic-ai-runner-launch.sh')
+    result = subprocess.run([launcher, '--continue'], text=True, capture_output=True, check=False)
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert result.stderr == ''
+
+
+def test_prefetch_github_context_uses_authenticated_remote(tmp_path: Path):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_git = bin_dir / 'git'
+    fake_git.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "https://x-access-token:test-token@github.com/pydantic/pydantic-ai.git"\n',
+        encoding='utf-8',
+    )
+    fake_gh = bin_dir / 'gh'
+    fake_gh.write_text(
+        """#!/bin/sh
+[ "$GH_TOKEN" = "test-token" ] || exit 9
+case "$1:$2" in
+  issue:list) printf '%s\\n' '[{"number":1,"title":"Issue"}]' ;;
+  pr:list) printf '%s\\n' '[{"number":2,"title":"PR"}]' ;;
+  *) exit 8 ;;
+esac
+""",
+        encoding='utf-8',
+    )
+    fake_git.chmod(0o755)
+    fake_gh.chmod(0o755)
+
+    agent_dir = tmp_path / 'agent'
+    env = os.environ.copy()
+    env.pop('GH_TOKEN', None)
+    env.pop('GITHUB_TOKEN', None)
+    env.update(
+        PATH=f'{bin_dir}:{env["PATH"]}',
+        GITHUB_REPOSITORY='pydantic/pydantic-ai',
+        GH_AW_AGENT_DIR=str(agent_dir),
+    )
+    script = Path(__file__).with_name('prefetch-github-context.sh')
+    result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+
+    assert result.returncode == 0
+    assert 'test-token' not in result.stdout + result.stderr
+    assert json.loads((agent_dir / 'github-context/open-issues.json').read_text()) == [{'number': 1, 'title': 'Issue'}]
+    assert json.loads((agent_dir / 'github-context/open-pull-requests.json').read_text()) == [
+        {'number': 2, 'title': 'PR'}
+    ]
 
 
 def test_unknown_future_claude_flags_are_tolerated():

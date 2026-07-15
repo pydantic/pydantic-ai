@@ -55,24 +55,25 @@ assertion leakage on early exit. Do not run and report the existing suite.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-First narrow to streaming-labelled issues with a tight, server-side filter — the
-`/search/issues` endpoint is blocked by the firewall proxy and there are no
-`mcp__github__*` tools, but the `?labels=` filter on the issue-list endpoint is
-allowed. This covers both prior `[streaming-resilience-sweep]` findings and
-human-filed streaming issues:
+Open issues were prefetched before the sandbox started. First narrow the local
+corpus to streaming-labelled issues. This covers both prior
+`[streaming-resilience-sweep]` findings and human-filed streaming issues:
 
 ```
-gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=streaming&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title}'
+jq '.[] | select(any(.labels[]; .name == "streaming")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
 Only if that is inconclusive, widen to a full open-issue scan and grep locally
 for "stream_output" / "stream_text":
 
 ```
-gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
