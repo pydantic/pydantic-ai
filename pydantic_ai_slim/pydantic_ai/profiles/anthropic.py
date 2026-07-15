@@ -193,12 +193,12 @@ to preserve `xhigh` instead of downshifting.
 def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
     """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
 
-    Shared between mthe direct Anthropic path and any provider that translates to the
+    Shared between the direct Anthropic path and any provider that translates to the
     Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
     Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
     base mapping, while letting the `xhigh` passthrough decision live in one place.
     """
-    if level == 'xhigh' and supports_xhigh:                                 
+    if level == 'xhigh' and supports_xhigh:
         return 'xhigh'
     return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
@@ -306,7 +306,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         )
     )
     supported_native_tools = (
-        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPCI_BASE_BUILTINS
+        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
     )
 
     return AnthropicModelProfile(
@@ -334,7 +334,7 @@ def _code_execution_tool_versions(
 ) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
     versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
     default_version: AnthropicCodeExecutionToolVersion = '20250825'
-    if model_name.startswith(_ANTHROPCIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
+    if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
         default_version = '20260120'
         versions = (*versions, default_version)
     return default_version, versions
