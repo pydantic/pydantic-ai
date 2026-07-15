@@ -51,6 +51,9 @@ def test_synthetic_cassette_detects_prefix_violation(prefix_moving_cassette: Pat
         'extension',
         -1,
     )
+    # 'shrunk' is only produced by deliberately-compacting tests, which the marker exempts before
+    # classification runs, so exercise it directly.
+    assert classify_prefix_pair([('messages', 'one'), ('messages', 'two')], [('messages', 'one')]) == ('shrunk', 1)
     assert len(violations) == 1
     assert violations[0].level == 'tools'
     assert violations[0].block_index == 0
@@ -60,7 +63,7 @@ def test_check_cache_prefix_stability_fails_unmarked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
 ) -> None:
     node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
-    with pytest.raises(pytest.fail.Exception, match='@pytest.mark.moves_cache_prefix'):
+    with pytest.raises(pytest.fail.Exception, match='moves_cache_prefix'):
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
