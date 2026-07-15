@@ -261,7 +261,7 @@ Instrumented agent runs report prompt-cache health without additional configurat
 | `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
 | `pydantic_ai.cache.collapse_reason` | Collapse classification: `ttl-expired`, `unknown`, or `unexpected`. |
 
-An unexpected collapse means the provider's documented retention window should still have been active. It emits a `pydantic_ai.cache.collapse` span event for alerting and investigation. Expired retention windows and providers without a documented window are classified on the span but do not emit the event. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend the expected retention window.
+Requests that never engage the cache (no reads or writes — e.g. caching disabled, or a prompt below the provider's minimum cacheable size) are ignored entirely. An unexpected collapse means the provider's documented retention window should still have been active. It emits a `pydantic_ai.cache.collapse` span event for alerting and investigation. Expired retention windows and providers without a documented window are classified on the span but do not emit the event. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend the expected retention window.
 
 ### Emitted metrics
 

@@ -320,6 +320,12 @@ class Instrumentation(AbstractCapability[Any]):
         usage = response.usage
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
+        if not read and not write:
+            # The provider cache wasn't engaged for this request (caching disabled or unreported, or
+            # the prompt fell below the provider's minimum cacheable size), so there is nothing to
+            # judge — and the marks must not move: an untouched cache keeps aging toward its TTL, and
+            # a request that bypassed the cache is not a collapse of it.
+            return
         key = (response.provider_name, response.model_name)
         mark = self._cache_marks.get(key)
         established = mark.established_tokens if mark else 0
@@ -334,8 +340,8 @@ class Instrumentation(AbstractCapability[Any]):
 
         if read > 0 or established > 0:
             span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
-        if updated_established > 0:
-            span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
+        # The participation gate above guarantees read + write > 0, so the updated mark is always positive.
+        span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
 
         if not collapsed:
             return

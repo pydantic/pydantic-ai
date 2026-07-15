@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
-from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai import Agent, CachePoint, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -17,11 +16,19 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import try_import
 
 with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.context import Context
     from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
 pytestmark = pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+
+# These are unit tests rather than VCR tests: they pin the *derived* span attributes, span events,
+# and sampling/recording behavior of the `Instrumentation` capability for preset usage sequences,
+# which requires exact control over `cache_read/write_tokens` per step — recorded provider traffic
+# can't produce deterministic cache-token sequences (cache state on the provider side is not
+# reproducible at playback time).
 
 
 @dataclass(frozen=True)
@@ -38,18 +45,35 @@ class ResponseNameFunctionModel(FunctionModel):
         self._model_name = model_name
 
 
+class DropFirstChatSpanSampler(Sampler):
+    """Drop the first `chat` span and record everything else, to exercise non-recording spans."""
+
+    def __init__(self) -> None:
+        self._chat_spans_seen = 0
+
+    def should_sample(
+        self, parent_context: Context | None, trace_id: int, name: str, *args: object, **kwargs: object
+    ) -> SamplingResult:
+        if name.startswith('chat '):
+            self._chat_spans_seen += 1
+            if self._chat_spans_seen == 1:
+                return SamplingResult(Decision.DROP)
+        return SamplingResult(Decision.RECORD_AND_SAMPLE)
+
+    def get_description(self) -> str:
+        return 'DropFirstChatSpanSampler'
+
+
 def cache_spans(
     usages: Sequence[CacheUsage],
     *,
     retention: timedelta | None = None,
     prompt: str | list[str | CachePoint] = 'prompt',
-    tracer_provider: TracerProvider | NoOpTracerProvider | None = None,
-) -> tuple[list[ReadableSpan], InMemorySpanExporter | None]:
-    exporter = None
-    if tracer_provider is None:
-        exporter = InMemorySpanExporter()
-        tracer_provider = TracerProvider()
-        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    sampler: Sampler | None = None,
+) -> tuple[list[ReadableSpan], InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider(sampler=sampler) if sampler is not None else TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
 
     call_index = 0
 
@@ -87,9 +111,7 @@ def cache_spans(
         return 'continue'
 
     agent.run_sync(prompt)
-    return (
-        [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')] if exporter else []
-    ), exporter
+    return [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')], exporter
 
 
 def cache_attributes(span: ReadableSpan) -> dict[str, object]:
@@ -98,6 +120,7 @@ def cache_attributes(span: ReadableSpan) -> dict[str, object]:
 
 
 def test_stable_cache_health() -> None:
+    """Growing cache reads across a run produce hit-ratio/established attributes and no collapse."""
     spans, _ = cache_spans(
         [CacheUsage(write=1500), CacheUsage(read=1500), CacheUsage(read=1600)], retention=timedelta(hours=1)
     )
@@ -122,6 +145,7 @@ def test_stable_cache_health() -> None:
 def test_cache_collapse_classification(
     retention: timedelta | None, prompt: str | list[str | CachePoint], reason: str, has_event: bool
 ) -> None:
+    """A collapse is classified by retention (incl. `CachePoint` extension); only `unexpected` emits the event."""
     spans, _ = cache_spans([CacheUsage(write=1400), CacheUsage(read=100)], retention=retention, prompt=prompt)
 
     assert cache_attributes(spans[-1]) == {
@@ -143,6 +167,7 @@ def test_cache_collapse_classification(
 
 
 def test_collapse_event_without_provider_name() -> None:
+    """Event attributes must skip `None` values (OTel attributes cannot be None)."""
     spans, _ = cache_spans(
         [CacheUsage(write=1400, provider_name=None), CacheUsage(read=100, provider_name=None)],
         retention=timedelta(hours=1),
@@ -154,20 +179,23 @@ def test_collapse_event_without_provider_name() -> None:
 
 
 def test_model_switch_and_switch_back() -> None:
+    """A model switch is never a collapse (fresh per-model mark); switching back is judged against the old mark."""
     spans, _ = cache_spans(
         [
             CacheUsage(write=1400, model_name='first'),
-            CacheUsage(model_name='second'),
+            CacheUsage(write=1500, model_name='second'),
             CacheUsage(read=100, model_name='first'),
         ],
         retention=timedelta(hours=1),
     )
 
-    assert cache_attributes(spans[1]) == {}
+    # The switched-to model writes its own prefix: judged against a fresh mark, never `first`'s.
+    assert cache_attributes(spans[1]) == {'pydantic_ai.cache.established_tokens': 1500}
     assert cache_attributes(spans[2])['pydantic_ai.cache.collapse_reason'] == 'unexpected'
 
 
 def test_sub_threshold_collapse_and_rebaseline() -> None:
+    """Prefixes below the minimum are never judged, and a collapse re-baselines the mark so it warns once."""
     spans, _ = cache_spans(
         [
             CacheUsage(write=1000),
@@ -186,6 +214,7 @@ def test_sub_threshold_collapse_and_rebaseline() -> None:
 
 
 def test_no_cache_attributes_and_run_aggregate() -> None:
+    """Non-caching runs get zero cache attributes; runs with cache reads get a run-span aggregate ratio."""
     no_cache_spans, exporter = cache_spans([CacheUsage()])
     assert exporter is not None
     assert cache_attributes(no_cache_spans[0]) == {}
@@ -199,10 +228,34 @@ def test_no_cache_attributes_and_run_aggregate() -> None:
 
 
 def test_cache_marks_update_without_recording() -> None:
-    spans, exporter = cache_spans(
-        [CacheUsage(write=1400), CacheUsage(read=100), CacheUsage(read=100)],
+    """The mark must be established during a sampled-out (non-recording) span, so a collapse is
+    still detected on the next, recorded span."""
+    spans, _ = cache_spans(
+        [CacheUsage(write=1400), CacheUsage(read=100)],
         retention=timedelta(hours=1),
-        tracer_provider=NoOpTracerProvider(),
+        sampler=DropFirstChatSpanSampler(),
     )
-    assert spans == []
-    assert exporter is None
+
+    (span,) = spans
+    attributes = cache_attributes(span)
+    assert attributes['pydantic_ai.cache.collapsed'] is True
+    assert attributes['pydantic_ai.cache.collapse_reason'] == 'unexpected'
+    assert [event.name for event in span.events] == ['pydantic_ai.cache.collapse']
+
+
+def test_requests_without_cache_participation_leave_marks_untouched() -> None:
+    """A request the provider cache never engaged with (no reads, no writes — e.g. caching toggled
+    off mid-run, or a prompt below the minimum cacheable size) is not a collapse and must not emit
+    cache attributes, reset the established mark, or refresh the idle clock."""
+    spans, _ = cache_spans(
+        [CacheUsage(write=1400), CacheUsage(), CacheUsage(read=1400)],
+        retention=timedelta(hours=1),
+    )
+
+    assert cache_attributes(spans[1]) == {}
+    assert not spans[1].events
+    assert cache_attributes(spans[2]) == {
+        'pydantic_ai.cache.hit_ratio': 0.7,
+        'pydantic_ai.cache.established_tokens': 1400,
+    }
+    assert not spans[2].events
