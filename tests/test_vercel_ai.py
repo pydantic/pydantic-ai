@@ -5454,6 +5454,50 @@ async def test_adapter_dump_load_roundtrip():
     assert reloaded_messages == original_messages
 
 
+async def test_adapter_dump_messages_with_reused_tool_call_id():
+    """Tool returns must be scoped per-ModelResponse, not collapsed history-wide by tool_call_id.
+
+    When a provider reuses the same `tool_call_id` across separate ModelResponse messages
+    (e.g. Bedrock Mantle OpenAI models), a history-wide `tool_results` dict keyed only by
+    `tool_call_id` overwrites the earlier return with the later one. Each assistant UIMessage
+    must carry its own distinct tool output, and the round-trip must preserve both.
+    """
+    original_messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me search for that.'),
+                ToolCallPart(tool_name='web_search', args={'query': 'first'}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='web_search', content='FIRST RESULT', tool_call_id='call_1')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me search again.'),
+                ToolCallPart(tool_name='web_search', args={'query': 'second'}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='web_search', content='SECOND RESULT', tool_call_id='call_1')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+
+    assistant_messages = [m for m in ui_messages if m.role == 'assistant']
+    # Two assistant messages carry tool output parts, plus a final text-only one.
+    tool_outputs = [p for m in assistant_messages for p in m.parts if isinstance(p, ToolOutputAvailablePart)]
+    assert len(tool_outputs) == 2
+    assert tool_outputs[0].output == 'FIRST RESULT'
+    assert tool_outputs[1].output == 'SECOND RESULT'
+
+    # Round-trip: the reloaded ToolReturnPart values must remain distinct.
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = list(iter_message_parts(reloaded_messages, ModelRequest, ToolReturnPart))
+    assert len(tool_returns) == 2
+    assert tool_returns[0].content == 'FIRST RESULT'
+    assert tool_returns[1].content == 'SECOND RESULT'
+
+
 async def test_adapter_dump_load_roundtrip_without_timestamps():
     """Test that dump_messages and load_messages work when ModelRequest has no timestamp (None)."""
     original_messages: list[ModelRequest | ModelResponse] = [

@@ -943,21 +943,30 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-        tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
-
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        tool_results[part.tool_call_id] = part
-                    elif isinstance(part, RetryPromptPart) and part.tool_name:
-                        tool_results[part.tool_call_id] = part
+        # Build per-ModelResponse tool results. Tool returns in a ModelRequest belong to
+        # the most recent ModelResponse that preceded them, so that a provider reusing the
+        # same `tool_call_id` across separate responses doesn't collapse to the latest result.
+        response_tool_results: dict[int, dict[str, ToolReturnPart | RetryPromptPart]] = {}
+        current_response_index: int | None = None
+        for i, msg in enumerate(messages):
+            if isinstance(msg, ModelResponse):  # pragma: no branch
+                current_response_index = i
+                response_tool_results[i] = {}
+            elif isinstance(  # pragma: no branch
+                msg, ModelRequest
+            ):
+                if current_response_index is not None:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            response_tool_results[current_response_index][part.tool_call_id] = part
+                        elif isinstance(part, RetryPromptPart) and part.tool_name:
+                            response_tool_results[current_response_index][part.tool_call_id] = part
 
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
         message_index = 0
 
-        for msg in messages:
+        for i, msg in enumerate(messages):
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 # Metadata only goes on the trailing UIMessage of a split request so reload
@@ -988,7 +997,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
+                # Use the tool results scoped to this ModelResponse so reused tool_call_ids
+                # across separate responses don't collapse to the latest result.
+                msg_tool_results = response_tool_results[i]
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, msg_tool_results, sdk_version)
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(
