@@ -1847,10 +1847,11 @@ async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
     """Resolve the 'tenant-model' alias to a model built from the run's deps.
 
-    Matches both the raw alias (run-setup resolution of `run(model='tenant-model')`) and the
-    `'function:tenant-model'` round-trip string the task re-resolves.
+    Matches the alias exactly: the run's original model-id string (not the resolved
+    model's `'function:tenant-model'`) is what crosses the durable boundary, so the
+    worker-side re-resolution sees the same string the caller wrote.
     """
-    if 'tenant-model' not in model_id:
+    if model_id != 'tenant-model':
         return None
     tenant = ctx.deps
 
@@ -1871,6 +1872,23 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
     for tenant in ('acme', 'globex'):
         result = await agent.run('hi', model='tenant-model', deps=tenant)
         assert result.output == f'tenant:{tenant}'
+
+
+async def test_prefect_durability_alias_default_model() -> None:
+    """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
+
+    `infer_model` can't build `'tenant-model'`, so binding registers no concrete default;
+    every request carries the raw alias string across the task boundary and the task
+    re-resolves it with the run's deps.
+    """
+    agent = Agent(
+        'tenant-model',
+        name='durability_alias_default',
+        deps_type=str,
+        capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
+    )
+    result = await agent.run('hi', deps='acme')
+    assert result.output == 'tenant:acme'
 
 
 async def test_prefect_durability_allows_instrumented_default_model() -> None:

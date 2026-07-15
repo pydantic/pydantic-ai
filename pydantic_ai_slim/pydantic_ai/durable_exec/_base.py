@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import KnownModelName, Model, ModelResolutionContext, infer_model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._utils import unwrap_model
@@ -50,6 +50,7 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
+        default_model: Model | None
         if isinstance(agent.model, str):
             # The agent's default stayed a string because a capability owns string
             # resolution (this capability itself, at minimum — see `Agent.__init__`).
@@ -58,16 +59,22 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
             if agent.model in self._extra_models:
                 default_model = self._extra_models[agent.model]
             else:
-                default_model = self._resolve_model_id(agent.model)
+                try:
+                    default_model = self._resolve_model_id(agent.model)
+                except (UserError, ValueError):
+                    # An alias only a deps-aware capability (e.g. `ResolveModelId`) can
+                    # resolve. No concrete default can be registered; every request for
+                    # the default carries the raw string and re-resolves on the worker.
+                    default_model = None
         else:
             default_model = agent.model
 
-        self._models_by_id = {'default': default_model}
+        self._models_by_id = {} if default_model is None else {'default': default_model}
         for model_id, model_instance in self._extra_models.items():
             if model_id == 'default':
                 raise UserError("Model ID 'default' is reserved for the agent's primary model.")
             self._models_by_id[model_id] = model_instance
-        if isinstance(agent.model, str) and agent.model not in self._models_by_id:
+        if isinstance(agent.model, str) and default_model is not None and agent.model not in self._models_by_id:
             self._models_by_id[agent.model] = default_model
 
     async def resolve_model_id(
@@ -84,6 +91,21 @@ class BaseDurability(AbstractCapability[AgentDepsT]):
         capability before this one — it gets first crack at every string.
         """
         return self._resolve_model_id(model_id)
+
+    def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
+        """The cross-boundary identifier for this request's model.
+
+        Prefer the original model-id string the run's model was resolved from
+        (`ModelRequestContext._model_id`) when the request still targets the run's
+        model: it survives aliases that the resolved model's own `model_id` doesn't
+        (the worker-side chain re-resolves the same string the caller wrote). A model
+        swapped in by an outer capability's `before_model_request` invalidates the
+        provenance, so it falls back to `_find_model_id`.
+        """
+        provenance = request_context._model_id  # pyright: ignore[reportPrivateUsage]
+        if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
+            return provenance
+        return self._find_model_id(request_context.model)
 
     def _find_model_id(self, model: Model) -> str | None:
         """Find the cross-boundary identifier for a `Model` instance.

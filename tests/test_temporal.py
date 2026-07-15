@@ -5294,11 +5294,11 @@ async def test_durability_default_string_registered_in_models_becomes_default():
 def _tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
     """Resolve the 'tenant-model' alias to a model built from the run's deps.
 
-    Matches both the raw alias (workflow-side resolution of `run(model='tenant-model')`)
-    and the `'function:tenant-model'` round-trip string the activity re-resolves
-    (`_find_model_id` ships the resolved model's `model_id` across the boundary).
+    Matches the alias exactly: the run's original model-id string (not the resolved
+    model's `'function:tenant-model'`) is what crosses the durable boundary, so the
+    worker-side re-resolution sees the same string the caller wrote.
     """
-    if 'tenant-model' not in model_id:
+    if model_id != 'tenant-model':
         return None
     tenant = ctx.deps
 
@@ -5347,6 +5347,41 @@ async def test_durability_resolve_model_id_capability_is_deps_aware(client: Clie
                 task_queue=TASK_QUEUE,
             )
             assert output == f'tenant:{tenant}'
+
+
+_alias_default_agent = Agent(
+    'tenant-model',
+    name='alias_default_test',
+    deps_type=str,
+    capabilities=[ResolveModelId(_tenant_resolver), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class AliasDefaultWorkflow:
+    @workflow.run
+    async def run(self, tenant: str) -> str:
+        result = await _alias_default_agent.run('hi', deps=tenant)
+        return result.output
+
+
+async def test_durability_alias_default_model(client: Client):
+    """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
+
+    `infer_model` can't build `'tenant-model'`, so binding registers no concrete default;
+    every request carries the raw alias string across the activity boundary and the
+    worker-side chain re-resolves it with the run's deps.
+    """
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[AliasDefaultWorkflow], plugins=[AgentPlugin(_alias_default_agent)]
+    ):
+        output = await client.execute_workflow(
+            AliasDefaultWorkflow.run,
+            args=['acme'],
+            id='AliasDefaultWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'tenant:acme'
 
 
 # --- Outer capability swaps `request_context.model` inside a workflow ---

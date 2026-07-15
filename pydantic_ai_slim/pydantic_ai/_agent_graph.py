@@ -349,6 +349,13 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     agent: Agent[DepsT, Any] | None = None
 
+    model_id: str | None = None
+    """The model-id string `model` was resolved from, if the run's model came from a string.
+
+    Stamped onto `ModelRequestContext._model_id` so durable-execution capabilities can
+    round-trip the original selection token across the activity/step/task boundary.
+    """
+
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
     """The base class for all agent nodes.
@@ -914,6 +921,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        wrap_request_context._model_id = ctx.deps.model_id  # pyright: ignore[reportPrivateUsage]
         # Signal to hooks that the agent loop expects a real event stream —
         # durability capabilities route through the streaming activity/step/task.
         wrap_request_context.streaming = True
@@ -1184,6 +1192,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        request_context._model_id = ctx.deps.model_id  # pyright: ignore[reportPrivateUsage]
         try:
             try:
                 model_response = await ctx.deps.root_capability.wrap_model_request(

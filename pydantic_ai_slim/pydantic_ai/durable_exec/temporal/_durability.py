@@ -446,11 +446,11 @@ class TemporalDurability(BaseDurability[AgentDepsT]):
 
         self._validate_model_request_parameters(request_context.model_request_parameters)
 
-        # Use `request_context.model` (which an outer instrumentation capability may have
-        # already unwrapped) so `_find_model_id`'s identity match against
-        # `_models_by_id['default']` succeeds for the agent's default model. `ctx.model`
-        # is set once at `iter()` time and may still reference the wrapped model.
-        model_id = self._find_model_id(request_context.model)
+        # Prefer the run's original model-id string (provenance) as the selection token;
+        # a model swapped in by an outer capability falls back to `_find_model_id` on
+        # `request_context.model` (which an outer instrumentation capability may have
+        # already unwrapped — instances are unwrap-matched by identity).
+        model_id = self._model_id_for_request(ctx, request_context)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or request_context.model.model_id
 

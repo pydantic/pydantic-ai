@@ -2157,10 +2157,11 @@ async def test_dbos_durability_unrebuildable_runtime_model_errors(dbos: DBOS) ->
 def _dbos_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
     """Resolve the 'tenant-model' alias to a model built from the run's deps.
 
-    Matches both the raw alias (run-setup resolution of `run(model='tenant-model')`) and the
-    `'function:tenant-model'` round-trip string the step re-resolves.
+    Matches the alias exactly: the run's original model-id string (not the resolved
+    model's `'function:tenant-model'`) is what crosses the durable boundary, so the
+    worker-side re-resolution sees the same string the caller wrote.
     """
-    if 'tenant-model' not in model_id:
+    if model_id != 'tenant-model':
         return None
     tenant = ctx.deps
 
@@ -2181,6 +2182,23 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
     for tenant in ('acme', 'globex'):
         result = await agent.run('hi', model='tenant-model', deps=tenant)
         assert result.output == f'tenant:{tenant}'
+
+
+async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
+    """An agent whose *default* model is an alias only a `ResolveModelId` capability can resolve.
+
+    `infer_model` can't build `'tenant-model'`, so binding registers no concrete default;
+    every request carries the raw alias string across the step boundary and the step
+    re-resolves it with the run's deps.
+    """
+    agent = Agent(
+        'tenant-model',
+        name='durability_alias_default',
+        deps_type=str,
+        capabilities=[ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
+    )
+    result = await agent.run('hi', deps='acme')
+    assert result.output == 'tenant:acme'
 
 
 async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> None:

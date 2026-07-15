@@ -333,12 +333,12 @@ class DBOSDurability(BaseDurability[AgentDepsT]):
             return await handler(request_context)
 
         # A `Model` instance can't be serialized across the step boundary, so the
-        # request carries a `model_id` (None for the default, a `models=` registry
-        # key, or a model-name string) and the step rebuilds the model deps-aware
-        # via `_resolve_model_for_request`. `request_context.model` (not `ctx.model`)
-        # is used so a model swapped in by an outer capability's
-        # `before_model_request` round-trips too.
-        model_id = self._find_model_id(request_context.model)
+        # request carries a `model_id` (None for the default, the run's original
+        # model-id string, a `models=` registry key, or a model-name string) and the
+        # step rebuilds the model deps-aware via `_resolve_model_for_request`.
+        # A model swapped in by an outer capability's `before_model_request`
+        # round-trips via `_find_model_id` on `request_context.model`.
+        model_id = self._model_id_for_request(ctx, request_context)
 
         # Use the streaming step when either the agent loop expects an event
         # stream (per-run/instance handler, or a chain capability that overrides

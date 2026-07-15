@@ -209,6 +209,16 @@ class ModelRequestContext:
     available (chain didn't run, or events weren't captured). Not user API.
     """
 
+    _model_id: str | None = field(default=None, init=False)
+    """Internal provenance: the model-id string the run's model was resolved from, if any.
+
+    Durable-execution capabilities prefer this over the resolved model's own `model_id`
+    as the selection token to carry across the activity/step/task boundary, so aliases
+    resolved by a `resolve_model_id` capability round-trip as the original string the
+    worker-side chain can re-resolve. Only meaningful while `model` is still the run's
+    resolved model — a model swapped in by a hook invalidates it. Not user API.
+    """
+
     streaming: bool = field(default=False, init=False)
     """Whether the agent loop expects to iterate the model response as a stream.
 

@@ -1145,6 +1145,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps = self._get_deps(deps)
 
         model_used = await self._resolve_model(model, deps=deps)
+        # The string `model_used` was resolved from, if any — carried through to
+        # `ModelRequestContext` so durable-execution capabilities can round-trip
+        # the original selection token (e.g. an alias only a `resolve_model_id`
+        # capability can resolve) across the activity/step/task boundary.
+        raw_model = self._pick_raw_model(model)
+        model_id = raw_model if isinstance(raw_model, str) else None
         del model
 
         output_schema = self._prepare_output_schema(output_type)
@@ -1446,6 +1452,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resumed_request=None,
             resumed_request_index=None,
             model=model_used,
+            model_id=model_id,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
