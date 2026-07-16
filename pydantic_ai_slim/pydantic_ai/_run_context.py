@@ -116,6 +116,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
+    sandbox: Sandbox | None = None
+    """The [`Sandbox`][pydantic_ai.sandbox.Sandbox] attached to this run, if any.
+
+    Set once per run — from the `sandbox=` run argument (caller-owned, available from the
+    earliest hooks on) or from a capability's
+    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution
+    (entered and exited by the run itself, available everywhere except `for_run` and initial
+    metadata factories). Treat it as read-only.
+
+    Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
+    Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for
+    the durable-execution pattern.
+    """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
@@ -135,20 +148,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     recreated for each agent run and reconstructed identically on durable replay/recovery — not on
     the process-shared toolset instance, so whether a wrapper schedules its `get_tools` activity/step
     depends only on the run's own history and stays replay-deterministic.
-    """
-
-    sandbox: Sandbox | None = None
-    """The [`Sandbox`][pydantic_ai.sandbox.Sandbox] attached to this run, if any.
-
-    Set once per run — from the `sandbox=` run argument (caller-owned, available from the
-    earliest hooks on) or from a capability's
-    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution
-    (entered and exited by the run itself, available everywhere except `for_run` and initial
-    metadata factories). Treat it as read-only.
-
-    Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
-    Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for
-    the durable-execution pattern.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
