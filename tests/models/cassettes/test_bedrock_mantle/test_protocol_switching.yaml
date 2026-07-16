@@ -1,0 +1,243 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '120'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with exactly CHAT.
+        role: user
+      model: openai.gpt-oss-120b
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '611'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: CHAT
+          reasoning: 'User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation,
+            no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".'
+          refusal: null
+          role: assistant
+      created: 1784242286
+      id: chatcmpl-13776c43-8130-44ff-b334-5ad1a09ca684
+      model: openai.gpt-oss-120b
+      object: chat.completion
+      service_tier: default
+      usage:
+        completion_tokens: 54
+        prompt_tokens: 72
+        total_tokens: 126
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '488'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      input:
+      - content: Reply with exactly CHAT.
+        role: user
+      - content: |-
+          <think>
+          User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation, no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".
+          </think>
+        role: assistant
+      - content: CHAT
+        role: assistant
+      - content: Reply with exactly RESPONSES.
+        role: user
+      model: openai.gpt-oss-120b
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1229'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      created_at: 1784242288.0
+      error: null
+      id: resp_piupv6ipxos6dw5sosdqepzh5btpdkjneyr7rudesxqljctvctia
+      incomplete_details: null
+      instructions: null
+      metadata: {}
+      model: openai.gpt-oss-120b
+      object: response
+      output:
+      - content:
+        - text: |-
+            User asks: "Reply with exactly RESPONSES." So answer should be the word RESPONSES exactly. No extra punctuation, just that.
+
+            We must output exactly "RESPONSES". Ensure no extra spaces, line breaks before or after? Probably just the word.
+          type: reasoning_text
+        id: msg_9ba1921a079d988a
+        status: completed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: RESPONSES
+          type: output_text
+        id: msg_87fc5baff7c80dda
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      service_tier: default
+      status: completed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 145
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 67
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 212
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '763'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Reply with exactly CHAT.
+          type: text
+        role: user
+      - content:
+        - text: |-
+            <thinking>
+            User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation, no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".
+            </thinking>
+          type: text
+        - text: CHAT
+          type: text
+        role: assistant
+      - content:
+        - text: Reply with exactly RESPONSES.
+          type: text
+        role: user
+      - content:
+        - text: RESPONSES
+          type: text
+        role: assistant
+      - content:
+        - text: Reply with exactly MESSAGES.
+          type: text
+        role: user
+      model: anthropic.claude-sonnet-5
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages?beta=true
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '539'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      content:
+      - text: MESSAGES
+        type: text
+      id: msg_bdrk_yhrxk5tuj7kwsdvbg3di5eutqli4mp4ar6hxrfc7tne26h3vkuoq
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 158
+        output_tokens: 8
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

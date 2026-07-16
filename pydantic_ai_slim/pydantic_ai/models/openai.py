@@ -2161,7 +2161,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         item.name,
                         item.arguments,
                         tool_call_id=_response_tool_call_id(
-                            item.call_id, response.id, self.profile.get('tool_call_id_scope', 'history')
+                            item.call_id,
+                            response.id,
+                            self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False),
                         ),
                         id=item.id,
                         provider_name=self.system,
@@ -2305,7 +2307,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
-            _tool_call_id_scope=self.profile.get('tool_call_id_scope', 'history'),
+            _tool_call_ids_are_response_scoped=self.profile.get(
+                'openai_responses_tool_call_ids_are_response_scoped', False
+            ),
         )
         streamed_response.provider_response_id = (
             first_chunk.response.id if isinstance(first_chunk, responses.ResponseCreatedEvent) else expected_response_id
@@ -3650,7 +3654,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
-    _tool_call_id_scope: Literal['history', 'response']
+    _tool_call_ids_are_response_scoped: bool
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
@@ -3784,7 +3788,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             tool_name=chunk.item.name,
                             args=chunk.item.arguments,
                             tool_call_id=_response_tool_call_id(
-                                chunk.item.call_id, self.provider_response_id, self._tool_call_id_scope
+                                chunk.item.call_id,
+                                self.provider_response_id,
+                                self._tool_call_ids_are_response_scoped,
                             ),
                             id=chunk.item.id,
                             provider_name=self.provider_name,
@@ -4561,8 +4567,8 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         return combined_id, None
 
 
-def _response_tool_call_id(tool_call_id: str, response_id: str | None, scope: Literal['history', 'response']) -> str:
-    if scope == 'history':
+def _response_tool_call_id(tool_call_id: str, response_id: str | None, response_scoped: bool) -> str:
+    if not response_scoped:
         return tool_call_id
     assert response_id is not None
     return f'{response_id}:{tool_call_id}'

@@ -432,6 +432,7 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
         'zai',
         'moonshot',
         'moonshotai',
+        'openai',
     }
 
     for model_name in model_names:

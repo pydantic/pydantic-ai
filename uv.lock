@@ -5568,7 +5568,10 @@ anthropic = [
     { name = "anthropic" },
 ]
 bedrock = [
+    { name = "anthropic" },
     { name = "boto3" },
+    { name = "openai" },
+    { name = "tiktoken" },
 ]
 cli = [
     { name = "argcomplete" },
@@ -5664,6 +5667,7 @@ zai = [
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.108.0" },
+    { name = "anthropic", marker = "extra == 'bedrock'", specifier = ">=0.108.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.20.6" },
@@ -5683,6 +5687,7 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.0.0,!=2.4.6" },
+    { name = "openai", marker = "extra == 'bedrock'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'zai'", specifier = ">=2.29.0" },
@@ -5704,6 +5709,7 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.24.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
+    { name = "tiktoken", marker = "extra == 'bedrock'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },

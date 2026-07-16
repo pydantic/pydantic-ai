@@ -109,7 +109,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     'OpenAIResponsesCompatibleProvider',
     Literal[
         'azure',
-        'bedrock-mantle',
         'deepseek',
         'fireworks',
         'nebius',
@@ -1033,6 +1032,16 @@ def infer_model_profile(model: str) -> ModelProfile:
     if provider is None:
         return DEFAULT_PROFILE
 
+    if provider == 'bedrock-mantle':
+        from ..providers._bedrock_model_names import bedrock_model_interface
+        from ..providers.bedrock import BedrockProvider
+
+        try:
+            interface = bedrock_model_interface(model_name, explicit_mantle=True)
+            return BedrockProvider.mantle_model_profile(model_name, interface)
+        except (ValueError, UserError):
+            return DEFAULT_PROFILE
+
     try:
         provider_class = infer_provider_class(provider)
     except ValueError:
@@ -1074,6 +1083,25 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    if provider_name in ('bedrock', 'bedrock-mantle'):
+        from ..providers._bedrock_model_names import bedrock_model_interface
+        from ..providers.bedrock import BedrockProvider
+        from .bedrock_mantle import (
+            BedrockMantleChatModel,
+            BedrockMantleMessagesModel,
+            BedrockMantleResponsesModel,
+        )
+
+        if not isinstance(provider, BedrockProvider):
+            raise UserError('Bedrock models require a `BedrockProvider`.')
+        interface = bedrock_model_interface(model_name, explicit_mantle=provider_name == 'bedrock-mantle')
+        if interface == 'mantle-openai-responses':
+            return BedrockMantleResponsesModel(model_name, provider=provider)
+        elif interface == 'mantle-openai-chat':
+            return BedrockMantleChatModel(model_name, provider=provider)
+        elif interface == 'mantle-anthropic-messages':
+            return BedrockMantleMessagesModel(model_name, provider=provider)
+
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
@@ -1092,7 +1120,7 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'bedrock-mantle'):
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

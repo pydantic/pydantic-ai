@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from textwrap import dedent
-from typing import Literal, TypeAlias
+from typing import TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -47,9 +47,6 @@ class ModelProfile(TypedDict, total=False):
 
     supports_tools: bool
     """Whether the model supports tools. Default: `True`."""
-
-    tool_call_id_scope: Literal['history', 'response']
-    """The scope within which tool call IDs are guaranteed to be unique. Default: `'history'`."""
 
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.
@@ -126,7 +123,6 @@ class ModelProfile(TypedDict, total=False):
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
-    'tool_call_id_scope': 'history',
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,

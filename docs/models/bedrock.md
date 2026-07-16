@@ -1,8 +1,5 @@
 # Bedrock
 
-!!! note
-    Looking for the Amazon Bedrock Mantle OpenAI-compatible API? See [Amazon Bedrock Mantle](openai.md#amazon-bedrock-mantle).
-
 ## Install
 
 To use `BedrockConverseModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `bedrock` optional group:
@@ -47,6 +44,58 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
 agent = Agent(model)
 ...
+```
+
+## Amazon Bedrock Mantle
+
+[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) exposes OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Pydantic AI uses the same [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] and AWS credentials for both Mantle and the Bedrock Runtime Converse API.
+
+For OpenAI GPT-5.4 and later models, the regular `bedrock:` shorthand automatically uses Mantle's Responses endpoint because those models are not served through Converse:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('bedrock:openai.gpt-5.6-luna')
+```
+
+Other `bedrock:` model names continue to use Converse. Use `bedrock-mantle:` to select Mantle explicitly. The model family determines the protocol and endpoint:
+
+| Model name | Interface |
+|---|---|
+| `bedrock:openai.gpt-5.4...`, `gpt-5.5...`, or `gpt-5.6...` | OpenAI Responses at `/openai/v1` |
+| `bedrock:<other model>` | Bedrock Runtime Converse |
+| `bedrock-mantle:openai.gpt-5.4...`, `gpt-5.5...`, or `gpt-5.6...` | OpenAI Responses at `/openai/v1` |
+| `bedrock-mantle:openai.gpt-oss-*` | OpenAI Responses at `/v1` |
+| `bedrock-mantle:openai.gpt-oss-safeguard-*` | OpenAI Chat Completions at `/v1` |
+| `bedrock-mantle:anthropic.*` | Anthropic Messages at `/anthropic/v1/messages` |
+
+For example, `bedrock-mantle:` is sufficient for both OpenAI and Anthropic models:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+openai_agent = Agent('bedrock-mantle:openai.gpt-oss-120b')
+anthropic_agent = Agent('bedrock-mantle:anthropic.claude-sonnet-5')
+```
+
+GPT-OSS models support both Responses and Chat Completions. The shorthand uses Responses; construct [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] when Chat Completions is required:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel
+
+model = BedrockMantleChatModel('openai.gpt-oss-120b')
+agent = Agent(model)
+```
+
+To use a custom Mantle origin, pass `mantle_base_url` to [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider]. Pydantic AI adds the protocol-specific path:
+
+```python {test="skip"}
+from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(mantle_base_url='https://bedrock-mantle.us-east-1.api.aws')
+model = BedrockMantleResponsesModel('openai.gpt-oss-120b', provider=provider)
 ```
 
 ## Customizing Bedrock Runtime API

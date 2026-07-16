@@ -518,35 +518,6 @@ agent = Agent(model)
 
 See [Ollama](ollama.md) for dedicated Ollama documentation, including structured output and Ollama Cloud limitations.
 
-### Amazon Bedrock Mantle
-
-[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) exposes an OpenAI-compatible Responses API for models hosted on Amazon Bedrock. Create a [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html), set `AWS_BEARER_TOKEN_BEDROCK` and either `AWS_DEFAULT_REGION` or `AWS_REGION`, and use the `bedrock-mantle:` model prefix:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-
-agent = Agent('bedrock-mantle:openai.gpt-5.6-luna')
-...
-```
-
-The shorthand uses the `/openai/v1` API path required by GPT-5.4 and later OpenAI models on Mantle. Models such as `openai.gpt-oss-120b` use the standard `/v1` path instead, so provide its complete base URL through [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider]:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
-
-model = OpenAIResponsesModel(
-    'openai.gpt-oss-120b',
-    provider=BedrockMantleProvider(
-        base_url='https://bedrock-mantle.us-east-1.api.aws/v1',
-        api_key='your-bedrock-api-key',
-    ),
-)
-agent = Agent(model)
-...
-```
-
 ### Azure AI Foundry
 
 To use [Azure AI Foundry](https://ai.azure.com/) as your provider, set `AZURE_OPENAI_ENDPOINT` to a URL whose path ends in `/v1` (for example `https://<resource>.openai.azure.com/openai/v1/` or `https://<resource>.services.ai.azure.com/openai/v1/`), set `AZURE_OPENAI_API_KEY`, and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:

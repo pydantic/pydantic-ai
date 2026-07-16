@@ -15,6 +15,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
@@ -28,7 +29,7 @@ with try_import() as imports_successful:
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
-    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
@@ -63,6 +64,7 @@ def vcr_config():  # pragma: lax no cover
 _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
     'bedrock': BedrockModelName,
+    'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
@@ -129,6 +131,13 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:mistral.mistral-large-2402-v1:0',
         'gateway/bedrock:mistral.mistral-large-2407-v1:0',
         'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:openai.gpt-5.4',
+        'gateway/bedrock:openai.gpt-5.4-2026-03-05',
+        'gateway/bedrock:openai.gpt-5.5',
+        'gateway/bedrock:openai.gpt-5.5-2026-04-23',
+        'gateway/bedrock:openai.gpt-5.6-luna',
+        'gateway/bedrock:openai.gpt-5.6-sol',
+        'gateway/bedrock:openai.gpt-5.6-terra',
         'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-lite-v1:0',
         'gateway/bedrock:us.amazon.nova-micro-v1:0',

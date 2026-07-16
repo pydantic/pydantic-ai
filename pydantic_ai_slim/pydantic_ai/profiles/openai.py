@@ -241,6 +241,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_responses_tool_call_ids_are_response_scoped: bool
+    """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
+
+    When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
+    normalized message history keeps the history-wide uniqueness required by Pydantic AI.
+    """
+
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 

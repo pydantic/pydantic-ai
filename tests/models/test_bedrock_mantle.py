@@ -6,18 +6,20 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+from pydantic_ai.models.bedrock_mantle import (
+    BedrockMantleChatModel,
+    BedrockMantleMessagesModel,
+    BedrockMantleResponsesModel,
+)
+from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
-    provider = BedrockMantleProvider(
-        region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key')
-    )
-    model = OpenAIResponsesModel('openai.gpt-5.6-luna', provider=provider)
+    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+    model = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
     agent = Agent(
         model,
         instructions=(
@@ -57,3 +59,20 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
     if not stream:
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
+
+
+async def test_protocol_switching(allow_model_requests: None) -> None:
+    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+    chat_model = BedrockMantleChatModel('openai.gpt-oss-120b', provider=provider)
+    responses_model = BedrockMantleResponsesModel('openai.gpt-oss-120b', provider=provider)
+    messages_model = BedrockMantleMessagesModel('anthropic.claude-sonnet-5', provider=provider)
+
+    chat_result = await Agent(chat_model).run('Reply with exactly CHAT.')
+    responses_result = await Agent(responses_model).run(
+        'Reply with exactly RESPONSES.', message_history=chat_result.all_messages()
+    )
+    messages_result = await Agent(messages_model).run(
+        'Reply with exactly MESSAGES.', message_history=responses_result.all_messages()
+    )
+
+    assert (chat_result.output, responses_result.output, messages_result.output) == ('CHAT', 'RESPONSES', 'MESSAGES')

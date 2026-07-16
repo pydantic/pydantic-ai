@@ -173,7 +173,15 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 - **Snapshot that ratchets:** `tests/test_capabilities.py::test_model_json_schema_with_capabilities` embeds the full `KnownModelName` enum. It's a plain sorted string list — hand-add the new ids in sorted position (deterministic, no need for `--inline-snapshot=fix`). Profile-flag tests go in `tests/providers/test_xai.py` (see `test_xai_model_profile`); the parametrized `tests/test_thinking.py::test_grok_43_profile_thinking_support` asserts the *4.3* effort set specifically — don't add a different-effort model to it.
 - **env / probing:** `XAI_API_KEY` lives in the repo-root `.env` (not in every worktree). Run probes with `source .env && <script>` so `$XAI_API_KEY` is exported; put any `curl` referencing it in a script file rather than passing the key inline. Verify enumeration/profile logic with a plain `uv run python` snippet (recurse `get_args(XaiModelName)`, compare to `known_model_names()`; call `grok_model_profile(...)` directly) rather than a full `uv run pytest tests/` run.
 
-### Google, Bedrock, others
+### Bedrock
+
+- **Bedrock Mantle has a separate model catalog from Bedrock Runtime.** `aws bedrock list-foundation-models` is not sufficient for Mantle models. Query Mantle's OpenAI-compatible Models API as well, but do not infer protocol support from its response: the catalog does not say whether a model uses OpenAI Responses, OpenAI Chat Completions, or Anthropic Messages. Verify the interface and path against the AWS model card and a live request.
+- **Mantle model families use different protocols and paths.** OpenAI GPT-5.4+ uses Responses at `/openai/v1`; regular GPT-OSS supports Responses and Chat Completions at `/v1`; GPT-OSS Safeguard is Chat-only at `/v1`; Anthropic uses Messages at `/anthropic/v1/messages`. Add a routing case only after verifying the model family rather than treating Mantle as one OpenAI-compatible endpoint.
+- **The shorthand preserves Converse by default.** `bedrock:` remains on Bedrock Runtime Converse except for model families that are Mantle-only, while `bedrock-mantle:` explicitly selects Mantle. If a model supports multiple Mantle protocols, keep one shorthand default and expose the other through explicit model construction.
+- **Mantle names ratchet two enumerations.** Add `bedrock-mantle:` names to `KnownModelName`; add automatic `bedrock:` names only for Mantle-only families. Since `gateway/bedrock` is Converse and cannot serve those Mantle-only names, add their synthesized gateway forms to `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`.
+- **Automatic routing changes dependency ownership.** When `bedrock:<model>` can construct a Mantle-backed model, the `bedrock` optional group must include the relevant OpenAI or Anthropic SDK; a separate optional extra would make the documented shorthand fail at runtime.
+
+### Google and others
 
 Not yet documented here. **When you add the next model for one of these providers, add the landmines you encountered to this section before closing the session** (see Step 9).
 

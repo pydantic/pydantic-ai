@@ -399,6 +399,7 @@
               "api/models/anthropic",
               "api/models/base",
               "api/models/bedrock",
+              "api/models/bedrock_mantle",
               "api/models/cerebras",
               "api/models/cohere",
               "api/models/fallback",
