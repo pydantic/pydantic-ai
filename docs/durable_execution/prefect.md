@@ -54,12 +54,7 @@ See the [Prefect documentation](https://docs.prefect.io/) for more information.
 
 ## Durable Agent
 
-Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] [capability](../capabilities.md). The capability automatically:
-
-* Rebinds [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync] to run as Prefect flows.
-* Wraps [model requests](../models/overview.md) as Prefect tasks.
-* Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
-* Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] [capability](../capabilities.md). When the agent runs inside a Prefect flow, the capability routes [model requests](../models/overview.md), [tool calls](../tools.md), and [MCP communication](../mcp/client.md) through Prefect tasks. To make a run durable, call `agent.run()` inside a `@flow`.
 
 The agent stays a normal `Agent` everywhere — outside a Prefect flow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
@@ -78,6 +73,8 @@ pip/uv-add pydantic-ai-slim[prefect]
 ```
 
 ```python {title="prefect_durability.py" test="skip"}
+from prefect import flow
+
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectDurability
 
@@ -89,15 +86,21 @@ agent = Agent(
 )
 
 
+@flow  # (3)!
+async def answer(question: str) -> str:
+    result = await agent.run(question)
+    return result.output
+
+
 async def main():
-    result = await agent.run('What is the capital of Mexico?')  # (3)!
-    print(result.output)
+    answer_text = await answer('What is the capital of Mexico?')
+    print(answer_text)
     #> Mexico City (Ciudad de México, CDMX)
 ```
 
 1. The agent's `name` is used to uniquely identify its flows and tasks.
-2. Attach durability via `capabilities=[...]`. The capability rebinds `agent.run` / `agent.run_sync` to run inside a Prefect flow, and routes model requests, tool calls, and MCP communication through Prefect tasks.
-3. `agent.run()` enters a Prefect flow automatically; model requests, tool calls, and MCP communication run as Prefect tasks.
+2. Attach durability via `capabilities=[...]`. The capability routes model requests, tool calls, and MCP communication through Prefect tasks when the agent runs inside a flow.
+3. Wrap `agent.run()` in your own `@flow` to make the run durable.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -110,7 +113,9 @@ For more information on how to use Prefect in Python applications, see their [Py
 !!! warning "Deprecated"
     [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v3. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
 
-Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant. `PrefectAgent` wraps `Agent.run` / `Agent.run_sync` as Prefect flows and routes model requests, tool calls, and MCP communication through Prefect tasks, identically to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]:
+Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant. `PrefectAgent` wraps `Agent.run` / `Agent.run_sync` as Prefect flows automatically and routes model requests, tool calls, and MCP communication through Prefect tasks. [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] also routes model requests, tool calls, and MCP communication through tasks, but does not wrap the run: call `agent.run()` inside your own `@flow`.
+
+When migrating from `PrefectAgent` to `PrefectDurability`, wrap the `agent.run()` call in a `@flow`.
 
 ```python {title="prefect_agent.py" test="skip"}
 from pydantic_ai import Agent
@@ -156,13 +161,11 @@ toolset = FunctionToolset(id='research')
 
 
 @toolset.tool(metadata={'prefect': TaskConfig(timeout_seconds=10.0)})  # (1)!
-def fetch_data(url: str) -> str:
-    ...
+def fetch_data(url: str) -> str: ...
 
 
 @toolset.tool(metadata={'prefect': False})  # (2)!
-def simple_tool() -> str:
-    ...
+def simple_tool() -> str: ...
 
 
 agent = Agent(

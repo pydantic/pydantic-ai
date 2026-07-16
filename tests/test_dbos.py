@@ -2011,41 +2011,8 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
-async def test_dbos_durability_auto_wraps_run_as_workflow(dbos: DBOS) -> None:
-    """`agent.run` outside any workflow auto-wraps into a DBOS workflow.
-
-    Without DBOSDurability, calling agent.run() directly wouldn't produce any DBOS
-    workflow record. With it, steps inside the run get recorded under an auto-spawned
-    workflow ID — verified by listing the workflow's steps after the run.
-    """
-    agent = Agent(_durability_fn_model, name='durability_auto', capabilities=[DBOSDurability()])
-
-    wfid = str(uuid.uuid4())
-    with SetWorkflowID(wfid):
-        result = await agent.run('Auto-wrapped')
-
-    assert result.output == 'Echo: Auto-wrapped'
-    steps = await dbos.list_workflow_steps_async(wfid)
-    step_names = [step['function_name'] for step in steps]
-    assert 'durability_auto__model.request' in step_names
-
-
-def test_dbos_durability_auto_wraps_run_sync_as_workflow(dbos: DBOS) -> None:
-    """`agent.run_sync` outside any workflow auto-wraps into a DBOS workflow."""
-    agent = Agent(_durability_fn_model, name='durability_auto_sync', capabilities=[DBOSDurability()])
-
-    wfid = str(uuid.uuid4())
-    with SetWorkflowID(wfid):
-        result = agent.run_sync('Sync auto-wrapped')
-
-    assert result.output == 'Echo: Sync auto-wrapped'
-    steps = asyncio.get_event_loop().run_until_complete(dbos.list_workflow_steps_async(wfid))
-    step_names = [step['function_name'] for step in steps]
-    assert 'durability_auto_sync__model.request' in step_names
-
-
 async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
-    """The configured parallel-execution mode is active inside the auto-wrapped run."""
+    """The configured parallel-execution mode is active for the duration of the run."""
     from pydantic_ai import tool_manager as _tm
 
     captured: list[str] = []
@@ -2066,19 +2033,11 @@ async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> N
 
 
 async def test_dbos_durability_outside_workflow() -> None:
-    """DBOSDurability is transparent outside a DBOS workflow.
-
-    `agent.run` and `agent.run_sync` auto-wrap into a workflow, so to exercise the
-    truly transparent path we go through `iter`, which can't be cleanly decorated
-    with `@DBOS.workflow` and stays as plain code outside any workflow.
-    """
+    """DBOSDurability is transparent outside a DBOS workflow."""
     agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[DBOSDurability()])
 
-    async with agent.iter('Hello outside') as run:
-        async for _ in run:
-            pass
-    assert run.result is not None
-    assert run.result.output == 'Echo: Hello outside'
+    result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
 
 
 async def test_dbos_durability_step_verification(dbos: DBOS) -> None:
@@ -2158,8 +2117,13 @@ async def test_dbos_durability_unrebuildable_runtime_model_errors(dbos: DBOS) ->
     bare 'Unknown provider' the step points at the `models=` / `ResolveModelId` escape hatches.
     """
     agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[DBOSDurability()])
-    with pytest.raises(UserError, match='could not be rebuilt'):
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
         await agent.run('hello', model=TestModel())
+
+    with pytest.raises(UserError, match='could not be rebuilt'):
+        await run_agent()
 
 
 async def test_dbos_durability_string_default_model(dbos: DBOS) -> None:
@@ -2291,20 +2255,6 @@ def test_dbos_durability_get_ordering() -> None:
 def test_dbos_durability_get_serialization_name() -> None:
     """DBOSDurability is not spec-serializable."""
     assert DBOSDurability.get_serialization_name() is None
-
-
-def test_dbos_durability_idempotent_for_agent() -> None:
-    """Binding a second `DBOSDurability` to the same agent doesn't re-wrap `agent.run`.
-
-    Without the idempotency guard, re-binding would stack workflow decorators
-    on top of each other.
-    """
-    agent = Agent(_durability_fn_model, name='dbos_idempotent_test', capabilities=[DBOSDurability()])
-    first_run = agent.run
-
-    # Re-binding another DBOSDurability should leave agent.run untouched.
-    DBOSDurability().for_agent(agent)
-    assert agent.run is first_run
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -2592,31 +2542,38 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
     """An `MCPToolset` added per-run is rejected: its I/O steps must be registered at construction."""
     agent = Agent(_durability_fn_model, name='durability_runtime_mcp', capabilities=[DBOSDurability()])
 
-    with pytest.raises(
-        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
-    ):
+    @DBOS.workflow()
+    async def run_agent() -> None:
         await agent.run(
             'Hello',
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
         )
+
+    with pytest.raises(
+        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+    ):
+        await run_agent()
 
 
 def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> None:
     """A `DynamicToolset` added per-run is rejected, on `run_sync` as well as `run`."""
     agent = Agent(_durability_fn_model, name='durability_runtime_dynamic', capabilities=[DBOSDurability()])
 
+    @DBOS.workflow()
+    def run_agent() -> None:
+        agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
+
     with pytest.raises(
         UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
     ):
-        agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
+        run_agent()
 
 
 async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -> None:
     """`agent.iter(toolsets=...)` inside a user workflow is guarded like `run(toolsets=...)`.
 
     The rejection lives in run setup (`get_wrapper_toolset`), which every entry point routes
-    through, rather than only in the patched `run`/`run_sync` — otherwise `iter`/`run_stream`
-    inside a workflow would execute the MCP toolset's I/O un-checkpointed.
+    through so `iter` inside a workflow cannot execute the MCP toolset's I/O un-checkpointed.
     """
     agent = Agent(_durability_fn_model, name='durability_runtime_mcp_iter', capabilities=[DBOSDurability()])
 
@@ -2644,14 +2601,16 @@ async def test_dbos_durability_rejects_per_run_capability_toolset(dbos: DBOS) ->
     Construction-time capability toolsets are wrapped by `for_agent` (see the
     capability-contributed test above); a per-run capability's toolset arrives after that
     wrapping has happened, so it would run un-checkpointed inside the workflow. A
-    `DynamicToolset` with a module-level factory is used because DBOS pickles the
-    auto-workflow's kwargs — an `MCPToolset`'s live client fails that serialization
-    before run setup is even reached.
+    `DynamicToolset` with a module-level factory keeps the workflow input serializable.
     """
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
-    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+    @DBOS.workflow()
+    async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(DynamicToolset(_per_run_dynamic_factory, id='per_run_dynamic'))])
+
+    with pytest.raises(UserError, match='DynamicToolset cannot be passed'):
+        await run_agent()
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:
@@ -2771,10 +2730,14 @@ async def test_dbos_durability_continuation_usage_limit_cancels_suspended(dbos: 
     )
     agent = Agent(model, name='durability_continuation_usage_limit', capabilities=[DBOSDurability()])
 
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
     wfid = str(uuid.uuid4())
     with SetWorkflowID(wfid):
         with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
-            await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+            await run_agent()
 
     assert model.request_calls == 2
     # The over-budget merge was still suspended, so the live job was cancelled before raising.

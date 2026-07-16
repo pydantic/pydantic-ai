@@ -54,6 +54,7 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 
 @deprecated(
     """`DBOSAgent` is deprecated. Migrate each constructor argument as follows:
+- With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
 - `name=` → set `name=` on `Agent`.
 - `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; it runs inside steps, exactly like before.

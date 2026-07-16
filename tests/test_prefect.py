@@ -1629,32 +1629,6 @@ async def test_prefect_durability_simple_agent() -> None:
     assert output == 'Echo: Hello Prefect'
 
 
-async def test_prefect_durability_auto_wraps_run_as_flow() -> None:
-    """`agent.run` outside an active flow auto-wraps in one.
-
-    The capability hooks `agent.run` so callers don't need a manual `@flow`. Inside an
-    existing flow the wrapper short-circuits to avoid creating a redundant nested flow.
-    """
-    agent = Agent(_durability_fn_model, name='durability_auto', capabilities=[PrefectDurability()])
-
-    result = await agent.run('Auto-wrapped')
-    assert result.output == 'Echo: Auto-wrapped'
-
-
-def test_prefect_durability_idempotent_for_agent() -> None:
-    """Binding a second `PrefectDurability` to the same agent doesn't re-wrap `agent.run`.
-
-    Without the idempotency guard, re-binding would stack flow decorators on top
-    of each other.
-    """
-    agent = Agent(_durability_fn_model, name='prefect_idempotent_test', capabilities=[PrefectDurability()])
-    first_run = agent.run
-
-    # Re-binding another PrefectDurability should leave agent.run untouched.
-    PrefectDurability().for_agent(agent)
-    assert agent.run is first_run
-
-
 def test_resolve_tool_task_config_reads_metadata() -> None:
     """Per-tool Prefect config from `tool_def.metadata['prefect']` takes priority over the by-name dict."""
     from pydantic_ai.durable_exec.prefect._toolset import resolve_tool_task_config
@@ -1760,16 +1734,20 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
     labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
 
     agent = Agent(TestModel(), name=f'durability_reject_{kind}', capabilities=[PrefectDurability()])
-    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+
+    @flow
+    async def run_agent() -> None:
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
+
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await run_agent()
 
 
 async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
     """`agent.iter(toolsets=...)` inside a user flow is guarded like `run(toolsets=...)`.
 
     The rejection lives in run setup (`get_wrapper_toolset`), which every entry point routes
-    through, rather than only in the patched `run`/`run_sync` — otherwise `iter`/`run_stream`
-    inside a flow would execute the toolset's tools un-tasked.
+    through so `iter` inside a flow cannot execute the toolset's tools un-tasked.
     """
     agent = Agent(TestModel(), name='durability_reject_iter', capabilities=[PrefectDurability()])
 
@@ -1791,8 +1769,12 @@ async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
     """
     agent = Agent(TestModel(), name='durability_reject_per_run_cap', capabilities=[PrefectDurability()])
 
-    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+    @flow
+    async def run_agent() -> None:
         await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
+
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
+        await run_agent()
 
 
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:
@@ -1824,27 +1806,12 @@ def test_prefect_durability_same_toolset_instance_reused() -> None:
     assert sorted(bound._prefect_toolsets_by_id) == ['<agent>', 'shared_fn']  # pyright: ignore[reportPrivateUsage]
 
 
-def test_prefect_durability_auto_wraps_run_sync_as_flow() -> None:
-    """`agent.run_sync` outside an active flow auto-wraps in one."""
-    agent = Agent(_durability_fn_model, name='durability_auto_sync', capabilities=[PrefectDurability()])
-
-    result = agent.run_sync('Sync auto-wrapped')
-    assert result.output == 'Echo: Sync auto-wrapped'
-
-
 async def test_prefect_durability_outside_flow() -> None:
-    """PrefectDurability is transparent outside a Prefect flow.
-
-    `agent.run` and `agent.run_sync` auto-wrap into a flow, so to exercise the truly
-    transparent path we go through `iter`, which stays as plain code outside any flow.
-    """
+    """PrefectDurability is transparent outside a Prefect flow."""
     agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[PrefectDurability()])
 
-    async with agent.iter('Hello outside') as run:
-        async for _ in run:
-            pass
-    assert run.result is not None
-    assert run.result.output == 'Echo: Hello outside'
+    result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
 
 
 def test_prefect_durability_requires_agent_name() -> None:
@@ -1903,8 +1870,13 @@ async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
     bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
     """
     agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
-    with pytest.raises(UserError, match='could not be rebuilt'):
+
+    @flow
+    async def run_agent() -> None:
         await agent.run('hello', model=TestModel())
+
+    with pytest.raises(UserError, match='could not be rebuilt'):
+        await run_agent()
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:

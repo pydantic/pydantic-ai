@@ -3,11 +3,10 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
-from prefect import flow, task
+from prefect import task
 from prefect.context import FlowRunContext
-from prefect.utilities.asyncutils import run_coro_as_sync
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
@@ -39,9 +38,11 @@ from ._types import TaskConfig, default_task_config
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
-    When added to an agent, this capability intercepts model requests and
-    wraps toolsets to route their I/O through Prefect tasks.
-    Outside of Prefect flows, the capability is transparent.
+    The capability routes model requests, tool calls, MCP I/O, and optionally
+    event-stream handling through Prefect tasks when the agent runs inside a
+    Prefect flow. Call `agent.run()` inside your own `@flow` to make that run
+    durable; outside a flow the capability is transparent and the run is a
+    normal, non-durable agent run.
 
     The capability discovers the agent's model, name, and toolsets
     automatically via `for_agent()`.
@@ -197,9 +198,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             bound._prefectify_leaf_toolsets(toolset)
 
-        # --- Auto-wrap agent.run / run_sync as Prefect flows ---
-        bound._install_flow_wrappers(agent)
-
         return bound
 
     def _in_durable_context(self) -> bool:
@@ -215,47 +213,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
         await event_stream_handler_task(event)
 
-    def _install_flow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Replace `agent.run` and `agent.run_sync` with Prefect-flow-decorated wrappers.
-
-        When called outside an active flow run, the wrapper enters a new flow so
-        every model and toolset task recorded inside it is observable in the Prefect
-        UI. When already inside a flow, the wrapper passes through to avoid a
-        redundant nested flow.
-
-        Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
-        `PrefectDurability` instances by mistake), the second call is a no-op
-        rather than stacking wrappers.
-        """
-        if getattr(agent.run, '_pydantic_ai_prefect_wrapped', False):
-            return
-        original_run = agent.run
-        original_run_sync = agent.run_sync
-
-        @flow(name=f'{self.name} Run')
-        async def _auto_run_flow(*args: Any, **kwargs: Any) -> Any:
-            return await original_run(*args, **kwargs)
-
-        @flow(name=f'{self.name} Sync Run')
-        def _auto_run_sync_flow(*args: Any, **kwargs: Any) -> Any:
-            # Prefect's sync flow body must be sync; bridge to the async run() the
-            # same way `PrefectAgent.run_sync` does.
-            return run_coro_as_sync(original_run(*args, **kwargs))
-
-        async def patched_run(*args: Any, **kwargs: Any) -> Any:
-            if FlowRunContext.get() is not None:
-                return await original_run(*args, **kwargs)
-            return cast(Any, await _auto_run_flow(*args, **kwargs))
-
-        def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
-            if FlowRunContext.get() is not None:  # pragma: lax no cover
-                return original_run_sync(*args, **kwargs)
-            return cast(Any, _auto_run_sync_flow(*args, **kwargs))
-
-        patched_run._pydantic_ai_prefect_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
-        agent.run = patched_run
-        agent.run_sync = patched_run_sync
-
     def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Reject executing toolsets added per-run inside a flow.
 
@@ -264,10 +221,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         `run(toolsets=...)`, or toolsets contributed by per-run capabilities/specs. An
         executing extra would run un-tasked inside the flow and re-execute on retries, so
         it's rejected explicitly, like the deprecated `PrefectAgent` does. Non-executing
-        toolsets like `ExternalToolset` are allowed. Checked here in run setup rather than
-        in the patched `run`/`run_sync` so that `iter`/`run_stream` inside a user flow are
-        covered too; only applies inside a flow — outside one the capability is transparent
-        and any toolset is fine.
+        toolsets like `ExternalToolset` are allowed. Checked here in run setup so every
+        entry point inside a user flow is covered; only applies inside a flow — outside
+        one the capability is transparent and any toolset is fine.
         """
         if FlowRunContext.get() is None:
             return

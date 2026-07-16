@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -39,9 +39,11 @@ from ._utils import StepConfig
 class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through DBOS steps.
 
-    When added to an agent, this capability intercepts model requests and
-    optionally wraps MCP toolsets to route their I/O through DBOS steps.
-    Outside of DBOS workflows, the capability is transparent.
+    The capability routes model requests, MCP I/O, and optionally event-stream
+    handling through DBOS steps when the agent runs inside a DBOS workflow. Call
+    `agent.run()` inside your own `@DBOS.workflow` to make that run durable;
+    outside a workflow the capability is transparent and the run is a normal,
+    non-durable agent run.
 
     The capability discovers the agent's model, name, and toolsets
     automatically via `for_agent()`.
@@ -109,8 +111,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._request_stream_step: Any = None
         self._cancel_suspended_response_step: Any = None
         self._event_stream_handler_step: Any = None
-        self._auto_run_workflow: Callable[..., Awaitable[Any]] | None = None
-        self._auto_run_sync_workflow: Callable[..., Any] | None = None
 
     @classmethod
     def from_agent(cls, agent: AbstractAgent[Any, Any]) -> DBOSDurability[Any] | None:
@@ -205,9 +205,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             bound._dbosify_leaf_toolsets(toolset)
 
-        # --- Auto-wrap agent.run / run_sync as DBOS workflows ---
-        bound._install_workflow_wrappers(agent)
-
         return bound
 
     def _in_durable_context(self) -> bool:
@@ -219,71 +216,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._event_stream_handler_step is not None
         await self._event_stream_handler_step(event, ctx)
 
-    def _install_workflow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Replace `agent.run` and `agent.run_sync` with DBOS-workflow-decorated wrappers.
-
-        When called outside an active DBOS workflow, the wrapper enters a workflow so
-        all model and toolset steps recorded inside become durable. When already inside a
-        workflow, it skips the redundant wrap and just applies the configured parallel
-        execution mode.
-
-        `agent.iter` is wrapped in-place by `wrap_run` instead — its async-generator
-        signature can't be cleanly forwarded through `@DBOS.workflow`.
-
-        Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
-        `DBOSDurability` instances by mistake), the second call is a no-op rather
-        than stacking wrappers.
-        """
-        if getattr(agent.run, '_pydantic_ai_dbos_wrapped', False):
-            return
-        original_run = agent.run
-        original_run_sync = agent.run_sync
-        parallel_mode = self._parallel_execution_mode
-
-        @DBOS.workflow(name=f'{self.name}.run')
-        async def _auto_run_workflow(*args: Any, **kwargs: Any) -> Any:
-            with agent.parallel_tool_call_execution_mode(parallel_mode):
-                return await original_run(*args, **kwargs)
-
-        @DBOS.workflow(name=f'{self.name}.run_sync')
-        def _auto_run_sync_workflow(*args: Any, **kwargs: Any) -> Any:
-            with agent.parallel_tool_call_execution_mode(parallel_mode):
-                return original_run_sync(*args, **kwargs)
-
-        self._auto_run_workflow = _auto_run_workflow
-        self._auto_run_sync_workflow = _auto_run_sync_workflow
-
-        def _reject_runtime_toolsets_kwarg(kwargs: dict[str, Any]) -> None:
-            # Fast path for the explicit `run(toolsets=...)` kwarg: it must be rejected
-            # *before* `_auto_run_workflow` hands the kwargs to DBOS, which pickles workflow
-            # inputs — an executing toolset (e.g. an `MCPToolset` holding a live client)
-            # isn't picklable, so letting it through would surface an opaque serialization
-            # error instead of the `UserError`. Toolsets that arrive through other routes
-            # (per-run capabilities/specs, `iter`) are caught by `_reject_runtime_toolsets`
-            # in run setup.
-            reject_unsupported_runtime_toolsets(
-                kwargs.get('toolsets'), unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS'
-            )
-
-        async def patched_run(*args: Any, **kwargs: Any) -> Any:
-            _reject_runtime_toolsets_kwarg(kwargs)
-            if DBOS.workflow_id is not None and DBOS.step_id is None:
-                # Already inside a DBOS workflow — skip the auto-wrap and just apply the mode.
-                with agent.parallel_tool_call_execution_mode(parallel_mode):
-                    return await original_run(*args, **kwargs)
-            return await _auto_run_workflow(*args, **kwargs)
-
-        def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
-            _reject_runtime_toolsets_kwarg(kwargs)
-            if DBOS.workflow_id is not None and DBOS.step_id is None:  # pragma: lax no cover
-                with agent.parallel_tool_call_execution_mode(parallel_mode):
-                    return original_run_sync(*args, **kwargs)
-            return _auto_run_sync_workflow(*args, **kwargs)
-
-        patched_run._pydantic_ai_dbos_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
-        agent.run = patched_run
-        agent.run_sync = patched_run_sync
-
     def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Reject executing toolsets added per-run inside a workflow.
 
@@ -293,10 +225,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         un-checkpointed inside the workflow and re-execute on recovery, so it's rejected
         explicitly, like the deprecated `DBOSAgent` does. DBOS runs function tools inline,
         so `FunctionToolset` is allowed at runtime, as are non-executing toolsets like
-        `ExternalToolset`. Checked here in run setup rather than in the patched
-        `run`/`run_sync` so that `iter`/`run_stream` inside a user workflow are covered
-        too; only applies inside a workflow — outside one the capability is transparent
-        and any toolset is fine.
+        `ExternalToolset`. Checked here in run setup so every entry point inside a
+        user workflow is covered; only applies inside a workflow — outside one the
+        capability is transparent and any toolset is fine.
         """
         if DBOS.workflow_id is None or DBOS.step_id is not None:
             return
@@ -370,13 +301,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for the duration of the run.
-
-        Auto-wrapping into a DBOS workflow is handled by `_install_workflow_wrappers`
-        for `run`/`run_sync`. This hook is the single chokepoint that applies the
-        execution mode for every entry point — including `iter`, which the run/sync
-        wrappers don't cover.
-        """
+        """Apply the configured parallel-execution mode for every entry point."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()

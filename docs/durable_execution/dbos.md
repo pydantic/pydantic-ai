@@ -45,10 +45,7 @@ See the [DBOS documentation](https://docs.dbos.dev/architecture) for more inform
 
 ## Durable Agent
 
-Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] [capability](../capabilities.md). The capability automatically:
-
-* Rebinds `agent.run` and `agent.run_sync` to run inside DBOS workflows.
-* Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) as DBOS steps.
+Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] [capability](../capabilities.md). When the agent runs inside a DBOS workflow, the capability routes [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) through DBOS steps. To make a run durable, call `agent.run()` inside a `@DBOS.workflow`.
 
 The agent stays a normal `Agent` everywhere — outside a DBOS workflow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
@@ -87,17 +84,23 @@ agent = Agent(
 )
 
 
+@DBOS.workflow()  # (4)!
+async def answer(question: str) -> str:
+    result = await agent.run(question)
+    return result.output
+
+
 async def main():
     DBOS.launch()
-    result = await agent.run('What is the capital of Mexico?')  # (4)!
-    print(result.output)
+    answer_text = await answer('What is the capital of Mexico?')
+    print(answer_text)
     #> Mexico City (Ciudad de México, CDMX)
 ```
 
 1. This example uses SQLite. Postgres is recommended for production.
 2. The agent's `name` is used to uniquely identify its workflows.
-3. Attach durability via `capabilities=[...]`. The capability rebinds `agent.run` / `agent.run_sync` to run inside a DBOS workflow, and routes model requests and MCP communication through DBOS steps. Because DBOS workflows must be registered before `DBOS.launch()`, the agent must also be constructed before calling `DBOS.launch()`.
-4. `agent.run()` enters a DBOS workflow automatically; model requests and MCP communication run as DBOS steps.
+3. Attach durability via `capabilities=[...]`. The capability routes model requests and MCP communication through DBOS steps when the agent runs inside a workflow. Because DBOS workflows must be registered before `DBOS.launch()`, the agent must also be constructed before calling `DBOS.launch()`.
+4. Wrap `agent.run()` in your own `@DBOS.workflow` to make the run durable.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -110,7 +113,9 @@ For more information on how to use DBOS in Python applications, see their [Pytho
 !!! warning "Deprecated"
     [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] is the original wrapper-agent path for DBOS integration and will be removed in v3. New code should use the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability shown above.
 
-Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get a durable agent variant. `DBOSAgent` wraps `Agent.run` / `Agent.run_sync` as DBOS workflows and routes model requests and MCP communication through DBOS steps, identically to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]:
+Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent] to get a durable agent variant. `DBOSAgent` wraps `Agent.run` / `Agent.run_sync` as DBOS workflows automatically and routes model requests and MCP communication through DBOS steps. [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] also routes model requests and MCP communication through steps, but does not wrap the run: call `agent.run()` inside your own `@DBOS.workflow`.
+
+When migrating from `DBOSAgent` to `DBOSDurability`, wrap the `agent.run()` call in a `@DBOS.workflow`.
 
 ```python {title="dbos_agent.py" test="skip"}
 from pydantic_ai import Agent

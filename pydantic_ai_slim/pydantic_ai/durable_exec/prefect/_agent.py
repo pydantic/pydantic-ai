@@ -47,6 +47,7 @@ from ._types import TaskConfig, default_task_config
 
 @deprecated(
     """`PrefectAgent` is deprecated. Migrate each constructor argument as follows:
+- With the capability, call `agent.run()` inside a `@flow`; the wrapper did this automatically.
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[PrefectDurability(...)])`.
 - `name=` → set `name=` on `Agent`.
 - `event_stream_handler=` → pass `event_stream_handler=` to `PrefectDurability`; it runs inside tasks, exactly like before.
