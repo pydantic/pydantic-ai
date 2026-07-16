@@ -2670,7 +2670,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
-        background_tools: set[str] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
@@ -2727,9 +2726,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 available to tools and capabilities.
             conversation_id: Optional conversation id, set on the run context and the telemetry span
                 so a realtime session can be correlated with other runs.
-            background_tools: Names of tools that should run concurrently in the background while the
-                model keeps responding, rather than blocking until they finish. The result is sent
-                back once ready, mirroring firing off a subagent and continuing in the meantime.
             message_history: Prior conversation to seed the session with. It is projected to the
                 provider's initial conversation items (text/transcript only — audio is not replayed)
                 and included in [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
@@ -2906,7 +2902,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 yield RealtimeSession(
                     connection,
                     tool_runner,
-                    background_tools=background_tools or set(),
                     instrumentation=session_instrumentation_settings,
                     model_name=model.model_name,
                     agent_name=self.name,

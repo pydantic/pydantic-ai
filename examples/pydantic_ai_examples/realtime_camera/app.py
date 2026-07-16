@@ -380,7 +380,7 @@ async def _dispatch_text(
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
 
-    # A lock serializes WebSocket sends, since a background tool's `emit` can race the event pump.
+    # A lock serializes WebSocket sends, since a tool's `emit` can race the event pump.
     send_lock = anyio.Lock()
 
     async def emit(message: dict[str, object]) -> None:
@@ -394,7 +394,6 @@ async def ws(socket: WebSocket) -> None:
     async with agent.realtime_session(
         model=model,
         deps=deps,
-        background_tools={'redraw_diagram'} if DRAW else None,
     ) as session:
         async with anyio.create_task_group() as tg:
 

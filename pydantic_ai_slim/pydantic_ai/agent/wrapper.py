@@ -303,7 +303,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
-        background_tools: set[str] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
     ) -> AsyncGenerator[RealtimeSession]:
@@ -319,7 +318,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             metadata=metadata,
             conversation_id=conversation_id,
-            background_tools=background_tools,
             message_history=message_history,
             audio_retention=audio_retention,
         ) as session:

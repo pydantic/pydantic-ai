@@ -271,10 +271,13 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
             ],
         },
     ]
-    # Second `chat` span replies with the tool result folded into its input.
-    assert {'type': 'tool_call_response', 'id': 'c1', 'name': 'get_weather', 'result': 'sunny'} in json.loads(
-        str(second.attributes['gen_ai.input.messages'])
-    )[-1]['parts']
+    # The synthetic connection emits the post-tool response without yielding, so the concurrent tool
+    # has not finished when the second `chat` span opens. Its input therefore ends at the tool call;
+    # the late result is still inserted next to the call in session history after it completes.
+    assert json.loads(str(second.attributes['gen_ai.input.messages']))[-1]['parts'] == [
+        {'type': 'text', 'content': 'let me check'},
+        {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+    ]
     assert json.loads(str(second.attributes['gen_ai.output.messages'])) == [
         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'it is sunny'}]},
     ]
@@ -538,10 +541,10 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
 
 
 async def test_direct_session_runs_tool_via_runner() -> None:
-    """A direct `RealtimeSession` executes a tool call through its `tool_runner` and folds the result in.
+    """A direct `RealtimeSession` executes a tool call concurrently through its `tool_runner`.
 
     The hand-managed path has no `Instrumentation` capability, so no `execute_tool` span is produced;
-    the runner's result surfaces as the `tool_call_response` folded into the post-tool `chat` span.
+    the runner's result is inserted into history when it completes.
     """
     settings, exporter = _settings()
     conn = _Connection(
@@ -562,10 +565,12 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     assert len(chats) == 2
     _, second = chats
     assert second.attributes is not None
-    # The runner returned 'sunny', which is folded into the post-tool response's input messages.
-    assert {'type': 'tool_call_response', 'id': 'c1', 'name': 'get_weather', 'result': 'sunny'} in json.loads(
-        str(second.attributes['gen_ai.input.messages'])
-    )[-1]['parts']
+    # The connection does not yield between the call and response, so the concurrent tool finishes
+    # after this span opens and is not yet present in its input attributes.
+    assert json.loads(str(second.attributes['gen_ai.input.messages']))[-1]['parts'] == [
+        {'type': 'text', 'content': 'let me check'},
+        {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+    ]
 
 
 async def test_chat_span_without_model_name() -> None:

@@ -259,7 +259,7 @@ Key facts for building realtime agents:
   `supports_output_truncation`, and `supports_session_seeding`. OpenAI supports all of these; Gemini
   Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
   (automatic VAD only). Calling an unsupported method raises `UserError` up front.
-- **Slow tools**: pass `background_tools={'name'}` so the model keeps speaking while a tool runs.
+- **Tools**: every tool runs concurrently, so the model keeps speaking while it runs.
 
 See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
 

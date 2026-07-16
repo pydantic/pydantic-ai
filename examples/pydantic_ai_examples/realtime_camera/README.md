@@ -68,8 +68,8 @@ Gemini, using the same `GOOGLE_API_KEY` as the live session — that returns a c
 HTML version of the drawing. The browser renders it in an overlay and can export it to PNG
 client-side.
 
-It runs as a [background tool][pydantic_ai.Agent.realtime_session] (it takes a moment), so the voice
-conversation keeps flowing while the diagram is drawn, then the model announces it when it appears.
+Tools [run concurrently by design][pydantic_ai.Agent.realtime_session], so the voice conversation
+keeps flowing while the diagram is drawn, then the model announces it when it appears.
 
 The frames streamed to Gemini are small and low-detail to keep the live session cheap, so for the
 redraw the server asks the browser for a one-off **high-resolution snapshot** (the camera is opened at

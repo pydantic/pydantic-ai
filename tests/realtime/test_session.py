@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -324,11 +325,11 @@ async def test_tool_call_round_builds_classic_history() -> None:
             'PartStartEvent',  # tool call part start
             'PartEndEvent',  # tool call part end
             'FunctionToolCallEvent',
-            'FunctionToolResultEvent',
             'PartStartEvent',  # assistant answer start
             'PartDeltaEvent',
             'PartEndEvent',  # assistant answer end
             'TurnCompleteEvent',
+            'FunctionToolResultEvent',
         ]
     )
     assert conn.sent == [ToolResult(tool_call_id='tc_1', output='Sunny, 22C')]
@@ -419,7 +420,7 @@ async def test_tool_runner_exception_becomes_error_result() -> None:
     assert conn.sent == [ToolResult(tool_call_id='tc', output='Error: kaboom')]
 
 
-async def test_background_tool_does_not_block_other_events() -> None:
+async def test_tool_does_not_block_other_events() -> None:
     release = asyncio.Event()
     conn = FakeRealtimeConnection(
         [
@@ -434,7 +435,7 @@ async def test_background_tool_does_not_block_other_events() -> None:
         await release.wait()
         return 'done in background'
 
-    session = RealtimeSession(conn, runner, background_tools={'slow'})
+    session = RealtimeSession(conn, runner)
     events = [e async for e in session]
 
     # The tool call fires immediately, the model keeps talking, and the result lands only after the turn.
@@ -456,8 +457,8 @@ async def test_background_tool_does_not_block_other_events() -> None:
     assert conn.sent == [ToolResult(tool_call_id='bg_1', output='done in background')]
 
 
-async def test_background_tool_result_adjacent_to_call_in_history() -> None:
-    """A late background result streams last, but sits right after its call in `all_messages()`.
+async def test_tool_result_adjacent_to_call_in_history() -> None:
+    """A late result streams last, but sits right after its call in `all_messages()`.
 
     Request-response APIs demand call/return adjacency (OpenAI rejects a `tool` message that doesn't
     directly follow the assistant message carrying the call), so the portable history must keep it
@@ -477,7 +478,7 @@ async def test_background_tool_result_adjacent_to_call_in_history() -> None:
         await release.wait()
         return 'late result'
 
-    session = RealtimeSession(conn, runner, background_tools={'slow'})
+    session = RealtimeSession(conn, runner)
     events = [e async for e in session]
 
     # The result event streams in completion order: after the intervening assistant turn.
@@ -497,7 +498,7 @@ async def test_background_tool_result_adjacent_to_call_in_history() -> None:
 
 
 class AwaitBetweenConnection(RealtimeConnection):
-    """A connection that yields control between events so background tasks can progress."""
+    """A connection that yields control between events so tool tasks can progress."""
 
     def __init__(self, events: list[RealtimeEvent]) -> None:
         self._events = events
@@ -512,7 +513,7 @@ class AwaitBetweenConnection(RealtimeConnection):
             await asyncio.sleep(0)
 
 
-async def test_background_completion_drained_between_events() -> None:
+async def test_tool_completion_drained_between_events() -> None:
     conn = AwaitBetweenConnection(
         [ToolCall(tool_call_id='bg', tool_name='fast', args='{}'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')]
     )
@@ -520,7 +521,7 @@ async def test_background_completion_drained_between_events() -> None:
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'quick'
 
-    session = RealtimeSession(conn, runner, background_tools={'fast'})
+    session = RealtimeSession(conn, runner)
     events = [e async for e in session]
 
     assert [type(e).__name__ for e in events] == snapshot(
@@ -553,7 +554,7 @@ class IdleAfterToolConnection(RealtimeConnection):
         await asyncio.Event().wait()
 
 
-async def test_background_completion_delivered_while_upstream_idle() -> None:
+async def test_tool_completion_delivered_while_upstream_idle() -> None:
     # The connection goes silent after the tool call; the completion must still surface promptly
     # rather than waiting for a provider event that never arrives.
     conn = IdleAfterToolConnection(ToolCall(tool_call_id='bg', tool_name='fast', args='{}'))
@@ -561,7 +562,7 @@ async def test_background_completion_delivered_while_upstream_idle() -> None:
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'ready'
 
-    session = RealtimeSession(conn, runner, background_tools={'fast'})
+    session = RealtimeSession(conn, runner)
     agen = cast(AsyncGenerator[Any], session.__aiter__())
     # Drain the tool-call part events + FunctionToolCallEvent.
     assert isinstance(await agen.__anext__(), PartStartEvent)
@@ -621,20 +622,20 @@ class SendFailsConnection(RealtimeConnection):
             await asyncio.Event().wait()
 
 
-async def test_background_tool_failure_propagates_while_idle() -> None:
+async def test_tool_failure_propagates_while_idle() -> None:
     conn = SendFailsConnection([ToolCall(tool_call_id='bg', tool_name='boom', args='{}')], idle=True)
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'ok'
 
-    # The background tool's ToolResult send fails while the provider is idle; without propagation the
+    # The tool's ToolResult send fails while the provider is idle; without propagation the
     # consumer would hang waiting for a completion that never arrives.
-    session = RealtimeSession(conn, runner, background_tools={'boom'})
+    session = RealtimeSession(conn, runner)
     with pytest.raises(RuntimeError, match='connection lost'):
         _ = [e async for e in session]
 
 
-async def test_background_tool_failure_propagates_after_close() -> None:
+async def test_tool_failure_propagates_after_close() -> None:
     release = asyncio.Event()
     conn = SendFailsConnection([ToolCall(tool_call_id='bg', tool_name='boom', args='{}')], release=release)
 
@@ -642,15 +643,15 @@ async def test_background_tool_failure_propagates_after_close() -> None:
         await release.wait()  # only runs after upstream has closed → failure surfaces during drain
         return 'ok'
 
-    session = RealtimeSession(conn, runner, background_tools={'boom'})
+    session = RealtimeSession(conn, runner)
     with pytest.raises(RuntimeError, match='connection lost'):
         _ = [e async for e in session]
 
 
-async def test_early_break_with_running_background_cancels_task() -> None:
+async def test_early_break_with_running_tool_cancels_task() -> None:
     blocked = asyncio.Event()
     started = asyncio.Event()
-    # AwaitBetweenConnection yields control between events, so the background task actually starts.
+    # AwaitBetweenConnection yields control between events, so the tool task actually starts.
     conn = AwaitBetweenConnection([ToolCall(tool_call_id='bg', tool_name='hang', args='{}'), AudioDelta(data=b'\x01')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -658,14 +659,14 @@ async def test_early_break_with_running_background_cancels_task() -> None:
         await blocked.wait()
         return 'never'  # pragma: no cover
 
-    session = RealtimeSession(conn, runner, background_tools={'hang'})
+    session = RealtimeSession(conn, runner)
     agen = cast(AsyncGenerator[Any], session.__aiter__())
     assert isinstance(await agen.__anext__(), PartStartEvent)  # tool call part
     assert isinstance(await agen.__anext__(), PartEndEvent)
     assert isinstance(await agen.__anext__(), FunctionToolCallEvent)
     assert isinstance(await agen.__anext__(), PartStartEvent)  # the audio delta's part
-    assert started.is_set()  # the background tool is running by now
-    await agen.aclose()  # cancels the still-running background task
+    assert started.is_set()  # the tool is running by now
+    await agen.aclose()  # cancels the still-running tool task
 
 
 # --- send helpers + history ---------------------------------------------------------------------
@@ -696,6 +697,36 @@ async def test_send_dispatches_through_bookkeeping_helpers() -> None:
     assert session.new_messages() == snapshot(
         [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())])]
     )
+
+
+async def test_send_accepts_plain_content() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    await session.send('hello')
+    await session.send(BinaryImage(data=b'image', media_type='image/png'))
+    await session.send(BinaryContent(data=b'audio', media_type='audio/wav'))
+
+    assert conn.sent == snapshot(
+        [
+            TextInput(text='hello'),
+            ImageInput(data=b'image', mime_type='image/png'),
+            AudioInput(data=b'audio'),
+        ]
+    )
+    assert session.new_messages() == snapshot(
+        [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())])]
+    )
+
+
+async def test_send_rejects_unsupported_binary_content() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    with pytest.raises(UserError, match="Unsupported binary media type 'application/pdf'.*image and audio"):
+        await session.send(BinaryContent(data=b'document', media_type='application/pdf'))
+
+    assert conn.sent == []
 
 
 async def test_send_enforces_model_profile_guard() -> None:
@@ -1613,7 +1644,7 @@ async def test_agent_realtime_session_uses_realtime_model_when_text_model_set() 
     assert seen_system == 'fake'
 
 
-async def test_agent_realtime_session_background_tools_end_to_end() -> None:
+async def test_agent_realtime_session_concurrent_tools_end_to_end() -> None:
     agent: Agent[None, str] = Agent()
     release = asyncio.Event()
 
@@ -1627,7 +1658,7 @@ async def test_agent_realtime_session_background_tools_end_to_end() -> None:
         release=release,
     )
     model = FakeRealtimeModel(conn)
-    async with agent.realtime_session(model=model, background_tools={'slow_lookup'}) as session:
+    async with agent.realtime_session(model=model) as session:
         events = [e async for e in session]
 
     assert [type(e).__name__ for e in events] == snapshot(

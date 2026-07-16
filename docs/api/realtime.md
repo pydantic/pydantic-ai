@@ -30,8 +30,8 @@ low-level codec events into the shared message/part event vocabulary from
 intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sending the
 [`ToolResult`][pydantic_ai.realtime.ToolResult] back, and emitting a
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Tools listed in
-`background_tools` run concurrently so the model can keep speaking while they work.
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs
+concurrently so the model can keep speaking while it works.
 
 ## Overview
 
@@ -42,11 +42,12 @@ intercepting each [`ToolCall`][pydantic_ai.realtime.ToolCall], running it, sendi
 | [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] | Provider ABC; `connect()` opens a connection. |
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
 | [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
-| [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic (sync/background) tool dispatch. |
+| [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 | [`ToolRunner`][pydantic_ai.realtime.ToolRunner] | Async callable a session uses to execute a tool by name. |
 
-**Inputs** — you feed a [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] into
-[`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]:
+**Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts plain `str`,
+image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a precise
+[`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]:
 data — [`AudioInput`][pydantic_ai.realtime.AudioInput],
 [`TextInput`][pydantic_ai.realtime.TextInput],
 [`ImageInput`][pydantic_ai.realtime.ImageInput];

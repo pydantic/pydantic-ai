@@ -102,6 +102,7 @@ session:
 | [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio] | A chunk of microphone audio (PCM16). |
 | [`send_text`][pydantic_ai.realtime.RealtimeSession.send_text] | A complete text turn. |
 | [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image] | An image as conversation context (e.g. a video frame). |
+| [`send`][pydantic_ai.realtime.RealtimeSession.send] | Any typed session input, or plain `str` / image or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. |
 
 ## Events
 
@@ -416,17 +417,18 @@ sends the result back, and emits a [`FunctionToolResultEvent`][pydantic_ai.messa
 A result is always returned to the model, even when the arguments fail to parse or the tool raises,
 so the conversation never stalls.
 
-### Background tools
+### Concurrent tools
 
-By default a tool runs synchronously: the session waits for it before reading more of the model's
-output. For slow tools you can run them in the **background** so the model keeps speaking while the
-work happens, with the result delivered once it is ready. This mirrors firing off a subagent and
-carrying on.
+Every tool call runs concurrently with the session. The model can keep talking (or stay silent) while
+the tool works, and receives the result as soon as it is ready, so slow tools do not freeze the
+conversation. The [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams
+when the tool finishes; [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps
+the result adjacent to its call so the history remains valid for a text-agent handoff.
 
-```python {test="skip" lint="skip"}
-async with agent.realtime_session(model=model, background_tools={'deep_research'}) as session:
-    ...
-```
+!!! note "Deferred and approval-required tools"
+    Tools that raise `CallDeferred` or `ApprovalRequired` are not supported in a realtime session:
+    a live conversation cannot pause for an out-of-band answer. Unless a capability handler resolves
+    the call in-session, the model receives an error-string tool result.
 
 ### Built-in tools (web search)
 
@@ -623,8 +625,8 @@ ones that are specific to the request-response graph (faking them would be misle
 | `user_prompt` | ❌ stream input with `send_audio` / `send_text` / `send_image` instead |
 | `retries`, `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
 
-Realtime-only: `background_tools` (run a tool concurrently while the model keeps talking) and
-`audio_retention` (keep spoken audio bytes on the history parts).
+Realtime-only: `audio_retention` keeps spoken audio bytes on the history parts. Tool calls always run
+concurrently with the session.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -717,8 +719,7 @@ async def main():
         ...
 ```
 
-For a slow delegated run, mark the tool as a [background tool](#background-tools) so the model keeps
-talking while the analysis runs.
+The delegated run executes concurrently, so the model can keep talking while the analysis runs.
 
 ## Not yet supported
 

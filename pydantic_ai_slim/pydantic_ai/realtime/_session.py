@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
@@ -109,7 +109,7 @@ _TranslatableEvent: TypeAlias = (
 
 
 def _as_event(item: object) -> RealtimeSessionEvent:
-    """Unwrap a queue item: re-raise a background tool's exception, otherwise return the event."""
+    """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
     if isinstance(item, Exception):
         raise item
     return cast('RealtimeSessionEvent', item)
@@ -173,20 +173,17 @@ class RealtimeSession:
       [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] carrying a
       [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when it completes.
 
-    Tools execute in one of two modes:
-
-    - **Synchronous** (default): the session waits for the tool to finish before reading further
-      events from the model, mirroring a blocking call.
-    - **Background**: tools whose name is in `background_tools` run concurrently. The session keeps
-      streaming the model's events (so it can keep speaking) and sends the result back once it is
-      ready, mirroring firing off a subagent and continuing work while it runs.
+    Tools always run concurrently with the session. The session keeps streaming events while a tool
+    runs, so the model can keep speaking and user speech keeps being processed, then sends the result
+    back over the connection once it is ready. This mirrors how a person can keep talking while work
+    happens.
 
     A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is always sent for every tool call, even
     when argument parsing or the tool itself fails, so the model never stalls waiting on a result.
 
     History is accumulated in the order events are reported, which is authoritative for turn-by-turn
     speech but approximate at the edges: user transcripts that a provider reports asynchronously are
-    ordered as received. Tool results are the exception: a background tool's
+    ordered as received. Tool results are the exception: a tool's
     [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams whenever the tool
     finishes (possibly after later turns), but in [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
     its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is placed directly after the response
@@ -199,7 +196,6 @@ class RealtimeSession:
         connection: RealtimeConnection,
         tool_runner: ToolRunner,
         *,
-        background_tools: Iterable[str] = (),
         instrumentation: InstrumentationSettings | None = None,
         model_name: str | None = None,
         agent_name: str | None = None,
@@ -212,7 +208,6 @@ class RealtimeSession:
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
-        self._background_tools = frozenset(background_tools)
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else _FULL_PROFILE
         self._model_name = model_name
@@ -281,19 +276,32 @@ class RealtimeSession:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
 
-    async def send(self, content: RealtimeSessionInput) -> None:
-        """Feed a [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] into the session.
+    async def send(self, content: RealtimeSessionInput | str | BinaryContent) -> None:
+        """Feed content into the session.
 
-        Dispatches to the typed helpers (`send_audio`, `send_text`, `send_image`, `commit_audio`,
-        `clear_audio`, `create_response`, `truncate_output`, `interrupt`), so every input goes through
-        the same history bookkeeping and model-profile guards rather than bypassing them. Prefer calling
-        those helpers directly; this is for code that already holds a `RealtimeSessionInput` value.
+        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
+        text as a `str`, or image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. All
+        inputs dispatch through the typed helpers (`send_audio`, `send_text`, `send_image`,
+        `commit_audio`, `clear_audio`, `create_response`, `truncate_output`, `interrupt`), preserving
+        the same history bookkeeping and model-profile guards.
 
         [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
         is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends
         tool results itself as each tool completes (see `_execute_tool`).
         """
-        if isinstance(content, AudioInput):
+        if isinstance(content, str):
+            await self.send_text(content)
+        elif isinstance(content, BinaryContent):
+            if content.is_image:
+                await self.send_image(content.data, mime_type=content.media_type)
+            elif content.is_audio:
+                await self.send_audio(content.data)
+            else:
+                raise UserError(
+                    f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
+                    'Only image and audio content are supported.'
+                )
+        elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
             await self.send_text(content.text)
@@ -535,7 +543,7 @@ class RealtimeSession:
     def _insert_tool_return(self, call_part: ToolCallPart, request: ModelRequest) -> None:
         """Insert a tool-return request directly after the response carrying its call.
 
-        A background tool can finish after later turns, but request-response APIs demand call/return
+        A tool can finish after later turns, but request-response APIs demand call/return
         adjacency (OpenAI: a `tool` message must directly follow the assistant message with the call;
         Anthropic: the `tool_result` must open the next user message), so history keeps the canonical
         order even though the `FunctionToolResultEvent` streams in completion order.
@@ -757,10 +765,10 @@ class RealtimeSession:
             return SessionErrorEvent(message=str(e), type='usage_limit_exceeded', recoverable=False)
         return None
 
-    async def _run_background_tool(
+    async def _run_tool(
         self, call: ToolCall, call_part: ToolCallPart, queue: asyncio.Queue[RealtimeSessionEvent | object]
     ) -> None:
-        """Run a background tool and feed its completion (or failure) back through the queue."""
+        """Run a tool and feed its completion (or failure) back through the queue."""
         try:
             result = await self._execute_tool(call)
         except Exception as e:
@@ -788,14 +796,9 @@ class RealtimeSession:
             for out in self._handle_tool_call_part(call_part):
                 await queue.put(out)
             await queue.put(FunctionToolCallEvent(part=call_part))
-            if event.tool_name in self._background_tools:
-                task = asyncio.create_task(self._run_background_tool(event, call_part, queue))
-                background.add(task)
-                task.add_done_callback(background.discard)
-            else:
-                result = await self._execute_tool(event)
-                for out in self._complete_tool_call(call_part, result):
-                    await queue.put(out)
+            task = asyncio.create_task(self._run_tool(event, call_part, queue))
+            background.add(task)
+            task.add_done_callback(background.discard)
             return False
         if isinstance(event, SessionUsageEvent):
             self.usage.incr(event.usage)
@@ -811,8 +814,8 @@ class RealtimeSession:
         return False
 
     async def _stream(self) -> AsyncIterator[RealtimeSessionEvent]:
-        # Both the upstream connection and finished background tools feed a single queue, so a
-        # background completion wakes the consumer immediately instead of waiting for the next
+        # Both the upstream connection and finished tools feed a single queue, so a tool completion
+        # wakes the consumer immediately instead of waiting for the next
         # provider event (which may never come while the model is idle).
         queue: asyncio.Queue[RealtimeSessionEvent | object] = asyncio.Queue()
         closed = object()  # sentinel: the upstream connection has been fully drained
@@ -836,8 +839,8 @@ class RealtimeSession:
                 item = await queue.get()
                 if item is closed:
                     break
-                yield _as_event(item)  # re-raises if a background tool failed
-            # Upstream is done: wait for any in-flight background tools, then flush their completions.
+                yield _as_event(item)  # re-raises if a tool failed
+            # Upstream is done: wait for any in-flight tools, then flush their completions.
             if background:
                 await asyncio.gather(*background, return_exceptions=True)
             while not queue.empty():
