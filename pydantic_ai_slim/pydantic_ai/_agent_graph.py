@@ -170,6 +170,21 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+async def _with_event_stream_buffer(
+    stream: AsyncIterator[_messages.AgentStreamEvent],
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Drain buffered run events around each event from a node stream, preserving order."""
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+    async for event in stream:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        yield event
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+
+
 async def _cancel_task(task: Task[Any]) -> None:
     # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
     task.cancel()
@@ -260,6 +275,14 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=list[_messages.AgentStreamEvent]
+    )
+    """Internal: run event buffer, shared by reference into every `RunContext` this run (see `build_run_context`)
+    as the private `_event_stream_buffer` field. Framework code appends events to it (e.g.
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
+    [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]);
+    the graph drains it into the agent event stream around node events."""
     mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
         default_factory=dict[str, dict[str, ToolDefinition]]
     )
@@ -1009,6 +1032,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
+            _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
         )
 
     async def _make_request(  # noqa: C901
@@ -1546,9 +1570,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncGenerator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        stream = self._run_stream(ctx)
+        stream = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
         yield stream
 
         # Run the stream to completion if it was not finished:
@@ -1960,14 +1984,16 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
-    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs caching.
+    # `discovered_tool_names`, `pending_messages`, `_event_stream_buffer`, `_mcp_tool_defs_cache` (see the
+    # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / event delivery /
+    # tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 

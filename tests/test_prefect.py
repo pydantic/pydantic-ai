@@ -1432,6 +1432,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'model_settings',  # hashed via the model request inputs, not RunContext
         'capability_loaded',  # transient per-hook flag; `None` during tool execution
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_event_stream_buffer',  # live per-run event buffer drained in workflow code, not a tool-execution input
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
