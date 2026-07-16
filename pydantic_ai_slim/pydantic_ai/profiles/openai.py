@@ -359,6 +359,12 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
 
 _REGEX_LOOKAROUND_TOKENS = ('(?=', '(?!', '(?<=', '(?<!')
 
+_TYPE_BEARING_KEYS = ('type', '$ref', 'anyOf', 'oneOf', 'allOf', 'enum', 'const')
+"""Keywords whose presence means a schema node describes a concrete type.
+
+Used to tell whether an array's `items` actually types its elements. A node without any of these
+(e.g. `{}`, `True`, or `{'description': '...'}`) is untyped and rejected by OpenAI strict mode."""
+
 _sentinel = object()
 
 
@@ -491,12 +497,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             # OpenAI strict mode requires an array to describe its elements' type, via either `items`
             # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
             # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
-            # give the element a `type`, so they're rejected by the API in strict mode and there's no way
-            # to repair them without inventing an element type. `items` counts as typed only when it's a
-            # non-empty schema object (a boolean node like `true`/`false` has no `type`).
+            # give the element a type, so they're rejected by the API in strict mode and there's no way
+            # to repair them without inventing an element type. `items` only types its elements when it's
+            # a schema object carrying a type-bearing keyword (a boolean node, `{}`, or a metadata-only
+            # node like `{'description': ...}` does not).
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
-            has_typed_items = isinstance(items, dict) and bool(items)
+            has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
             if not has_typed_items and not schema.get('prefixItems'):
                 if self.strict is True:
                     raise UserError(

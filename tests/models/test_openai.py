@@ -5438,14 +5438,16 @@ def test_transformer_adds_properties_to_object_schemas():
         pytest.param({'type': 'array', 'items': {}}, id='empty-items'),
         pytest.param({'type': 'array'}, id='missing-items'),
         pytest.param({'type': 'array', 'items': True}, id='boolean-items'),
+        pytest.param({'type': 'array', 'items': {'description': 'values'}}, id='metadata-only-items'),
     ],
 )
 def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str, Any]):
     """An untyped array isn't strict-compatible.
 
-    This covers a bare `list` (`items: {}`), no `items` key at all, and a boolean `items: true`
-    (JSON Schema shape for `list[Any]`). OpenAI strict mode requires the `items` schema to have a
-    `type`, so with `strict=None` we must infer that the schema can't be sent in strict mode.
+    This covers a bare `list` (`items: {}`), no `items` key at all, a boolean `items: true`
+    (JSON Schema shape for `list[Any]`), and a metadata-only `items` node with no type-bearing
+    keyword. OpenAI strict mode requires the `items` schema to have a `type`, so with `strict=None`
+    we must infer that the schema can't be sent in strict mode.
     See https://github.com/pydantic/pydantic-ai/issues/4425
     """
     schema: dict[str, Any] = {
@@ -5458,12 +5460,21 @@ def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str,
     assert transformer.is_strict_compatible is False
 
 
-def test_transformer_typed_array_strict_compatible():
-    """A typed array (e.g. `list[str]`) has a proper `items` schema and stays strict-compatible."""
+@pytest.mark.parametrize(
+    'items_schema',
+    [
+        pytest.param({'type': 'string'}, id='type'),
+        pytest.param({'$ref': '#/$defs/Foo'}, id='ref'),
+        pytest.param({'anyOf': [{'type': 'string'}, {'type': 'integer'}]}, id='anyOf'),
+    ],
+)
+def test_transformer_typed_array_strict_compatible(items_schema: dict[str, Any]):
+    """An array whose `items` carries a type-bearing keyword stays strict-compatible."""
     schema: dict[str, Any] = {
         'type': 'object',
-        'properties': {'items': {'type': 'array', 'items': {'type': 'string'}}},
-        'required': ['items'],
+        'properties': {'values': {'type': 'array', 'items': items_schema}},
+        'required': ['values'],
+        '$defs': {'Foo': {'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']}},
     }
     transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
     transformer.walk()
