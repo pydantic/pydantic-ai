@@ -486,4 +486,19 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                     for k in schema['properties'].keys():
                         if k not in required:
                             self.is_strict_compatible = False
+
+        if schema_type == 'array':
+            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
+            # (list types) or `prefixItems` (tuple types). A bare `list` (no type param) produces an
+            # empty `items: {}` with neither, and a schema may omit `items` entirely; both are rejected
+            # by the API in strict mode and there's no way to repair them without inventing an element
+            # type. See https://github.com/pydantic/pydantic-ai/issues/4425
+            if not schema.get('items') and not schema.get('prefixItems'):
+                if self.strict is True:
+                    raise UserError(
+                        'OpenAI strict mode requires array items to have a type, but got an untyped array '
+                        '(e.g. a bare `list`). Add a type parameter such as `list[str]`, or set `strict=False`.'
+                    )
+                elif self.strict is None:  # pragma: no branch
+                    self.is_strict_compatible = False
         return schema

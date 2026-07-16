@@ -5432,6 +5432,54 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+@pytest.mark.parametrize(
+    'array_schema',
+    [
+        pytest.param({'type': 'array', 'items': {}}, id='empty-items'),
+        pytest.param({'type': 'array'}, id='missing-items'),
+    ],
+)
+def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str, Any]):
+    """An untyped array (bare `list` -> `items: {}`, or no `items` at all) isn't strict-compatible.
+
+    OpenAI strict mode requires the `items` schema to have a `type`, so with `strict=None` we must
+    infer that the schema can't be sent in strict mode.
+    See https://github.com/pydantic/pydantic-ai/issues/4425
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': array_schema},
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_typed_array_strict_compatible():
+    """A typed array (e.g. `list[str]`) has a proper `items` schema and stays strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {'type': 'string'}}},
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_untyped_array_explicit_strict_raises():
+    """With `strict=True` explicitly requested, an untyped array can't be repaired, so we raise a
+    clear error instead of letting OpenAI reject the request with an opaque 400."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {}}},
+        'required': ['items'],
+    }
+    with pytest.raises(UserError, match='OpenAI strict mode requires array items to have a type'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
