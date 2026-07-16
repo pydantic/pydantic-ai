@@ -299,6 +299,63 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_error_closes_open_text():
+    """A mid-stream error while a text part is open emits `text-end` before the error.
+
+    The native stream crashes without a `PartEndEvent`, so the base class must close the
+    open part itself — otherwise a client that aborts at the error chunk (e.g. the AI SDK)
+    leaves the text part stuck in a streaming state. See #6546, mirroring #4963 for tool calls.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            ' world',
+            '</text followed_by_text=False>',
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_error_closes_open_thinking():
+    """A mid-stream error while a thinking part is open emits `thinking-end` before the error."""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' hard'))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<thinking follows_thinking=False>Thinking',
+            ' hard',
+            '</thinking followed_by_thinking=False>',
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo

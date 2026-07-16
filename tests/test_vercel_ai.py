@@ -73,6 +73,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
@@ -2768,6 +2769,88 @@ async def test_run_stream_output_tool_error():
             'tool-input-delta',
             'tool-input-available',
             'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_text():
+    """A mid-stream `UsageLimitExceeded` while a text part is open must emit `text-end` before `error`.
+
+    The AI SDK v6 client aborts at the `error` chunk, so a missing `text-end` leaves the text part
+    stuck in `state: 'streaming'`. See #6546, mirroring #4963 for dangling tool calls.
+    """
+
+    async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        for _ in range(50):
+            yield 'lots of streamed text '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_text))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `text-end` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'text-end'
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-delta',
+            'text-end',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_thinking():
+    """A mid-stream `UsageLimitExceeded` while a thinking part is open must emit `reasoning-end` before `error`."""
+
+    async def stream_thinking(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        for _ in range(50):
+            yield {0: DeltaThinkingPart(content='lots of thinking ')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_thinking))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types[event_types.index('error') - 1] == 'reasoning-end'
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'reasoning-start',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-end',
             'error',
             'finish-step',
             'finish',

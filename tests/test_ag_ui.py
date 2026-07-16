@@ -83,6 +83,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
@@ -367,6 +368,73 @@ async def test_empty_messages() -> None:
                 'timestamp': IsInt(),
                 'message': 'No message history, user prompt, or instructions provided',
             },
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_text() -> None:
+    """A mid-stream `UsageLimitExceeded` while a text message is open must emit `TEXT_MESSAGE_END` before `RUN_ERROR`.
+
+    Like the AI SDK, the AG-UI client mishandles an unclosed message (see #3108), so the base class
+    must close the open part before the error. See #6546, mirroring #4963 for dangling tool calls.
+    """
+
+    async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        for _ in range(50):
+            yield 'lots of streamed text '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_text))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TEXT_MESSAGE_END'
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_END',
+            'RUN_ERROR',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_thinking() -> None:
+    """A mid-stream `UsageLimitExceeded` while a thinking message is open must close it before `RUN_ERROR`."""
+
+    async def stream_thinking(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        for _ in range(50):
+            yield {0: DeltaThinkingPart(content='lots of thinking ')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_thinking))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version='0.1.10')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'THINKING_END'
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'THINKING_START',
+            'THINKING_TEXT_MESSAGE_START',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_END',
+            'THINKING_END',
+            'RUN_ERROR',
         ]
     )
 

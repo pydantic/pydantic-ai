@@ -90,6 +90,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
+    _open_response_part: TextPart | ThinkingPart | None = None
+    """The text or thinking part currently being streamed, if any.
+
+    Set on `PartStartEvent`, cleared on `PartEndEvent`. The error path closes it (emitting its
+    `*-end` event) before `on_error`, mirroring how `_pending_tool_calls` closes dangling tool
+    calls — otherwise a client that aborts at the error chunk (like the AI SDK) leaves the part
+    stuck in a streaming state.
+    """
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -162,8 +170,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         try:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
+                    if isinstance(event.part, TextPart | ThinkingPart):
+                        self._open_response_part = event.part
                     async for e in self._turn_to('response'):
                         yield e
+                elif isinstance(event, PartEndEvent):
+                    if isinstance(event.part, TextPart | ThinkingPart):
+                        self._open_response_part = None
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     kind: Literal['function', 'output'] = (
@@ -201,6 +214,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_event(event):
                     yield e
         except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
+            # Close an open text or thinking part before emitting the error, so a client that
+            # aborts at the error chunk (like the AI SDK) doesn't leave it stuck in a streaming
+            # state. This comes first: it's a response-side event, whereas the tool-call cleanup
+            # below turns to the request side, and everything after the error chunk is dropped.
+            if (part := self._open_response_part) is not None:
+                self._open_response_part = None
+                if isinstance(part, TextPart):
+                    async for e in self.handle_text_end(part):
+                        yield e
+                else:
+                    async for e in self.handle_thinking_end(part):
+                        yield e
+
             # Close any pending tool calls before emitting the error,
             # so the UI doesn't show them as still running.
 
