@@ -37,7 +37,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
@@ -1460,13 +1460,15 @@ async def test_positional_or_keyword_with_var_args():
     """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/6540.
+
+    Not VCR-backed: this exercises local schema-to-call argument binding and makes no provider request.
     """
 
     def f(r0: int, *values: int) -> dict[str, Any]:
         return {'r0': r0, 'values': list(values)}
 
     tool = Tool(f)
-    ctx = RunContext(deps=None, model=TestModel(), usage=RequestUsage())
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     result = await tool.function_schema.call({'r0': 1, 'values': [0]}, ctx)
     assert result == {'r0': 1, 'values': [0]}
 
