@@ -127,7 +127,8 @@ def test_stable_cache_health() -> None:
     )
 
     assert [cache_attributes(span) for span in spans] == [
-        {'pydantic_ai.cache.established_tokens': 1500},
+        # The establishing request reads nothing back, so its cold-start hit ratio is honestly 0.0.
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 1500},
         {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 1500},
         {'pydantic_ai.cache.hit_ratio': 0.8, 'pydantic_ai.cache.established_tokens': 1600},
     ]
@@ -191,7 +192,10 @@ def test_model_switch_and_switch_back() -> None:
     )
 
     # The switched-to model writes its own prefix: judged against a fresh mark, never `first`'s.
-    assert cache_attributes(spans[1]) == {'pydantic_ai.cache.established_tokens': 1500}
+    assert cache_attributes(spans[1]) == {
+        'pydantic_ai.cache.hit_ratio': 0.0,
+        'pydantic_ai.cache.established_tokens': 1500,
+    }
     assert cache_attributes(spans[2])['pydantic_ai.cache.collapse_reason'] == 'unexpected'
 
 

@@ -349,8 +349,10 @@ class Instrumentation(AbstractCapability[Any]):
         if not span.is_recording():
             return
 
-        if read > 0 or established > 0:
-            span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
+        # The cache is in play for this request (or was for an earlier one on the same key), so both
+        # are meaningful: a request that establishes a prefix without reading any of it back honestly
+        # has a `0.0` hit ratio, and that cold-start cost belongs in the run's cache-efficiency picture.
+        span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
         span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
 
         if not collapsed:
