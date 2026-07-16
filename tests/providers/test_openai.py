@@ -4,8 +4,7 @@ import pytest
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from openai import OpenAIError
-
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -33,8 +32,11 @@ def test_init_with_non_openai_model():
 def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     with pytest.raises(
-        OpenAIError,
-        match=r'^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
+        UserError,
+        match=(
+            r'Set the `OPENAI_API_KEY` environment variable or pass it via `OpenAIProvider\(api_key=\.\.\.\)`'
+            r" to use the OpenAI provider\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
+        ),
     ):
         OpenAIProvider()
 
@@ -42,6 +44,13 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
 def test_init_of_openai_with_base_url_and_without_api_key(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     provider = OpenAIProvider(base_url='https://example.com/v1')
+    assert provider.client.api_key == 'api-key-not-set'
+
+
+def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
+    env.remove('OPENAI_API_KEY')
+    env.set('OPENAI_BASE_URL', 'https://example.com/v1')
+    provider = OpenAIProvider()
     assert provider.client.api_key == 'api-key-not-set'
 
 

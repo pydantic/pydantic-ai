@@ -27,6 +27,11 @@ def _validate_max_running(max_running: int) -> None:
         raise UserError(f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.')
 
 
+def _validate_max_queued(max_queued: int | None) -> None:
+    if max_queued is not None and max_queued < 0:
+        raise UserError(f'max_queued must be >= 0, got {max_queued}. Use None for unlimited queue.')
+
+
 class AbstractConcurrencyLimiter(ABC):
     """Abstract base class for concurrency limiters.
 
@@ -75,7 +80,7 @@ class ConcurrencyLimit:
 
     Args:
         max_running: Maximum number of concurrent operations allowed. Must be >= 1.
-        max_queued: Maximum number of operations waiting in the queue.
+        max_queued: Maximum number of operations waiting in the queue. Must be >= 0.
             If None, the queue is unlimited. If exceeded, raises `ConcurrencyLimitExceeded`.
     """
 
@@ -84,6 +89,7 @@ class ConcurrencyLimit:
 
     def __post_init__(self) -> None:
         _validate_max_running(self.max_running)
+        _validate_max_queued(self.max_queued)
 
 
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
@@ -106,15 +112,16 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
 
         Args:
             max_running: Maximum number of concurrent operations. Must be >= 1.
-            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded.
+            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded. Must be >= 0.
             name: Optional name for this limiter, used for observability when sharing
                 a limiter across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
 
         Raises:
-            UserError: If `max_running` is less than 1.
+            UserError: If `max_running` is less than 1, or `max_queued` is less than 0.
         """
         _validate_max_running(max_running)
+        _validate_max_queued(max_queued)
         self._limiter = anyio.CapacityLimiter(max_running)
         self._max_queued = max_queued
         self._name = name

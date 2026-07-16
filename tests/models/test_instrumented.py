@@ -2016,6 +2016,58 @@ def test_messages_to_otel_messages_serialization_errors():
     )
 
 
+def test_messages_to_otel_messages_serializes_bytes():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'tool',
+                    {'text': '🐈 Hello'.encode(), 'binary': {'data': b'\xff'}},
+                    tool_call_id='tool_call_id',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'tool',
+                    [b'\x00', b'\xff'],
+                    tool_call_id='return_tool_call_id',
+                )
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_id',
+                        'name': 'tool',
+                        'arguments': {'text': '🐈 Hello', 'binary': {'data': '_w=='}},
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'return_tool_call_id',
+                        'name': 'tool',
+                        'result': ['AA==', '_w=='],
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello, world!')], timestamp=IsDatetime())]
     model = InstrumentedModel(MyModel())
