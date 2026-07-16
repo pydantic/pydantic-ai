@@ -73,10 +73,10 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 )
                 break
         if base is None:
-            # OpenAI models are unprefixed.
-            # Azure retention ranges from in-memory caching (typically 5–10 minutes, always within an hour)
-            # to 24-hour retention, which newer models use by default. There is no single honest boundary;
-            # users should pass `retention=` to `prompt_cache_outlook` explicitly.
+            # OpenAI models are unprefixed, and inherit their unset `prompt_cache_retention`: Azure
+            # retention likewise ranges from in-memory caching (typically 5-10 minutes, always within an
+            # hour) to 24-hour extended retention, which newer models use by default, so there is no
+            # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
 

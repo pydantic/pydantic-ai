@@ -269,7 +269,6 @@ def test_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'prompt_cache_retention': timedelta(seconds=600),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -360,7 +359,6 @@ def test_openai_gpt_4o():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'prompt_cache_retention': timedelta(seconds=600),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -379,7 +377,6 @@ def test_openai_o3_mini():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'prompt_cache_retention': timedelta(seconds=600),
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
