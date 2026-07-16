@@ -13,7 +13,13 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    format_inlined_text_file,
+    generate_tool_call_id as _generate_tool_call_id,
+    is_text_like_media_type,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..exceptions import ModelAPIError
 from ..messages import (
     AudioUrl,
@@ -656,7 +662,17 @@ class MistralModel(Model[Mistral]):
                         image_url.detail = metadata.get('detail', 'auto')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
+                    if is_text_like_media_type(item.media_type):
+                        content.append(
+                            MistralTextChunk(
+                                text=format_inlined_text_file(
+                                    item.data.decode('utf-8'),
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
                         if metadata := item.vendor_metadata:
                             image_url.detail = metadata.get('detail', 'auto')
@@ -668,7 +684,18 @@ class MistralModel(Model[Mistral]):
                             'BinaryContent other than image or PDF is not supported in Mistral user prompts'
                         )
                 elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
+                    if is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append(
+                            MistralTextChunk(
+                                text=format_inlined_text_file(
+                                    downloaded_text['data'],
+                                    media_type=item.media_type,
+                                    identifier=item.identifier,
+                                )
+                            )
+                        )
+                    elif item.media_type == 'application/pdf':
                         if item.force_download:
                             downloaded = await download_item(item, data_format='base64_uri')
                             content.append(

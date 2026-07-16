@@ -65,6 +65,9 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
+    from mistralai.client.models import DocumentURLChunk as MistralDocumentURLChunk, TextChunk as MistralTextChunk
+    from mistralai.client.models.usermessage import UserMessage as MistralUserMessage
+
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -790,25 +793,43 @@ async def test_text_plain_document_anthropic(
 
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
-async def test_non_pdf_document_url_error(
-    mistral_api_key: str,
-    allow_model_requests: None,
-):
-    """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
-    model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent = Agent(model)
+async def test_non_pdf_document_url_mistral() -> None:
+    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text."""
+    from unittest.mock import AsyncMock, patch
 
-    @agent.tool_plain
-    def get_file() -> DocumentUrl:
-        return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
+    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    file_text = 'Dummy TXT file'
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
-            'Use the get_file tool to retrieve a file.',
-            usage_limits=UsageLimits(output_tokens_limit=100000),
-        )
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=doc_url,
+                    tool_call_id='call1',
+                ),
+            ],
+        ),
+    ]
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
+        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+
+    user_messages = [msg for msg in mapped if isinstance(msg, MistralUserMessage)]
+    assert len(user_messages) == 1
+    trailing_user = user_messages[-1]
+    assert trailing_user.content is not None
+    text_chunks = [chunk for chunk in trailing_user.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text == f'This is file {doc_url.identifier}:'
+    assert '-----BEGIN FILE' in text_chunks[1].text
+    assert file_text in text_chunks[1].text
+    assert not any(isinstance(chunk, MistralDocumentURLChunk) for chunk in trailing_user.content)
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')

@@ -54,6 +54,7 @@ with try_import() as imports_successful:
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
+        DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -2732,20 +2733,30 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
 
 
 async def test_txt_url_input(allow_model_requests: None):
+    from unittest.mock import AsyncMock, patch
+
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
-            [
-                'hello',
-                DocumentUrl(url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt'),
-            ]
-        )
+    document_url = DocumentUrl(
+        url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt',
+        media_type='text/plain',
+    )
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': 'Dummy TXT file', 'data_type': 'text/plain'}
+        result = await agent.run(['hello', document_url])
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+    assert result.output == 'world'
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    text_chunks = [chunk.text for chunk in messages[0].content if isinstance(chunk, MistralTextChunk)]
+    assert any('-----BEGIN FILE' in text and 'Dummy TXT file' in text for text in text_chunks)
+    assert not any(isinstance(chunk, MistralDocumentURLChunk) for chunk in messages[0].content)
 
 
 async def test_audio_as_binary_content_input(allow_model_requests: None):
@@ -3083,6 +3094,77 @@ async def test_image_url_no_force_download() -> None:
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_not_called()
+
+
+async def test_text_document_binary_content_mapping(text_document_content: BinaryContent) -> None:
+    """Test that text-like BinaryContent is inlined as MistralTextChunk."""
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this document?',
+                        text_document_content,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert 'Dummy TXT file' in inlined
+    assert '-----END FILE' in inlined
+    assert text_document_content.media_type in inlined
+    assert text_document_content.identifier in inlined
+
+
+async def test_text_document_url_mapping() -> None:
+    """Test that text-like DocumentUrl is downloaded and inlined as MistralTextChunk."""
+    from unittest.mock import AsyncMock, patch
+
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+    file_text = 'Dummy TXT file'
+    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['Read this', doc_url]),
+                ]
+            )
+        ]
+
+        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/file.txt'
+        assert mock_download.call_args[1]['data_format'] == 'text'
+
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert file_text in inlined
+    assert doc_url.identifier in inlined
 
 
 async def test_document_url_force_download() -> None:
