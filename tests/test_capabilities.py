@@ -511,6 +511,8 @@ def test_agent_from_spec_capabilities_merged():
 
 
 def test_model_json_schema_with_capabilities():
+    # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
+    # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
     assert remove_schema_descriptions(schema) == snapshot(
@@ -1019,6 +1021,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.6',
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
+                        'moonshotai:kimi-k3',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
