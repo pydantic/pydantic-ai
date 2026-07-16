@@ -104,39 +104,72 @@ STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
 def _hf_hub_unavailable(exc: BaseException) -> bool:
     """Whether an exception from a SentenceTransformer load means the HF Hub is
     unavailable (worth skipping the real-model smoke tests) rather than a genuine
-    integration defect (which must fail loudly). Shapes verified against real outages.
+    integration defect or a bad model pin (which must fail loudly). Shapes verified
+    against real outage and bad-pin probes.
     """
-    if isinstance(exc, httpx.HTTPError):
-        # Raw httpx errors (e.g. connect timeouts) escape huggingface_hub 1.x
-        # unwrapped, and the only httpx traffic in a model load is Hub traffic.
+    if isinstance(exc, httpx.TransportError):
+        # Transport-level httpx errors (e.g. connect timeouts) escape
+        # huggingface_hub 1.x unwrapped, and the only httpx traffic in a model
+        # load is Hub traffic. Status-level httpx errors are not outage proof.
         return True
     if isinstance(exc, RuntimeError):
         # After a connection error, huggingface_hub 1.x retries on an httpx client
         # it just closed, surfacing httpx's RuntimeError instead of its own error.
         return 'client has been closed' in str(exc)
-    # huggingface_hub's own errors (HfHubHTTPError for 429/5xx responses,
-    # LocalEntryNotFoundError, ...) are OSError subclasses; transformers wraps
-    # connection failures in a plain OSError whose message points at the Hub.
-    return type(exc).__module__.startswith('huggingface_hub') or 'huggingface.co' in str(exc)
+    if type(exc).__module__.startswith('huggingface_hub'):
+        # huggingface_hub errors are OSError subclasses. Ones carrying an HTTP
+        # response are an outage only for transient statuses; 401/403/404 mean a
+        # bad pin or an auth problem. Ones without a response (e.g.
+        # LocalEntryNotFoundError) mean the Hub couldn't be reached at all.
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        return status is None or status == 429 or status >= 500
+    # transformers wraps connection failures in a plain OSError: "We couldn't
+    # connect to 'https://huggingface.co' to load the files [...]". Other OSError
+    # shapes (corrupt cache, invalid model identifier) must propagate.
+    return "couldn't connect" in str(exc).lower()
 
 
 def test_hf_hub_unavailable_classifier():
+    """Exercises the fixture's outage-classification guard on synthetic exceptions:
+    no HTTP is involved (hence no VCR), just shapes captured from real probes."""
+
+    class FakeResponse:
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
     class FakeHubError(OSError):
-        pass
+        def __init__(self, msg: str, status_code: int | None = None):
+            super().__init__(msg)
+            self.response = FakeResponse(status_code) if status_code is not None else None
 
     FakeHubError.__module__ = 'huggingface_hub.errors'
 
+    # Hub unavailability: skip the real-model smoke tests.
     assert _hf_hub_unavailable(httpx.ConnectTimeout('timed out'))
     assert _hf_hub_unavailable(RuntimeError('Cannot send a request, as the client has been closed.'))
-    assert _hf_hub_unavailable(FakeHubError('504 Server Error'))
+    assert _hf_hub_unavailable(FakeHubError('504 Server Error', 504))
+    assert _hf_hub_unavailable(FakeHubError('429 Too Many Requests', 429))
+    assert _hf_hub_unavailable(FakeHubError('cannot find the requested files in the disk cache'))
     assert _hf_hub_unavailable(OSError("We couldn't connect to 'https://huggingface.co' to load the files"))
+    # Anything else fails loudly: bad pins, auth problems, local defects.
+    assert not _hf_hub_unavailable(FakeHubError('401 Unauthorized', 401))
+    assert not _hf_hub_unavailable(FakeHubError('404 Repository Not Found', 404))
+    assert not _hf_hub_unavailable(
+        httpx.HTTPStatusError('404', request=httpx.Request('GET', 'https://x'), response=httpx.Response(404))
+    )
     assert not _hf_hub_unavailable(RuntimeError('CUDA error: device-side assert triggered'))
     assert not _hf_hub_unavailable(OSError('Unable to load weights from pytorch checkpoint file'))
+    assert not _hf_hub_unavailable(
+        OSError(
+            "xyz is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'"
+        )
+    )
 
 
 def test_stsb_model_pin_matches_ci():
-    """Drift between this pin and ci.yml silently reintroduces per-run Hub downloads:
-    the stale cache key keeps exact-hitting, so CI never caches the new revision."""
+    """Parses CI configuration only, no network or VCR involved: drift between this
+    pin and ci.yml silently reintroduces per-run Hub downloads, because the stale
+    cache key keeps exact-hitting, so CI never caches the new revision."""
     ci_yml = Path(__file__).parent.parent / '.github' / 'workflows' / 'ci.yml'
     if not ci_yml.is_file():  # pragma: lax no cover
         pytest.skip('not running from a repo checkout')
@@ -1660,10 +1693,10 @@ class TestSentenceTransformers:
             model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
         except (OSError, RuntimeError, httpx.HTTPError) as e:  # pragma: lax no cover
             # Skip only when the Hub is unavailable (see `_hf_hub_unavailable`) so a
-            # HF outage never reds the whole suite; anything else (corrupt cache,
-            # dependency mismatch, model-construction regression) fails loudly.
-            # `lax` because this path runs only during outages: coverage must
-            # tolerate both outcomes.
+            # HF outage never reds the whole suite; anything else (bad pin, auth
+            # problem, corrupt cache, dependency mismatch) fails loudly. `lax`
+            # because this path runs only during outages: coverage must tolerate
+            # both outcomes.
             if not _hf_hub_unavailable(e):
                 raise
             pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
