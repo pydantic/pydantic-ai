@@ -121,11 +121,6 @@ class PendingMessage:
     """The message(s) to inject, in order. Always ends in a
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
 
-    enqueue_id: str = field(default_factory=lambda: str(uuid7()))
-    """Unique identifier for this enqueue call, surfaced on the
-    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
-    are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
-
     priority: PendingMessagePriority = 'asap'
     """When to deliver these messages:
 
@@ -133,6 +128,11 @@ class PendingMessage:
         would otherwise terminate).
     - `'when_idle'`: only when the agent would otherwise terminate, after `'asap'` messages.
     """
+
+    enqueue_id: str = field(default_factory=lambda: str(uuid7()))
+    """Unique identifier for this enqueue call, surfaced on the
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
+    are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
     @classmethod
     def from_content(cls, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> PendingMessage | None:

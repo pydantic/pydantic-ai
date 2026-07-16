@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import anyio
 import pytest
@@ -19,6 +20,7 @@ from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import _agent_graph
+from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
@@ -13952,7 +13954,11 @@ async def test_empty_enqueue_emits_no_delivery_event():
 
 
 def test_enqueued_messages_event_serialization_roundtrip():
-    """`EnqueuedMessagesEvent` round-trips through the `AgentStreamEvent` union (e.g. for durable execution)."""
+    """`EnqueuedMessagesEvent` round-trips through the `AgentStreamEvent` union as JSON.
+
+    Durable execution (e.g. Temporal's per-event `event_stream_handler` wrapping) serializes
+    events to JSON across the activity boundary, so JSON mode is the actual constraint.
+    """
     event = EnqueuedMessagesEvent(
         enqueue_id='enq-1',
         messages=(ModelRequest(parts=[UserPromptPart(content='hi')]),),
@@ -13961,6 +13967,88 @@ def test_enqueued_messages_event_serialization_roundtrip():
     dumped = adapter.dump_python(event)
     assert dumped['event_kind'] == 'enqueued_messages'
     assert adapter.validate_python(dumped) == event
+    assert adapter.validate_json(adapter.dump_json(event)) == event
+
+
+def test_pending_message_positional_construction_keeps_priority_second():
+    """`PendingMessage(messages, priority)` positional construction still sets `priority`.
+
+    Guards the field order: `enqueue_id` (which has a generated default) must stay after
+    `priority`, or positional callers would silently assign their priority to `enqueue_id`.
+    """
+    pending = PendingMessage([ModelRequest(parts=[UserPromptPart(content='hi')])], 'when_idle')
+    assert pending.priority == 'when_idle'
+    assert pending.enqueue_id != 'when_idle'
+    assert UUID(pending.enqueue_id).version == 7
+
+
+async def test_single_enqueue_with_multiple_messages_emits_one_event():
+    """One `enqueue` call carrying multiple messages emits a single event with all delivered messages."""
+    events: list[AgentStreamEvent] = []
+    enqueue_id: str | None = None
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='inject_exchange', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def inject_exchange(ctx: RunContext[Any]) -> str:
+        nonlocal enqueue_id
+        # A synthetic prior turn (a complete response) followed by a fresh user request:
+        # one enqueue call, two delivered messages.
+        enqueue_id = ctx.enqueue(
+            ModelResponse(parts=[TextPart(content='synthetic recap')]),
+            'Follow up on the recap',
+        )
+        return 'ok'
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert enqueue_id is not None
+    delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(result.all_messages()[3:5]))]
+    assert isinstance(delivery_events[0].messages[0], ModelResponse)
+    assert isinstance(delivery_events[0].messages[1], ModelRequest)
+
+
+async def test_enqueue_delivery_event_via_run_stream():
+    """The delivery event surfaces through `agent.run_stream`'s `event_stream_handler`."""
+    events: list[AgentStreamEvent] = []
+    enqueue_id: str | None = None
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='inject_msg', json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[Any]) -> str:
+        nonlocal enqueue_id
+        enqueue_id = ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        output = await result.get_output()
+
+    assert output == 'done'
+    assert enqueue_id is not None
+    delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
@@ -14593,8 +14681,6 @@ def test_pending_message_allows_empty_request():
     An empty `ModelRequest` reaching the queue is harmless — the drain stamps and forwards
     it, and downstream wire-merging absorbs zero-part messages as a natural no-op.
     """
-    from pydantic_ai._enqueue import PendingMessage
-
     msg = PendingMessage(messages=[ModelRequest(parts=[])])
     assert msg.priority == 'asap'
     assert msg.messages[0].parts == []
@@ -14881,8 +14967,6 @@ async def test_drain_rejects_directly_queued_content_not_ending_in_request():
     is public, so a producer can append a `PendingMessage` directly. The end-of-run drain catches a
     request-less message with a helpful `UserError` rather than a bare assertion.
     """
-    from pydantic_ai._enqueue import PendingMessage
-
     lone_response = ModelResponse(
         parts=[TextPart(content='synthetic')], usage=RequestUsage(input_tokens=1, output_tokens=1)
     )

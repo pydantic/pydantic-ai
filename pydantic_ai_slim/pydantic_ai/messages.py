@@ -3353,9 +3353,10 @@ ModelResponseStreamEvent = Annotated[
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
-    Emitted at delivery time, describing the messages exactly as they landed in history (with
-    `timestamp` / `run_id` / `conversation_id` stamped). A history processor that later rewrites
-    history does not update the event: it always reflects what was delivered.
+    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
+    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    `conversation_id` stamped). A history processor that replaces history with new message objects
+    does not affect the event, but in-place mutation of a delivered message will be visible through it.
     """
 
     enqueue_id: str
