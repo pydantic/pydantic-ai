@@ -18,7 +18,7 @@ import pydantic_core
 from pydantic import AnyUrl, Field
 from typing_extensions import Self, assert_never
 
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
 
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -590,6 +590,103 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     )
 )
 
+LIST_MCP_RESOURCES_TOOL_NAME = 'list_mcp_resources'
+READ_MCP_RESOURCE_TOOL_NAME = 'read_mcp_resource'
+
+# Unlike server tools (validated server-side, so `TOOL_SCHEMA_VALIDATOR` is a pass-through), the
+# synthesized `read_mcp_resource` tool is executed locally, so its `uri` argument needs real
+# validation here — a missing or non-string `uri` should surface as a retryable error to the model.
+READ_MCP_RESOURCE_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
+    schema=pydantic_core.core_schema.typed_dict_schema(
+        {'uri': pydantic_core.core_schema.typed_dict_field(pydantic_core.core_schema.str_schema())}
+    )
+)
+
+_LIST_MCP_RESOURCES_PARAMETERS: ObjectJsonSchema = {
+    'type': 'object',
+    'properties': {},
+    'additionalProperties': False,
+}
+_READ_MCP_RESOURCE_PARAMETERS: ObjectJsonSchema = {
+    'type': 'object',
+    'properties': {
+        'uri': {
+            'type': 'string',
+            'description': (
+                'The URI of the resource to read, e.g. "resource://product_name.txt". '
+                f'Use `{LIST_MCP_RESOURCES_TOOL_NAME}` to discover valid URIs.'
+            ),
+        }
+    },
+    'required': ['uri'],
+    'additionalProperties': False,
+}
+
+
+def _resource_tool_defs(include_return_schema: bool | None) -> list[ToolDefinition]:
+    """Build the `ToolDefinition`s for the synthesized MCP resource tools.
+
+    The `metadata['mcp_resource_tool']` marker is what `MCPToolset.call_tool` dispatches on, so
+    these tools are executed against the client's resource methods rather than forwarded to the
+    server as regular tool calls. The marker deliberately omits the `'task'` key so these tools
+    never enter the server-side task machinery.
+
+    Both tools carry a `readOnlyHint` annotation (in the same shape server tools use — a dumped
+    [`ToolAnnotations`][mcp.types.ToolAnnotations]): reading resources never mutates server state,
+    so consumers that gate on annotations (e.g. an approval predicate) treat them as read-only.
+    """
+    read_only_annotations = mcp_types.ToolAnnotations(readOnlyHint=True).model_dump()
+    return [
+        ToolDefinition(
+            name=LIST_MCP_RESOURCES_TOOL_NAME,
+            description=(
+                'List the resources available on the MCP server. Returns a list of objects with '
+                '`uri`, `name`, `description`, `mime_type`, and (when present) `annotations`. Call '
+                f'`{READ_MCP_RESOURCE_TOOL_NAME}` with a `uri` to read one.'
+            ),
+            parameters_json_schema=_LIST_MCP_RESOURCES_PARAMETERS,
+            metadata={'mcp_resource_tool': True, 'annotations': read_only_annotations},
+            include_return_schema=include_return_schema,
+        ),
+        ToolDefinition(
+            name=READ_MCP_RESOURCE_TOOL_NAME,
+            description=(
+                'Read the contents of a single MCP resource by its URI. Text resources return a '
+                'string; binary resources return their content. Use '
+                f'`{LIST_MCP_RESOURCES_TOOL_NAME}` to discover valid URIs.'
+            ),
+            parameters_json_schema=_READ_MCP_RESOURCE_PARAMETERS,
+            metadata={'mcp_resource_tool': True, 'annotations': read_only_annotations},
+            include_return_schema=include_return_schema,
+        ),
+    ]
+
+
+def _resource_to_model_dict(resource: Resource) -> dict[str, Any]:
+    """Project a `Resource` to a compact, JSON-serializable dict for the `list_mcp_resources` tool.
+
+    Only the fields the model needs to decide what to read are included (`uri`, `name`,
+    `description`, `mime_type`), plus an `annotations` sub-dict (`audience`, `priority`,
+    `last_modified`) when the resource carries annotations. UI/host-only fields (`title`, `size`,
+    `icons`, `metadata`) are omitted to keep the payload compact. The `Any` covers the
+    heterogeneous JSON values (str, float, list, nested dict); all are JSON-serializable so the
+    return round-trips through durable-execution serialization.
+    """
+    result: dict[str, Any] = {
+        'uri': resource.uri,
+        'name': resource.name,
+        'description': resource.description,
+        'mime_type': resource.mime_type,
+    }
+    if resource.annotations is not None:
+        result['annotations'] = {
+            'audience': resource.annotations.audience,
+            'priority': resource.annotations.priority,
+            'last_modified': resource.annotations.last_modified,
+        }
+    return result
+
+
 # Environment variable expansion pattern
 # Supports both ${VAR_NAME} and ${VAR_NAME:-default} syntax
 # Group 1: variable name
@@ -771,6 +868,29 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     used.
     """
 
+    expose_resources: bool
+    """Whether to expose the server's resources to the model as callable tools.
+
+    Defaults to `False`. When `True`, and the server advertises the `resources` capability, two
+    synthesized tools are added to the toolset alongside the server's own tools:
+
+    - `list_mcp_resources` — lists the concrete resources the server advertises (with their `uri`,
+      `name`, `description`, `mime_type`, and any `annotations`).
+    - `read_mcp_resource` — reads a single resource by `uri`.
+
+    This lets the model discover and read MCP resources mid-run, rather than requiring the
+    application to inject resource content out-of-band. Resource *templates* are not exposed. If
+    the server does not advertise the `resources` capability, no tools are added even when this is
+    `True`.
+
+    These synthesized tools are client-side projections over
+    [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] /
+    [`read_resource()`][pydantic_ai.mcp.MCPToolset.read_resource], so they bypass
+    [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] (which wraps server tool
+    calls). A bad URI passed to `read_mcp_resource` honors
+    [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior] like any other tool.
+    """
+
     process_tool_call: ProcessToolCallback | None
     """Hook to wrap tool calls — useful for adding request-level metadata, custom retry policies,
     or telemetry. See [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
@@ -822,6 +942,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
+        expose_resources: bool = False,
         # Sampling — high-level shortcut and low-level escape hatch
         sampling_model: models.Model | None = None,
         sampling_handler: SamplingHandler[Any, Any] | None = None,
@@ -866,6 +987,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
             include_return_schema: Whether to include return schemas in tool definitions. See
                 [`MCPToolset.include_return_schema`][pydantic_ai.mcp.MCPToolset.include_return_schema].
+            expose_resources: Whether to expose the server's resources to the model as callable
+                `list_mcp_resources` / `read_mcp_resource` tools. See
+                [`MCPToolset.expose_resources`][pydantic_ai.mcp.MCPToolset.expose_resources].
             sampling_model: A Pydantic AI model the server may sample from. Mutually exclusive with
                 `sampling_handler`.
             sampling_handler: A FastMCP-shaped sampling handler. Use for full control over the
@@ -981,6 +1105,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
+        self.expose_resources = expose_resources
         self.sampling_model = sampling_model
         self.log_level = log_level
 
@@ -1156,6 +1281,27 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
+
+        # Synthesize model-callable resource tools when opted in and the server supports resources.
+        # `list_tools()` above has already entered the session, so `capabilities` is populated.
+        if self.expose_resources and self.capabilities.resources:
+            for tool_def in _resource_tool_defs(self.include_return_schema):
+                if tool_def.name in tools:
+                    raise exceptions.UserError(
+                        f'Cannot expose MCP resources as tool {tool_def.name!r}: the server already '
+                        f'defines a tool with that name. Set `expose_resources=False` or rename the '
+                        f'server tool.'
+                    )
+                tools[tool_def.name] = ToolsetTool[AgentDepsT](
+                    toolset=self,
+                    tool_def=tool_def,
+                    max_retries=max_retries,
+                    args_validator=(
+                        READ_MCP_RESOURCE_SCHEMA_VALIDATOR
+                        if tool_def.name == READ_MCP_RESOURCE_TOOL_NAME
+                        else TOOL_SCHEMA_VALIDATOR
+                    ),
+                )
         return tools
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
@@ -1242,6 +1388,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
+        # Synthesized resource tools are client-side projections over `list_resources()` /
+        # `read_resource()`; they don't exist on the server, so they must be dispatched here before
+        # the server-tool path (`direct_call_tool` unconditionally forwards `name` to the server).
+        # We key on the `mcp_resource_tool` marker rather than the name so a server tool that shares
+        # the name can never be misrouted (and `get_tools` would have raised on that collision).
+        if (tool.tool_def.metadata or {}).get('mcp_resource_tool'):
+            return await self._call_resource_tool(name, tool_args)
+
         # Server-side task-augmented execution per MCP SEP-1686 is governed entirely by the tool's
         # `execution.taskSupport`: 'required'/'optional' → task path; 'forbidden' or absent → regular path.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
@@ -1250,6 +1404,25 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
             )
         return await self.direct_call_tool(name, tool_args, use_task=use_task)
+
+    async def _call_resource_tool(self, name: str, tool_args: dict[str, Any]) -> Any:
+        """Dispatch a synthesized resource tool to the client-side resource methods.
+
+        `read_mcp_resource` honors [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior]
+        on a bad URI (wrapping `MCPError` as `ModelRetry` under `'retry'`), consistent with server
+        tools. `tool_args['uri']` is guaranteed present and a `str` by the tool's args validator.
+        """
+        if name == LIST_MCP_RESOURCES_TOOL_NAME:
+            return [_resource_to_model_dict(resource) for resource in await self.list_resources()]
+        elif name == READ_MCP_RESOURCE_TOOL_NAME:
+            try:
+                return await self.read_resource(tool_args['uri'])
+            except MCPError as e:
+                if self.tool_error_behavior == 'retry':
+                    raise exceptions.ModelRetry(message=str(e)) from e
+                raise
+        else:  # pragma: no cover - only the two names above carry the `mcp_resource_tool` marker
+            raise ValueError(f'Unknown MCP resource tool: {name!r}')
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
