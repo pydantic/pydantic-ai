@@ -363,7 +363,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             include_glob: If provided, only search files matching this glob (e.g. '*.py').
 
         Returns:
-            Matching lines formatted as file:line_number:text.
+            str: Matching lines formatted as file:line_number:text.
         """
         # See list_directory: the search root isn't gated by allowed_patterns;
         # matched files are filtered per-entry below.

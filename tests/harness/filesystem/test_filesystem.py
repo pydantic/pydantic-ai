@@ -1050,6 +1050,17 @@ class TestFileSystemCapability:
         toolset = fs.get_toolset()
         assert isinstance(toolset, FileSystemToolset)
 
+    def test_search_files_description_has_string_return_type(self) -> None:
+        description = FileSystem().get_toolset().tools['search_files'].description
+
+        assert description == (
+            '<summary>Search file contents using a regular expression.</summary>\n'
+            '<returns>\n'
+            '<type>str</type>\n'
+            '<description>Matching lines formatted as file:line_number:text.</description>\n'
+            '</returns>'
+        )
+
     def test_protected_defaults(self) -> None:
         fs = FileSystem()
         assert '.git/*' in fs.protected_patterns
