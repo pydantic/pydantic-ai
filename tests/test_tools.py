@@ -37,7 +37,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
@@ -1453,6 +1453,27 @@ def test_async_function_tool_consistent_with_schema():
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
     assert agent._function_toolset.tools['foobar'].max_retries == 0
+
+
+@pytest.mark.anyio
+async def test_positional_or_keyword_with_var_args():
+    """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6540.
+
+    Not VCR-backed: this exercises local schema-to-call argument binding and makes no provider request.
+    """
+
+    def f(r0: int, *values: int) -> dict[str, Any]:
+        return {'r0': r0, 'values': list(values)}
+
+    tool = Tool(f)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    args = {'r0': 1, 'values': [0]}
+    result = await tool.function_schema.call(args, ctx)
+    assert result == {'r0': 1, 'values': [0]}
+    # `call` must not mutate the caller's args dict — tool-execute hooks inspect it afterwards.
+    assert args == {'r0': 1, 'values': [0]}
 
 
 def test_tool_retries():
@@ -4608,3 +4629,39 @@ def test_tooloutput_rejects_negative_max_retries():
 def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
     out = ToolOutput(int, max_retries=max_retries)
     assert out.max_retries == max_retries
+
+
+def test_tool_return_part_serializes_with_serialization_alias():
+    """Tool return serialization uses field aliases so wire output matches return_schema.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6542: the
+    `return_schema` is generated with `mode='serialization'` (advertising the
+    `serialization_alias`), but `ToolReturnPart.model_response_str()` and
+    `model_response_object()` must also serialize with `by_alias=True` so the payload
+    keys agree with the schema the model received.
+    """
+
+    class OutputModel(BaseModel):
+        value: int = Field(serialization_alias='wireOut')
+
+    def my_tool() -> OutputModel:
+        return OutputModel(value=1)
+
+    tool = Tool(my_tool)
+    # The advertised return schema uses the serialization alias.
+    return_schema = tool.function_schema.return_schema
+    assert 'wireOut' in return_schema.get('properties', {})
+
+    part = ToolReturnPart(tool_name='my_tool', content=my_tool(), tool_call_id='call-1')
+
+    # String serialization should use the alias key.
+    serialized_str = part.model_response_str()
+    assert json.loads(serialized_str) == {'wireOut': 1}
+
+    # Object serialization should use the alias key.
+    serialized_obj = part.model_response_object()
+    assert serialized_obj == {'wireOut': 1}
+
+    # The wire output keys agree with the advertised return schema properties.
+    assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
+    assert set(serialized_obj) == set(return_schema.get('properties', {}))
