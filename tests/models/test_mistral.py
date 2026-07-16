@@ -2731,21 +2731,84 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
     )
 
 
-async def test_txt_url_input(allow_model_requests: None):
+async def test_text_as_binary_content_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(
-        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
-    ):
-        await agent.run(
+    text_bytes = b'Hello, this is a text file.'
+
+    await agent.run(['hello', BinaryContent(data=text_bytes, media_type='text/plain')])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    text_chunks = [chunk for chunk in messages[0].content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text == 'hello'
+    assert text_chunks[1].text == snapshot(
+        '\n'.join(
             [
-                'hello',
-                DocumentUrl(url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt'),
+                f'-----BEGIN FILE id="{BinaryContent(data=text_bytes, media_type="text/plain").identifier}" type="text/plain"-----',
+                'Hello, this is a text file.',
+                f'-----END FILE id="{BinaryContent(data=text_bytes, media_type="text/plain").identifier}"-----',
             ]
         )
+    )
+
+
+async def test_yaml_as_binary_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    yaml_bytes = b'key: value\nlist:\n  - item1\n  - item2'
+
+    await agent.run(['hello', BinaryContent(data=yaml_bytes, media_type='application/x-yaml')])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    text_chunks = [chunk for chunk in messages[0].content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text == 'hello'
+    assert text_chunks[1].text == snapshot(
+        '\n'.join(
+            [
+                f'-----BEGIN FILE id="{BinaryContent(data=yaml_bytes, media_type="application/x-yaml").identifier}" type="application/x-yaml"-----',
+                'key: value\nlist:\n  - item1\n  - item2',
+                f'-----END FILE id="{BinaryContent(data=yaml_bytes, media_type="application/x-yaml").identifier}"-----',
+            ]
+        )
+    )
+
+
+async def test_txt_url_input(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    async def mock_download_item(item: Any, data_format: str = 'bytes', type_format: str = 'mime') -> dict[str, Any]:
+        return {'data': 'Hello World', 'data_type': 'text/plain'}
+
+    monkeypatch.setattr('pydantic_ai.models.mistral.download_item', mock_download_item)
+
+    document_url = DocumentUrl(url='https://example.com/file.txt', identifier='txtfile')
+
+    await agent.run(['hello', document_url])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    text_chunks = [chunk for chunk in messages[0].content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text == 'hello'
+    assert text_chunks[1].text == snapshot(
+        '\n'.join(
+            [
+                '-----BEGIN FILE id="txtfile" type="text/plain"-----',
+                'Hello World',
+                '-----END FILE id="txtfile"-----',
+            ]
+        )
+    )
 
 
 async def test_audio_as_binary_content_input(allow_model_requests: None):

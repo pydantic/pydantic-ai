@@ -854,3 +854,25 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
     )
+
+
+def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:
+    """Format text-like file content with BEGIN/END delimiters for inlining into a prompt.
+
+    This produces a delimited block that lets the model distinguish multiple inlined files:
+
+    ```
+    -----BEGIN FILE id="{identifier}" type="{media_type}"-----
+    {text}
+    -----END FILE id="{identifier}"-----
+    ```
+
+    The caller wraps the returned string in a provider-specific text content part.
+    """
+    return '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
+    )
