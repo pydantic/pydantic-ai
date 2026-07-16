@@ -5437,13 +5437,15 @@ def test_transformer_adds_properties_to_object_schemas():
     [
         pytest.param({'type': 'array', 'items': {}}, id='empty-items'),
         pytest.param({'type': 'array'}, id='missing-items'),
+        pytest.param({'type': 'array', 'items': True}, id='boolean-items'),
     ],
 )
 def test_transformer_untyped_array_not_strict_compatible(array_schema: dict[str, Any]):
-    """An untyped array (bare `list` -> `items: {}`, or no `items` at all) isn't strict-compatible.
+    """An untyped array isn't strict-compatible.
 
-    OpenAI strict mode requires the `items` schema to have a `type`, so with `strict=None` we must
-    infer that the schema can't be sent in strict mode.
+    This covers a bare `list` (`items: {}`), no `items` key at all, and a boolean `items: true`
+    (JSON Schema shape for `list[Any]`). OpenAI strict mode requires the `items` schema to have a
+    `type`, so with `strict=None` we must infer that the schema can't be sent in strict mode.
     See https://github.com/pydantic/pydantic-ai/issues/4425
     """
     schema: dict[str, Any] = {
