@@ -2870,9 +2870,9 @@ async def test_run_stream_error_closes_open_thinking():
 async def test_run_stream_error_closes_open_native_tool_call():
     """A mid-stream `UsageLimitExceeded` while a native tool call is open must emit `tool-input-available` before `error`.
 
-    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` is tracked in neither
-    `_open_response_part` nor `_pending_tool_calls`, so without an explicit close the AI SDK v6 client aborts at the
-    `error` chunk leaving the call stuck in an input-streaming state.
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` lands outside
+    `_pending_tool_calls` (which only holds already-dispatched calls), so without an explicit close the AI SDK v6
+    client aborts at the `error` chunk leaving the call stuck in an input-streaming state.
     """
 
     async def stream_native_tool_call(
@@ -2897,6 +2897,63 @@ async def test_run_stream_error_closes_open_native_tool_call():
             }
 
     agent = Agent(model=FunctionModel(stream_function=stream_native_tool_call))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
+    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
+    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
+    assert tool_available['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_tool_call():
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+
+    A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
+    open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
+    an explicit close the AI SDK v6 client aborts at the `error` chunk leaving the call stuck in an
+    input-streaming state.
+    """
+
+    async def stream_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
+        # run errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: DeltaToolCall(
+                    name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2'
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_tool_call))
 
     request = SubmitMessage(
         id='foo',

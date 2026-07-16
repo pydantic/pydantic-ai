@@ -90,22 +90,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
-    _open_response_part: TextPart | ThinkingPart | None = None
-    """The text or thinking part currently being streamed, if any.
+    _open_part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart | None = None
+    """The message part currently being streamed, if any.
 
-    Set on `PartStartEvent`, cleared on `PartEndEvent`. The error path closes it (emitting its
-    `*-end` event) before `on_error`, mirroring how `_pending_tool_calls` closes dangling tool
-    calls — otherwise a client that aborts at the error chunk (like the AI SDK) leaves the part
-    stuck in a streaming state.
-    """
-    _open_native_tool_call: NativeToolCallPart | None = None
-    """The native (builtin) tool call part currently being streamed, if any.
+    Assigned once the part's start event has been emitted and cleared on its `PartEndEvent`. Only one
+    part is open at a time — a part's end is emitted before the next part's start begins — so a single
+    slot covers text, thinking, function/output tool-call, and native tool-call parts alike.
 
-    Tracked separately from `_open_response_part` because a `NativeToolCallPart` lands in neither it
-    (text/thinking only) nor `_pending_tool_calls` (function/output calls only), so the error path
-    would otherwise leave it dangling. Set on `PartStartEvent`, cleared on `PartEndEvent`, and closed
-    on error via `handle_builtin_tool_call_end` before `on_error`.
+    The error path closes it — emitting its `*-end` event via `handle_part_end` — before `on_error`,
+    mirroring how `_pending_tool_calls` closes dangling dispatched tool calls. Otherwise a client that
+    aborts at the error chunk (like the AI SDK) leaves the part stuck in a streaming state.
     """
+    _open_part_index: int = 0
+    """The index of the part tracked by `_open_part`, used to reconstruct its `PartEndEvent` on error."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -178,17 +175,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         try:
             async for event in stream:
                 if isinstance(event, PartStartEvent):
-                    if isinstance(event.part, TextPart | ThinkingPart):
-                        self._open_response_part = event.part
-                    elif isinstance(event.part, NativeToolCallPart):
-                        self._open_native_tool_call = event.part
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, PartEndEvent):
-                    if isinstance(event.part, TextPart | ThinkingPart):
-                        self._open_response_part = None
-                    elif isinstance(event.part, NativeToolCallPart):
-                        self._open_native_tool_call = None
+                    # Only one part is open at a time, so this end is for `_open_part` (or it's already
+                    # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
+                    self._open_part = None
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     kind: Literal['function', 'output'] = (
@@ -225,25 +217,22 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
                 async for e in self.handle_event(event):
                     yield e
-        except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
-            # Close an open text or thinking part before emitting the error, so a client that
-            # aborts at the error chunk (like the AI SDK) doesn't leave it stuck in a streaming
-            # state. This comes first: it's a response-side event, whereas the tool-call cleanup
-            # below turns to the request side, and everything after the error chunk is dropped.
-            if (part := self._open_response_part) is not None:
-                self._open_response_part = None
-                if isinstance(part, TextPart):
-                    async for e in self.handle_text_end(part):
-                        yield e
-                else:
-                    async for e in self.handle_thinking_end(part):
-                        yield e
 
-            # Close an open native tool call too, for the same reason — it's also response-side, so it
-            # comes before the request-side tool-call cleanup below.
-            if (native_call := self._open_native_tool_call) is not None:
-                self._open_native_tool_call = None
-                async for e in self.handle_builtin_tool_call_end(native_call):
+                # Mark the part open only after its start event has been emitted, so a start hook that
+                # raises mid-emit doesn't leave the error path closing a part the client never saw.
+                if isinstance(event, PartStartEvent) and isinstance(
+                    event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
+                ):
+                    self._open_part = event.part
+                    self._open_part_index = event.index
+        except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
+            # Close the open message part before emitting the error, so a client that aborts at the
+            # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
+            # first: it's a response-side event, whereas the tool-call cleanup below turns to the
+            # request side, and everything after the error chunk is dropped.
+            if (part := self._open_part) is not None:
+                self._open_part = None
+                async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
                     yield e
 
             # Close any pending tool calls before emitting the error,
