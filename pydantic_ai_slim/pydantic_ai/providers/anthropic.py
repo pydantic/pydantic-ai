@@ -8,11 +8,10 @@ from typing import TypeAlias, overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -103,7 +102,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         else:
             api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
             if not api_key:
-                raise UserError(
+                raise missing_api_key_error(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
                     ' to use the Anthropic provider.'
                 )

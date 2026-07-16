@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -207,10 +208,18 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
+    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
+    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
+    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
+    # restricts `Path.home()` access.
+    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
+    download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
 
@@ -3400,6 +3409,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

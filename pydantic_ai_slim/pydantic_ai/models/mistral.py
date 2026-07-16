@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 import pydantic_core
 from httpx import Timeout
+from pydantic import JsonValue
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
@@ -785,8 +786,8 @@ class MistralStreamedResponse(StreamedResponse):
 
     @staticmethod
     def _try_get_output_tool_from_text(text: str, output_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
-        output_json: dict[str, Any] | None = pydantic_core.from_json(text, allow_partial='trailing-strings')
-        if output_json:
+        output_json: JsonValue = pydantic_core.from_json(text, allow_partial='trailing-strings')
+        if isinstance(output_json, dict) and output_json:
             for output_tool in output_tools.values():
                 # NOTE: Additional verification to prevent JSON validation to crash
                 # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
@@ -796,11 +797,38 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     continue
 
+                # Numeric tokens at the end of a partial document may be extended by the next chunk.
+                if not MistralStreamedResponse._validate_required_json_schema(
+                    output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
+                ):
+                    try:
+                        pydantic_core.from_json(text)
+                    except ValueError:
+                        continue
+                elif text[-1:].isdigit():
+                    # Probe whether a decimal continuation would invalidate the schema.
+                    try:
+                        extended_json = cast(
+                            dict[str, JsonValue],
+                            pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings'),
+                        )
+                    except ValueError:
+                        continue
+                    if not MistralStreamedResponse._validate_required_json_schema(
+                        extended_json, output_tool.parameters_json_schema
+                    ):
+                        continue
+
                 # The following part_id will be thrown away
                 return ToolCallPart(tool_name=output_tool.name, args=output_json)
 
     @staticmethod
-    def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
+    def _validate_required_json_schema(
+        json_dict: dict[str, JsonValue],
+        json_schema: dict[str, Any],
+        *,
+        allow_widened_numeric_match: bool = True,
+    ) -> bool:
         """Validate that all required parameters in the JSON schema are present in the JSON dictionary."""
         required_params = json_schema.get('required', [])
         properties = json_schema.get('properties', {})
@@ -812,19 +840,26 @@ class MistralStreamedResponse(StreamedResponse):
             param_schema = properties.get(param, {})
             param_type = param_schema.get('type')
             param_items_type = param_schema.get('items', {}).get('type')
+            param_value = json_dict[param]
 
             if param_type == 'array' and param_items_type:
-                if not isinstance(json_dict[param], list):
+                if not isinstance(param_value, list):
                     return False
-                for item in json_dict[param]:
-                    if not isinstance(item, VALID_JSON_TYPE_MAPPING[param_items_type]):
+                for item in param_value:
+                    if not _matches_json_type(
+                        item, param_items_type, allow_widened_numeric_match=allow_widened_numeric_match
+                    ):
                         return False
-            elif param_type and not isinstance(json_dict[param], VALID_JSON_TYPE_MAPPING[param_type]):
+            elif param_type and not _matches_json_type(
+                param_value, param_type, allow_widened_numeric_match=allow_widened_numeric_match
+            ):
                 return False
 
-            if isinstance(json_dict[param], dict) and 'properties' in param_schema:
+            if isinstance(param_value, dict) and 'properties' in param_schema:
                 nested_schema = param_schema
-                if not MistralStreamedResponse._validate_required_json_schema(json_dict[param], nested_schema):
+                if not MistralStreamedResponse._validate_required_json_schema(
+                    param_value, nested_schema, allow_widened_numeric_match=allow_widened_numeric_match
+                ):
                     return False
 
         return True
@@ -848,6 +883,19 @@ SIMPLE_JSON_TYPE_MAPPING = {
     'array': 'list',
     'null': 'None',
 }
+
+
+def _matches_json_type(value: JsonValue, json_type: str, *, allow_widened_numeric_match: bool = True) -> bool:
+    """Check whether a parsed JSON value matches a JSON Schema type."""
+    if json_type == 'number':
+        return isinstance(value, float) or (
+            allow_widened_numeric_match and isinstance(value, int) and not isinstance(value, bool)
+        )
+    if json_type == 'integer':
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            allow_widened_numeric_match and isinstance(value, float) and value.is_integer()
+        )
+    return isinstance(value, VALID_JSON_TYPE_MAPPING[json_type])
 
 
 def _map_usage(
