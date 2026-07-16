@@ -147,6 +147,11 @@ def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
     return cast('dict[str, Any]', parsed), None
 
 
+def _is_tool_return_request(message: ModelMessage) -> bool:
+    """Whether a history message is a request carrying only tool returns (an inserted tool result)."""
+    return isinstance(message, ModelRequest) and all(isinstance(part, ToolReturnPart) for part in message.parts)
+
+
 class RealtimeSession:
     """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection], building message history and auto-executing tools.
 
@@ -180,10 +185,13 @@ class RealtimeSession:
     when argument parsing or the tool itself fails, so the model never stalls waiting on a result.
 
     History is accumulated in the order events are reported, which is authoritative for turn-by-turn
-    speech but approximate at the edges: a background tool's result lands in history whenever it
-    finishes (so it may follow later assistant/user turns rather than sit right after its call), and
-    user transcripts that a provider reports asynchronously are ordered as received. Synchronous tool
-    calls and ordinary turns mirror a classic [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] history.
+    speech but approximate at the edges: user transcripts that a provider reports asynchronously are
+    ordered as received. Tool results are the exception: a background tool's
+    [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams whenever the tool
+    finishes (possibly after later turns), but in [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages]
+    its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] is placed directly after the response
+    carrying its call — request-response APIs require that adjacency, so the history stays valid for a
+    handoff to a standard [`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
     """
 
     def __init__(
@@ -521,8 +529,31 @@ class RealtimeSession:
 
     def _complete_tool_call(self, call_part: ToolCallPart, result: str) -> list[RealtimeSessionEvent]:
         return_part = ToolReturnPart(tool_name=call_part.tool_name, content=result, tool_call_id=call_part.tool_call_id)
-        self._history.append(ModelRequest(parts=[return_part]))
+        self._insert_tool_return(call_part, ModelRequest(parts=[return_part]))
         return [FunctionToolResultEvent(part=return_part)]
+
+    def _insert_tool_return(self, call_part: ToolCallPart, request: ModelRequest) -> None:
+        """Insert a tool-return request directly after the response carrying its call.
+
+        A background tool can finish after later turns, but request-response APIs demand call/return
+        adjacency (OpenAI: a `tool` message must directly follow the assistant message with the call;
+        Anthropic: the `tool_result` must open the next user message), so history keeps the canonical
+        order even though the `FunctionToolResultEvent` streams in completion order.
+        """
+        for i in range(len(self._history) - 1, -1, -1):
+            message = self._history[i]
+            if isinstance(message, ModelResponse) and any(
+                isinstance(part, ToolCallPart) and part.tool_call_id == call_part.tool_call_id for part in message.parts
+            ):
+                # Skip past returns already inserted for this response (parallel calls keep call order).
+                insert_at = i + 1
+                while insert_at < len(self._history) and _is_tool_return_request(self._history[insert_at]):
+                    insert_at += 1
+                self._history.insert(insert_at, request)
+                return
+        # The calling response is always in history (`_handle_tool_call_part` finalized it before the
+        # tool started), so this is unreachable; append rather than drop the result if it ever isn't.
+        self._history.append(request)  # pragma: no cover
 
     def _handle_input_transcript(self, text: str, is_final: bool) -> list[RealtimeSessionEvent]:
         events: list[RealtimeSessionEvent] = []

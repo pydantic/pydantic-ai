@@ -456,6 +456,46 @@ async def test_background_tool_does_not_block_other_events() -> None:
     assert conn.sent == [ToolResult(tool_call_id='bg_1', output='done in background')]
 
 
+async def test_background_tool_result_adjacent_to_call_in_history() -> None:
+    """A late background result streams last, but sits right after its call in `all_messages()`.
+
+    Request-response APIs demand call/return adjacency (OpenAI rejects a `tool` message that doesn't
+    directly follow the assistant message carrying the call), so the portable history must keep it
+    even when the model spoke again before the tool finished.
+    """
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            Transcript(text='still working on it', is_final=False),
+            TurnCompleteEvent(),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'late result'
+
+    session = RealtimeSession(conn, runner, background_tools={'slow'})
+    events = [e async for e in session]
+
+    # The result event streams in completion order: after the intervening assistant turn.
+    assert isinstance(events[-1], FunctionToolResultEvent)
+
+    # But in history the return is adjacent to its call, with the intervening turn after it.
+    call_response, tool_return, speech_response = session.all_messages()
+    assert isinstance(call_response, ModelResponse)
+    assert isinstance(call_response.parts[0], ToolCallPart)
+    assert isinstance(tool_return, ModelRequest)
+    assert isinstance(tool_return.parts[0], ToolReturnPart)
+    assert tool_return.parts[0].tool_call_id == 'bg_1'
+    assert tool_return.parts[0].content == 'late result'
+    assert isinstance(speech_response, ModelResponse)
+    assert isinstance(speech_response.parts[0], SpeechPart)
+    assert speech_response.parts[0].transcript == 'still working on it'
+
+
 class AwaitBetweenConnection(RealtimeConnection):
     """A connection that yields control between events so background tasks can progress."""
 
