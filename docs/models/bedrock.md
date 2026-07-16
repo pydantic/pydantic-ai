@@ -69,15 +69,6 @@ Other `bedrock:` model names continue to use Converse. Use `bedrock-mantle:` to 
 | `bedrock-mantle:openai.gpt-oss-safeguard-*` | OpenAI Chat Completions at `/v1` |
 | `bedrock-mantle:anthropic.*` | Anthropic Messages at `/anthropic/v1/messages` |
 
-For example, `bedrock-mantle:` is sufficient for both OpenAI and Anthropic models:
-
-```python {test="skip"}
-from pydantic_ai import Agent
-
-openai_agent = Agent('bedrock-mantle:openai.gpt-oss-120b')
-anthropic_agent = Agent('bedrock-mantle:anthropic.claude-sonnet-5')
-```
-
 GPT-OSS models support both Responses and Chat Completions. The shorthand uses Responses; construct [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] when Chat Completions is required:
 
 ```python {test="skip"}
