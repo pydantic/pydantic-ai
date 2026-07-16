@@ -1844,11 +1844,19 @@ async def test_prefect_durability_runtime_registered_model() -> None:
         name='durability_runtime_registered',
         capabilities=[PrefectDurability(models={'alt': _prefect_alt_model})],
     )
-    result = await agent.run('hello', model='alt')
-    assert result.output == 'alt-response'
 
-    result = await agent.run('hello', model=_prefect_alt_model)
-    assert result.output == 'alt-response'
+    # Separate flow runs so each request gets its own task-cache scope (Prefect caches
+    # tasks by input hash, and both requests would otherwise share the `'alt'` model task).
+    @flow
+    async def run_by_key() -> str:
+        return (await agent.run('hello', model='alt')).output
+
+    @flow
+    async def run_by_instance() -> str:
+        return (await agent.run('hello', model=_prefect_alt_model)).output
+
+    assert await run_by_key() == 'alt-response'
+    assert await run_by_instance() == 'alt-response'
 
 
 async def test_prefect_durability_override_registered_model() -> None:
@@ -1858,9 +1866,14 @@ async def test_prefect_durability_override_registered_model() -> None:
         name='durability_override_registered',
         capabilities=[PrefectDurability(models={'alt': _prefect_alt_model})],
     )
-    with agent.override(model='alt'):
-        result = await agent.run('hello')
-    assert result.output == 'alt-response'
+
+    @flow
+    async def run_agent() -> str:
+        with agent.override(model='alt'):
+            result = await agent.run('hello')
+        return result.output
+
+    assert await run_agent() == 'alt-response'
 
 
 async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
@@ -1904,13 +1917,17 @@ async def test_prefect_durability_resolve_model_id_capability_is_deps_aware() ->
         deps_type=str,
         capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
     )
-    for tenant in ('acme', 'globex'):
-        result = await agent.run('hi', model='tenant-model', deps=tenant)
-        assert result.output == f'tenant:{tenant}'
 
+    # Separate flow runs so each request gets its own task-cache scope: within one flow the
+    # `'tenant-model'` model task caches by input and would replay the first tenant's result.
+    @flow
+    async def run_agent(model_id: str, tenant: str) -> str:
+        return (await agent.run('hi', model=model_id, deps=tenant)).output
+
+    assert await run_agent('tenant-model', 'acme') == 'tenant:acme'
+    assert await run_agent('tenant-model', 'globex') == 'tenant:globex'
     # A string the resolver doesn't recognize defers to the default `infer_model` flow.
-    result = await agent.run('hi', model='test', deps='acme')
-    assert result.output == 'success (no tool calls)'
+    assert await run_agent('test', 'acme') == 'success (no tool calls)'
 
 
 async def test_prefect_durability_alias_default_model() -> None:
@@ -1926,8 +1943,13 @@ async def test_prefect_durability_alias_default_model() -> None:
         deps_type=str,
         capabilities=[ResolveModelId(_prefect_tenant_resolver), PrefectDurability()],
     )
-    result = await agent.run('hi', deps='acme')
-    assert result.output == 'tenant:acme'
+
+    @flow
+    async def run_agent() -> str:
+        result = await agent.run('hi', deps='acme')
+        return result.output
+
+    assert await run_agent() == 'tenant:acme'
 
 
 async def test_prefect_durability_allows_instrumented_default_model() -> None:
@@ -1941,8 +1963,13 @@ async def test_prefect_durability_allows_instrumented_default_model() -> None:
         name='durability_instrumented_default',
         capabilities=[Instrumentation(settings=InstrumentationSettings()), PrefectDurability()],
     )
-    result = await agent.run('hello')
-    assert result.output == 'Echo: hello'
+
+    @flow
+    async def run_agent() -> str:
+        result = await agent.run('hello')
+        return result.output
+
+    assert await run_agent() == 'Echo: hello'
 
 
 def test_prefect_durability_get_ordering() -> None:

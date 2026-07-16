@@ -2091,11 +2091,14 @@ async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:
         name='durability_runtime_registered',
         capabilities=[DBOSDurability(models={'alt': _dbos_alt_model})],
     )
-    result = await agent.run('hello', model='alt')
-    assert result.output == 'alt-response'
 
-    result = await agent.run('hello', model=_dbos_alt_model)
-    assert result.output == 'alt-response'
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, str]:
+        by_key = await agent.run('hello', model='alt')
+        by_instance = await agent.run('hello', model=_dbos_alt_model)
+        return by_key.output, by_instance.output
+
+    assert await run_agent() == ('alt-response', 'alt-response')
 
 
 async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
@@ -2105,9 +2108,14 @@ async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
         name='durability_override_registered',
         capabilities=[DBOSDurability(models={'alt': _dbos_alt_model})],
     )
-    with agent.override(model='alt'):
-        result = await agent.run('hello')
-    assert result.output == 'alt-response'
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        with agent.override(model='alt'):
+            result = await agent.run('hello')
+        return result.output
+
+    assert await run_agent() == 'alt-response'
 
 
 async def test_dbos_durability_unrebuildable_runtime_model_errors(dbos: DBOS) -> None:
@@ -2134,11 +2142,13 @@ async def test_dbos_durability_string_default_model(dbos: DBOS) -> None:
     """
     agent = Agent('test', name='durability_string_default', capabilities=[DBOSDurability()])
 
-    result = await agent.run('hello')
-    assert result.output == 'success (no tool calls)'
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, str]:
+        default = await agent.run('hello')
+        by_string = await agent.run('hello', model='test')
+        return default.output, by_string.output
 
-    result = await agent.run('hello', model='test')
-    assert result.output == 'success (no tool calls)'
+    assert await run_agent() == ('success (no tool calls)', 'success (no tool calls)')
 
 
 async def test_dbos_durability_wrapped_default_model(dbos: DBOS) -> None:
@@ -2150,8 +2160,13 @@ async def test_dbos_durability_wrapped_default_model(dbos: DBOS) -> None:
     `infer_model` and fail to rebuild.
     """
     agent = Agent(_durability_fn_model, name='durability_wrapped_default', capabilities=[DBOSDurability()])
-    result = await agent.run('hello', model=WrapperModel(_durability_fn_model))
-    assert result.output == 'Echo: hello'
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        result = await agent.run('hello', model=WrapperModel(_durability_fn_model))
+        return result.output
+
+    assert await run_agent() == 'Echo: hello'
 
 
 def _dbos_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
@@ -2179,13 +2194,15 @@ async def test_dbos_durability_resolve_model_id_capability_is_deps_aware(dbos: D
         deps_type=str,
         capabilities=[ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
     )
-    for tenant in ('acme', 'globex'):
-        result = await agent.run('hi', model='tenant-model', deps=tenant)
-        assert result.output == f'tenant:{tenant}'
 
-    # A string the resolver doesn't recognize defers to the default `infer_model` flow.
-    result = await agent.run('hi', model='test', deps='acme')
-    assert result.output == 'success (no tool calls)'
+    @DBOS.workflow()
+    async def run_agent() -> list[str]:
+        outputs = [(await agent.run('hi', model='tenant-model', deps=tenant)).output for tenant in ('acme', 'globex')]
+        # A string the resolver doesn't recognize defers to the default `infer_model` flow.
+        outputs.append((await agent.run('hi', model='test', deps='acme')).output)
+        return outputs
+
+    assert await run_agent() == ['tenant:acme', 'tenant:globex', 'success (no tool calls)']
 
 
 def _dbos_broken_resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
@@ -2207,8 +2224,13 @@ async def test_dbos_durability_user_resolver_error_propagates(dbos: DBOS) -> Non
         name='durability_broken_resolver',
         capabilities=[ResolveModelId(_dbos_broken_resolver), DBOSDurability()],
     )
-    with pytest.raises(ValueError, match='resolver exploded'):
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
         await agent.run('hello', model='broken-model')
+
+    with pytest.raises(ValueError, match='resolver exploded'):
+        await run_agent()
 
 
 async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
@@ -2224,8 +2246,13 @@ async def test_dbos_durability_alias_default_model(dbos: DBOS) -> None:
         deps_type=str,
         capabilities=[ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
     )
-    result = await agent.run('hi', deps='acme')
-    assert result.output == 'tenant:acme'
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        result = await agent.run('hi', deps='acme')
+        return result.output
+
+    assert await run_agent() == 'tenant:acme'
 
 
 async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> None:
@@ -2239,8 +2266,13 @@ async def test_dbos_durability_allows_instrumented_default_model(dbos: DBOS) -> 
         name='durability_instrumented_default',
         capabilities=[Instrumentation(settings=InstrumentationSettings()), DBOSDurability()],
     )
-    result = await agent.run('hello')
-    assert result.output == 'Echo: hello'
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        result = await agent.run('hello')
+        return result.output
+
+    assert await run_agent() == 'Echo: hello'
 
 
 def test_dbos_durability_get_ordering() -> None:
