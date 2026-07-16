@@ -349,6 +349,25 @@ def test_reminders_ignore_an_unauthorized_label_race(monkeypatch: pytest.MonkeyP
     assert client.posts == []
 
 
+def test_reminder_scan_is_bounded_before_hydration(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = FakeClient()
+    encoded = 'needs-maintainer-action'
+    client.responses[f'/repos/repo/issues?state=open&labels={encoded}&sort=updated&direction=asc'] = [
+        item(number=number, labels=[monitor._ACTION_LABEL]) for number in range(1, 12)
+    ]
+    hydrated_numbers: list[int] = []
+
+    def hydrate_item(
+        client: FakeClient, repo: str, number: int
+    ) -> tuple[dict[str, Any], list[monitor.Activity], dict[str, str | None]]:
+        hydrated_numbers.append(number)
+        return item(number=number, labels=[monitor._ACTION_LABEL]), [], {}
+
+    monkeypatch.setattr(monitor, 'hydrate', hydrate_item)
+    assert monitor.run_reminders(client, 'repo', staged=True, now=NOW) == []
+    assert hydrated_numbers == list(range(1, 11))
+
+
 def test_eligible_numbers_are_bounded_to_trigger() -> None:
     assert monitor.eligible_numbers({'issue': {'number': 42}}, 'issues') == {42}
     assert monitor.eligible_numbers(

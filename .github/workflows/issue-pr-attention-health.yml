@@ -15,7 +15,7 @@ jobs:
   report-failure:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
-      github.event.workflow_run.conclusion == 'failure'
+      contains(fromJSON('["failure", "timed_out"]'), github.event.workflow_run.conclusion)
     runs-on: ubuntu-latest
     environment: pydantic-ai-triage
     timeout-minutes: 5

@@ -24,7 +24,7 @@ from typing_extensions import TypedDict
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-_MAX_REMINDERS = 20
+_MAX_REMINDERS = 10
 _DEFAULT_OWNER = 'adtyavrdhn'
 _FINAL_RECIPIENT = 'DouweM'
 _ACTION_LABEL = 'needs-maintainer-action'
@@ -479,7 +479,7 @@ def run_reminders(client: GitHubClient, repo: str, *, staged: bool, now: dt.date
     encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
     items = client.paginate(f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc')
     lines: list[str] = []
-    for item in items:
+    for item in items[:_MAX_REMINDERS]:
         number = int(item['number'])
         current, activities, permissions = hydrate(client, repo, number)
         if _ACTION_LABEL not in _labels(current) or not _action_label_is_authorized(activities):
@@ -493,8 +493,6 @@ def run_reminders(client: GitHubClient, repo: str, *, staged: bool, now: dt.date
         if not staged:
             client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
         lines.append(f'#{number}: {"would post" if staged else "posted"} reminder {reminder["stage"]}')
-        if len(lines) >= _MAX_REMINDERS:
-            break
     return lines
 
 
