@@ -52,7 +52,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -2323,90 +2323,6 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
             )
 
 
-class SandboxContributingCapability(AbstractCapability[Any]):
-    """Capability that overrides `get_sandbox`; the hook would run as workflow code inside Temporal."""
-
-    async def get_sandbox(self, ctx: RunContext[Any]) -> Sandbox | None:
-        return None  # pragma: no cover
-
-
-sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])
-sandbox_capability_temporal_agent = TemporalAgent(sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG)
-
-
-def make_sandbox_capability(ctx: RunContext[Any]) -> AbstractCapability[Any]:
-    return SandboxContributingCapability()
-
-
-dynamic_sandbox_capability_agent = Agent(
-    model, name='dynamic_sandbox_capability_agent', capabilities=[make_sandbox_capability]
-)
-dynamic_sandbox_capability_temporal_agent = TemporalAgent(
-    dynamic_sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG
-)
-
-
-@workflow.defn
-class SandboxCapabilityAgentWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await sandbox_capability_temporal_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-@workflow.defn
-class DynamicSandboxCapabilityAgentWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await dynamic_sandbox_capability_temporal_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_model_requests: None, client: Client):
-    # A `get_sandbox` hook executes in the run body, i.e. as workflow code, where creating a sandbox
-    # (network I/O) is forbidden — rejected before the run starts. Outside workflows the same wrapped
-    # agent may use the capability freely.
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[SandboxCapabilityAgentWorkflow],
-        plugins=[AgentPlugin(sandbox_capability_temporal_agent)],
-    ):
-        with workflow_raises(
-            UserError,
-            snapshot(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the hook would execute as workflow code where creating a sandbox (network I/O) is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
-            ),
-        ):
-            await client.execute_workflow(
-                SandboxCapabilityAgentWorkflow.run,
-                args=['What is the capital of Mexico?'],
-                id=SandboxCapabilityAgentWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-
-async def test_temporal_agent_rejects_dynamic_sandbox_capability(allow_model_requests: None, client: Client):
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[DynamicSandboxCapabilityAgentWorkflow],
-        plugins=[AgentPlugin(dynamic_sandbox_capability_temporal_agent)],
-    ):
-        with workflow_raises(
-            UserError,
-            snapshot(
-                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the hook would execute as workflow code where creating a sandbox (network I/O) is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
-            ),
-        ):
-            await client.execute_workflow(
-                DynamicSandboxCapabilityAgentWorkflow.run,
-                args=['What is the capital of Mexico?'],
-                id=DynamicSandboxCapabilityAgentWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-
 def request_runtime_external_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
 
@@ -3502,7 +3418,7 @@ def test_temporal_run_context_sandbox_unavailable():
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
 
     serialized = TemporalRunContext.serialize_run_context(ctx)
-    assert '_sandbox_holder' not in serialized
+    assert 'sandbox' not in serialized
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     with pytest.raises(
@@ -3558,7 +3474,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
-        '_sandbox_holder',  # live sandbox handle, can't cross the boundary; `sandbox` raises UserError with guidance
+        'sandbox',  # live sandbox handle, can't cross the boundary; accessing it raises UserError with guidance
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

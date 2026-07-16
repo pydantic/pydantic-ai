@@ -266,7 +266,6 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 - **`str` in output_type allows plain text to end the run**: If your union includes `str` (or no `output_type` is set), the model can return plain text instead of structured output. Omit `str` from the union to force tool-based output.
 - **Hook decorator names on `.on` don't repeat `on_`**: Use `hooks.on.run_error` and `hooks.on.model_request_error` — not `hooks.on.on_run_error`.
 - **`history_processors` is deprecated; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. The kwarg still works in 1.x but emits a `PydanticAIDeprecationWarning` and will be removed in v2.
-- **Sandbox capabilities cannot be deferred**: a capability that overrides `get_sandbox` must not use `defer_loading=True`; acquisition and teardown need to bracket the whole run.
 
 ## Task-Family References
 

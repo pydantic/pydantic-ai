@@ -47,7 +47,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
                 raise e
 
     @property
-    def sandbox(self) -> Sandbox | None:
+    def sandbox(self) -> Sandbox | None:  # pyright: ignore[reportIncompatibleVariableOverride] — deliberately raises instead of silently returning None
         """Not available inside a Temporal activity; see [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 
         A live sandbox handle cannot be serialized across the activity boundary, so unlike other

@@ -33,30 +33,6 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
-@dataclasses.dataclass
-class SandboxHolder:
-    """Internal carrier for a run's sandbox slot and its provenance — not part of the public API.
-
-    Created once per run and shared by reference into every `RunContext` built for the run
-    (like `_mcp_tool_defs_cache`), so the readonly `RunContext.sandbox` property observes the
-    same slot across steps, `dataclasses.replace` copies, and capability context clones. The
-    slot is filled either at assembly time (`sandbox=` run argument) or once inside the run
-    body (capability `get_sandbox` resolution), and cleared at run-body exit for
-    capability-contributed sandboxes.
-    """
-
-    value: Sandbox | None = None
-    """The run's sandbox; `None` before one is contributed and after run-body-exit clearing."""
-    from_capability: bool = False
-    """Whether `value` came from a capability's `get_sandbox` rather than the `sandbox=` run argument.
-
-    This provenance gates the clearing at run-body exit: a capability-contributed sandbox may
-    be torn down by its capability's `wrap_run` `finally` the moment the run body returns, so
-    the slot must be emptied before the wrap chain unwinds; a run-argument sandbox is
-    caller-owned, outlives the run, and stays.
-    """
-
-
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -161,15 +137,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
     depends only on the run's own history and stays replay-deterministic.
     """
 
-    _sandbox_holder: SandboxHolder = field(default_factory=lambda: SandboxHolder(), repr=False)
-    """Private implementation detail — not part of the public API; do not read or write.
+    sandbox: Sandbox | None = None
+    """The [`Sandbox`][pydantic_ai.sandbox.Sandbox] attached to this run via the `sandbox=` run argument, if any.
 
-    One-slot carrier for the run's sandbox, created once per run and shared by reference into
-    every `RunContext` built for the run so the readonly `sandbox` property observes the same
-    slot across steps and context copies. Read via [`sandbox`][pydantic_ai.tools.RunContext.sandbox].
+    Set once at run assembly and available for the whole run, from the earliest hooks on.
+    Pydantic AI never manages the sandbox's lifecycle — the caller that supplied it owns
+    creation and teardown. Treat it as read-only.
 
     Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
-    Temporal activity boundaries; see the sandbox docs for the durable-execution pattern.
+    Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for
+    the durable-execution pattern.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
@@ -211,22 +188,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     for the full set of currently-callable tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
-
-    @property
-    def sandbox(self) -> Sandbox | None:
-        """The [`Sandbox`][pydantic_ai.sandbox.Sandbox] attached to this run, if any.
-
-        Readonly, resolved at most once per run: either the `sandbox=` argument passed to the
-        run method (which takes precedence and is available from the earliest hooks on), or
-        the sandbox contributed by a capability's
-        [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook
-        (available from `before_run` through the end of the run body). Pydantic AI never
-        manages the sandbox's lifecycle — whoever supplied it owns creation and teardown; a
-        capability-contributed sandbox is cleared from the context when the run body finishes,
-        so `after_run`/`on_run_error` hooks and toolset `__aexit__` see `None` rather than a
-        possibly-torn-down handle. See the sandbox docs for the full availability matrix.
-        """
-        return self._sandbox_holder.value
 
     @property
     def last_attempt(self) -> bool:

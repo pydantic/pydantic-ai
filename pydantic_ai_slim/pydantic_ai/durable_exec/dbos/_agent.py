@@ -24,8 +24,7 @@ from pydantic_ai.agent import (
     WrapperAgent,
 )
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability
-from pydantic_ai.capabilities._run_validation import run_capability_validation
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -51,23 +50,6 @@ if TYPE_CHECKING:
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
 """
-
-_SANDBOX_CAPABILITY_REJECTION = (
-    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
-    'workflow: acquiring live external state in workflow code is not replay-safe. Pass a serializable '
-    'reference on `deps` and re-open the sandbox inside a DBOS step instead.'
-)
-
-
-def _reject_sandbox_capability(capability: AbstractCapability[Any]) -> None:
-    if capability.has_get_sandbox:
-        raise UserError(_SANDBOX_CAPABILITY_REJECTION)
-
-
-def _reject_known_sandbox_capabilities(capabilities: Sequence[AgentCapability[Any]] | None) -> None:
-    for capability in capabilities or ():
-        if isinstance(capability, AbstractCapability):
-            _reject_sandbox_capability(cast(AbstractCapability[Any], capability))
 
 
 @DBOS.dbos_class()
@@ -179,10 +161,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with (
-                self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler),
-                run_capability_validation(_reject_sandbox_capability),
-            ):
+            with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
                 return await super(WrapperAgent, self).run(
                     user_prompt,
                     output_type=output_type,
@@ -232,10 +211,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with (
-                self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler),
-                run_capability_validation(_reject_sandbox_capability),
-            ):
+            with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
                 return super(DBOSAgent, self).run_sync(
                     user_prompt,
                     output_type=output_type,
@@ -468,8 +444,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
-        _reject_sandbox_capability(self.wrapped.root_capability)
-        _reject_known_sandbox_capabilities(capabilities)
         # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
         # not forwarded into (and so never part of) the durable workflow inputs.
         if sandbox is not None:
@@ -625,8 +599,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
-        _reject_sandbox_capability(self.wrapped.root_capability)
-        _reject_known_sandbox_capabilities(capabilities)
         # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
         # not forwarded into (and so never part of) the durable workflow inputs.
         if sandbox is not None:

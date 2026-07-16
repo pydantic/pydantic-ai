@@ -82,16 +82,6 @@ Used with the [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
-
-class _SandboxKwargs(TypedDict, total=False):
-    sandbox: Sandbox
-
-
-def _sandbox_kwargs(sandbox: Sandbox | None) -> _SandboxKwargs:
-    """Only forward the new keyword when used, preserving older custom agent subclasses."""
-    return {'sandbox': sandbox} if sandbox is not None else {}
-
-
 AgentInstructions = _instructions.AgentInstructions
 """Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
 
@@ -489,11 +479,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -520,8 +508,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             retries=retries,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
-            **_sandbox_kwargs(sandbox),
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node.
             # When event_stream_handler is set or a capability overrides wrap_run_event_stream,
@@ -687,11 +675,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -719,8 +705,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
-                **_sandbox_kwargs(sandbox),
             )
         )
 
@@ -850,11 +836,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -885,8 +869,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=False,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
-            **_sandbox_kwargs(sandbox),
         ) as agent_run:
             # Handle wrap_run short-circuit: result is already available
             if agent_run.result is not None:
@@ -1161,11 +1145,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1192,8 +1174,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
-                **_sandbox_kwargs(sandbox),
             )
         )
 
@@ -1335,11 +1317,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1368,8 +1348,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
+                sandbox=sandbox,
                 spec=spec,
-                **_sandbox_kwargs(sandbox),
             )
 
         return _RunStreamEventsContext(run_agent)
@@ -1534,11 +1514,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:

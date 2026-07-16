@@ -47,14 +47,12 @@ from .._agent_graph import (
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import SandboxHolder
 from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities._run_validation import validate_run_capabilities
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -1056,11 +1054,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1224,13 +1220,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
-        # One holder per run, shared by reference into every RunContext (see the invariant on
-        # `GraphAgentDeps.sandbox_holder`). A sandbox passed to the run method fills the slot
-        # here at assembly time — it is then available from `for_run` on, and capability
-        # `get_sandbox` hooks are never consulted. Otherwise the slot is filled (at most once)
-        # inside the run body, at the top of `_do_run` below.
-        sandbox_holder = SandboxHolder(value=sandbox)
-
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
@@ -1251,7 +1240,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
-            _sandbox_holder=sandbox_holder,
+            sandbox=sandbox,
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1294,9 +1283,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
         resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
-        # Durable integrations install policies here so they can validate capability-function
-        # results after `for_run()` resolves them but before any lifecycle or acquisition hook runs.
-        validate_run_capabilities(resolved_layers)
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
         # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
@@ -1449,7 +1435,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
-            sandbox_holder=sandbox_holder,
+            sandbox=sandbox,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1506,43 +1492,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             async def _do_run() -> AgentRunResult[Any]:
                 nonlocal _wrap_context
-                try:
-                    # Resolve the run's sandbox at most once, before `before_run`. This runs
-                    # inside every participating capability's `wrap_run` frame (`_do_run` is
-                    # the innermost handler of the wrap chain), so a capability that acquires
-                    # a sandbox in `get_sandbox` can guarantee teardown in its own `wrap_run`
-                    # `finally`. Skipped entirely when a sandbox was passed to the run method.
-                    if sandbox_holder.value is None and run_capability.has_get_sandbox:
-                        sandbox_holder.value = await run_capability.get_sandbox(run_ctx)
-                        sandbox_holder.from_capability = sandbox_holder.value is not None
-                    await run_capability.before_run(run_ctx)
-                    # Capture context vars set by wrap_run/before_run so
-                    # they can be propagated to the outer task where
-                    # agent_run.next() (and therefore node hooks) execute.
-                    _current_ctx = contextvars.copy_context()
-                    _wrap_context = [
-                        (var, _current_ctx[var])
-                        for var in _current_ctx
-                        if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
-                    ]
-                    _run_ready.set()
-                    await _run_done.wait()
-                    if _run_error is not None:
-                        # Raise the original node error, not the potentially
-                        # transformed version from context manager __aexit__ chains.
-                        raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                    r = agent_run.result
-                    assert r is not None
-                    return r
-                finally:
-                    # A capability-contributed sandbox may be torn down by its capability's
-                    # `wrap_run` as soon as `_do_run` returns, so clear the slot here — before
-                    # the wrap chain unwinds — so `after_run`/`on_run_error` hooks and toolset
-                    # `__aexit__` (all of which run later) see `None` rather than a
-                    # possibly-destroyed handle. A run-argument sandbox is caller-owned and
-                    # outlives the run, so it stays.
-                    if sandbox_holder.from_capability:
-                        sandbox_holder.value = None
+                await run_capability.before_run(run_ctx)
+                # Capture context vars set by wrap_run/before_run so
+                # they can be propagated to the outer task where
+                # agent_run.next() (and therefore node hooks) execute.
+                _current_ctx = contextvars.copy_context()
+                _wrap_context = [
+                    (var, _current_ctx[var])
+                    for var in _current_ctx
+                    if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
+                ]
+                _run_ready.set()
+                await _run_done.wait()
+                if _run_error is not None:
+                    # Raise the original node error, not the potentially
+                    # transformed version from context manager __aexit__ chains.
+                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
+                r = agent_run.result
+                assert r is not None
+                return r
 
             _outer_context = contextvars.copy_context()
             _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -1591,10 +1559,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             except BaseException as exc:
                 # A failure here (e.g. a toolset `__aenter__` raising) would otherwise leave
                 # `_do_run` parked on `_run_done.wait()` forever: the wrap chain never unwinds,
-                # capability `wrap_run` cleanup (`finally` blocks holding resources such as a
-                # capability-contributed sandbox) never runs, and `_wrap_task` leaks as a
-                # permanently pending task. Mirror the readiness-wait failure path above:
-                # unpark `_do_run`, drain the wrap chain, then re-raise.
+                # capability `wrap_run` cleanup (`finally` blocks holding run-scoped resources)
+                # never runs, and `_wrap_task` leaks as a permanently pending task. Mirror the
+                # readiness-wait failure path above: unpark `_do_run`, drain the wrap chain,
+                # then re-raise.
                 _run_error = exc
                 _run_done.set()
                 await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
@@ -2858,11 +2826,6 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     """
     explicit_ids: set[str] = set()
     for cap in capabilities:
-        if cap.defer_loading is True and cap.has_get_sandbox:
-            raise exceptions.UserError(
-                '`get_sandbox` cannot be used with `defer_loading=True`. Sandbox acquisition '
-                'must be active for the whole run so its `wrap_run` hook can bracket teardown.'
-            )
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
                 'Deferred capabilities must use stable explicit `id` values. '

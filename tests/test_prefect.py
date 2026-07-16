@@ -34,7 +34,6 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai._run_context import SandboxHolder
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
@@ -1417,7 +1416,7 @@ def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        _sandbox_holder=SandboxHolder(value=sandbox),
+        sandbox=sandbox,
     )
 
 
@@ -1475,7 +1474,7 @@ async def test_prefect_flow_forwards_sandbox_to_tools():
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        _sandbox_holder=SandboxHolder(value=cast(Sandbox, OtherProviderSandbox('sandbox-1'))),
+        sandbox=cast(Sandbox, OtherProviderSandbox('sandbox-1')),
     )
     assert cache_policy.compute_key(
         task_ctx=mock_task_ctx, inputs={'ctx': other}, flow_parameters={}
@@ -1530,7 +1529,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     }
     # Fields carried into the projection under a derived key rather than verbatim.
     projected_via_derived_key = {
-        '_sandbox_holder',  # projected as 'sandbox' (provider, sandbox_id), only when a sandbox is attached
+        'sandbox',  # projected as (provider, sandbox_id), only when a sandbox is attached
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])

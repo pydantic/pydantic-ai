@@ -28,22 +28,19 @@ async def main() -> None:
 
 `LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. Keep approval, command restrictions, output limits, and path policy in the tool layer.
 
-## Ownership and precedence
+## Ownership
 
-- `run(sandbox=...)` wins over capability-provided sandboxes and remains caller-owned.
-- A capability can override `get_sandbox` for per-run or shared acquisition. It owns what it returns.
-- For per-run state, return a fresh capability instance from `for_run`, acquire in `get_sandbox`, and close in `wrap_run`'s `finally`.
-- Do not combine `get_sandbox` with `defer_loading=True`; teardown cannot safely bracket a capability loaded partway through a run.
-- If several capabilities contribute, the latest resolved capability is consulted first. Earlier providers are fallbacks when later ones return `None`.
+- The caller of `run(sandbox=...)` owns the sandbox: create it before the run, tear it down after (typically an `async with` around the run).
+- The handle is available on `ctx.sandbox` for the whole run; sharing one sandbox across runs is just passing the same handle to each run.
 
 ## Durable execution
 
 Live sandbox handles do not cross durable boundaries:
 
-- Temporal workflows reject `sandbox=` and sandbox-providing capabilities. Carry a serializable `{provider, sandbox_id}` reference and re-open it inside an activity.
-- DBOS durable `run` and `run_sync` reject both routes. Re-open by reference inside a tool decorated with `@DBOS.step()`.
-- Prefect includes provider-qualified sandbox identity in tool-task cache keys, but the caller or capability still owns lifecycle.
+- Temporal workflows reject `sandbox=`. Carry a serializable `{provider, sandbox_id}` reference and re-open it inside an activity.
+- DBOS durable `run` and `run_sync` reject `sandbox=`. Re-open by reference inside a tool decorated with `@DBOS.step()`.
+- Prefect includes provider-qualified sandbox identity in tool-task cache keys, but the caller still owns lifecycle.
 
 Keep credentials worker-side, make create/open operations idempotent, and use a server-side TTL because terminated workflows do not run cleanup.
 
-See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for the protocol, lifecycle phase table, and implementation contracts.
+See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for the protocol, lifecycle rules, and implementation contracts.

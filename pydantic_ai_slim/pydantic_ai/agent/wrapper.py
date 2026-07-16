@@ -4,8 +4,6 @@ from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, overload
 
-from typing_extensions import TypedDict
-
 from .. import (
     _instructions,
     _utils,
@@ -40,14 +38,6 @@ from .abstract import (
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
     from .spec import AgentSpec
-
-
-class _SandboxKwargs(TypedDict, total=False):
-    sandbox: Sandbox
-
-
-def _sandbox_kwargs(sandbox: Sandbox | None) -> _SandboxKwargs:
-    return {'sandbox': sandbox} if sandbox is not None else {}
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -283,11 +273,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
-            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed as the readonly
-                [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox]. Takes precedence over any sandbox a
-                capability would contribute via
-                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] (capability hooks are then
-                never invoked). The caller owns its lifecycle: create it before the run and tear it down after.
+            sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
+                and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+                The caller owns its lifecycle: create it before the run and tear it down after.
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -310,8 +298,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             capabilities=capabilities,
+            sandbox=sandbox,
             spec=spec,
-            **_sandbox_kwargs(sandbox),
         ) as run:
             yield run
 

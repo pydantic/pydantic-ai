@@ -3,36 +3,30 @@
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
 that an agent run can execute commands in and read/write files of. Pydantic AI defines the
 protocol only: any object that structurally satisfies [`Sandbox`][pydantic_ai.sandbox.Sandbox]
-can be attached to a run, either directly via the `sandbox=` argument to the run methods or
-contributed by a capability via
-[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Tools and
-capabilities then reach it through the readonly
+can be attached to a run via the `sandbox=` argument to the run methods. Tools and
+capabilities then reach it through the read-only
 [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
 
 This is a *usage* interface: creating, destroying, sharing, and reconnecting sandboxes is the
 business of whoever supplies one, never of Pydantic AI or of code that merely uses the sandbox.
-See the [sandbox documentation](../sandbox.md) for the lifecycle rules, the availability matrix,
-and how sandboxes interact with durable execution.
+See the [sandbox documentation](../sandbox.md) for the lifecycle rules and how sandboxes
+interact with durable execution.
 
 The protocol is deliberately a floor, not a ceiling: implementations are expected to offer
-richer surfaces (reconnection, snapshotting, streaming limits, provider-native escape hatches)
-on their concrete types. Code written against the protocol must only rely on what is
-documented here. The floor is also frozen once released: because conformance is structural,
-adding a member to any protocol in this module silently breaks every existing implementation,
-which stops conforming the moment the member it lacks appears — documenting the new member as
-optional-may-raise-`NotImplementedError` doesn't help, since it must still *exist* to
-typecheck. New operations must therefore arrive on concrete types or as new, separate
-protocols, never as members of these.
+richer surfaces (reconnection, snapshotting, streaming limits) on their concrete types, and
+code written against the protocol must only rely on what is documented here. The floor is
+also frozen once released: because conformance is structural, adding a member to any protocol
+in this module silently breaks every existing implementation. New operations must arrive on
+concrete types or as new, separate protocols, never as members of these.
 
 Every type in this module — including the plain data carriers
 [`SandboxResult`][pydantic_ai.sandbox.SandboxResult],
 [`SandboxOutputChunk`][pydantic_ai.sandbox.SandboxOutputChunk], and
 [`SandboxFileEntry`][pydantic_ai.sandbox.SandboxFileEntry] — is a protocol rather than a
 concrete class for the same reason: a sandbox library's existing native types conform as-is,
-so attaching one requires no pydantic-ai dependency, no adapter layer, and no lossy copy of
-richer provider objects into pydantic-ai ones. The carriers declare their members as
+with no pydantic-ai dependency or adapter layer. The carriers declare their members as
 *read-only properties* deliberately: a bare annotated protocol member demands a settable
-attribute, which frozen dataclasses and properties fail to satisfy — declared read-only,
+attribute, which frozen dataclass fields and properties fail to satisfy — declared read-only,
 plain attributes, dataclass fields (frozen included), and properties all conform.
 
 Contracts every implementation must honor:
@@ -256,11 +250,9 @@ class Sandbox(Protocol):
     supplier of a sandbox always owns its lifecycle.
 
     This is the module's only `@runtime_checkable` protocol, because it is the boundary
-    object handed to `sandbox=` and worth an `isinstance` sanity check there. Such checks are
-    shallow — they verify member *presence*, not signatures or member types (`isinstance`
-    can't see that `fs` is a proper [`SandboxFilesystem`][pydantic_ai.sandbox.SandboxFilesystem]),
-    so decorating the inner protocols would add nothing: full conformance is the type
-    checker's job. Verify it statically, e.g. `sandbox: Sandbox = MySandbox(...)`.
+    object handed to `sandbox=`. `isinstance` checks are shallow (member presence, not
+    signatures), so full conformance is the type checker's job: verify it statically, e.g.
+    `sandbox: Sandbox = MySandbox(...)`.
     """
 
     @property

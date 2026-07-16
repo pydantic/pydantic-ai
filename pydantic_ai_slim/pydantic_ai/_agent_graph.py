@@ -38,7 +38,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
-from ._run_context import SandboxHolder, set_current_run_context
+from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
+    from .sandbox import Sandbox
 
 __all__ = (
     'GraphAgentState',
@@ -340,10 +341,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
-    # Same shared-by-reference invariant as the sets above: one holder per run, mutated in place
-    # (slot fill at resolution, slot clear at run-body exit), never reassigned, so the readonly
-    # `RunContext.sandbox` property observes the same slot from every context copy.
-    sandbox_holder: SandboxHolder
+    # Set once at run assembly from the `sandbox=` run argument; never changes during the run.
+    sandbox: Sandbox | None
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -1966,15 +1965,15 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
-        _sandbox_holder=ctx.deps.sandbox_holder,
+        sandbox=ctx.deps.sandbox,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache`, `_sandbox_holder` (see the
-    # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg —
-    # forking the object would silently break in-step capability loads / tool reveals / message enqueues /
-    # tool-defs caching / sandbox access.
+    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs
+    # caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 

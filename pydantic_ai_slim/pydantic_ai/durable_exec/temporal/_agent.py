@@ -26,8 +26,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability
-from pydantic_ai.capabilities._run_validation import run_capability_validation
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -50,18 +49,6 @@ from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
-
-
-_SANDBOX_CAPABILITY_REJECTION = (
-    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal '
-    'workflow: the hook would execute as workflow code where creating a sandbox (network I/O) is '
-    'forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
-)
-
-
-def _reject_sandbox_capability(capability: AbstractCapability[Any]) -> None:
-    if capability.has_get_sandbox:
-        raise UserError(_SANDBOX_CAPABILITY_REJECTION)
 
 
 @dataclass
@@ -313,7 +300,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             self._temporal_model.using_model(model),
             _utils.disable_threads(),
             _agent_graph.set_agent_graph_sleep(workflow.sleep),
-            run_capability_validation(_reject_sandbox_capability),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
             try:
@@ -459,14 +445,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
                     'serializable reference on `deps` instead and re-open the sandbox inside your tools.'
                 )
-            # A `get_sandbox` hook would run in the run body, i.e. as workflow code, where creating a sandbox
-            # (network I/O) is forbidden. Check both the wrapped agent's bound capability chain and any per-run
-            # capabilities. Outside workflows the hook is fine: it runs in-process like any other agent run.
-            if self.wrapped.root_capability.has_get_sandbox or any(
-                isinstance(capability, AbstractCapability) and capability.has_get_sandbox
-                for capability in capabilities or ()
-            ):
-                raise UserError(_SANDBOX_CAPABILITY_REJECTION)
             resolved_model = None
         else:
             resolved_model = self._temporal_model.resolve_model(model)

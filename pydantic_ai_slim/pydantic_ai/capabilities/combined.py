@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -39,7 +38,6 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandbox import Sandbox
     from pydantic_graph import End
 
 
@@ -75,14 +73,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
-
-    @property
-    def has_get_sandbox(self) -> bool:
-        # A subclass may override `get_sandbox` on the container itself (not just on leaves),
-        # so check both — mirroring `WrapperCapability.has_get_sandbox`.
-        return type(self).get_sandbox is not CombinedCapability.get_sandbox or any(
-            c.has_get_sandbox for c in self.capabilities
-        )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
@@ -210,31 +200,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
-
-    async def get_sandbox(self, ctx: RunContext[AgentDepsT]) -> Sandbox | None:
-        # The capability latest in the resolved chain wins, matching the reversed dispatch of
-        # `after_run`/`get_wrapper_toolset` and the later-wins model-settings merge. Earlier
-        # capabilities are only consulted when every later one returned None, so a losing
-        # capability never acquires a sandbox it would immediately have to discard.
-        available: list[tuple[AbstractCapability[AgentDepsT], RunContext[AgentDepsT]]] = []
-        for capability in self.capabilities:
-            if capability.has_get_sandbox and (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
-                available.append((capability, cap_ctx))
-        if len(available) > 1:
-            # Detection is side-effect-free (override identity, no hooks fire); the resolution
-            # below stays winner-only. Silent last-wins would make one capability's sandbox
-            # quietly shadow another's — say so once, at the moment it happens.
-            warnings.warn(
-                f'{len(available)} capabilities override `get_sandbox`; the one latest in the resolved '
-                'capability chain is consulted first, and earlier ones only when later ones return None',
-                UserWarning,
-                stacklevel=2,
-            )
-        for capability, cap_ctx in reversed(available):
-            sandbox = await capability.get_sandbox(cap_ctx)
-            if sandbox is not None:
-                return sandbox
-        return None
 
     # --- Tool preparation hooks ---
 
