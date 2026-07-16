@@ -669,6 +669,19 @@ def test_subagent_request_limit_is_a_constant():
     assert shim.SUBAGENT_REQUEST_LIMIT == 75
 
 
+def test_attention_dynamic_workflow_is_bounded_to_specialists():
+    """Attention triage gets a tiny purpose-built crew, not recursive free-form delegation."""
+    from pydantic_ai.models.test import TestModel
+
+    workflow = shim.attention_dynamic_workflow(TestModel())
+    assert workflow.max_agent_calls == 2
+    assert workflow.max_retries == 1
+    assert workflow.inherit_model is True
+    assert workflow.sub_agent_usage_limits is not None
+    assert workflow.sub_agent_usage_limits.request_limit == 8
+    assert {agent.name for agent in workflow.agents} == {'issue_evidence', 'pr_evidence'}
+
+
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
     # The Task tool spawns a sub-Agent on ctx.model with the read-only tool
     # set, runs the given prompt, and returns the sub-agent's output.

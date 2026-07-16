@@ -50,6 +50,7 @@ import httpx
 import logfire
 from anthropic import AsyncAnthropic
 from pydantic import ValidationError
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import NativeTool, ProcessEventStream, ProcessHistory
@@ -176,6 +177,44 @@ SUBAGENT_INSTRUCTIONS = (
     'shell out. Investigate the task you were given and return a concise, '
     'evidence-grounded answer to your caller — do not try to act on it.'
 )
+
+ATTENTION_ISSUE_SPECIALIST_INSTRUCTIONS = (
+    'You are the issue-evidence specialist for Pydantic AI maintainer attention triage. '
+    'Given a complete issue snapshot, decide who must take the next meaningful action: a maintainer, '
+    'the contributor, automation, nobody, or uncertain. Validity, importance, age, and inactivity alone '
+    'do not imply maintainer action. Give a concise evidence-grounded recommendation; never mutate state.'
+)
+
+ATTENTION_PR_SPECIALIST_INSTRUCTIONS = (
+    'You are the PR-evidence specialist for Pydantic AI maintainer attention triage. Given a complete PR '
+    'snapshot including CI and reviews, decide who must take the next meaningful action: a maintainer, '
+    'the contributor, automation, nobody, or uncertain. Distinguish review-ready work from contributor '
+    'changes and pending CI. Give a concise evidence-grounded recommendation; never mutate state.'
+)
+
+
+def attention_dynamic_workflow(model: Model) -> DynamicWorkflow[object]:
+    """Build the bounded specialist crew used only by attention triage."""
+    issue_evidence = Agent(
+        model,
+        name='issue_evidence',
+        description='Resolve ambiguous issue validity, project-decision, and next-actor evidence.',
+        instructions=ATTENTION_ISSUE_SPECIALIST_INSTRUCTIONS,
+    )
+    pr_evidence = Agent(
+        model,
+        name='pr_evidence',
+        description='Resolve ambiguous PR readiness, review, CI, and next-actor evidence.',
+        instructions=ATTENTION_PR_SPECIALIST_INSTRUCTIONS,
+    )
+    return DynamicWorkflow(
+        agents=[issue_evidence, pr_evidence],
+        max_agent_calls=2,
+        max_retries=1,
+        inherit_model=True,
+        sub_agent_usage_limits=UsageLimits(request_limit=8),
+        resource_limits={'max_duration_secs': 20},
+    )
 
 
 # History compaction (pydantic-ai `ProcessHistory` capability). Two stages
@@ -852,6 +891,11 @@ async def run(
 ) -> int:
     """Run one agent turn and emit Claude-shape stream-json. Always emits a `result` line."""
     reset_context_state()
+    dynamic_capabilities = (
+        [attention_dynamic_workflow(model)]
+        if os.environ.get('PYDANTIC_AI_DYNAMIC_WORKFLOW') == 'attention-triage'
+        else []
+    )
     agent: Agent[object, str] = Agent(
         model,
         instructions=[INSTRUCTIONS, prompt],
@@ -860,6 +904,7 @@ async def run(
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
+            *dynamic_capabilities,
         ],
     )
     limits = UsageLimits(request_limit=REQUEST_LIMIT)
