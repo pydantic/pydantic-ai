@@ -7,10 +7,9 @@ from typing import Literal, overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
     from google.genai.client import Client
@@ -130,7 +129,7 @@ class GoogleProvider(BaseGoogleProvider):
         # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
         api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
         if api_key is None:
-            raise UserError(
+            raise missing_api_key_error(
                 'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                 ' to use the Gemini API.'
             )

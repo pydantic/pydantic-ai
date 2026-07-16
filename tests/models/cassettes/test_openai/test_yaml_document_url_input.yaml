@@ -419,7 +419,7 @@ interactions:
                 Examples:
                   - examples/*.md
 
-        # DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
+        # DON'T PUT REDIRECTS IN THIS FILE! Add them to the `redirects` block in the unified-docs repo (pydantic/unified-docs, astro.config.mjs).
 
         hooks:
           - "docs/.hooks/main.py"
@@ -880,7 +880,7 @@ interactions:
                     Examples:
                       - examples/*.md
 
-            # DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
+            # DON'T PUT REDIRECTS IN THIS FILE! Add them to the `redirects` block in the unified-docs repo (pydantic/unified-docs, astro.config.mjs).
 
             hooks:
               - "docs/.hooks/main.py"

@@ -116,19 +116,6 @@
     ]
   },
   {
-    "label": "Pydantic AI Harness",
-    "items": [
-      {
-        "label": "Overview",
-        "slug": "harness/overview"
-      },
-      {
-        "label": "Code Mode",
-        "slug": "harness/code-mode"
-      }
-    ]
-  },
-  {
     "label": "Pydantic Evals",
     "items": [
       {
