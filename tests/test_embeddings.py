@@ -81,9 +81,18 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
+    import torch
     from sentence_transformers import SentenceTransformer
 
-    from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+    import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
+    from pydantic_ai.embeddings.sentence_transformers import (
+        SentenceTransformerEmbeddingModel,
+        SentenceTransformersEmbeddingSettings,
+    )
+
+
+STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1592,7 +1601,7 @@ class TestSentenceTransformers:
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('HF_HUB_OFFLINE', '1')
             try:
-                model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+                model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
             except OSError as e:  # pragma: no cover
                 # A cold HF cache under offline mode (or an unreachable/rate-limited
                 # Hub) raises OSError; skip rather than fail so a HF outage never reds
@@ -1602,7 +1611,7 @@ class TestSentenceTransformers:
         # Under HF_HUB_OFFLINE the model card isn't fetched, so `model_id` is unset
         # and the model would report its name as 'unknown'. Set it explicitly to
         # match the name users get online (a no-op when the card did load).
-        model.model_card_data.model_id = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+        model.model_card_data.model_id = STSB_BERT_TINY_MODEL
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
 
@@ -1616,6 +1625,87 @@ class TestSentenceTransformers:
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'
         assert model.base_url is None
+
+    async def test_adapter_without_downloaded_model(self, monkeypatch: pytest.MonkeyPatch):
+        """VCR cannot exercise a local adapter, so cover it without a downloaded model."""
+        st_model = MagicMock(spec=SentenceTransformer)
+        st_model.model_card_data = MagicMock()
+        st_model.model_card_data.model_id = 'test-model'
+        st_model.encode_query.return_value.tolist.return_value = [[0.1, 0.2]]
+        st_model.encode_document.return_value.tolist.return_value = [[0.3, 0.4], [0.5, 0.6]]
+        st_model.get_max_seq_length.return_value = 512
+        st_model.tokenize.return_value = {'input_ids': torch.tensor([[1, 2, 3]])}
+
+        def preserve_model(model: SentenceTransformer) -> SentenceTransformer:
+            return model
+
+        monkeypatch.setattr(sentence_transformers_module, 'deepcopy', preserve_model)
+
+        model = SentenceTransformerEmbeddingModel(
+            st_model,
+            settings=SentenceTransformersEmbeddingSettings(
+                dimensions=2,
+                sentence_transformers_batch_size=2,
+                sentence_transformers_device='cpu',
+                sentence_transformers_normalize_embeddings=True,
+            ),
+        )
+        embedder = Embedder(model)
+
+        query_result = await embedder.embed_query('hello')
+        assert query_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2]],
+                inputs=['hello'],
+                input_type='query',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_query.assert_called_once_with(
+            ['hello'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+
+        documents_result = await embedder.embed_documents(['hello', 'world'])
+        assert documents_result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.3, 0.4], [0.5, 0.6]],
+                inputs=['hello', 'world'],
+                input_type='document',
+                model_name='test-model',
+                provider_name='sentence-transformers',
+                timestamp=IsDatetime(),
+            )
+        )
+        st_model.encode_document.assert_called_once_with(
+            ['hello', 'world'],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            convert_to_tensor=False,
+            device='cpu',
+            normalize_embeddings=True,
+            truncate_dim=2,
+            batch_size=2,
+        )
+        assert await embedder.max_input_tokens() == 512
+        assert await embedder.count_tokens('hello') == 3
+
+        loaded_model = MagicMock(spec=SentenceTransformer)
+        loaded_model.get_max_seq_length.return_value = 256
+        constructor = MagicMock(return_value=loaded_model)
+        monkeypatch.setattr(sentence_transformers_module, 'SentenceTransformer', constructor)
+
+        lazy_embedder = Embedder(SentenceTransformerEmbeddingModel('lazy-model'))
+        assert await lazy_embedder.max_input_tokens() == 256
+        constructor.assert_called_once_with('lazy-model')
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
