@@ -32,8 +32,8 @@ from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtim
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
-    disable_threads,
     capture_event_stream,
+    disable_threads,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
@@ -129,6 +129,22 @@ async def _heartbeating() -> AsyncGenerator[None]:
         with suppress(asyncio.CancelledError):
             # Anything but our own cancellation is a `beat()` crash — propagate it.
             await task
+
+
+def _with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
+    """Return a copy of `retry_policy` with the framework's non-retryable errors ensured.
+
+    `UserError` and `PydanticUserError` won't be fixed by re-running the activity, and an
+    `UnexpectedModelBehavior` (e.g. a model staying suspended past the continuation ceiling)
+    would only re-incur the request's cost. A user-supplied `retry_policy` in any activity
+    config would otherwise replace the base policy wholesale and silently drop these, so the
+    guarantee is re-applied after every merge that may override the policy.
+    """
+    retry_policy = copy.copy(retry_policy) if retry_policy else RetryPolicy()
+    existing = retry_policy.non_retryable_error_types or []
+    additional = [UserError.__name__, PydanticUserError.__name__, UnexpectedModelBehavior.__name__]
+    retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
+    return retry_policy
 
 
 @dataclass(init=False)
@@ -234,17 +250,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             if activity_config
             else ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
         )
-        retry_policy = copy.copy(activity_config.get('retry_policy') or RetryPolicy())
-        retry_policy.non_retryable_error_types = [
-            *(retry_policy.non_retryable_error_types or []),
-            UserError.__name__,
-            PydanticUserError.__name__,
-            # A model misbehaving in a way the framework can't interpret (e.g. staying suspended
-            # past the continuation ceiling) won't be fixed by re-running the whole request chain,
-            # which would only re-incur its cost.
-            UnexpectedModelBehavior.__name__,
-        ]
-        activity_config['retry_policy'] = retry_policy
+        activity_config['retry_policy'] = _with_non_retryable_errors(activity_config.get('retry_policy'))
         self.activity_config = activity_config
         # The model activities heartbeat in the background (see `_heartbeating`), so give them a
         # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
@@ -253,6 +259,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             **activity_config,
             **(model_activity_config or {}),
         }
+        # A `retry_policy` in `model_activity_config` would otherwise replace the normalized
+        # base policy and drop the non-retryable entries.
+        self._model_activity_config['retry_policy'] = _with_non_retryable_errors(
+            self._model_activity_config.get('retry_policy')
+        )
         self._toolset_activity_config = toolset_activity_config or {}
 
         # These are populated by for_agent()
@@ -451,10 +462,19 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'within the workflow.'
                 )
 
+            toolset_activity_config: ActivityConfig = {
+                **self.activity_config,
+                **self._toolset_activity_config.get(ts_id, {}),
+            }
+            # A `retry_policy` in the per-toolset config would otherwise replace the
+            # normalized base policy and drop the non-retryable entries.
+            toolset_activity_config['retry_policy'] = _with_non_retryable_errors(
+                toolset_activity_config.get('retry_policy')
+            )
             wrapped = _default_temporalize_toolset(
                 ts,
                 activity_name_prefix,
-                {**self.activity_config, **self._toolset_activity_config.get(ts_id, {})},
+                toolset_activity_config,
                 {},  # per-tool config comes from tool metadata on the capability path
                 deps_type,
                 self.run_context_type,

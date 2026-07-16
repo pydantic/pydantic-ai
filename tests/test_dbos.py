@@ -2405,27 +2405,27 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     durability = DBOSDurability(event_stream_handler=handler)
     agent = Agent(TestModel(), name='durability_handler', tools=[handled_tool], capabilities=[durability])
 
+    wfid = str(uuid.uuid4())
+
     @DBOS.workflow()
     async def run_durable_agent() -> str:
         return (await agent.run('Hello')).output
 
-    await run_durable_agent()
+    with SetWorkflowID(wfid):
+        await run_durable_agent()
     events = [event for event, _ in events_in_boundary]
     assert events
-    assert all(
-        in_boundary
-        for event, in_boundary in events_in_boundary
-        if isinstance(event, (PartStartEvent, PartDeltaEvent, FinalResultEvent))
-    )
-    assert all(
-        not in_boundary
-        for event, in_boundary in events_in_boundary
-        if isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
-    )
+    # Model events run inside the model-request step; tool events run inside a dedicated
+    # event-handler step. Either way the handler always runs inside a checkpointed step.
+    assert all(in_boundary for _, in_boundary in events_in_boundary)
     assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'durability_handler__event_stream_handler' in step_names
 
 
 async def test_dbos_durability_event_stream_handler_outside_workflow(dbos: DBOS) -> None:

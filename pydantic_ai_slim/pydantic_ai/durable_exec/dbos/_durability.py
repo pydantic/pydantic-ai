@@ -89,8 +89,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
-                live inside model-request steps, and tool events are handled inline in
-                workflow code.
+                live inside model-request steps, and each tool event is handled in its own
+                event-handler step.
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
             parallel_execution_mode: Tool-call execution mode applied for the duration
@@ -108,6 +108,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._request_step: Any = None
         self._request_stream_step: Any = None
         self._cancel_suspended_response_step: Any = None
+        self._event_stream_handler_step: Any = None
         self._auto_run_workflow: Callable[..., Awaitable[Any]] | None = None
         self._auto_run_sync_workflow: Callable[..., Any] | None = None
 
@@ -189,6 +190,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         bound._cancel_suspended_response_step = cancel_suspended_response_step
 
+        if bound._event_stream_handler is not None:
+            handler = bound._event_stream_handler
+
+            @DBOS.step(name=f'{bound.name}__event_stream_handler', **bound._model_step_config)
+            async def event_stream_handler_step(
+                event: _messages.AgentStreamEvent, run_context: RunContext[Any]
+            ) -> None:
+                await handler(run_context, bound._single_event_stream(event))
+
+            bound._event_stream_handler_step = event_stream_handler_step
+
         # --- MCP toolset wrapping ---
         for toolset in agent.toolsets:
             bound._dbosify_leaf_toolsets(toolset)
@@ -202,8 +214,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        assert self._event_stream_handler is not None
-        await self._event_stream_handler(ctx, self._single_event_stream(event))
+        # Route the handler through a DBOS step so its side effects are checkpointed and
+        # don't re-run when the workflow recovers.
+        assert self._event_stream_handler_step is not None
+        await self._event_stream_handler_step(event, ctx)
 
     def _install_workflow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Replace `agent.run` and `agent.run_sync` with DBOS-workflow-decorated wrappers.

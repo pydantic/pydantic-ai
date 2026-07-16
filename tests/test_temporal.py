@@ -5273,6 +5273,57 @@ def test_durability_activity_config_not_mutated():
     ]
 
 
+def test_durability_custom_retry_policy_keeps_non_retryable_errors():
+    """A caller-supplied `retry_policy` must not drop the framework's non-retryable errors.
+
+    A `retry_policy` in `model_activity_config` or a per-toolset config would otherwise
+    replace the normalized base policy wholesale, letting a `UserError` or a
+    continuation-ceiling `UnexpectedModelBehavior` retry the whole (paid) segment.
+    """
+    toolset = FunctionToolset[None](id='my_toolset')
+
+    async def my_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    toolset.add_function(my_tool)
+
+    durability = TemporalDurability(
+        model_activity_config=ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ModelError'])),
+        toolset_activity_config={
+            'my_toolset': ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ToolError'])),
+        },
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='custom_retry_agent',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[durability],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    model_retry = bound._model_activity_config.get('retry_policy')  # pyright: ignore[reportPrivateUsage]
+    assert model_retry is not None
+    assert model_retry.non_retryable_error_types == [
+        'ModelError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+    ]
+
+    toolset_wrapper = bound._temporal_toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(toolset_wrapper, TemporalFunctionToolset)
+    toolset_retry = toolset_wrapper.activity_config.get('retry_policy')
+    assert toolset_retry is not None
+    assert toolset_retry.non_retryable_error_types == [
+        'ToolError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+    ]
+
+
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 

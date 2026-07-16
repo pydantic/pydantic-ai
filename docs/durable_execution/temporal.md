@@ -204,7 +204,7 @@ If you need one or more of these attributes to be available inside activities, y
 
 Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
 
-For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity.
+For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity. As with any Temporal activity, a handler may run more than once if an activity retries, so keep its side effects idempotent.
 
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] and use [`Agent.run()`][pydantic_ai.agent.Agent.run] inside the workflow. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
@@ -226,7 +226,7 @@ This has a few operational implications:
 - **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Activities heartbeat automatically, with a default `heartbeat_timeout` of 30 seconds.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
-- **Payload size**: with an [event stream handler](#streaming), each segment's buffered events must fit within Temporal's 2MB payload limit.
+- **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's 2MB payload limit.
 
 !!! note
     If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: tools and capabilities running inside activities read them from the [`RunContext`][pydantic_ai.tools.RunContext], e.g. to adapt to the run's remaining [usage budget](../agent.md#usage-limits).

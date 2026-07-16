@@ -188,7 +188,7 @@ agent = Agent(
 
 When running inside a Prefect flow, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] works but doesn't provide real-time streaming because Prefect tasks consume their entire execution before returning results. The method will execute fully and return the complete result at once.
 
-For handlers with I/O side effects, pass `event_stream_handler=` to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Model events are delivered live inside each model-request task, while each tool event is delivered in its own event-handler task. Configure those per-event tasks with `event_stream_handler_task_config=`.
+For handlers with I/O side effects, pass `event_stream_handler=` to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Model events are delivered live inside each model-request task, while each tool event is delivered in its own event-handler task. Configure those per-event tasks with `event_stream_handler_task_config=`. As with any Prefect task, a handler may run more than once if a task retries, so keep its side effects idempotent.
 
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
