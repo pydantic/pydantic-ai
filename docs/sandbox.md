@@ -13,8 +13,9 @@ from pydantic_ai.sandbox import Sandbox
 
 
 async def analyze(sandbox: Sandbox) -> str:
-    await sandbox.fs.write_text('/workspace/count.py', 'print(sum(range(10)))')
-    result = await sandbox.run(['python', '/workspace/count.py'], timeout=30)
+    path = await sandbox.resolve('count.py')  # relative to the sandbox's working directory
+    await sandbox.fs.write_text(path, 'print(sum(range(10)))')
+    result = await sandbox.run(['python', path], timeout=30)
     if result.exit_code != 0:
         return f'failed: {result.stderr}'
     return result.stdout
@@ -69,7 +70,7 @@ async def main() -> None:
 
 Because the caller owns the sandbox, sharing one across several runs (state persists between conversations) is just passing the same handle to each run.
 
-**2. From a capability** — a capability's [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook returns the sandbox *as an async context manager*, and the run enters it when the run starts and exits it when the run ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except `for_run` and initial metadata factories:
+**2. From a capability** — a capability's [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook returns the sandbox *as an async context manager*, and the run enters it when the run starts and exits it when the run ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except run assembly — `for_run` on capabilities and toolsets, and initial metadata factories, which all resolve before the contribution is entered:
 
 ```python {title="sandbox_capability.py"}
 from contextlib import AbstractAsyncContextManager

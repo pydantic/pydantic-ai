@@ -122,8 +122,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Set once per run — from the `sandbox=` run argument (caller-owned, available from the
     earliest hooks on) or from a capability's
     [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution
-    (entered and exited by the run itself, available everywhere except `for_run` and initial
-    metadata factories). Treat it as read-only.
+    (entered and exited by the run itself, available everywhere except run assembly:
+    `for_run` on capabilities and toolsets, and initial metadata factories). Treat it as
+    read-only.
 
     Not available in `TemporalRunContext` — a live sandbox handle is not serializable across
     Temporal activity boundaries; see the [sandbox docs](../sandbox.md#durable-execution) for

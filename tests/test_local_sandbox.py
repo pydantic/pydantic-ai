@@ -210,6 +210,13 @@ async def test_default_root_is_a_temp_dir_removed_on_exit():
     assert not root.exists()
 
 
+async def test_temp_root_already_deleted_on_exit_does_not_raise():
+    async with LocalSandbox() as sandbox:
+        root = Path(await sandbox.working_dir())
+        await sandbox.fs.remove(str(root))  # a command or tool may delete the root itself
+    assert not root.exists()
+
+
 async def test_caller_supplied_root_is_never_removed(tmp_path: Path):
     async with LocalSandbox(tmp_path) as sandbox:
         await sandbox.fs.write_text(str(tmp_path / 'keep.txt'), 'kept')

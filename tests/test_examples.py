@@ -910,6 +910,9 @@ async def model_logic(  # noqa: C901
             for part in message.parts
             if isinstance(part, UserPromptPart) and isinstance(part.content, str)
         ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the sandbox, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
         if 'Profile the script and fix the hot spot.' in prompts:

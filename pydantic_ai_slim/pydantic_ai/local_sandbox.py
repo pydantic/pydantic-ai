@@ -181,7 +181,12 @@ class LocalSandbox:
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
     ) -> None:
         if self._owns_root and self._root is not None:
-            await asyncio.to_thread(shutil.rmtree, self._root)
+            try:
+                await asyncio.to_thread(shutil.rmtree, self._root)
+            except FileNotFoundError:
+                # A command or `fs.remove()` may have deleted the root already; exiting
+                # must not raise (it would mask the exception that ended the block).
+                pass
 
     async def working_dir(self) -> str:
         return str(self._root_path)
