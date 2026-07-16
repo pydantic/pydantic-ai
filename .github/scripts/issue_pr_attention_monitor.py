@@ -28,11 +28,11 @@ _SLA = dt.timedelta(days=3)
 _MAX_CANDIDATES = 20
 _MAX_WORKERS = 12
 _DEFAULT_RECIPIENT = 'adtyavrdhn'
-_ESCALATION_RECIPIENT = 'DouweM'
+_DOUWE_RECIPIENT = 'DouweM'
 _MAINTAINER_ASSOCIATIONS = frozenset({'OWNER', 'MEMBER', 'COLLABORATOR'})
 _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
 _MARKER = re.compile(
-    r'<!-- pydantic-ai-attention-monitor stage=(?P<stage>[12]) '
+    r'<!-- pydantic-ai-attention-monitor stage=(?P<stage>[123]) '
     r'recipient=(?P<recipient>[A-Za-z0-9-]+) -->'
 )
 
@@ -57,9 +57,9 @@ class Activity(TypedDict):
 
 
 class MonitorState(TypedDict):
-    """Latest active escalation marker emitted by this workflow."""
+    """Latest active reminder marker emitted by this workflow."""
 
-    stage: Literal[1, 2]
+    stage: Literal[1, 2, 3]
     recipient: str
     created_at: str
 
@@ -88,17 +88,25 @@ def choose_primary_recipient(assignees: Iterable[Assignee]) -> str:
 
 
 def latest_monitor_state(activities: Iterable[Activity], primary_recipient: str) -> MonitorState | None:
-    """Return an active monitor escalation, reset by reassignment or maintainer response."""
+    """Return an active reminder, reset by reassignment or maintainer response."""
     markers: list[tuple[dt.datetime, MonitorState]] = []
     timeline = list(activities)
     for activity in timeline:
         match = _MARKER.search(activity.get('body', ''))
         if match:
+            stage_text = match.group('stage')
+            stage: Literal[1, 2, 3]
+            if stage_text == '1':
+                stage = 1
+            elif stage_text == '2':
+                stage = 2
+            else:
+                stage = 3
             markers.append(
                 (
                     _activity_time(activity),
                     MonitorState(
-                        stage=1 if match.group('stage') == '1' else 2,
+                        stage=stage,
                         recipient=match.group('recipient'),
                         created_at=activity['created_at'],
                     ),
@@ -108,7 +116,7 @@ def latest_monitor_state(activities: Iterable[Activity], primary_recipient: str)
         return None
 
     marker_time, state = max(markers, key=lambda entry: entry[0])
-    if state['stage'] == 1 and state['recipient'].casefold() != primary_recipient.casefold():
+    if state['stage'] in {1, 2} and state['recipient'].casefold() != primary_recipient.casefold():
         return None
     if any(
         _activity_time(a) > marker_time
@@ -119,25 +127,27 @@ def latest_monitor_state(activities: Iterable[Activity], primary_recipient: str)
     return state
 
 
-def next_escalation(
+def next_reminder(
     *,
     activities: Iterable[Activity],
     assignees: Iterable[Assignee],
     last_activity_at: dt.datetime,
     now: dt.datetime,
-) -> tuple[Literal[1, 2], str] | None:
-    """Return the due escalation stage and deterministic recipient."""
+) -> tuple[Literal[1, 2, 3], str] | None:
+    """Return the due reminder stage and deterministic recipient."""
     primary = choose_primary_recipient(assignees)
     state = latest_monitor_state(activities, primary)
     if state is None:
         if now - last_activity_at < _SLA:
             return None
         return 1, primary
-    if state['stage'] == 2:
+    if state['stage'] == 3:
         return None
     if now - _parse_time(state['created_at']) < _SLA:
         return None
-    return 2, _ESCALATION_RECIPIENT
+    if state['stage'] == 1:
+        return 2, primary
+    return 3, _DOUWE_RECIPIENT
 
 
 class GitHubClient:
@@ -281,13 +291,15 @@ def _permission(client: GitHubClient, repo: str, login: str) -> str | None:
         raise
 
 
-def render_comment(item: Mapping[str, Any], stage: Literal[1, 2], recipient: str) -> str:
+def render_comment(item: Mapping[str, Any], stage: Literal[1, 2, 3], recipient: str) -> str:
     """Render one reminder plus its machine-readable state marker."""
     noun = 'PR' if item['kind'] == 'pull_request' else 'issue'
     if stage == 1:
         message = f'@{recipient} this {noun} has had no GitHub activity for three days.'
+    elif stage == 2:
+        message = f'@{recipient} second ping: this {noun} is still waiting three days after the first reminder.'
     else:
-        message = f'@{recipient} this {noun} is still waiting three days after the first maintainer reminder.'
+        message = f'@{recipient} pinging you because this {noun} is still waiting three days after the second reminder.'
     return (
         f'{message}\n\n'
         f'**Last GitHub activity:** {item["last_activity_at"]}\n\n'
@@ -306,10 +318,10 @@ def _write_summary(path: str | None, *, staged: bool, total: int, due: list[dict
         f'- Notifications selected: {len(due)}',
     ]
     for item in due:
-        escalation = item['next_escalation']
+        reminder = item['next_reminder']
         lines.append(
-            f'- {item["url"]}: Stage {escalation["stage"]} to '
-            f'`@{escalation["recipient"]}` (last activity {item["last_activity_at"]})'
+            f'- {item["url"]}: reminder {reminder["stage"]} to '
+            f'`@{reminder["recipient"]}` (last activity {item["last_activity_at"]})'
         )
     with Path(path).open('a', encoding='utf-8') as summary:
         summary.write('\n'.join(lines) + '\n')
@@ -328,9 +340,9 @@ def main() -> int:
     items = client.paginate(f'/repos/{repo}/issues?state=open&sort=updated&direction=asc')
     now = dt.datetime.now(dt.timezone.utc)
     stale = [item for item in items if now - _parse_time(item['updated_at']) >= _SLA]
-    query = f'repo:{repo} is:open "pydantic-ai-attention-monitor stage=1" in:comments'
-    pending_stage_two = client.search_issues(query)
-    candidates_by_number = {int(item['number']): item for item in [*stale, *pending_stage_two]}
+    query = f'repo:{repo} is:open "pydantic-ai-attention-monitor" in:comments'
+    pending_reminders = client.search_issues(query)
+    candidates_by_number = {int(item['number']): item for item in [*stale, *pending_reminders]}
     candidate_items: list[dict[str, Any]] = list(candidates_by_number.values())
     hydrate = functools.partial(_safe_hydrate, client, repo)
     with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
@@ -350,21 +362,21 @@ def main() -> int:
             for login in item.pop('assignee_logins')
         ]
         last_activity = _parse_time(item['last_activity_at'])
-        escalation = next_escalation(
+        reminder = next_reminder(
             activities=item['activities'], assignees=assignees, last_activity_at=last_activity, now=now
         )
-        if escalation is None:
+        if reminder is None:
             continue
-        stage, recipient = escalation
+        stage, recipient = reminder
         item['assignees'] = assignees
-        item['next_escalation'] = {'stage': stage, 'recipient': recipient}
+        item['next_reminder'] = {'stage': stage, 'recipient': recipient}
         due.append(item)
 
-    due.sort(key=lambda item: (item['next_escalation']['stage'] != 2, item['last_activity_at']))
+    due.sort(key=lambda item: (-item['next_reminder']['stage'], item['last_activity_at']))
     selected = due[:_MAX_CANDIDATES]
     for item in selected:
-        escalation = item['next_escalation']
-        body = render_comment(item, escalation['stage'], escalation['recipient'])
+        reminder = item['next_reminder']
+        body = render_comment(item, reminder['stage'], reminder['recipient'])
         if staged:
             print(f'WOULD COMMENT {item["url"]}:\n{body}\n')
         else:
