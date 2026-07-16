@@ -32,7 +32,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -793,7 +793,6 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
         assert v == snapshot(
             [
                 {'first': 'One'},
-                {'first': 'One', 'second': 2},
                 {'first': 'One', 'second': 2, 'bool_value': True},
                 {'first': 'One', 'second': 2, 'bool_value': True, 'nullable_value': None},
                 {
@@ -955,7 +954,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([1, 1, 1])
+        assert v == snapshot([1, 1])
         assert result.is_complete
         assert result.usage.input_tokens == 6
         assert result.usage.output_tokens == 6
@@ -1019,6 +1018,45 @@ async def test_stream_result_type_numeric_json_retries_malformed_continuation(
         assert await result.get_output() == expected
 
     assert len(get_mock_chat_completion_kwargs(mock_client)) == 2
+
+
+class _StaleIntField(TypedDict):
+    value: int
+
+
+@pytest.mark.parametrize(
+    'output_type, json_chunks',
+    [
+        pytest.param(int, ('{"response":1', '.5}'), id='top-level-int'),
+        pytest.param(list[int], ('{"response":[1', '.5]}'), id='array-of-int'),
+        pytest.param(_StaleIntField, ('{"value":1', '.5}'), id='object-int-field'),
+    ],
+)
+async def test_stream_output_defers_stale_integer_prefix(
+    allow_model_requests: None,
+    output_type: Any,
+    json_chunks: tuple[str, str],
+) -> None:
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/6504.
+
+    When a chunk boundary falls inside a number right after an integral prefix (`1`) and the
+    completed value is non-integral (`1.5`), the partial parse (e.g. `{"response": 1`) used to be
+    emitted as a stale `1`. The completed `1.5` then fails `integer` validation, so nothing replaced
+    the stale args and the run silently returned `1` — a value the model never produced. The emission
+    must instead be deferred until the number is complete, so the invalid `1.5` reaches the
+    output-retry path rather than being silently truncated. As the issue notes, a top-level integer,
+    an integer array item, and an integer object field all share this hazard.
+    """
+    stream = [text_chunk(json_chunks[0]), text_chunk(json_chunks[1], finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent: Agent[None, Any] = Agent(model=model, output_type=output_type)
+
+    # `run_stream` exhausts output retries and raises while entering the context manager, so the
+    # body never runs.
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        async with agent.run_stream('User prompt value'):
+            pass  # pragma: no cover
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
