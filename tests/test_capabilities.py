@@ -1019,6 +1019,7 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.6',
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
+                        'moonshotai:kimi-k3',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',

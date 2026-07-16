@@ -73,7 +73,7 @@ def test_moonshotai_model_profile_thinking():
     provider = MoonshotAIProvider(api_key='api-key')
 
     # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
-    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed'):
+    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
         profile = provider.model_profile(reasoning_model)
         assert profile is not None
         assert profile.get('supports_thinking') is True
