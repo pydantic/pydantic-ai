@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
@@ -52,7 +52,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -2319,6 +2319,48 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
                 SimpleAgentWorkflowWithRunSandbox.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunSandbox.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+class SandboxContributingCapability(AbstractCapability[Any]):
+    """Capability whose contributed sandbox would be entered as workflow code inside Temporal."""
+
+    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        return None  # pragma: no cover
+
+
+sandbox_capability_agent = Agent(model, name='sandbox_capability_agent', capabilities=[SandboxContributingCapability()])
+sandbox_capability_temporal_agent = TemporalAgent(sandbox_capability_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class SandboxCapabilityAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await sandbox_capability_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_model_requests: None, client: Client):
+    # A contributed sandbox would be entered as workflow code, where I/O is forbidden — rejected
+    # before the run starts. Outside workflows the same wrapped agent may use the capability freely.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SandboxCapabilityAgentWorkflow],
+        plugins=[AgentPlugin(sandbox_capability_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
+            ),
+        ):
+            await client.execute_workflow(
+                SandboxCapabilityAgentWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=SandboxCapabilityAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
 

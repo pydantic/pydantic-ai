@@ -24,7 +24,7 @@ from pydantic_ai.agent import (
     WrapperAgent,
 )
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -41,6 +41,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from .._sandbox import contributes_sandbox
 from ._model import DBOSModel
 from ._utils import StepConfig
 
@@ -444,6 +445,19 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
+        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # replay-safe. Checked statically over the bound chain and per-run capabilities; a
+        # contributor produced at run time by a dynamic capability function cannot be caught here.
+        if contributes_sandbox(self.wrapped.root_capability) or any(
+            isinstance(capability, AbstractCapability)
+            and contributes_sandbox(cast(AbstractCapability[Any], capability))
+            for capability in capabilities or ()
+        ):
+            raise UserError(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
+                'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
+            )
         # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
         # not forwarded into (and so never part of) the durable workflow inputs.
         if sandbox is not None:
@@ -599,6 +613,19 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
         self._reject_unsupported_runtime_toolsets(toolsets)
+        # A `get_sandbox` contribution would be entered as replayed workflow code, which is not
+        # replay-safe. Checked statically over the bound chain and per-run capabilities; a
+        # contributor produced at run time by a dynamic capability function cannot be caught here.
+        if contributes_sandbox(self.wrapped.root_capability) or any(
+            isinstance(capability, AbstractCapability)
+            and contributes_sandbox(cast(AbstractCapability[Any], capability))
+            for capability in capabilities or ()
+        ):
+            raise UserError(
+                'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run in a DBOS durable '
+                'workflow: the sandbox would be entered in workflow code, which is replayed during recovery. '
+                'Pass a serializable reference on `deps` and re-open the sandbox inside a DBOS step instead.'
+            )
         # Checked before entering the workflow, whose arguments are pickled; the sandbox is deliberately
         # not forwarded into (and so never part of) the durable workflow inputs.
         if sandbox is not None:

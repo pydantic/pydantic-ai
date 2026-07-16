@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -1157,6 +1158,11 @@ class FakeRunSandbox:
     sandbox_id = 'fake-sandbox'
 
 
+class SandboxContributingCapability(AbstractCapability[Any]):
+    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        return None  # pragma: no cover
+
+
 _SANDBOX_REJECTION_MESSAGE = (
     'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
     'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
@@ -1174,6 +1180,22 @@ async def test_dbos_agent_run_sync_rejects_sandbox(dbos: DBOS):
     # Rejected before `dbos_wrapped_run_sync_workflow` is entered, i.e. before its arguments are pickled.
     with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
         simple_dbos_agent.run_sync('Hello', sandbox=cast(Sandbox, FakeRunSandbox()))
+
+
+async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
+    # A `get_sandbox` contribution would be entered in workflow code, which is replayed during
+    # recovery. Checked statically over both the bound chain and per-run capabilities.
+    static_agent = DBOSAgent(
+        Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])
+    )
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await static_agent.run('Hello')
+
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        await simple_dbos_agent.run('Hello', capabilities=[SandboxContributingCapability()])
+
+    with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
+        simple_dbos_agent.run_sync('Hello', capabilities=[SandboxContributingCapability()])
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):

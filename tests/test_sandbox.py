@@ -1,22 +1,24 @@
 """Tests for the sandbox concept: the `Sandbox` protocol and the read-only `RunContext.sandbox`
-field populated from the `sandbox=` run argument."""
+field, populated from the `sandbox=` run argument or a capability's `get_sandbox` contribution."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandbox import Sandbox
+from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -270,3 +272,152 @@ async def test_sandbox_available_during_streamed_run():
         async for _chunk in stream.stream_text():
             pass
     assert seen == ['streamed']
+
+
+@dataclass
+class SandboxCapability(AbstractCapability[Any]):
+    """Canonical contributor: a fresh sandbox per run, entered and exited by the run itself."""
+
+    name: str = 'cap'
+    events: list[str] = field(default_factory=lambda: [])
+
+    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        self.events.append(f'{self.name}:offered')
+
+        @asynccontextmanager
+        async def per_run_sandbox() -> AsyncGenerator[Sandbox]:
+            self.events.append(f'{self.name}:enter')
+            try:
+                yield FakeSandbox(self.name)
+            finally:
+                self.events.append(f'{self.name}:exit')
+
+        return per_run_sandbox()
+
+
+async def test_capability_sandbox_reaches_tools_and_is_bracketed_by_the_run():
+    cap = SandboxCapability()
+    seen: list[str] = []
+    agent = make_probe_agent(seen, capabilities=[cap])
+    result = await agent.run('go')
+    assert result.output == 'done'
+    assert seen == ['cap']
+    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+
+
+async def test_capability_sandbox_live_through_after_run():
+    """The run exits the sandbox after `after_run`, so hooks never see a dead handle."""
+
+    @dataclass
+    class ContributingWatcher(SandboxCapability):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            self.events.append(f'after_run:{_describe(ctx.sandbox)}')
+            return result
+
+    cap = ContributingWatcher()
+    await make_probe_agent([], capabilities=[cap]).run('go')
+    assert cap.events == ['cap:offered', 'cap:enter', 'after_run:cap', 'cap:exit']
+
+
+async def test_run_argument_wins_over_capability():
+    cap = SandboxCapability(name='loser')
+    seen: list[str] = []
+    agent = make_probe_agent(seen, capabilities=[cap])
+    await agent.run('go', sandbox=FakeSandbox('direct'))
+    assert seen == ['direct']
+    assert cap.events == []
+
+
+async def test_last_capability_in_chain_wins_and_losers_are_never_consulted():
+    first = SandboxCapability(name='first')
+    last = SandboxCapability(name='last')
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[first, last]).run('go')
+    assert seen == ['last']
+    assert first.events == []
+
+
+async def test_capability_returning_none_falls_back_to_earlier_capability():
+    @dataclass
+    class Abstaining(SandboxCapability):
+        def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+            self.events.append(f'{self.name}:offered-none')
+            return None
+
+    contributor = SandboxCapability(name='contributor')
+    abstainer = Abstaining(name='abstainer')
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[contributor, abstainer]).run('go')
+    assert seen == ['contributor']
+    assert abstainer.events == ['abstainer:offered-none']
+
+
+async def test_warm_sandbox_shared_across_runs():
+    warm = FakeSandbox('warm')
+
+    @dataclass
+    class WarmSandboxCapability(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+            return nullcontext(warm)
+
+    observed: list[Any] = []
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[WarmSandboxCapability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        observed.append(ctx.sandbox)
+        return 'ok'
+
+    await agent.run('one')
+    await agent.run('two')
+    assert observed == [warm, warm]
+
+
+async def test_deferred_capability_never_contributes():
+    cap = SandboxCapability(name='deferred')
+    cap.id = 'deferred-sandbox'
+    cap.defer_loading = True
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[cap]).run('go')
+    assert seen == ['none']
+    assert cap.events == []
+
+
+async def test_wrapper_capability_forwards_get_sandbox():
+    inner = SandboxCapability(name='inner')
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')
+    assert seen == ['inner']
+    assert inner.events == ['inner:offered', 'inner:enter', 'inner:exit']
+
+
+async def test_capability_sandbox_exits_when_a_tool_raises():
+    cap = SandboxCapability()
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('explode', {})])
+
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[cap])
+
+    @agent.tool
+    async def explode(ctx: RunContext[Any]) -> str:
+        assert ctx.sandbox is not None
+        raise RuntimeError('boom')
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('go')
+    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+
+
+async def test_capability_sandbox_exits_when_toolset_entry_fails():
+    """The exit stack owns the bracket, so teardown runs even when the run never starts."""
+
+    class ExplodingToolset(WrapperToolset[Any]):
+        async def __aenter__(self) -> Any:
+            raise RuntimeError('toolset entry failed')
+
+    cap = SandboxCapability()
+    agent: Agent = Agent(TestModel(), toolsets=[ExplodingToolset(wrapped=FunctionToolset())], capabilities=[cap])
+    with pytest.raises(RuntimeError, match='toolset entry failed'):
+        await agent.run('go')
+    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']

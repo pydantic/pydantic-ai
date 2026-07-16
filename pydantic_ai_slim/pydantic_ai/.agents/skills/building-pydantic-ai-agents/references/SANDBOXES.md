@@ -28,18 +28,20 @@ async def main() -> None:
 
 `LocalSandbox` runs on the host and isolates nothing. Use it only for trusted development and tests; use a container, VM, or remote implementation for untrusted code. Keep approval, command restrictions, output limits, and path policy in the tool layer.
 
-## Ownership
+## Ownership and precedence
 
-- The caller of `run(sandbox=...)` owns the sandbox: create it before the run, tear it down after (typically an `async with` around the run).
-- The handle is available on `ctx.sandbox` for the whole run; sharing one sandbox across runs is just passing the same handle to each run.
+- The caller of `run(sandbox=...)` owns the sandbox: create it before the run, tear it down after (typically an `async with` around the run). It wins over any capability contribution.
+- A capability contributes by returning an async context manager from `get_sandbox` (sync hook): the run enters it at run start and exits it at run end, like a capability toolset. Return a fresh context manager for a per-run sandbox, or `contextlib.nullcontext(sandbox)` for a warm sandbox shared across runs.
+- Among capabilities, the latest in the resolved chain wins; earlier ones are only consulted when it returns `None`, and deferred capabilities are never consulted.
+- The handle is available on `ctx.sandbox` for the whole run (capability-contributed: everywhere except `for_run` and initial metadata factories).
 
 ## Durable execution
 
 Live sandbox handles do not cross durable boundaries:
 
-- Temporal workflows reject `sandbox=`. Carry a serializable `{provider, sandbox_id}` reference and re-open it inside an activity.
-- DBOS durable `run` and `run_sync` reject `sandbox=`. Re-open by reference inside a tool decorated with `@DBOS.step()`.
-- Prefect includes provider-qualified sandbox identity in tool-task cache keys, but the caller still owns lifecycle.
+- Temporal workflows reject `sandbox=` and sandbox-contributing capabilities. Carry a serializable `{provider, sandbox_id}` reference and re-open it inside an activity.
+- DBOS durable `run` and `run_sync` reject both routes. Re-open by reference inside a tool decorated with `@DBOS.step()`.
+- Prefect includes provider-qualified sandbox identity in tool-task cache keys, but the caller or capability still owns lifecycle.
 
 Keep credentials worker-side, make create/open operations idempotent, and use a server-side TTL because terminated workflows do not run cleanup.
 

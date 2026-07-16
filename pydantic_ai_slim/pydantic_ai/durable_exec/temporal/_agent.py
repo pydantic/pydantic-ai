@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -26,7 +26,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -43,6 +43,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from .._sandbox import contributes_sandbox
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
@@ -444,6 +445,21 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would '
                     'exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a '
                     'serializable reference on `deps` instead and re-open the sandbox inside your tools.'
+                )
+            # A `get_sandbox` contribution would be entered as workflow code, where the I/O of
+            # creating or connecting to a sandbox is forbidden. Checked statically over the bound
+            # capability chain and any per-run capabilities; a contributor produced at run time by
+            # a dynamic capability function cannot be caught here and fails inside the workflow
+            # sandbox instead. Outside workflows the hook works like in any other agent run.
+            if contributes_sandbox(self.wrapped.root_capability) or any(
+                isinstance(capability, AbstractCapability)
+                and contributes_sandbox(cast(AbstractCapability[Any], capability))
+                for capability in capabilities or ()
+            ):
+                raise UserError(
+                    'A capability that contributes a sandbox (overrides `get_sandbox`) cannot run inside a '
+                    'Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. '
+                    'Create the sandbox in an activity and pass a serializable reference on `deps` instead.'
                 )
             resolved_model = None
         else:

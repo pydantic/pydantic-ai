@@ -1056,7 +1056,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             sandbox: Optional [`Sandbox`][pydantic_ai.sandbox.Sandbox] to attach to this run, exposed to tools
                 and capability hooks as the read-only [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
-                The caller owns its lifecycle: create it before the run and tear it down after.
+                The caller owns its lifecycle (create it before the run, tear it down after), and it wins over any
+                sandbox a capability would contribute via
+                [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1459,6 +1461,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
             )
+            # A capability-contributed sandbox is resolved once per run and bracketed by the
+            # run's own exit stack — mirroring capability toolsets, whose enter/exit the run
+            # also owns. Entered before the graph run, so it exits after toolset `__aexit__`
+            # and `after_run`/`on_run_error`: `ctx.sandbox` is live for the whole run and
+            # teardown is guaranteed even when the run fails to start. Skipped entirely when
+            # the caller passed `sandbox=` — the caller then owns the lifecycle.
+            if sandbox is None and (sandbox_cm := run_capability.get_sandbox(initial_ctx)) is not None:
+                graph_deps.sandbox = await stack.enter_async_context(sandbox_cm)
             graph_run = await stack.enter_async_context(
                 graph.iter(
                     inputs=user_prompt_node,

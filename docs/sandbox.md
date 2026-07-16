@@ -39,7 +39,9 @@ Three contracts to know when writing code against the protocol (implementers: se
 
 ## Attaching a sandbox to a run
 
-Pass a sandbox to any run method via `sandbox=`; it is then available on `ctx.sandbox` for the whole run, from the earliest hooks through `after_run`. **You create it, you own it**: Pydantic AI never creates, enters, closes, or destroys a sandbox — it only carries the reference for the duration of the run. Create the sandbox before the run and tear it down after, typically with an `async with` around the run:
+There are two routes.
+
+**1. Directly, per run** — you create it, you own it. Pass a sandbox to any run method via `sandbox=`; it is then available on `ctx.sandbox` for the whole run, from the earliest hooks through `after_run`. Pydantic AI never touches its lifecycle — create the sandbox before the run and tear it down after, typically with an `async with` around the run:
 
 ```python
 from my_sandboxes import make_docker_sandbox  # your sandbox library
@@ -67,12 +69,45 @@ async def main() -> None:
 
 Because the caller owns the sandbox, sharing one across several runs (state persists between conversations) is just passing the same handle to each run.
 
+**2. From a capability** — a capability's [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook returns the sandbox *as an async context manager*, and the run enters it when the run starts and exits it when the run ends — exactly like a capability [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset], whose enter/exit the run also owns. Teardown is guaranteed by the run (even when the run fails to start), and `ctx.sandbox` is live everywhere except `for_run` and initial metadata factories:
+
+```python {title="sandbox_capability.py"}
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from typing import Any
+
+from my_sandboxes import make_docker_sandbox  # your sandbox library
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.sandbox import Sandbox
+
+
+@dataclass
+class MySandboxCapability(AbstractCapability[Any]):
+    def get_sandbox(self, ctx: RunContext[Any]) -> AbstractAsyncContextManager[Sandbox] | None:
+        # A fresh sandbox per run: entered when the run starts, exited when it ends.
+        return make_docker_sandbox()
+```
+
+```python {requires="sandbox_capability.py"}
+from pydantic_ai import Agent
+
+from sandbox_capability import MySandboxCapability
+
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[MySandboxCapability()])
+```
+
+For a **warm sandbox shared across runs**, return `contextlib.nullcontext(sandbox)` — its no-op exit leaves the sandbox running between conversations.
+
+A sandbox passed to the run method **wins** over anything a capability would contribute — the hook is then never called, exactly like run-level `model_settings` beating capability settings. Among capabilities, the one **latest in the resolved chain** wins (with no [ordering constraints][pydantic_ai.capabilities.CapabilityOrdering] in play, that's the last one registered); earlier capabilities are only consulted if it returns `None`, and losers never build a context manager. Deferred capabilities are never consulted: the run's sandbox is resolved once, before the first model request.
+
 ## Durable execution
 
 A live sandbox handle **does not survive a durable-execution boundary** — this is inherent, not an implementation gap:
 
-- **[Temporal](durable_execution/temporal.md)**: tool bodies run in activities, where `RunContext` is rebuilt from a serialized allowlist; a live handle can't cross. Temporal agents therefore **reject** `run(sandbox=...)` inside a workflow with a clear error, and `ctx.sandbox` inside an activity raises [`UserError`][pydantic_ai.exceptions.UserError] instead of silently returning `None`.
-- **[DBOS](durable_execution/dbos.md)**: run arguments are pickled as workflow inputs and workflow code is replayed during recovery, so DBOS durable `run`/`run_sync` also **reject** `sandbox=`. Re-open a sandbox by serializable reference inside a tool decorated as a DBOS step.
+- **[Temporal](durable_execution/temporal.md)**: tool bodies run in activities, where `RunContext` is rebuilt from a serialized allowlist; a live handle can't cross, and a capability-contributed sandbox would be entered as workflow code, where I/O is forbidden. Temporal agents therefore **reject** both `run(sandbox=...)` and sandbox-contributing capabilities inside a workflow with a clear error (the capability check is static, so a contributor produced at run time by a dynamic capability function fails inside the workflow sandbox instead), and `ctx.sandbox` inside an activity raises [`UserError`][pydantic_ai.exceptions.UserError] instead of silently returning `None`.
+- **[DBOS](durable_execution/dbos.md)**: run arguments are pickled as workflow inputs and workflow code is replayed during recovery, so DBOS durable `run`/`run_sync` **reject** both `sandbox=` and sandbox-contributing capabilities. Re-open a sandbox by serializable reference inside a tool decorated as a DBOS step.
 - **[Prefect](durable_execution/prefect.md)**: tool calls are tasks with input-hash caching; the sandbox's provider-qualified identity (`provider` + `sandbox_id` — ids are only unique within a provider) participates in the cache key so a flow-run retry with a fresh sandbox can't silently replay results recorded against a dead one.
 
 The portable pattern is to carry a **serializable reference** and re-open the sandbox in the durable engine's I/O boundary: a Temporal activity, a DBOS step, or a Prefect task.
@@ -161,7 +196,10 @@ async def execute(ctx: RunContext[None], command: str, timeout: float = 30.0) ->
     """Run a shell command in the workspace."""
     sandbox = ctx.sandbox
     if sandbox is None:
-        raise UserError('No sandbox on this run: pass `sandbox=` to the run method.')
+        raise UserError(
+            'No sandbox on this run: pass `sandbox=` to the run method '
+            'or register a sandbox-contributing capability.'
+        )
     result = await sandbox.run(command, shell=True, timeout=min(timeout, 120.0))
     output = result.stdout + (f'\n[stderr]\n{result.stderr}' if result.stderr else '')
     return output if result.exit_code == 0 else f'[exit code: {result.exit_code}]\n{output}'
