@@ -244,17 +244,25 @@ def test_cache_marks_update_without_recording() -> None:
     assert [event.name for event in span.events] == ['pydantic_ai.cache.collapse']
 
 
-def test_requests_without_cache_participation_leave_marks_untouched() -> None:
-    """On a provider that reports cache writes, a `0/0` request means caching wasn't engaged
-    (toggled off mid-run, or a prompt below the minimum cacheable size) — not a collapse — and must
-    not emit cache attributes, reset the established mark, or refresh the idle clock."""
+def test_unreported_cache_usage_reports_waste_without_alerting() -> None:
+    """A `0/0` response after an established prefix re-sends it uncached, so the waste is reported —
+    but the cause is ambiguous (caching disabled on a write-reporting provider vs. a full miss on a
+    read-only-reporting one), so it is classified `unreported` and never alerts."""
     spans, _ = cache_spans(
         [CacheUsage(write=1400), CacheUsage(), CacheUsage(read=1400)],
         retention=timedelta(hours=1),
     )
 
-    assert cache_attributes(spans[1]) == {}
+    assert cache_attributes(spans[1]) == {
+        'pydantic_ai.cache.hit_ratio': 0.0,
+        'pydantic_ai.cache.established_tokens': 1400,
+        'pydantic_ai.cache.collapsed': True,
+        'pydantic_ai.cache.wasted_tokens': 1400,
+        'pydantic_ai.cache.collapse_reason': 'unreported',
+    }
     assert not spans[1].events
+    # The mark survives untouched: the provider may still hold the prefix, so a later hit is not a
+    # fresh establish and is judged against the original mark.
     assert cache_attributes(spans[2]) == {
         'pydantic_ai.cache.hit_ratio': 0.7,
         'pydantic_ai.cache.established_tokens': 1400,
@@ -262,7 +270,7 @@ def test_requests_without_cache_participation_leave_marks_untouched() -> None:
     assert not spans[2].events
 
 
-def test_non_participating_request_does_not_refresh_idle_clock(mocker: MockerFixture) -> None:
+def test_unreported_request_does_not_refresh_idle_clock(mocker: MockerFixture) -> None:
     """The `0/0` request must not update `last_seen`: with the clock pinned, the later collapse is
     classified against the *first* request's timestamp (`ttl-expired`), which a clock-refreshing
     implementation would misreport as `unexpected`."""
@@ -280,24 +288,12 @@ def test_non_participating_request_does_not_refresh_idle_clock(mocker: MockerFix
     assert not spans[2].events
 
 
-def test_full_collapse_without_write_counter() -> None:
-    """On a provider that never reports cache writes (OpenAI's implicit caching), a `0/0` response
-    after an established prefix is a genuine full miss and must be judged as a collapse."""
-    spans, _ = cache_spans(
-        [CacheUsage(read=1500), CacheUsage(), CacheUsage(read=1400)],
-        retention=timedelta(hours=1),
-    )
+def test_unreported_usage_without_established_prefix_is_ignored() -> None:
+    """Before anything is cached there is no waste to report, so `0/0` responses stay silent."""
+    spans, _ = cache_spans([CacheUsage(), CacheUsage(read=1400)], retention=timedelta(hours=1))
 
-    attributes = cache_attributes(spans[1])
-    assert attributes['pydantic_ai.cache.collapsed'] is True
-    assert attributes['pydantic_ai.cache.wasted_tokens'] == 1500
-    assert attributes['pydantic_ai.cache.hit_ratio'] == 0.0
-    # The mark re-baselines to zero, so no established-tokens attribute survives the full miss.
-    assert 'pydantic_ai.cache.established_tokens' not in attributes
-    assert [event.name for event in spans[1].events] == ['pydantic_ai.cache.collapse']
-    # Re-establishing afterwards is judged against the fresh baseline, not the pre-miss mark.
-    assert cache_attributes(spans[2]) == {
+    assert cache_attributes(spans[0]) == {}
+    assert cache_attributes(spans[1]) == {
         'pydantic_ai.cache.hit_ratio': 0.7,
         'pydantic_ai.cache.established_tokens': 1400,
     }
-    assert not spans[2].events

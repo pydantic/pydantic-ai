@@ -62,14 +62,6 @@ def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
 class _CacheMark:
     established_tokens: int
     last_seen: datetime
-    saw_writes: bool
-    """Whether this provider/model ever reported a cache-write count in this run.
-
-    Discriminates the meaning of a `read == write == 0` response: providers that report writes
-    (Anthropic, Bedrock) always show `write > 0` while caching is active, so `0/0` means caching
-    wasn't engaged at all; providers that never report writes (OpenAI's implicit caching) report
-    `0/0` on a genuine full cache miss, which must be judged as a collapse.
-    """
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -93,8 +85,9 @@ class Instrumentation(AbstractCapability[Any]):
     `pydantic_ai.cache.hit_ratio`, `pydantic_ai.cache.established_tokens`,
     `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and
     `pydantic_ai.cache.collapse_reason` attributes. Collapses are classified as
-    `ttl-expired`, `unknown`, or `unexpected`; only unexpected collapses emit a
-    `pydantic_ai.cache.collapse` span event.
+    `unexpected`, `ttl-expired`, `unknown`, or `unreported`; only `unexpected` collapses
+    emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
+    prefix moved while it should still have been warm.
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
@@ -328,25 +321,29 @@ class Instrumentation(AbstractCapability[Any]):
         usage = response.usage
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
+        # Keyed on the response: `FallbackModel` resolves the model inside `request()`, so only the
+        # response says which provider and model actually served this request. A switch therefore
+        # starts a fresh mark (never a collapse), and switching back is judged against the old one.
         key = (response.provider_name, response.model_name)
         mark = self._cache_marks.get(key)
-        if not read and not write and (mark is None or mark.saw_writes):
-            # No cache participation reported. For providers that report cache writes (Anthropic,
-            # Bedrock), caching in play always shows `write > 0`, so `0/0` means the cache wasn't
-            # engaged for this request (caching disabled, or the prompt fell below the minimum
-            # cacheable size) — nothing to judge, and the marks must not move: an untouched cache
-            # keeps aging toward its TTL. Providers that never report writes (OpenAI's implicit
-            # caching) legitimately report `0/0` on a genuine full miss, so when the mark was
-            # established without ever seeing a write count, fall through and judge it.
-            return
         established = mark.established_tokens if mark else 0
+
+        # A response reporting neither reads nor writes never engaged the provider's cache.
+        unreported = not read and not write
+        if unreported and not established:
+            return
+
         now = _utils.now_utc()
         collapsed = established >= _CACHE_MIN_PREFIX_TOKENS and read < established * _CACHE_COLLAPSE_RATIO
-        updated_established = read + write if collapsed else max(established, read + write)
-        saw_writes = (mark.saw_writes if mark else False) or write > 0
-        self._cache_marks[key] = _CacheMark(
-            established_tokens=updated_established, last_seen=now, saw_writes=saw_writes
-        )
+        updated_established = established
+        if not unreported:
+            # After a collapse the mark re-baselines to what this request established, so a
+            # deliberate bust (compaction, a rewritten prompt) is reported once rather than against
+            # a stale high-water mark on every later request.
+            updated_established = read + write if collapsed else max(established, read + write)
+            self._cache_marks[key] = _CacheMark(established_tokens=updated_established, last_seen=now)
+        # An unreported response tells us nothing about the provider's copy of the prefix — it may
+        # still be sitting there, aging toward its TTL — so the mark and its idle clock stay put.
 
         span = get_current_span()
         if not span.is_recording():
@@ -354,8 +351,7 @@ class Instrumentation(AbstractCapability[Any]):
 
         if read > 0 or established > 0:
             span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
-        if updated_established > 0:
-            span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
+        span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
 
         if not collapsed:
             return
@@ -364,13 +360,20 @@ class Instrumentation(AbstractCapability[Any]):
         span.set_attribute('pydantic_ai.cache.collapsed', True)
         span.set_attribute('pydantic_ai.cache.wasted_tokens', wasted)
 
-        retention = request_context.model.profile.get('prompt_cache_retention')
-        if retention is None:
+        if unreported:
+            # Ambiguous by construction: providers that report cache writes (Anthropic, Bedrock) show
+            # `0/0` when the cache wasn't engaged at all — caching disabled for this request, or a
+            # prompt below the minimum cacheable size — while providers that only report reads
+            # (OpenAI's implicit caching) show `0/0` for a full cache miss. The established prefix was
+            # re-sent uncached either way, so the waste is real and reported, but the cause isn't
+            # knowable from usage alone, so this never alerts.
+            reason = 'unreported'
+        elif (retention := request_context.model.profile.get('prompt_cache_retention')) is None:
             reason = 'unknown'
         else:
             if (cache_point_ttl := _max_cache_point_ttl(request_context.messages)) is not None:
                 retention = max(retention, cache_point_ttl)
-            assert mark is not None
+            assert mark is not None  # a collapse requires an established mark
             reason = 'ttl-expired' if now - mark.last_seen > retention else 'unexpected'
         span.set_attribute('pydantic_ai.cache.collapse_reason', reason)
 
