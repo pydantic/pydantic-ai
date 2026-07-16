@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -100,15 +101,55 @@ STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors
 STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
 
 
+def _hf_hub_unavailable(exc: BaseException) -> bool:
+    """Whether an exception from a SentenceTransformer load means the HF Hub is
+    unavailable (worth skipping the real-model smoke tests) rather than a genuine
+    integration defect (which must fail loudly). Shapes verified against real outages.
+    """
+    if isinstance(exc, httpx.HTTPError):
+        # Raw httpx errors (e.g. connect timeouts) escape huggingface_hub 1.x
+        # unwrapped, and the only httpx traffic in a model load is Hub traffic.
+        return True
+    if isinstance(exc, RuntimeError):
+        # After a connection error, huggingface_hub 1.x retries on an httpx client
+        # it just closed, surfacing httpx's RuntimeError instead of its own error.
+        return 'client has been closed' in str(exc)
+    # huggingface_hub's own errors (HfHubHTTPError for 429/5xx responses,
+    # LocalEntryNotFoundError, ...) are OSError subclasses; transformers wraps
+    # connection failures in a plain OSError whose message points at the Hub.
+    return type(exc).__module__.startswith('huggingface_hub') or 'huggingface.co' in str(exc)
+
+
+def test_hf_hub_unavailable_classifier():
+    class FakeHubError(OSError):
+        pass
+
+    FakeHubError.__module__ = 'huggingface_hub.errors'
+
+    assert _hf_hub_unavailable(httpx.ConnectTimeout('timed out'))
+    assert _hf_hub_unavailable(RuntimeError('Cannot send a request, as the client has been closed.'))
+    assert _hf_hub_unavailable(FakeHubError('504 Server Error'))
+    assert _hf_hub_unavailable(OSError("We couldn't connect to 'https://huggingface.co' to load the files"))
+    assert not _hf_hub_unavailable(RuntimeError('CUDA error: device-side assert triggered'))
+    assert not _hf_hub_unavailable(OSError('Unable to load weights from pytorch checkpoint file'))
+
+
 def test_stsb_model_pin_matches_ci():
     """Drift between this pin and ci.yml silently reintroduces per-run Hub downloads:
     the stale cache key keeps exact-hitting, so CI never caches the new revision."""
     ci_yml = Path(__file__).parent.parent / '.github' / 'workflows' / 'ci.yml'
     if not ci_yml.is_file():  # pragma: lax no cover
         pytest.skip('not running from a repo checkout')
-    content = ci_yml.read_text()
-    assert STSB_BERT_TINY_MODEL in content
-    assert STSB_BERT_TINY_REVISION in content, 'update the HF cache keys and warmup commands in ci.yml'
+    stsb_lines = [line for line in ci_yml.read_text().splitlines() if 'stsb-bert-tiny' in line]
+    cache_keys = [line for line in stsb_lines if 'key:' in line]
+    warmups = [line for line in stsb_lines if 'snapshot_download' in line]
+    assert len(cache_keys) >= 2, 'expected a model cache key in both test jobs in ci.yml'
+    assert len(warmups) >= 2, 'expected a model warmup command in both test jobs in ci.yml'
+    assert all(STSB_BERT_TINY_MODEL in line for line in warmups)
+    for line in cache_keys + warmups:
+        assert STSB_BERT_TINY_REVISION in line, f'stale or missing revision pin in ci.yml: {line.strip()}'
+    stray = {sha for line in stsb_lines for sha in re.findall(r'[0-9a-f]{40}', line)} - {STSB_BERT_TINY_REVISION}
+    assert not stray, f'stale revision pins left in ci.yml: {stray}'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1618,12 +1659,13 @@ class TestSentenceTransformers:
         try:
             model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
         except (OSError, RuntimeError, httpx.HTTPError) as e:  # pragma: lax no cover
-            # With the Hub unavailable, failures surface as OSError (HTTP-status
-            # errors), raw httpx errors (connect timeouts), or RuntimeError
-            # (huggingface_hub 1.x retries on a client it just closed after a
-            # connection error). Skip rather than fail so a HF outage never reds the
-            # whole suite. `lax` because this path runs only during outages:
-            # coverage must tolerate both outcomes.
+            # Skip only when the Hub is unavailable (see `_hf_hub_unavailable`) so a
+            # HF outage never reds the whole suite; anything else (corrupt cache,
+            # dependency mismatch, model-construction regression) fails loudly.
+            # `lax` because this path runs only during outages: coverage must
+            # tolerate both outcomes.
+            if not _hf_hub_unavailable(e):
+                raise
             pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
         # If the model card didn't load, `model_id` is unset and the model reports
         # its name as 'unknown'. Set it explicitly so the reported name is
