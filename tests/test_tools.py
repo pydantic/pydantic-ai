@@ -1469,8 +1469,11 @@ async def test_positional_or_keyword_with_var_args():
 
     tool = Tool(f)
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    result = await tool.function_schema.call({'r0': 1, 'values': [0]}, ctx)
+    args = {'r0': 1, 'values': [0]}
+    result = await tool.function_schema.call(args, ctx)
     assert result == {'r0': 1, 'values': [0]}
+    # `call` must not mutate the caller's args dict — tool-execute hooks inspect it afterwards.
+    assert args == {'r0': 1, 'values': [0]}
 
 
 def test_tool_retries():

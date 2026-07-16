@@ -92,6 +92,11 @@ class FunctionSchema:
         ctx: RunContext[Any],
     ) -> tuple[list[Any], dict[str, Any]]:
         args = [ctx] if self.takes_ctx else []
+        if self.positional_fields or self.var_positional_field:
+            # Copy before popping so we never mutate the caller's dict. The same validated-args
+            # dict is later handed to tool-execute hooks (e.g. `after_tool_execute`), which must
+            # still observe the full set of arguments.
+            args_dict = dict(args_dict)
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))
         if self.var_positional_field:
