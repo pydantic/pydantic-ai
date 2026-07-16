@@ -256,12 +256,12 @@ Instrumented agent runs report prompt-cache health without additional configurat
 | Attribute | Description |
 |-----------|-------------|
 | `pydantic_ai.cache.hit_ratio` | Fraction of input tokens read from the prompt cache, on model-request spans and on agent-run spans with cache reads. |
-| `pydantic_ai.cache.established_tokens` | Established cached-prefix size for the response's provider and model. |
+| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the response's provider and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
 | `pydantic_ai.cache.collapsed` | `true` when a sufficiently large established prefix falls below half its previous size. |
 | `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
 | `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl-expired`, `unknown`, or `unreported`. |
 
-Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `wasted_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
 
 | `collapse_reason` | Meaning | Emits the event |
 |-------------------|---------|-----------------|
