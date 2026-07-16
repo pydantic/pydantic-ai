@@ -49,7 +49,7 @@ class ModelProfile(TypedDict, total=False):
     """Whether the model supports tools. Default: `True`."""
 
     tool_call_id_scope: Literal['history', 'response']
-    """The scope in which tool call IDs are unique. Default: `'history'`."""
+    """The scope within which tool call IDs are guaranteed to be unique. Default: `'history'`."""
 
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.

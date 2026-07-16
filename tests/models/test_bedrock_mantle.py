@@ -5,7 +5,7 @@ import os
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
@@ -43,11 +43,10 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
         messages = result.all_messages()
 
     tool_calls = [
-        (message.provider_response_id, part)
+        (message.provider_response_id, tool_call_part)
         for message in messages
         if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
+        for tool_call_part in message.tool_calls
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     raw_call_ids = ['call_0', 'call_1' if stream else 'call_0']
