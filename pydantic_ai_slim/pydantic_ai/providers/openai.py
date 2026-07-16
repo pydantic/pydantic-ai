@@ -38,11 +38,16 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # GPT-5.6 explicit caching keeps eligible prefixes for at least 30 minutes.
-        # Other models generally retain them for 5–10 minutes of inactivity, so the expectation boundary
-        # uses the upper end. Opt-in 24-hour retention must be passed explicitly to `prompt_cache_outlook`.
+        # GPT-5.6 explicit caching documents a model-determined floor: a cached prefix stays eligible
+        # for reuse for at least 30 minutes. Earlier models have no honest boundary to record, because
+        # their retention policy defaults to `24h` for organizations without zero data retention and to
+        # `in_memory` (5-10 minutes of inactivity) for organizations with it — an org setting that isn't
+        # knowable from the model. Those stay unset (`'unknown'`) rather than guess in either direction:
+        # too low a boundary would declare a live cache cold and throw away a real hit, too high a one
+        # would report expiry as an unexpected collapse. Users who know their policy (or set
+        # `openai_prompt_cache_retention`) pass `retention=` to `prompt_cache_outlook` explicitly.
         # https://developers.openai.com/api/docs/guides/prompt-caching
-        retention = timedelta(minutes=30 if model_name.startswith('gpt-5.6') else 10)
+        retention = timedelta(minutes=30) if model_name.startswith('gpt-5.6') else None
         return merge_profile(openai_model_profile(model_name), ModelProfile(prompt_cache_retention=retention))
 
     @overload

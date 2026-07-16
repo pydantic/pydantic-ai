@@ -70,8 +70,10 @@ def test_anthropic_profile_retention():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_profile_retention():
-    assert _retention(OpenAIProvider.model_profile('gpt-5.2')) == timedelta(minutes=10)
     assert _retention(OpenAIProvider.model_profile('gpt-5.6-sol')) == timedelta(minutes=30)
+    # Pre-5.6 retention defaults depend on the organization's zero-data-retention setting, not the
+    # model, so there is no honest boundary to record.
+    assert _retention(OpenAIProvider.model_profile('gpt-5.2')) is None
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
