@@ -70,6 +70,10 @@ def test_moonshotai_model_profile():
 
 
 def test_moonshotai_model_profile_thinking():
+    # Unit (not VCR): these pin the profile flags resolved from the model id at model-build time, which
+    # the cassette doesn't exercise — it records the wire round-trip, not the resolved profile, and our
+    # matchers aren't body-sensitive, so a regression flipping a model's reasoning flags could still
+    # replay an existing recording green. A direct profile assertion is what catches it.
     provider = MoonshotAIProvider(api_key='api-key')
 
     # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.

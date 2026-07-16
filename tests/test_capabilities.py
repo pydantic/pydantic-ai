@@ -511,6 +511,8 @@ def test_agent_from_spec_capabilities_merged():
 
 
 def test_model_json_schema_with_capabilities():
+    # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
+    # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
     assert remove_schema_descriptions(schema) == snapshot(
