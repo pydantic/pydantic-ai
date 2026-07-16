@@ -1030,6 +1030,10 @@ class _DuplicateIntField(TypedDict):
     b: str
 
 
+class _NullableIntField(TypedDict):
+    value: int | None
+
+
 class _StringField(TypedDict):
     value: str
 
@@ -1098,6 +1102,18 @@ async def test_stream_output_keeps_partial_float(allow_model_requests: None) -> 
             {'value': 1.23},
             {'value': 1.23},
         ]
+
+
+async def test_stream_output_nullable_integer_prefix_fails_validation(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact numeric boundary."""
+    stream = [text_chunk('{"value":1'), text_chunk('.5}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_NullableIntField)
+
+    async with agent.run_stream('User prompt value') as result:
+        with pytest.raises(UnexpectedModelBehavior, match='Output validation failed during streaming'):
+            await result.get_output()
 
 
 @pytest.mark.parametrize(
