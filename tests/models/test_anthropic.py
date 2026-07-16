@@ -79,7 +79,17 @@ from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, message, raise_if_exception, try_import
+from ..conftest import (
+    IsDatetime,
+    IsInstance,
+    IsNow,
+    IsStr,
+    TestEnv,
+    iter_message_parts,
+    message,
+    raise_if_exception,
+    try_import,
+)
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -8743,8 +8753,8 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -8803,8 +8813,8 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, NativeToolReturnPart)]
+    server_tool_calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    server_tool_returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'

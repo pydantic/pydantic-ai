@@ -29,6 +29,10 @@ AGENTS.override.md
 .agents/skills/*
 !.agents/skills/complete-partial-pr/
 !.agents/skills/complete-partial-pr/SKILL.md
+!.agents/skills/adding-a-provider-api-feature/
+!.agents/skills/adding-a-provider-api-feature/SKILL.md
+!.agents/skills/add-new-model/
+!.agents/skills/add-new-model/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
