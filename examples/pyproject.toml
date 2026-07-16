@@ -53,6 +53,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.117.0",
     "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",
+    "python-dotenv>=1.0.0",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",

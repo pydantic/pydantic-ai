@@ -143,6 +143,7 @@ nav:
           - examples/stream-whales.md
       - Realtime:
           - examples/realtime-voice.md
+          - examples/realtime-camera.md
       - Complex Workflows:
           - examples/flight-booking.md
       - Business Applications:
