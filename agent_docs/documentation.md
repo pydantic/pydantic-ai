@@ -24,6 +24,8 @@
 - Use consistent terminology across code, docs, comments, and errors (e.g., `freeform` vs `free-form`, `messages` vs `last message`) — prevents user confusion and makes codebase searchable — Inconsistent terminology fragments documentation searches, confuses users trying to map concepts between docs and code, and signals poor API design quality
 <!-- rule:76 -->
 - Prefix future work with `TODO:` and link workarounds to upstream/internal issues — enables tracking and cleanup when conditions change — Explicit markers with tracking links prevent abandoned workarounds and make technical debt actionable and removable when upstream fixes land
+<!-- rule:611 -->
+- Reference issues and PRs in comments and docstrings with the full URL (`https://github.com/pydantic/pydantic-ai/issues/1234`), not the `#1234` shorthand — The shorthand isn't clickable outside GitHub's own rendering (IDEs, generated API docs, plain-text views), so a full link stays navigable wherever the code is read
 <!-- rule:386 -->
 - Keep docs and implementation in sync — when they conflict, explicitly decide which to update and fix it — Prevents user confusion and wasted debugging time when documented behavior doesn't match actual behavior; applies to params, config options, component characteristics, and especially test docstrings which must describe what's actually validated
 <!-- rule:106 -->

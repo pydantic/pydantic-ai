@@ -126,12 +126,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (#6162).
+    the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
     """
 

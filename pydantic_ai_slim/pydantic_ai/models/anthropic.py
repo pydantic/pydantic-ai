@@ -275,7 +275,8 @@ LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
 # TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
-# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See PR #5849 for the same
+# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See
+# https://github.com/pydantic/pydantic-ai/pull/5849 for the same
 # bridge-then-drop pattern applied to `claude-fable-5`.
 AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
 """Possible Anthropic model names.
@@ -1298,7 +1299,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
                 # Cross-provider files are dropped silently here, not raised via
-                # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
@@ -1440,7 +1441,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
-        # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+        # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
             file.file_id
             for tool in model_request_parameters.native_tools
@@ -1648,7 +1649,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     # Anthropic occasionally emits a `tool_search_tool_*` server tool use
                                     # in parallel with a client `tool_use` and ends the turn before
                                     # delivering the corresponding `tool_search_tool_*_tool_result` block
-                                    # (see anthropics/anthropic-sdk-python#1325). Direct API tolerates
+                                    # (see https://github.com/anthropics/anthropic-sdk-python/issues/1325). Direct API tolerates
                                     # the unpaired call on resend (the result arrives in the next turn),
                                     # but Bedrock 400s with `tool use ... was found without a corresponding
                                     # tool_search_tool_*_tool_result block`. Drop the orphaned call from the
