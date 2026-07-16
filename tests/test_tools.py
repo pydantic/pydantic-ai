@@ -4631,7 +4631,7 @@ def test_tool_return_part_serializes_with_serialization_alias():
     return_schema = tool.function_schema.return_schema
     assert 'wireOut' in return_schema.get('properties', {})
 
-    part = ToolReturnPart(tool_name='my_tool', content=OutputModel(value=1), tool_call_id='call-1')
+    part = ToolReturnPart(tool_name='my_tool', content=my_tool(), tool_call_id='call-1')
 
     # String serialization should use the alias key.
     serialized_str = part.model_response_str()
