@@ -1542,6 +1542,67 @@ async def test_temporal_mcp_get_tools_not_cached_when_disabled(allow_model_reque
         mcp_replay_holder['agent'] = _make_mcp_replay_agent()
 
 
+def _call_read_mcp_resource_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Read an MCP resource on the first request, then echo the content back on the second.
+
+    Echoing the tool return (rather than a fixed string) is what makes the run output carry the
+    resource content, so a value the activity's data converter dropped, emptied, or mangled fails
+    the assertion instead of passing silently.
+    """
+    tool_returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if tool_returns:
+        return ModelResponse(parts=[TextPart(repr(tool_returns[-1]))])
+    return ModelResponse(parts=[ToolCallPart('read_mcp_resource', {'uri': 'resource://product_name.txt'})])
+
+
+_expose_resources_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FunctionModel(_call_read_mcp_resource_then_finish),
+        name='expose_resources_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+                id='mcp',
+                init_timeout=20,
+                expose_resources=True,
+            )
+        ],
+    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class ExposeResourcesWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _expose_resources_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_expose_resources(allow_model_requests: None, client: Client):
+    """`expose_resources=True` works across the Temporal activity boundary: the synthesized
+    `read_mcp_resource` tool's `metadata` marker survives `ToolDefinition` serialization, and its
+    string return round-trips through the activity's data converter.
+
+    The model echoes the tool return, so the asserted output pins the resource content itself
+    (exact string, trailing newline included) rather than merely that some tool return arrived.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExposeResourcesWorkflow],
+        plugins=[AgentPlugin(_expose_resources_agent)],
+    ):
+        output = await client.execute_workflow(
+            ExposeResourcesWorkflow.run,
+            args=['read the product name resource'],
+            id=f'{ExposeResourcesWorkflow.__name__}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot("'Pydantic AI\\n'")
+
+
 async def test_complex_agent_run(allow_model_requests: None):
     events: list[AgentStreamEvent] = []
 
