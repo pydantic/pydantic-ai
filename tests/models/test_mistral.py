@@ -11,7 +11,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from pydantic import BaseModel
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -793,6 +793,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
         assert v == snapshot(
             [
                 {'first': 'One'},
+                {'first': 'One', 'second': 2},
                 {'first': 'One', 'second': 2, 'bool_value': True},
                 {'first': 'One', 'second': 2, 'bool_value': True, 'nullable_value': None},
                 {
@@ -1024,12 +1025,88 @@ class _StaleIntField(TypedDict):
     value: int
 
 
+class _DuplicateIntField(TypedDict):
+    a: int
+    b: str
+
+
+class _StringField(TypedDict):
+    value: str
+
+
+@pytest.mark.parametrize(
+    'first_chunk, partial_value, complete_value',
+    [
+        pytest.param('{"value":"item 1', 'item 1', 'item 12', id='plain'),
+        pytest.param('{"value":"item \\"1', 'item "1', 'item "12', id='escaped-quote'),
+    ],
+)
+async def test_stream_output_keeps_digit_ending_partial_string(
+    allow_model_requests: None,
+    first_chunk: str,
+    partial_value: str,
+    complete_value: str,
+) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact string chunk boundary."""
+    stream = [text_chunk(first_chunk), text_chunk('2"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_StringField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': partial_value},
+            {'value': complete_value},
+            {'value': complete_value},
+        ]
+
+
+class _PartialIntField(TypedDict):
+    value: int
+    label: NotRequired[str]
+
+
+async def test_stream_output_keeps_integer_followed_by_whitespace(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact whitespace boundary."""
+    stream = [text_chunk('{"value":1 '), text_chunk(',"label":"x"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_PartialIntField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': 1},
+            {'value': 1, 'label': 'x'},
+            {'value': 1, 'label': 'x'},
+        ]
+
+
+class _FloatField(TypedDict):
+    value: float
+
+
+async def test_stream_output_keeps_partial_float(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact numeric boundary."""
+    stream = [text_chunk('{"value":1.2'), text_chunk('3}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_FloatField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': 1.2},
+            {'value': 1.23},
+            {'value': 1.23},
+        ]
+
+
 @pytest.mark.parametrize(
     'output_type, json_chunks',
     [
         pytest.param(int, ('{"response":1', '.5}'), id='top-level-int'),
         pytest.param(list[int], ('{"response":[1', '.5]}'), id='array-of-int'),
         pytest.param(_StaleIntField, ('{"value":1', '.5}'), id='object-int-field'),
+        pytest.param(_DuplicateIntField, ('{"a":0,"b":"x","a":1', '.5}'), id='duplicate-key'),
     ],
 )
 async def test_stream_output_defers_stale_integer_prefix(
@@ -1039,10 +1116,13 @@ async def test_stream_output_defers_stale_integer_prefix(
 ) -> None:
     """Regression test for https://github.com/pydantic/pydantic-ai/issues/6504.
 
+    A live model cannot reliably reproduce the exact numeric spelling and chunk boundary, so this
+    uses mocked SDK chunks.
+
     When a chunk boundary falls inside a number right after an integral prefix (`1`) and the
     completed value is non-integral (`1.5`), the partial parse (e.g. `{"response": 1`) used to be
     emitted as a stale `1`. The completed `1.5` then fails `integer` validation, so nothing replaced
-    the stale args and the run silently returned `1` — a value the model never produced. The emission
+    the stale args and the run silently returned `1`, a value the model never produced. The emission
     must instead be deferred until the number is complete, so the invalid `1.5` reaches the
     output-retry path rather than being silently truncated. As the issue notes, a top-level integer,
     an integer array item, and an integer object field all share this hazard.
