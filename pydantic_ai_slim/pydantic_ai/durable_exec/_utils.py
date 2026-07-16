@@ -14,11 +14,12 @@ integrations.
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, TypeAlias, TypeVar, cast
+from typing import Any, TypeAlias, TypeVar
 
 from pydantic_ai._utils import disable_threads
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ModelResponseStreamEvent
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -28,7 +29,7 @@ __all__ = [
     'SegmentExecutor',
     'StreamedActivityResult',
     'disable_threads',
-    'process_event_stream',
+    'capture_event_stream',
     'unwrap_model',
 ]
 
@@ -56,8 +57,9 @@ def unwrap_model(model: Model) -> Model:
 class StreamedActivityResult:
     """Bundle returned across an activity/step/task boundary in durable-execution flows.
 
-    Carries both the final `ModelResponse` and the events emitted by the model
-    stream while the chain consumed it inside the boundary. This is the serializable counterpart of a
+    Carries both the final `ModelResponse` and the raw events captured from the live
+    model stream inside the boundary. The chain consumes the replayed events workflow-side.
+    This is the serializable counterpart of a
     [`CompletedStreamedResponse`][pydantic_ai.models.CompletedStreamedResponse].
     """
 
@@ -120,61 +122,41 @@ class DurableModel(WrapperModel):
             result.response,
             model_request_parameters=model_request_parameters,
             events=result.events,
-            # The chain's `wrap_run_event_stream` hooks already fired against the live
-            # stream inside the boundary; the workflow-side replay must not re-fire them.
-            hooks_already_applied=True,
         )
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
 
 
-async def process_event_stream(
+async def capture_event_stream(
     *,
     run_context: RunContext[Any],
-    request_context: ModelRequestContext,
-    stream: AsyncIterable[AgentStreamEvent],
+    stream: AsyncIterable[ModelResponseStreamEvent],
+    handler: EventStreamHandler[Any] | None,
 ) -> list[ModelResponseStreamEvent]:
-    """Run the capability chain's `wrap_run_event_stream` hooks against a live model stream.
+    """Capture a live model stream inside a durable-execution boundary.
 
-    Use from inside a durable-execution boundary (Temporal activity, DBOS step,
-    Prefect task) to make sure capabilities like `ProcessEventStream` see real,
-    in-time-order events rather than synthetic events replayed on the workflow side.
-
-    Returns the events that emerged from the chain so the boundary can ship them
-    back to the workflow side.
-
-    Marks `request_context` as having had the chain run (signals the outer agent
-    loop to skip re-firing on the replay, which would double-emit hook side
-    effects like OTel spans). The helper is the only public path that sets that
-    flag — durability capabilities should always go through this helper.
+    If a handler is provided, it consumes the live stream inside the boundary. Any
+    events it leaves unconsumed are drained and captured. The returned raw events are
+    shipped back to the workflow, where the capability chain and any per-run handler
+    consume the replay.
 
     Args:
-        run_context: The current agent run context. The capability chain is read
-            from `run_context.root_capability`.
-        request_context: The model request context. Mutated as a side effect to
-            mark the chain as applied.
-        stream: The live model stream (a `StreamedResponse` or any async iterable
-            of `AgentStreamEvent`).
+        run_context: The current agent run context.
+        stream: The live model stream.
+        handler: Optional handler to run inside the durable boundary.
     """
-    wrapped = (
-        run_context.root_capability.wrap_run_event_stream(run_context, stream=stream)
-        if run_context.root_capability is not None
-        else stream
-    )
+    captured: list[ModelResponseStreamEvent] = []
 
-    captured: list[AgentStreamEvent] = []
-
-    async def teed() -> AsyncIterator[AgentStreamEvent]:
-        async for event in wrapped:
+    async def teed() -> AsyncIterator[ModelResponseStreamEvent]:
+        async for event in stream:
             captured.append(event)
             yield event
 
-    async for _ in teed():
+    teed_stream = teed()
+    if handler is not None:
+        await handler(run_context, teed_stream)
+
+    async for _ in teed_stream:
         pass
-    # The model-request path only produces ModelResponseStreamEvent (the chain
-    # wraps but doesn't change the type); cast at the boundary to satisfy the
-    # typed result returned across the durable boundary.
-    events = cast(list[ModelResponseStreamEvent], captured)
-    request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
-    return events
+    return captured

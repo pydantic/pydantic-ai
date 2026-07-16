@@ -49,12 +49,12 @@ from ._types import TaskConfig, default_task_config
     """`PrefectAgent` is deprecated. Migrate each constructor argument as follows:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[PrefectDurability(...)])`.
 - `name=` → set `name=` on `Agent`.
-- `event_stream_handler=` → use a `ProcessEventStream` capability; it runs inside the model-request task.
+- `event_stream_handler=` → pass `event_stream_handler=` to `PrefectDurability`; it runs inside tasks, exactly like before.
 - `mcp_task_config=` → set `mcp_task_config=` on `PrefectDurability`.
 - `model_task_config=` → set `model_task_config=` on `PrefectDurability`.
 - `tool_task_config=` → set `tool_task_config=` on `PrefectDurability`.
 - `tool_task_config_by_name=` → use per-tool `metadata={'prefect': ...}` or a `SetToolMetadata` capability.
-- `event_stream_handler_task_config=` → use `ProcessEventStream`; per-event sub-task wrapping is not supported.
+- `event_stream_handler_task_config=` → set `event_stream_handler_task_config=` on `PrefectDurability`.
 - `prefectify_toolset_func=` → not supported on the capability path; open an issue if you need it."""
 )
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):

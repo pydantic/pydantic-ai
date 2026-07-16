@@ -11,6 +11,7 @@ from prefect.utilities.asyncutils import run_coro_as_sync
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
@@ -21,10 +22,10 @@ from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtim
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
-    process_event_stream,
+    capture_event_stream,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -64,6 +65,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
@@ -86,6 +89,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            event_stream_handler: Optional event stream handler. Model events are handled
+                live inside model-request tasks, and tool events are handled in per-event tasks.
+            event_stream_handler_task_config: Prefect task config for event stream handler tasks.
             model_task_config: Prefect task config for model request tasks.
             mcp_task_config: Prefect task config for MCP server tasks.
             tool_task_config: Default Prefect task config for tool call tasks. Per-tool
@@ -94,13 +100,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 task wrapping), or via the
                 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
         """
-        super().__init__(models=models)
+        super().__init__(models=models, event_stream_handler=event_stream_handler)
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
 
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
+        self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
         self._prefect_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         # Populated by for_agent when the capability is attached to an agent.
@@ -163,20 +170,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
             model = await bound._resolve_model_for_request(model_id, run_context)
-            request_context = ModelRequestContext(
-                model=model,
-                messages=messages,
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-            )
             with set_current_run_context(run_context):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, run_context
                 ) as streamed_response:
-                    events = await process_event_stream(
+                    events = await capture_event_stream(
                         run_context=run_context,
-                        request_context=request_context,
                         stream=streamed_response,
+                        handler=bound._event_stream_handler,
                     )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -200,6 +201,19 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         bound._install_flow_wrappers(agent)
 
         return bound
+
+    def _in_durable_context(self) -> bool:
+        return FlowRunContext.get() is not None
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        assert self._event_stream_handler is not None
+        handler = self._event_stream_handler
+
+        @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
+        async def event_stream_handler_task(stream_event: AgentStreamEvent) -> None:
+            await handler(ctx, self._single_event_stream(stream_event))
+
+        await event_stream_handler_task(event)
 
     def _install_flow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Replace `agent.run` and `agent.run_sync` with Prefect-flow-decorated wrappers.
@@ -362,7 +376,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
         return await handler(request_context)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

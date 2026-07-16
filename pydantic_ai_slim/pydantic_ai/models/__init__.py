@@ -193,14 +193,6 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
-    _hooks_already_applied: bool = field(default=False, init=False)
-    """Internal coordination flag set by a durable-execution capability that has
-    already run the capability chain's `wrap_run_event_stream` hooks against the
-    live model stream inside its activity/step/task. Read by the outer agent loop
-    (`_stream_and_advance`) to skip re-wrapping the replayed stream (which would
-    double-emit hook side effects). Not user API.
-    """
-
     _model_id: str | None = field(default=None, init=False)
     """Internal provenance: the model-id string the run's model was resolved from, if any.
 
@@ -752,11 +744,6 @@ class StreamedResponse(ABC):
     """Lifecycle state of the response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
 
-    _hooks_already_applied: bool = field(default=False, init=False)
-    """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
-    against the live stream (e.g. inside a durable execution activity) and the outer
-    agent loop should not re-wrap this replayed stream."""
-
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
@@ -1035,7 +1022,6 @@ class CompletedStreamedResponse(StreamedResponse):
         *,
         model_request_parameters: ModelRequestParameters,
         events: bool | list[ModelResponseStreamEvent] = False,
-        hooks_already_applied: bool = False,
     ) -> None: ...
 
     @overload
@@ -1048,7 +1034,6 @@ class CompletedStreamedResponse(StreamedResponse):
         model_request_parameters: ModelRequestParameters | ModelResponse | None = None,
         *,
         events: bool | list[ModelResponseStreamEvent] = False,
-        hooks_already_applied: bool = False,
     ):
         if isinstance(response, ModelRequestParameters):
             # The positional `(model_request_parameters, response)` order predates the move
@@ -1065,7 +1050,6 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self._events = events
-        self._hooks_already_applied = hooks_already_applied
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if not isinstance(self._events, list):

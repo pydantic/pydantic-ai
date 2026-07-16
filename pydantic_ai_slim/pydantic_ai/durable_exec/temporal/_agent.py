@@ -65,7 +65,7 @@ class _EventStreamHandlerParams:
 - `name=` → set `name=` on `Agent`.
 - `models=` → set `models=` on `TemporalDurability`.
 - `provider_factory=` → use a deps-aware `ResolveModelId` capability.
-- `event_stream_handler=` → use a `ProcessEventStream` capability; it runs inside the activity.
+- `event_stream_handler=` → pass `event_stream_handler=` to `TemporalDurability`; it runs inside activities, exactly like before.
 - `activity_config=` → set `activity_config=` on `TemporalDurability`.
 - `model_activity_config=` → set `model_activity_config=` on `TemporalDurability`.
 - `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.

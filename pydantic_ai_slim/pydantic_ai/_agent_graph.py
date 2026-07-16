@@ -928,7 +928,6 @@ async def model_request_stream(
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
         )
-        sr._hooks_already_applied = request_context._hooks_already_applied  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
         finally:
@@ -1115,7 +1114,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response,
                 model_request_parameters=model_request_parameters,
                 events=True,
-                hooks_already_applied=wrap_request_context._hooks_already_applied,  # pyright: ignore[reportPrivateUsage]
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream

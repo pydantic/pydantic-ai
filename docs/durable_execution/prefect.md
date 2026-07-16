@@ -63,7 +63,7 @@ Add durable execution to any [`Agent`][pydantic_ai.agent.Agent] by attaching the
 
 The agent stays a normal `Agent` everywhere — outside a Prefect flow the capability is transparent, and the original agent, model, and MCP server can still be used as normal.
 
-Add a [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability before `PrefectDurability` to process the live event stream inside the model-request task. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+See [Streaming](#streaming) for event handling inside tasks and flow code.
 
 Here is a simple but complete example of attaching durable execution to an agent. All it requires is to install Pydantic AI with Prefect:
 
@@ -188,7 +188,11 @@ agent = Agent(
 
 When running inside a Prefect flow, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] works but doesn't provide real-time streaming because Prefect tasks consume their entire execution before returning results. The method will execute fully and return the complete result at once.
 
-For real-time event processing inside Prefect flows, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the model-request task. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+For handlers with I/O side effects, pass `event_stream_handler=` to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Model events are delivered live inside each model-request task, while each tool event is delivered in its own event-handler task. Configure those per-event tasks with `event_stream_handler_task_config=`.
+
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+
+A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs flow-side against replayed model events.
 
 Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 

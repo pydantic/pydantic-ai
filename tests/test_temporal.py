@@ -5775,8 +5775,6 @@ async def _durability_event_stream_handler(
 ) -> None:
     async for event in stream:
         if isinstance(event, (PartStartEvent, PartDeltaEvent)):
-            # Model-stream events must be delivered inside the activity; the chain also
-            # fires workflow-side for tool-call and final-output node streams.
             _stream_model_events_in_activity.append(activity.in_activity())
         _stream_events_collected.append(event)
 
@@ -5792,9 +5790,91 @@ _stream_durable_agent = Agent(
 @workflow.defn
 class StreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> tuple[str, list[bool]]:
         result = await _stream_durable_agent.run(prompt)
+        return result.output, _stream_model_events_in_activity
+
+
+_durability_handler_events: list[tuple[AgentStreamEvent, bool]] = []
+
+
+async def _durability_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _durability_handler_events.append((event, activity.in_activity()))
+
+
+async def _durability_handler_tool() -> str:
+    return 'handled'
+
+
+_handler_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    event_stream_handler=_durability_handler,
+)
+_handler_durable_agent = Agent(
+    TestModel(),
+    name='durability_handler_agent',
+    tools=[_durability_handler_tool],
+    capabilities=[_handler_durability],
+)
+
+
+@workflow.defn
+class HandlerDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _handler_durable_agent.run(prompt)
         return result.output
+
+
+async def test_temporal_durability_event_stream_handler(client: Client) -> None:
+    _durability_handler_events.clear()
+    bound = TemporalDurability.from_agent(_handler_durable_agent)
+    assert bound is not None
+    activity_names = [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in bound.temporal_activities
+    ]
+    assert 'agent__durability_handler_agent__event_stream_handler' in activity_names
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[HandlerDurableAgentWorkflow],
+        plugins=[AgentPlugin(_handler_durable_agent)],
+    ):
+        await client.execute_workflow(
+            HandlerDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=HandlerDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    events = [event for event, _ in _durability_handler_events]
+    assert events
+    assert all(in_activity for _, in_activity in _durability_handler_events)
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
+    assert any(isinstance(event, PartStartEvent) for event in events)
+    assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_temporal_durability_event_stream_handler_outside_workflow() -> None:
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    durability = TemporalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_handler', capabilities=[durability])
+    await agent.run('Hello')
+    assert any(isinstance(event, PartStartEvent) for event in events)
+
+
+def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> None:
+    durability = TemporalDurability()
+    assert durability.has_wrap_run_event_stream is False
 
 
 async def test_durability_streaming_in_workflow(client: Client):
@@ -5807,7 +5887,7 @@ async def test_durability_streaming_in_workflow(client: Client):
         workflows=[StreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_stream_durable_agent)],
     ):
-        output = await client.execute_workflow(
+        output, model_events_in_activity = await client.execute_workflow(
             StreamDurableAgentWorkflow.run,
             args=['Hello streaming'],
             id=StreamDurableAgentWorkflow.__name__,
@@ -5817,11 +5897,11 @@ async def test_durability_streaming_in_workflow(client: Client):
         # instead, request_stream_activity uses the stream_function path.
         # The final response is assembled from the streamed chunks.
         assert output == 'Streamed response'
-        assert _stream_model_events_in_activity
-        assert all(_stream_model_events_in_activity)
+        assert model_events_in_activity
+        assert not any(model_events_in_activity)
 
 
-# --- ProcessEventStream capability fires live inside the activity ---
+# --- ProcessEventStream capability fires workflow-side ---
 
 _process_events_collected: list[AgentStreamEvent] = []
 _process_model_events_in_activity: list[bool] = []
@@ -5833,8 +5913,6 @@ async def _process_event_stream_handler(
 ) -> None:
     async for event in stream:
         if isinstance(event, (PartStartEvent, PartDeltaEvent)):
-            # Model-stream events must be delivered inside the activity; the chain also
-            # fires workflow-side for tool-call and final-output node streams.
             _process_model_events_in_activity.append(activity.in_activity())
         _process_events_collected.append(event)
 
@@ -5853,9 +5931,14 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        return result.output
+        text_chunks = [
+            event.delta.content_delta
+            for event in _process_events_collected
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        ]
+        return result.output, _process_model_events_in_activity, text_chunks
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -5918,14 +6001,8 @@ def test_resolve_tool_activity_config_reads_metadata():
         resolve_tool_activity_config(tool, 'fn_tool', {})
 
 
-async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):
-    """ProcessEventStream (outer capability) sees live events emitted inside the Temporal activity.
-
-    With in-activity chain firing, the capability's handler runs against the real streamed
-    response — so multiple PartDeltaEvents come through (one per chunk). If the chain fired
-    on the replayed stream outside the activity instead, ProcessEventStream would see a
-    single synthetic delta with the full text.
-    """
+async def test_durability_process_event_stream_fires_workflow_side(client: Client):
+    """ProcessEventStream sees the real captured events replayed in the workflow."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -5934,23 +6011,16 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output = await client.execute_workflow(
+        output, model_events_in_activity, text_chunks = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
         assert output == 'Streamed response'
-        assert _process_model_events_in_activity
-        assert all(_process_model_events_in_activity)
+        assert model_events_in_activity
+        assert not any(model_events_in_activity)
 
-    delta_events = [
-        e for e in _process_events_collected if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    text_chunks = [cast(TextPartDelta, e.delta).content_delta for e in delta_events]
-    # Live stream: the first chunk becomes the PartStartEvent's text; subsequent chunks
-    # are deltas. Synthetic replay would collapse all chunks into a single delta with
-    # the full text ('Streamed response').
     assert text_chunks == ['ed ', 'response']
 
 
@@ -5968,6 +6038,7 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
 
 complex_durability_for_logfire = TemporalDurability[Deps](
     deps_type=Deps,
+    event_stream_handler=event_stream_handler,
     activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
@@ -5978,7 +6049,7 @@ complex_durable_logfire_agent = Agent(
     model,
     deps_type=Deps,
     output_type=Response,
-    capabilities=[ProcessEventStream(event_stream_handler), complex_durability_for_logfire],
+    capabilities=[complex_durability_for_logfire],
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='durability_complex_country'),
         MCPToolset(
@@ -6131,12 +6202,33 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running tool: get_country',
@@ -6152,7 +6244,18 @@ async def test_durability_complex_agent_logfire_span_tree(
                             ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running tool: get_product_name',
@@ -6169,7 +6272,18 @@ async def test_durability_complex_agent_logfire_span_tree(
                             ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -6211,9 +6325,19 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=2'),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running tool: get_weather',
@@ -6229,7 +6353,18 @@ async def test_durability_complex_agent_logfire_span_tree(
                             ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='chat gpt-4o',
@@ -6376,12 +6511,33 @@ async def test_durability_complex_agent_logfire_span_tree(
                                 )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=3'),
                         BasicSpan(
-                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
-                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                     ],
                 ),
@@ -7686,15 +7842,17 @@ _continuation_stream_agent = Agent(
 @workflow.defn
 class DurabilityContinuationStreamWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> AgentRunResult[str]:
-        return await _continuation_stream_agent.run(prompt)
+    async def run(self, prompt: str) -> tuple[AgentRunResult[str], list[tuple[str, int]]]:
+        result = await _continuation_stream_agent.run(prompt)
+        return result, _text_part_indices(_continuation_stream_events)
 
 
 @workflow.defn
 class DurabilityContinuationStreamResumeWorkflow:
     @workflow.run
-    async def run(self, messages: list[ModelMessage]) -> AgentRunResult[str]:
-        return await _continuation_stream_agent.run(message_history=messages)
+    async def run(self, messages: list[ModelMessage]) -> tuple[AgentRunResult[str], list[tuple[str, int]]]:
+        result = await _continuation_stream_agent.run(message_history=messages)
+        return result, _text_part_indices(_continuation_stream_events)
 
 
 def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
@@ -7706,7 +7864,7 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` fires inside each activity against its live segment, and the
+    `ProcessEventStream` receives each captured segment in workflow code, and the
     final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
@@ -7736,7 +7894,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
             id='DurabilityContinuationStreamWorkflow_chain',
             task_queue=TASK_QUEUE,
         )
-        result = await wf.result()
+        result, indices = await wf.result()
         history = await wf.fetch_history()
 
     assert result.output == 'The answer is 42.'
@@ -7744,14 +7902,8 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    # The construction-time handler sees each live segment inside its activity.
-    assert _text_part_indices(_continuation_stream_events) == snapshot(
-        [
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-        ]
+    assert indices == snapshot(
+        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
     )
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
@@ -7788,18 +7940,17 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
             id='DurabilityContinuationStreamWorkflow_resume',
             task_queue=TASK_QUEUE,
         )
-        result = await wf.result()
+        result, indices = await wf.result()
 
     assert result.output == 'The answer is 42.'
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    # The construction-time handler sees the activity-local segment index.
-    assert _text_part_indices(_continuation_stream_events) == snapshot(
+    assert indices == snapshot(
         [
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
+            ('PartStartEvent', 1),
+            ('PartDeltaEvent', 1),
         ]
     )
     assert _continuation_stream_model.request_stream_calls == 1

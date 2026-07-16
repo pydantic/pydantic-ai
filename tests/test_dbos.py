@@ -24,6 +24,9 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -2314,12 +2317,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
-    """`ProcessEventStream` routes streaming requests through DBOS steps.
-
-    The model-stream events must reach the handler *inside* the step, so its side effects
-    are checkpointed with the segment; the chain also fires flow-side for tool-call and
-    final-output node streams, so only model events are asserted in-step.
-    """
+    """`ProcessEventStream` receives captured model events in workflow code."""
     events_in_step: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -2348,7 +2346,7 @@ async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
         in_step for event, in_step in events_in_step if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
     assert model_events_in_step
-    assert all(model_events_in_step)
+    assert not any(model_events_in_step)
 
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
@@ -2361,23 +2359,14 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
     yield 'response'
 
 
-async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos: DBOS) -> None:
-    """ProcessEventStream (outer capability) sees live events emitted inside a DBOS step.
-
-    With in-step chain firing, the capability's handler runs against the real streamed
-    response — so multiple PartDeltaEvents come through (one per chunk). If the chain fired
-    on the replayed stream outside the step instead, ProcessEventStream would see a single
-    synthetic delta with the full text.
-    """
+async def test_dbos_durability_process_event_stream_fires_workflow_side(dbos: DBOS) -> None:
+    """ProcessEventStream sees the real captured events replayed in the workflow."""
 
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
-            if isinstance(event, (PartStartEvent, PartDeltaEvent)):
-                # Model-stream events must be delivered inside the step; the chain also
-                # fires flow-side for tool-call and final-output node streams.
-                assert DBOS.step_id is not None
+            assert DBOS.step_id is None
             events_received.append(event)
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
@@ -2400,10 +2389,61 @@ async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos:
         for e in events_received
         if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
     ]
-    # The 'Stream' / 'ed ' / 'response' chunks: first becomes the PartStartEvent's text,
-    # subsequent chunks are deltas. Synthetic replay of the final response would collapse
-    # everything into a single delta with the full text.
     assert delta_events == ['ed ', 'response']
+
+
+async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
+    events_in_boundary: list[tuple[AgentStreamEvent, bool]] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_in_boundary.append((event, DBOS.step_id is not None))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = DBOSDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler', tools=[handled_tool], capabilities=[durability])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    await run_durable_agent()
+    events = [event for event, _ in events_in_boundary]
+    assert events
+    assert all(
+        in_boundary
+        for event, in_boundary in events_in_boundary
+        if isinstance(event, (PartStartEvent, PartDeltaEvent, FinalResultEvent))
+    )
+    assert all(
+        not in_boundary
+        for event, in_boundary in events_in_boundary
+        if isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
+    )
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
+    assert any(isinstance(event, PartStartEvent) for event in events)
+    assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_dbos_durability_event_stream_handler_outside_workflow(dbos: DBOS) -> None:
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    durability = DBOSDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_handler', capabilities=[durability])
+    with agent.override():
+        await agent.run('Hello')
+    assert any(isinstance(event, PartStartEvent) for event in events)
+
+
+def test_dbos_durability_without_handler_does_not_wrap_event_stream() -> None:
+    assert DBOSDurability().has_wrap_run_event_stream is False
 
 
 async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DBOS) -> None:
@@ -2748,7 +2788,7 @@ async def test_dbos_durability_continuation_usage_limit_cancels_suspended(dbos: 
 async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DBOS) -> None:
     """A streamed suspended → complete chain is stitched across per-segment DBOS steps.
 
-    `ProcessEventStream` fires inside each step against its live segment, and the
+    `ProcessEventStream` receives each captured segment in workflow code, and the
     final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
@@ -2795,19 +2835,13 @@ async def test_dbos_durability_streaming_continuation_chain_in_workflow(dbos: DB
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # The construction-time handler sees each live segment inside its step.
     indices = [
         (type(event).__name__, event.index)
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
     assert indices == snapshot(
-        [
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-        ]
+        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
     )
     assert model.request_stream_calls == 2
     steps = await dbos.list_workflow_steps_async(wfid)

@@ -9,7 +9,7 @@ from dbos import DBOS
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai.agent import ParallelExecutionMode
+from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
@@ -21,10 +21,10 @@ from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtim
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
-    process_event_stream,
+    capture_event_stream,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -65,6 +65,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
         parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
@@ -87,13 +88,16 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            event_stream_handler: Optional event stream handler. Model events are handled
+                live inside model-request steps, and tool events are handled inline in
+                workflow code.
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
         """
-        super().__init__(models=models)
+        super().__init__(models=models, event_stream_handler=event_stream_handler)
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._model_step_config = model_step_config or {}
@@ -162,20 +166,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
             model = await bound._resolve_model_for_request(model_id, run_context)
-            request_context = ModelRequestContext(
-                model=model,
-                messages=messages,
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-            )
             with set_current_run_context(run_context):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, run_context
                 ) as streamed_response:
-                    events = await process_event_stream(
+                    events = await capture_event_stream(
                         run_context=run_context,
-                        request_context=request_context,
                         stream=streamed_response,
+                        handler=bound._event_stream_handler,
                     )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -199,6 +197,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         bound._install_workflow_wrappers(agent)
 
         return bound
+
+    def _in_durable_context(self) -> bool:
+        return DBOS.workflow_id is not None and DBOS.step_id is None
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        assert self._event_stream_handler is not None
+        await self._event_stream_handler(ctx, self._single_event_stream(event))
 
     def _install_workflow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Replace `agent.run` and `agent.run_sync` with DBOS-workflow-decorated wrappers.
@@ -406,7 +411,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
         return await handler(request_context)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

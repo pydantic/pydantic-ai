@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from abc import abstractmethod
+from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import Any, ClassVar
 
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FinalResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+)
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -31,9 +41,56 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     engine_name: ClassVar[str]
     """Human-readable engine name used in error messages (e.g. `'Temporal'`)."""
 
-    def __init__(self, *, models: Mapping[str, Model] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> None:
         self._extra_models: dict[str, Model] = dict(models) if models else {}
         self._models_by_id: dict[str, Model] = {}
+        self._event_stream_handler = event_stream_handler
+        self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return self._event_stream_handler is not None
+
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        if self._event_stream_handler is None:
+            async for event in stream:
+                yield event
+            return
+        if not self._in_durable_context():
+            assert self._process_event_stream is not None
+            async for event in self._process_event_stream.wrap_run_event_stream(ctx, stream=stream):
+                yield event
+            return
+
+        async for event in stream:
+            # `ModelResponseStreamEvent`s (exactly the types below) were already delivered
+            # live to the handler inside the model-request boundary; workflow-side they're
+            # the replay, so only `HandleResponseEvent`s are dispatched to the handler here.
+            if not isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent, FinalResultEvent)):
+                await self._dispatch_event_stream_event(ctx, event)
+            yield event
+
+    @abstractmethod
+    def _in_durable_context(self) -> bool:
+        """Whether execution is currently inside this engine's workflow or flow."""
+
+    @abstractmethod
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Deliver one workflow-side event inside an engine-specific durable boundary."""
+
+    @staticmethod
+    async def _single_event_stream(event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
+        yield event
 
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Build the model registry on a bound copy from the agent's default model and `models=` extras.

@@ -25,6 +25,8 @@ from pydantic_ai import (
     AgentStreamEvent,
     ExternalToolset,
     FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     FunctionToolset,
     ModelMessage,
     ModelRequest,
@@ -2014,12 +2016,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """`ProcessEventStream` routes streaming requests through Prefect tasks.
-
-    The model-stream events must reach the handler *inside* the task, so its side effects
-    are checkpointed with the segment; the chain also fires flow-side for tool-call and
-    final-output node streams, so only model events are asserted in-task.
-    """
+    """`ProcessEventStream` receives captured model events in flow code."""
     events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -2044,7 +2041,7 @@ async def test_prefect_durability_streaming_in_flow() -> None:
         in_task for event, in_task in events_in_task if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
     assert model_events_in_task
-    assert all(model_events_in_task)
+    assert not any(model_events_in_task)
 
 
 async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -2053,22 +2050,13 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
     yield 'response'
 
 
-async def test_prefect_durability_process_event_stream_fires_live_inside_task() -> None:
-    """`ProcessEventStream` (outer capability) sees live events emitted inside a Prefect task.
-
-    With in-task chain firing, the capability's handler runs against the real streamed
-    response, so multiple `PartDeltaEvent`s come through (one per chunk). If the chain fired
-    on the replayed stream outside the task instead, it would see a single synthetic delta
-    with the full text.
-    """
+async def test_prefect_durability_process_event_stream_fires_flow_side() -> None:
+    """`ProcessEventStream` sees the real captured events replayed in the flow."""
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
-            if isinstance(event, (PartStartEvent, PartDeltaEvent)):
-                # Model-stream events must be delivered inside the task; the chain also
-                # fires flow-side for tool-call and final-output node streams.
-                assert TaskRunContext.get() is not None
+            assert TaskRunContext.get() is None
             events_received.append(event)
 
     stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
@@ -2091,9 +2079,52 @@ async def test_prefect_durability_process_event_stream_fires_live_inside_task() 
         for e in events_received
         if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
     ]
-    # 'Stream' becomes the PartStartEvent's text; the subsequent chunks are deltas. Synthetic
-    # replay of the final response would collapse everything into a single delta.
     assert delta_events == ['ed ', 'response']
+
+
+async def test_prefect_durability_event_stream_handler() -> None:
+    events_in_boundary: list[tuple[AgentStreamEvent, bool]] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_in_boundary.append((event, TaskRunContext.get() is not None))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler', tools=[handled_tool], capabilities=[durability])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    await run_durable_agent()
+    events = [event for event, _ in events_in_boundary]
+    assert events
+    assert all(in_boundary for _, in_boundary in events_in_boundary)
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
+    assert any(isinstance(event, PartStartEvent) for event in events)
+    assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_prefect_durability_event_stream_handler_outside_flow() -> None:
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    durability = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(custom_output_text='done'), name='outside_handler', capabilities=[durability])
+    with agent.override():
+        await agent.run('Hello')
+    assert any(isinstance(event, PartStartEvent) for event in events)
+
+
+def test_prefect_durability_without_handler_does_not_wrap_event_stream() -> None:
+    assert PrefectDurability().has_wrap_run_event_stream is False
 
 
 async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
@@ -2239,7 +2270,7 @@ async def test_prefect_durability_continuation_usage_limit_cancels_suspended() -
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-    `ProcessEventStream` fires inside each task against its live segment, and the
+        `ProcessEventStream` receives each captured segment in flow code, and the
     final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
@@ -2284,19 +2315,13 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
     assert result.usage.requests == 1
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 6
-    # The construction-time handler sees each live segment inside its task.
     indices = [
         (type(event).__name__, event.index)
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
     assert indices == snapshot(
-        [
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-            ('PartStartEvent', 0),
-            ('PartDeltaEvent', 0),
-        ]
+        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
     )
     assert model.request_stream_calls == 2
 

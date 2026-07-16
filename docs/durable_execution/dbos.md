@@ -152,7 +152,11 @@ To customize how a model string is built — a custom provider, or per-user cred
 
 Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events] are not supported when running inside of a DBOS workflow.
 
-Instead, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the DBOS step. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+For handlers with I/O side effects, pass `event_stream_handler=` to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. Model events are delivered live inside each model-request step, while tool events are delivered inline in workflow code, matching DBOS's event-handler semantics.
+
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] and use [`Agent.run()`][pydantic_ai.agent.Agent.run]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+
+A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs workflow-side against replayed model events.
 
 Because the model stream is consumed inside the step, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 

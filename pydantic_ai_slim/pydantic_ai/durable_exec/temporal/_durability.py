@@ -18,6 +18,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import messages as _messages
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.capabilities.abstract import (
@@ -32,10 +33,10 @@ from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
     disable_threads,
-    process_event_stream,
+    capture_event_stream,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -71,6 +72,13 @@ class _CancelParams:
     response: ModelResponse
     serialized_run_context: Any
     model_id: str | None = None
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _EventStreamHandlerParams:
+    event: AgentStreamEvent
+    serialized_run_context: Any
 
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -160,6 +168,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -185,6 +194,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 client, or settings. Model-name strings never need registering;
                 to customize how they're built (e.g. a custom provider), use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            event_stream_handler: Optional event stream handler. Model events are handled
+                live inside model-request activities, and tool events are handled in
+                per-event activities.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters. Defaults to the agent's own
                 `deps_type`, discovered when the capability binds via `for_agent()`.
@@ -210,7 +222,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
-        super().__init__(models=models)
+        super().__init__(models=models, event_stream_handler=event_stream_handler)
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
@@ -345,12 +357,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            request_context = ModelRequestContext(
-                model=model_for_request,
-                messages=params.messages,
-                model_settings=cast(ModelSettings | None, params.model_settings),
-                model_request_parameters=params.model_request_parameters,
-            )
             async with _heartbeating():
                 with set_current_run_context(run_context):
                     async with model_for_request.request_stream(
@@ -359,10 +365,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.model_request_parameters,
                         run_context,
                     ) as streamed_response:
-                        events = await process_event_stream(
+                        events = await capture_event_stream(
                             run_context=run_context,
-                            request_context=request_context,
                             stream=streamed_response,
+                            handler=self._event_stream_handler,
                         )
                 return StreamedActivityResult(response=streamed_response.get(), events=events)
 
@@ -371,6 +377,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_activity
         )
         activities.append(self.request_stream_activity)
+
+        if self._event_stream_handler is not None:
+            handler = self._event_stream_handler
+
+            async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
+                run_context = deserialize_run_context(
+                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                )
+                await handler(run_context, self._single_event_stream(params.event))
+
+            event_stream_handler_activity.__annotations__['deps'] = deps_type | None
+            self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
+                event_stream_handler_activity
+            )
+            activities.append(self.event_stream_handler_activity)
 
         async def cancel_suspended_response_activity(params: _CancelParams, deps: AgentDepsT) -> None:
             run_context = deserialize_run_context(
@@ -456,6 +477,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return self._temporal_activities
 
     # --- Capability hooks ---
+
+    def _in_durable_context(self) -> bool:
+        return workflow.in_workflow()
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
+        await workflow.execute_activity(
+            activity=self.event_stream_handler_activity,
+            args=[
+                _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
+                ctx.deps,
+            ],
+            **config,
+        )
 
     async def wrap_run(
         self,
@@ -595,7 +631,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             request_stream_segment=request_stream_segment,
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
-        request_context._hooks_already_applied = True  # pyright: ignore[reportPrivateUsage]
         return await handler(request_context)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:

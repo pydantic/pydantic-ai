@@ -49,11 +49,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         ([`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability],
         [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability],
         [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]), model
-        streaming happens inside an activity/step/task rather than in the outer agent loop,
-        and this capability's handler fires there against the live stream — it sees the same
-        granular events it would in a non-durable run. (Under the deprecated wrapper agents,
-        the hook only fires for tool-call events and the final post-streaming batch; the
-        durable model consumes the live model-response events inside the activity.)
+        this capability's handler always runs in workflow or flow code and must be
+        deterministic because it re-runs on workflow replay. Tool-call and final-output
+        events arrive live; model events are the real captured events replayed after each
+        model-request activity, step, or task completes. For handler I/O that must run
+        exactly once inside a durable boundary, pass `event_stream_handler=` to the
+        durability capability instead.
     """
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]

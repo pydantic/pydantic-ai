@@ -204,7 +204,11 @@ If you need one or more of these attributes to be available inside activities, y
 
 Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
 
-Instead, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] before [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and use [`Agent.run()`][pydantic_ai.agent.Agent.run] inside the workflow. Its handler receives the agent [run context][pydantic_ai.tools.RunContext] and the live event stream inside the activity. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity.
+
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] and use [`Agent.run()`][pydantic_ai.agent.Agent.run] inside the workflow. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+
+A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs workflow-side against replayed model events.
 
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
