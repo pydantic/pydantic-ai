@@ -47,6 +47,8 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
 from ._inline_snapshot import Builder, Custom, customize
 
+T = TypeVar('T')
+
 __all__ = (
     'IsDatetime',
     'IsFloat',
@@ -61,6 +63,8 @@ __all__ = (
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
     'remove_schema_descriptions',
+    'message',
+    'message_part',
 )
 
 # Configure VCR logger to WARNING as it is too verbose by default
@@ -79,8 +83,6 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
-
-    T = TypeVar('T')
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -573,7 +575,12 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         return cache[key]
 
     for mod in list(sys.modules.values()):
-        if getattr(mod, 'create_async_http_client', None) is original:
+        # Read the module's own namespace via `__dict__` rather than `getattr`: some
+        # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
+        # that imports submodules on attribute access, and probing every loaded module
+        # with `getattr` would trigger those unrelated (and possibly failing) imports.
+        mod_dict = getattr(mod, '__dict__', None)
+        if mod_dict is not None and mod_dict.get('create_async_http_client', None) is original:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
     yield cache
@@ -1066,6 +1073,23 @@ def iter_message_parts(
             for part in msg.parts:
                 if isinstance(part, part_type):
                     yield part
+
+
+def message(messages: Sequence[ModelMessage], message_type: type[T], *, index: int = 0) -> T:
+    """Return `messages[index]`, asserting it is an instance of `message_type`."""
+    msg = messages[index]
+    assert isinstance(msg, message_type)
+    return msg
+
+
+def message_part(
+    messages: Sequence[ModelMessage], part_type: type[T], *, message_index: int = 0, part_index: int = 0
+) -> T:
+    """Return `messages[message_index].parts[part_index]`, asserting it is an instance of `part_type`."""
+    msg = messages[message_index]
+    part = msg.parts[part_index]
+    assert isinstance(part, part_type)
+    return part
 
 
 # endregion

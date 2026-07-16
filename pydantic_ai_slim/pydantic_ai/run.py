@@ -450,7 +450,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Designed to be called from the same event loop driving `agent.iter()`. If
@@ -475,11 +475,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 `'asap'` (default) — at the earliest opportunity (next model request,
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Returns:
+            The `enqueue_id` of the queued message, echoed on the
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
+            delivered, or `None` when there was nothing to enqueue (an empty call).
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self._graph_run.state.pending_messages.append(pending)
+        return pending.enqueue_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

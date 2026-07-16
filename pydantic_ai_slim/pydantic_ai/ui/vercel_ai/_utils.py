@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
+    ForceDownloadMode,
     ModelMessage,
     ProviderDetailsDelta,
     ToolReturnPart,
@@ -82,7 +83,7 @@ def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[s
 
 def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
-    **kwargs: ProviderDetailsDelta | str,
+    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | None,
 ) -> dict[str, Any] | None:
     """Dump provider metadata from keyword arguments.
 

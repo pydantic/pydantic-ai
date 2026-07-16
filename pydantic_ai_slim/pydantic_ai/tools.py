@@ -13,7 +13,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry
+from .exceptions import ModelRetry, UserError
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
 from .native_tools import AbstractNativeTool
@@ -435,6 +435,16 @@ ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
 
+def _validate_max_retries(max_retries: int | None) -> None:
+    if max_retries is not None and max_retries < 0:
+        raise UserError(f'max_retries must be >= 0, got {max_retries}')
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and timeout <= 0:
+        raise UserError(f'timeout must be > 0, got {timeout}')
+
+
 @dataclass(init=False)
 class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
@@ -553,6 +563,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
+        _validate_max_retries(max_retries)
+        _validate_timeout(timeout)
         self.function = function
         self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -776,7 +788,7 @@ class ToolDefinition:
 
     unless_native: Annotated[
         str | None,
-        # Old names were `prefer_builtin` and (after the builtin → native rename in #5338)
+        # Old names were `prefer_builtin` and (after the builtin → native rename in https://github.com/pydantic/pydantic-ai/issues/5338)
         # `prefer_native`; keep accepting both for serialized-history backward compat.
         Field(validation_alias=AliasChoices('unless_native', 'prefer_native', 'prefer_builtin')),
     ] = None

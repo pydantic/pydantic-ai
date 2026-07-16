@@ -142,6 +142,7 @@ jobs:
           anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           allowed_non_write_users: "*"
+          allowed_bots: "pydanty"
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'

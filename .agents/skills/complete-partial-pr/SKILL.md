@@ -53,9 +53,9 @@ Read the local context before scoping:
 - `CLAUDE.md` and `CLAUDE.local.md`
 - `agent_docs/index.md`
 - `.claude/skills/branch-context/issue-brief.md` and `.claude/skills/branch-context/pr-decisions.md`, if present
-- `.claude/skills/pyai-knowledge/feature-map.md` for the affected feature group
-- `.claude/skills/pyai-knowledge/internals-model.md` for layer ownership
-- `.claude/skills/pyai-knowledge/maintainer-mindset.md` for review tells
+- `agent_docs/pydantic-ai-slim.md` (**Ownership** section) and `pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md` for the affected feature group
+- `pydantic_ai_slim/pydantic_ai/{profiles,providers,models}/AGENTS.md`, `pydantic_ai_slim/pydantic_ai/AGENTS.md`, and the **Design Rules** section of `agent_docs/pydantic-ai-slim.md` for layer ownership
+- the root `CLAUDE.md` / `AGENTS.md` ethos ("channel your inner Samuel Colvin") and `agent_docs/index.md` for review tells
 
 If the investigation spans multiple surfaces or subagents, create a short working note under `local-notes/`, for example `local-notes/complete-partial-pr.md`. Keep facts, sources, and open questions there. Do not put research prose in `issue-brief.md`.
 

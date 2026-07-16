@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -38,30 +38,33 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '657'
+      - '655'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c7158386aaf73a075f98795b534f7c6d-f551e30ab168342f-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll retrieve the file for you and describe what I receive.
+      - text: I'll retrieve the file for you now.
         type: text
       - caller:
           type: direct
-        id: toolu_01CvWNXGuQqmQYjzB5zKwXba
+        id: toolu_019WEBcQ5sbsEcmHW9DqrZ2v
         input: {}
         name: get_file
         type: tool_use
-      id: msg_01S2gHxBdHMyFd26EQmgerjg
+      id: msg_011Ccn6rZNVm8pr6zrGvyLvd
       model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: tool_use
       stop_sequence: null
       type: message
@@ -73,7 +76,7 @@ interactions:
         cache_read_input_tokens: 0
         inference_geo: not_available
         input_tokens: 558
-        output_tokens: 50
+        output_tokens: 46
         service_tier: standard
     status:
       code: 200
@@ -83,11 +86,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '844'
+      - '820'
       content-type:
       - application/json
       host:
@@ -101,9 +104,9 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll retrieve the file for you and describe what I receive.
+        - text: I'll retrieve the file for you now.
           type: text
-        - id: toolu_01CvWNXGuQqmQYjzB5zKwXba
+        - id: toolu_019WEBcQ5sbsEcmHW9DqrZ2v
           input: {}
           name: get_file
           type: tool_use
@@ -111,11 +114,11 @@ interactions:
       - content:
         - content:
           - source:
-              file_id: file_011CYiV4nBS5Jak8e78n4mYu
+              file_id: file_011Ccn6h7bTbXrEWQKoQZqF9
               type: file
             type: image
           is_error: false
-          tool_use_id: toolu_01CvWNXGuQqmQYjzB5zKwXba
+          tool_use_id: toolu_019WEBcQ5sbsEcmHW9DqrZ2v
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -135,25 +138,47 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '271'
+      - '1230'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c9d935aea6261fddf7f4dcbebc495535-79e10e9773504968-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     parsed_body:
-      error:
-        message: 'messages.2.content.0.tool_result.content.0.image.source: Input tag ''file'' found using ''type'' does not
-          match any of the expected tags: ''base64'', ''url'''
-        type: invalid_request_error
-      request_id: req_011CYigKCwNYEiykg75cBRRh
-      type: error
+      content:
+      - text: "I received an image of a **cross-section of a kiwi fruit**. \n\nHere's what I can see:\n- The kiwi has been
+          sliced in half horizontally, showing the distinctive circular pattern of the fruit's interior\n- The flesh is bright
+          green with a gradient that becomes lighter toward the pale cream-colored center\n- There's a characteristic starburst
+          pattern of small black seeds arranged in a radial pattern around the center\n- The texture appears juicy and fresh\n-
+          You can see some of the fuzzy brown skin around the edges of the slice\n- The image is taken against a white background,
+          giving it a clean, professional appearance\n\nThis is a classic cross-sectional view that clearly shows the beautiful
+          natural geometry of a kiwi fruit!"
+        type: text
+      id: msg_011Ccn6rjD5yxvRcPa3Ef5pR
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1092
+        output_tokens: 167
+        service_tier: standard
     status:
-      code: 400
-      message: Bad Request
+      code: 200
+      message: OK
 version: 1

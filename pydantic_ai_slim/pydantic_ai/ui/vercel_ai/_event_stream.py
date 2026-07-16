@@ -93,8 +93,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     """UI event stream transformer for the Vercel AI protocol."""
 
     _: KW_ONLY
-    sdk_version: Literal[5, 6] = 5
-    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
+    sdk_version: Literal[5, 6, 7] = 5
+    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming; 7 emits the
+    same wire as 6 (v7's data-stream protocol equals v6's)."""
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
 
@@ -345,6 +346,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
         else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
+            # an error; `'interrupted'` (a call cut off before it produced a result) must never be.
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
                 output=tool_return_output(part),
@@ -427,6 +430,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
+            # an error; a synthesized `'interrupted'` return (from message-history repair) must never
+            # be surfaced as one — its content string carries the interruption message as the output.
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts

@@ -204,6 +204,100 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
+async def test_request_usage_without_tokens(allow_model_requests: None):
+    """The mock pins billed-unit mapping when Cohere omits `tokens`, a response shape VCR cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=4, output_tokens=2),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            details={
+                'input_tokens': 4,
+                'output_tokens': 2,
+            },
+        )
+    )
+
+
+async def test_request_usage_with_partial_tokens(allow_model_requests: None):
+    """The mock pins optional token fields, which a VCR response cannot reliably trigger."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            tokens=cohere.UsageTokens(input_tokens=4),
+            billed_units=cohere.UsageBilledUnits(input_tokens=3),
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=4,
+            details={'input_tokens': 3},
+        )
+    )
+
+
+async def test_request_usage_with_cached_tokens_mock(allow_model_requests: None):
+    """Top-level `usage.cached_tokens` surfaces as first-class `cache_read_tokens` via the genai-prices tokens flavor.
+
+    Unit-style mock rather than VCR: the SDK types these counts as floats, and this pins the
+    float-to-int normalization plus nonzero token extraction, so a silently-broken extraction
+    path (which yields all-zero tokens with details preserved) cannot pass. The VCR variant
+    `test_request_usage_with_cached_tokens` covers the recorded-API path.
+    """
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+        usage=cohere.Usage(
+            billed_units=cohere.UsageBilledUnits(input_tokens=13, output_tokens=8),
+            tokens=cohere.UsageTokens(input_tokens=542, output_tokens=8),
+            cached_tokens=37,
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=542,
+            cache_read_tokens=37,
+            output_tokens=8,
+            details={
+                'input_tokens': 13,
+                'output_tokens': 8,
+            },
+        )
+    )
+
+
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         AssistantMessageResponse(
@@ -688,3 +782,30 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')
+
+
+async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
+    """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
+    neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
+    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty response from the API payload.
+    """
+    completions = [
+        completion_message(AssistantMessageResponse(content=None)),
+        completion_message(
+            AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='hello back')])
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_mock(completions)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    # The empty response is omitted from the payload (no assistant message with neither content nor
+    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
+    # self-correct.
+    second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
+    assert not any(message.role == 'assistant' for message in second_call_messages)
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])

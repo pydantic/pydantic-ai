@@ -61,7 +61,7 @@ from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime
+from .conftest import IsDatetime, message, message_part
 
 pytest.importorskip('starlette')
 
@@ -552,7 +552,7 @@ async def test_run_stream_response_error():
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
             "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
-            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries</error>",
             '</request>',
             '</stream>',
         ]
@@ -813,8 +813,7 @@ async def test_reinject_system_prompt_capability_injects_when_history_missing():
         capabilities=[ReinjectSystemPrompt()],
     )
 
-    first_request = result.all_messages()[0]
-    assert isinstance(first_request, ModelRequest)
+    first_request = message(result.all_messages(), ModelRequest)
     assert first_request.parts == snapshot(
         [
             SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
@@ -849,15 +848,13 @@ async def test_reinject_system_prompt_capability_reaches_model_and_all_messages(
 
     # What the model received on its one call
     assert len(captured) == 1
-    model_first_request = captured[0][0]
-    assert isinstance(model_first_request, ModelRequest)
+    model_first_request = message(captured[0], ModelRequest)
     assert [type(p).__name__ for p in model_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
     assert isinstance(model_first_request.parts[0], SystemPromptPart)
     assert model_first_request.parts[0].content == 'Server prompt'
 
     # What the caller sees via result.all_messages()
-    stored_first_request = result.all_messages()[0]
-    assert isinstance(stored_first_request, ModelRequest)
+    stored_first_request = message(result.all_messages(), ModelRequest)
     assert [type(p).__name__ for p in stored_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
     assert isinstance(stored_first_request.parts[0], SystemPromptPart)
     assert stored_first_request.parts[0].content == 'Server prompt'
@@ -940,8 +937,7 @@ async def test_reinject_system_prompt_capability_agent_without_model():
         capabilities=[ReinjectSystemPrompt()],
     )
 
-    first_request = result.all_messages()[0]
-    assert isinstance(first_request, ModelRequest)
+    first_request = message(result.all_messages(), ModelRequest)
     assert first_request.parts == snapshot(
         [
             SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
@@ -973,8 +969,7 @@ async def test_reinject_system_prompt_capability_preserves_existing():
         capabilities=[ReinjectSystemPrompt()],
     )
 
-    first_request = result.all_messages()[0]
-    assert isinstance(first_request, ModelRequest)
+    first_request = message(result.all_messages(), ModelRequest)
     sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
     assert [p.content for p in sys_parts] == ['First agent']
 
@@ -1034,10 +1029,7 @@ def test_sanitize_messages_strips_file_urls_with_disallowed_schemes():
         sanitized = adapter.sanitize_messages(adapter.messages)
 
     assert len(sanitized) == 1
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
 
 
@@ -1069,9 +1061,7 @@ def test_sanitize_messages_respects_custom_allowed_schemes():
     with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'"):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot([ImageUrl(url='s3://bucket/ok.png')])
 
 
@@ -1105,9 +1095,7 @@ def test_sanitize_messages_resets_force_download_not_in_allowlist():
     warning_message = str(caught[0].message)
     assert 'True' in warning_message
     assert 'https://example.com/img.png' not in warning_message
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(
         [
             ImageUrl(url='https://example.com/img.png', force_download=False),
@@ -1140,9 +1128,7 @@ def test_sanitize_messages_leaves_allowlisted_force_download_alone():
         warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(
         [
             ImageUrl(url='https://example.com/a.png', force_download=False),
@@ -1173,9 +1159,7 @@ def test_sanitize_messages_widened_allowlist_lets_true_through_but_resets_allow_
     with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local'):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(
         [
             ImageUrl(url='https://example.com/a.png', force_download=True),
@@ -1211,9 +1195,7 @@ def test_sanitize_messages_strips_disallowed_scheme_before_reset():
     assert not any('s3://bucket/key.png' in m for m in messages)
     assert not any('https://example.com/img.png' in m for m in messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot([ImageUrl(url='https://example.com/img.png', force_download=False)])
 
 
@@ -1253,10 +1235,7 @@ def test_sanitize_messages_resets_force_download_in_tool_return_parts():
     with pytest.warns(UserWarning, match=r'force_download'):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    tool_return = request.parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
+    tool_return = message_part(sanitized, ToolReturnPart)
     assert tool_return.content == snapshot(
         [
             'see file',
@@ -1265,10 +1244,7 @@ def test_sanitize_messages_resets_force_download_in_tool_return_parts():
         ]
     )
 
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
-    native_return = response.parts[0]
-    assert isinstance(native_return, NativeToolReturnPart)
+    native_return = message_part(sanitized, NativeToolReturnPart, message_index=1)
     assert native_return.content == snapshot(ImageUrl(url='https://example.com/native.png', force_download=False))
 
 
@@ -1307,10 +1283,7 @@ def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
     with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'.*'s3'"):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    tool_return = request.parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
+    tool_return = message_part(sanitized, ToolReturnPart)
     assert tool_return.content == snapshot(
         [
             'see file',
@@ -1320,10 +1293,7 @@ def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
         ]
     )
 
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
-    native_return = response.parts[0]
-    assert isinstance(native_return, NativeToolReturnPart)
+    native_return = message_part(sanitized, NativeToolReturnPart, message_index=1)
     assert native_return.content is None
 
 
@@ -1357,9 +1327,7 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
 
 
@@ -1379,9 +1347,7 @@ def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
         warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    assert isinstance(sanitized[0], ModelRequest)
-    user_part = sanitized[0].parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
 
 
@@ -1438,16 +1404,10 @@ def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
     with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock', 'google-cloud'\]"):
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    tool_return = request.parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
+    tool_return = message_part(sanitized, ToolReturnPart)
     assert tool_return.content == snapshot(['see file', {'ok': ImageUrl(url='https://example.com/ok.png')}])
 
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
-    native_return = response.parts[0]
-    assert isinstance(native_return, NativeToolReturnPart)
+    native_return = message_part(sanitized, NativeToolReturnPart, message_index=1)
     assert native_return.content is None
 
 
@@ -1473,10 +1433,7 @@ def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_allow_
         warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    request = sanitized[0]
-    assert isinstance(request, ModelRequest)
-    tool_return = request.parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
+    tool_return = message_part(sanitized, ToolReturnPart)
     assert tool_return.content == snapshot(['see file', {'kept': uploaded_file}])
 
 
@@ -1498,8 +1455,7 @@ def test_sanitize_messages_strips_dangling_tool_calls():
         sanitized = adapter.sanitize_messages(adapter.messages)
 
     assert len(sanitized) == 2
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
+    response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in response.parts] == ['TextPart']
 
 
@@ -1518,8 +1474,7 @@ def test_sanitize_messages_keeps_tool_calls_resolved_by_deferred_results():
         warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages, deferred_tool_results=deferred_tool_results)
 
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
+    response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in response.parts] == ['ToolCallPart']
 
 
@@ -1564,8 +1519,7 @@ def test_sanitize_messages_keeps_dangling_native_tool_calls():
         warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    response = sanitized[1]
-    assert isinstance(response, ModelResponse)
+    response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in response.parts] == ['TextPart', 'NativeToolCallPart']
 
 
@@ -1585,8 +1539,7 @@ def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
         warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages)
 
-    mid_response = sanitized[1]
-    assert isinstance(mid_response, ModelResponse)
+    mid_response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in mid_response.parts] == ['ToolCallPart']
 
 
@@ -1618,8 +1571,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert len(captured) == 1
     history_seen_by_model = captured[0]
     assert not any(
-        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
-        for message in history_seen_by_model
+        isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
 
 
@@ -1655,10 +1607,7 @@ async def test_run_stream_strips_file_urls_with_disallowed_schemes():
             pass
 
     assert len(captured) == 1
-    first_request = captured[0][0]
-    assert isinstance(first_request, ModelRequest)
-    user_part = first_request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
+    user_part = message_part(captured[0], UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/public.png')]
 
 
@@ -1684,8 +1633,7 @@ async def test_reinject_system_prompt_capability_with_pending_tool_calls():
 
     result = await agent.run(message_history=history, capabilities=[ReinjectSystemPrompt()])
 
-    first_request = result.all_messages()[0]
-    assert isinstance(first_request, ModelRequest)
+    first_request = message(result.all_messages(), ModelRequest)
     assert first_request.parts == snapshot(
         [
             SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
