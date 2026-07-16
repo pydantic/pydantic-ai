@@ -14,6 +14,7 @@ from ..messages import (
     CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -272,6 +273,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
         - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
         - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
+        - [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] -> `handle_enqueued_messages`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
@@ -295,6 +297,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case FinalResultEvent():
                 async for e in self.handle_final_result(event):
+                    yield e
+            case EnqueuedMessagesEvent():
+                async for e in self.handle_enqueued_messages(event):
                     yield e
             case FunctionToolCallEvent():
                 async for e in self.handle_function_tool_call(event):
@@ -622,6 +627,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The final result event.
+        """
+        return
+        yield  # Make this an async generator
+
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[EventT]:
+        """Handle an `EnqueuedMessagesEvent` (messages enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] delivered into the run).
+
+        By default no protocol events are emitted. Override this to surface the delivered
+        messages to the frontend.
+
+        Args:
+            event: The enqueued messages event.
         """
         return
         yield  # Make this an async generator

@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     ForceDownloadMode,
@@ -541,6 +542,37 @@ async def test_event_stream_deferred_tool_hook_overrides():
             '<stream>',
             "<deferred-tool-requests approvals=['my_tool'] />",
             "<deferred-tool-results approvals=['approval_1'] />",
+            '</stream>',
+        ]
+    )
+
+
+class EnqueuedAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[str]:
+        yield f'<enqueued-messages id={event.enqueue_id!r} count={len(event.messages)} />'
+
+
+async def test_event_stream_enqueued_messages_hook():
+    """`EnqueuedMessagesEvent` dispatches to a no-op `handle_enqueued_messages` hook that subclasses can override to surface delivered messages to the frontend."""
+
+    def event_generator():
+        async def generate():
+            yield EnqueuedMessagesEvent(enqueue_id='enqueue_1', messages=(ModelRequest.user_text_prompt('Enqueued!'),))
+
+        return generate()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+
+    base_events = [event async for event in DummyUIEventStream(run_input=request).transform_stream(event_generator())]
+    assert base_events == snapshot(['<stream>', '</stream>'])
+
+    events = [
+        event async for event in EnqueuedAwareUIEventStream(run_input=request).transform_stream(event_generator())
+    ]
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<enqueued-messages id='enqueue_1' count=1 />",
             '</stream>',
         ]
     )
