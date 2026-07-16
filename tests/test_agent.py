@@ -11797,7 +11797,11 @@ async def test_raise_content_filter_error_capability_noop_for_other_finish_reaso
 
 
 async def test_raise_content_filter_error_capability_streaming():
-    """The capability raises ContentFilterError on the streaming path too."""
+    """The capability raises ContentFilterError on the streaming path too, preserving the partial text in the body.
+
+    Uses a synthetic `StreamedResponse` rather than a VCR cassette because emitting partial text alongside a
+    `content_filter` finish reason isn't reliably reproducible from a real provider.
+    """
 
     class ContentFilterStreamedResponse(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -11860,9 +11864,16 @@ async def test_raise_content_filter_error_capability_streaming():
 
     with pytest.raises(
         ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
-    ):
+    ) as exc_info:
         async with agent.run_stream('Trigger filter') as stream:
             await stream.get_output()
+
+    body = exc_info.value.body
+    assert body is not None
+    response_msg = json.loads(body)[0]
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details'] == {'finish_reason': 'content_filter'}
+    assert response_msg['parts'][0]['content'] == 'Partially generated content...'
 
 
 @pytest.mark.parametrize(
