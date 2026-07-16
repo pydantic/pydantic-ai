@@ -1,6 +1,7 @@
 """Tests for the deterministic half of attention triage."""
 
 import datetime as dt
+import json
 import sys
 from pathlib import Path
 from typing import cast
@@ -196,6 +197,21 @@ def test_assignment_change_restarts_sequence():
     )
 
 
+def test_contributor_assignment_does_not_restart_sequence():
+    """Only maintainer ownership changes reset the maintainer response clock."""
+    reminder = monitor.next_reminder(
+        activities=[
+            _labeled(6),
+            _marker(1, ['adtyavrdhn']),
+            _activity('assigned', NOW - dt.timedelta(hours=1), assignee='contributor'),
+        ],
+        assignees=['adtyavrdhn', 'contributor'],
+        permissions={'adtyavrdhn': 'write', 'contributor': 'triage'},
+        now=NOW,
+    )
+    assert reminder and reminder['stage'] == 2
+
+
 def test_remove_and_reapply_label_starts_new_clock():
     """A new label application starts a new clock."""
     activities = [
@@ -204,6 +220,31 @@ def test_remove_and_reapply_label_starts_new_clock():
         _activity('labeled', NOW - dt.timedelta(days=2), label='needs-maintainer-action'),
     ]
     assert monitor.next_reminder(activities=activities, assignees=[], permissions={}, now=NOW) is None
+
+
+def test_old_terminal_marker_does_not_survive_new_label_cycle():
+    """Weekly reporting cannot treat a prior stage-three ping as current."""
+    activities = [
+        _labeled(12),
+        _marker(3, ['DouweM'], days=9),
+        _activity('unlabeled', NOW - dt.timedelta(days=5), label='needs-maintainer-action'),
+        _activity('labeled', NOW - dt.timedelta(days=2), label='needs-maintainer-action'),
+    ]
+    label_since = monitor._active_label_since(activities)
+    assert label_since is not None
+    assert monitor._latest_reminder_marker(activities, {}, label_since) is None
+
+
+def test_maintainer_reassignment_clears_terminal_marker():
+    """A new maintainer owner gets a fresh cycle in reminders and reporting."""
+    activities = [
+        _labeled(12),
+        _marker(3, ['DouweM'], days=5),
+        _activity('assigned', NOW - dt.timedelta(days=2), assignee='dsfaccini'),
+    ]
+    label_since = monitor._active_label_since(activities)
+    assert label_since is not None
+    assert monitor._latest_reminder_marker(activities, {'dsfaccini': 'write'}, label_since) is None
 
 
 def test_rendered_comments_are_concise_and_include_context():
@@ -238,18 +279,108 @@ def test_context_is_bounded():
     assert '@\u200bother-maintainer' in monitor._clean_context('@other-maintainer should review')
 
 
+@pytest.mark.parametrize(
+    'context',
+    [
+        '[review this](https://attacker.example)',
+        'See https://attacker.example for context',
+        '<img src=x onerror=alert(1)>',
+        '<!-- hide the trusted marker',
+    ],
+)
+def test_context_rejects_links_urls_and_html(context: str):
+    """Model context is rendered as bounded plain text, never trusted bot markup."""
+    assert monitor._clean_context(context) == 'A maintainer decision is still the next step.'
+
+
 def test_custom_safe_output_boolean_strings_are_parsed(tmp_path: Path):
     """gh-aw boolean strings do not accidentally turn `false` into truthy Python strings."""
     output = tmp_path / 'agent-output.json'
     output.write_text(
         '{"items":[{"type":"record_attention_decision","item_number":"42",'
         '"next_actor":"maintainer","confidence":"high","recommended_action":"review",'
-        '"context":"The PR is ready for review.","urgent":"false","maintainer_skip":"true"}]}',
+        '"context":"The PR is ready for review.","urgent":"false"}]}',
         encoding='utf-8',
     )
     decision = monitor._parse_decisions(str(output))[0]
     assert decision['urgent'] is False
-    assert decision['maintainer_skip'] is True
+
+
+@pytest.mark.parametrize('item_number', ['0', '-1', '42\nforged=true', '<!channel>'])
+def test_decision_item_number_must_be_a_positive_decimal_string(tmp_path: Path, item_number: str):
+    """Agent-controlled item identifiers cannot cross into repository or workflow state."""
+    output = tmp_path / 'agent-output.json'
+    output.write_text(
+        json.dumps(
+            {
+                'items': [
+                    {
+                        'type': 'record_attention_decision',
+                        'item_number': item_number,
+                        'next_actor': 'maintainer',
+                        'confidence': 'high',
+                        'recommended_action': 'review',
+                        'context': 'The PR is ready for review.',
+                        'urgent': True,
+                    }
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='positive decimal string'):
+        monitor._parse_decisions(str(output))
+
+
+def test_decisions_must_target_the_triggering_item():
+    """Prompt injection cannot redirect a write to another issue or PR."""
+    with pytest.raises(ValueError, match=r'ineligible item numbers: \[43\]'):
+        monitor._validate_decision_targets([_decision(item_number=43)], {42})
+
+
+def test_duplicate_decisions_are_rejected():
+    """One agent run cannot repeatedly hydrate and mutate the same item."""
+    with pytest.raises(ValueError, match='duplicate decisions'):
+        monitor._validate_decision_targets([_decision(), _decision()], {42})
+
+
+def test_event_allowlist_uses_only_the_triggering_item():
+    """Ordinary event runs have a one-item deterministic write boundary."""
+    client = cast(monitor.GitHubClient, object())
+    assert monitor.eligible_decision_numbers(
+        client,
+        'pydantic/pydantic-ai',
+        event_name='issue_comment',
+        event={'issue': {'number': 42}},
+        staged=False,
+    ) == {42}
+
+
+def test_check_suite_allowlist_is_bounded_to_five_associated_prs():
+    """Check-suite output cannot target arbitrary or unbounded pull requests."""
+    client = cast(monitor.GitHubClient, object())
+    assert monitor.eligible_decision_numbers(
+        client,
+        'pydantic/pydantic-ai',
+        event_name='check_suite',
+        event={'check_suite': {'pull_requests': [{'number': number} for number in range(1, 8)]}},
+        staged=False,
+    ) == {1, 2, 3, 4, 5}
+
+
+def test_staged_schedule_has_no_eligible_items():
+    """Scheduled shadow runs cannot manufacture an item selection."""
+    client = cast(monitor.GitHubClient, object())
+    assert (
+        monitor.eligible_decision_numbers(
+            client,
+            'pydantic/pydantic-ai',
+            event_name='schedule',
+            event={},
+            staged=True,
+        )
+        == set()
+    )
 
 
 def test_permissions_are_cached_case_insensitively(monkeypatch: pytest.MonkeyPatch):
@@ -306,6 +437,45 @@ def test_non_maintainer_cannot_apply_skip_override(monkeypatch: pytest.MonkeyPat
     assert removed == ['attention:skip']
 
 
+def test_non_maintainer_cannot_apply_action_label(monkeypatch: pytest.MonkeyPatch):
+    """A triage-role user cannot start the maintainer attention clock."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'labeled',
+        'issue': {'number': 42, 'assignees': []},
+        'sender': {'login': 'triager'},
+        'label': {'name': 'needs-maintainer-action'},
+    }
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'triage')
+    removed: list[str] = []
+    monkeypatch.setattr(monitor, '_remove_label', lambda *args: removed.append(cast(str, args[-1])))
+
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == [
+        'ignored non-maintainer needs-maintainer-action override on #42'
+    ]
+    assert removed == ['needs-maintainer-action']
+
+
+@pytest.mark.parametrize('label', ['needs-maintainer-action', 'attention:force', 'attention:skip'])
+def test_non_maintainer_cannot_remove_protected_label(monkeypatch: pytest.MonkeyPatch, label: str):
+    """A triage-role user cannot cancel policy state or a maintainer override."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'unlabeled',
+        'issue': {'number': 42, 'assignees': []},
+        'sender': {'login': 'triager'},
+        'label': {'name': label},
+    }
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'triage')
+    added: list[list[str]] = []
+    monkeypatch.setattr(monitor, '_add_labels', lambda *args: added.append(list(args[-1])))
+
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == [
+        f'restored non-maintainer removal of {label} on #42'
+    ]
+    assert added == [[label]]
+
+
 def test_deterministic_workflow_can_project_maintainer_skip():
     """The workflow-authored label remains durable after translating a maintainer action."""
     activities = [
@@ -317,6 +487,44 @@ def test_deterministic_workflow_can_project_maintainer_skip():
         )
     ]
     assert monitor._valid_override({'attention:skip'}, activities, 'attention:skip')
+
+
+def test_authorized_skip_immediately_removes_attention(monkeypatch: pytest.MonkeyPatch):
+    """A maintainer skip stops reminders without waiting for another agent run."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'labeled',
+        'issue': {
+            'number': 42,
+            'assignees': [{'login': 'adtyavrdhn'}],
+            'labels': [{'name': 'needs-maintainer-action'}, {'name': 'attention:skip'}],
+        },
+        'sender': {'login': 'adtyavrdhn'},
+        'label': {'name': 'attention:skip'},
+    }
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'write')
+    removed: list[str] = []
+    monkeypatch.setattr(monitor, '_remove_label', lambda *args: removed.append(cast(str, args[-1])))
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == ['applied attention:skip override on #42']
+    assert removed == ['needs-maintainer-action']
+
+
+def test_force_skip_conflict_does_not_assign_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Conflicting maintainer overrides stay suppressed without changing ownership."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'labeled',
+        'issue': {
+            'number': 42,
+            'assignees': [],
+            'labels': [{'name': 'attention:force'}, {'name': 'attention:skip'}],
+        },
+        'sender': {'login': 'adtyavrdhn'},
+        'label': {'name': 'attention:force'},
+    }
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'write')
+    monkeypatch.setattr(monitor, '_assign', lambda *_: pytest.fail('must not assign a suppressed item'))
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == []
 
 
 def test_apply_decision_ignores_racing_non_maintainer_override(monkeypatch: pytest.MonkeyPatch):
@@ -341,15 +549,14 @@ def test_apply_decision_ignores_racing_non_maintainer_override(monkeypatch: pyte
     assert removed == ['attention:skip']
 
 
-def _decision() -> monitor.Decision:
+def _decision(*, item_number: int = 42) -> monitor.Decision:
     return monitor.Decision(
-        item_number=42,
+        item_number=item_number,
         next_actor='maintainer',
         confidence='high',
         recommended_action='Review the proposed change.',
         context='The PR is green and ready for review.',
         urgent=False,
-        maintainer_skip=False,
     )
 
 
@@ -402,6 +609,67 @@ def test_latest_maintainer_label_removal_wins_race_with_classifier(monkeypatch: 
     assert messages == ['#42: preserved latest maintainer label-removal override']
 
 
+def test_racing_maintainer_response_prevents_reminder(monkeypatch: pytest.MonkeyPatch):
+    """The host recomputes activity immediately before a public bot comment."""
+    client = monitor.GitHubClient('token')
+    activities = [
+        _labeled(6),
+        _activity('comment', NOW - dt.timedelta(hours=1), author='DouweM', maintainer=True),
+    ]
+    monkeypatch.setattr(
+        monitor,
+        'hydrate',
+        lambda *_: (
+            {'labels': [{'name': 'needs-maintainer-action'}], 'assignees': [{'login': 'dsfaccini'}]},
+            activities,
+            {'dsfaccini': 'write', 'DouweM': 'admin'},
+        ),
+    )
+    monkeypatch.setattr(client, 'post', lambda *_: pytest.fail('must not post after a maintainer response'))
+    assert (
+        monitor._post_reminder_if_current(
+            client,
+            'pydantic/pydantic-ai',
+            42,
+            context='The PR is ready.',
+            now=NOW,
+        )
+        == '#42: label retained; no reminder due'
+    )
+
+
+def test_model_output_cannot_create_durable_skip(monkeypatch: pytest.MonkeyPatch):
+    """An ordinary maintainer comment is not authority for the model to add `attention:skip`."""
+    client = cast(monitor.GitHubClient, object())
+    activities = [_activity('comment', NOW, author='DouweM', maintainer=True, body='An architectural note.')]
+    monkeypatch.setattr(
+        monitor,
+        'hydrate',
+        lambda *_: (
+            {'labels': [{'name': 'needs-maintainer-action'}], 'assignees': [{'login': 'adtyavrdhn'}]},
+            activities,
+            {'adtyavrdhn': 'write', 'DouweM': 'admin'},
+        ),
+    )
+    removed: list[str] = []
+    monkeypatch.setattr(monitor, '_remove_label', lambda *args: removed.append(cast(str, args[-1])))
+    decision = _decision()
+    decision['next_actor'] = 'none'
+    messages = monitor.apply_decision(client, 'pydantic/pydantic-ai', decision, staged=False, now=NOW)
+    assert messages == ['#42: removed needs-maintainer-action']
+    assert removed == ['needs-maintainer-action']
+
+
+def test_closed_item_is_never_mutated(monkeypatch: pytest.MonkeyPatch):
+    """A race with item closure fails closed before labels, assignments, or comments."""
+    client = cast(monitor.GitHubClient, object())
+    monkeypatch.setattr(monitor, 'hydrate', lambda *_: ({'state': 'closed'}, [], {}))
+    monkeypatch.setattr(monitor, '_add_labels', lambda *_: pytest.fail('must not mutate a closed item'))
+    assert monitor.apply_decision(client, 'pydantic/pydantic-ai', _decision(), staged=False, now=NOW) == [
+        '#42: ignored because the item is not open'
+    ]
+
+
 def test_uncertain_urgent_decision_is_an_anomaly(monkeypatch: pytest.MonkeyPatch):
     """An urgent item cannot disappear behind a classifier abstention."""
     client = cast(monitor.GitHubClient, object())
@@ -412,4 +680,78 @@ def test_uncertain_urgent_decision_is_an_anomaly(monkeypatch: pytest.MonkeyPatch
     decision['urgent'] = True
     assert monitor.apply_decision(client, 'pydantic/pydantic-ai', decision, staged=True, now=NOW) == [
         'ANOMALY #42: urgent item was not confidently routed to a maintainer'
+    ]
+
+
+def _report_item(number: int, labels: list[str]) -> dict[str, object]:
+    return {
+        'number': number,
+        'html_url': f'https://github.com/pydantic/pydantic-ai/issues/{number}',
+        'labels': [{'name': label} for label in labels],
+        'assignees': [],
+    }
+
+
+def _mock_report_client(
+    monkeypatch: pytest.MonkeyPatch,
+    item: dict[str, object] | None,
+    activities: list[monitor.Activity],
+    permissions: dict[str, str | None] | None = None,
+    *,
+    recent_run: bool = True,
+) -> monitor.GitHubClient:
+    client = monitor.GitHubClient('token')
+    monkeypatch.setattr(client, 'paginate', lambda *_: [item] if item is not None else [])
+    runs = [{'created_at': NOW.isoformat()}] if recent_run else []
+    monkeypatch.setattr(client, 'get', lambda *_: {'workflow_runs': runs})
+    if item is not None:
+        monkeypatch.setattr(monitor, 'hydrate', lambda *_: (item, activities, permissions or {}))
+    return client
+
+
+def test_anomaly_report_deduplicates_force_skip_conflict(monkeypatch: pytest.MonkeyPatch):
+    """An unlabeled conflict is reported once even though both label queries find it."""
+    item = _report_item(42, ['attention:force', 'attention:skip'])
+    activities = [
+        _activity('labeled', NOW, author='adtyavrdhn', maintainer=True, label='attention:force'),
+        _activity('labeled', NOW, author='adtyavrdhn', maintainer=True, label='attention:skip'),
+    ]
+    client = _mock_report_client(monkeypatch, item, activities)
+    assert monitor.anomaly_report(client, 'pydantic/pydantic-ai', now=NOW) == [
+        '<https://github.com/pydantic/pydantic-ai/issues/42|#42> has conflicting force and skip overrides'
+    ]
+
+
+def test_anomaly_report_ignores_valid_skip_only_item(monkeypatch: pytest.MonkeyPatch):
+    """An intentionally suppressed item does not need an owner or Slack noise."""
+    item = _report_item(42, ['attention:skip'])
+    activities = [_activity('labeled', NOW, author='adtyavrdhn', maintainer=True, label='attention:skip')]
+    client = _mock_report_client(monkeypatch, item, activities)
+    assert monitor.anomaly_report(client, 'pydantic/pydantic-ai', now=NOW) == []
+
+
+def test_anomaly_report_includes_unlabeled_urgent_item(monkeypatch: pytest.MonkeyPatch):
+    """Priority-only items cannot disappear from the exception report."""
+    item = _report_item(42, ['p:1-highest'])
+    client = _mock_report_client(monkeypatch, item, [])
+    assert monitor.anomaly_report(client, 'pydantic/pydantic-ai', now=NOW) == [
+        '<https://github.com/pydantic/pydantic-ai/issues/42|#42> is urgent but has no maintainer owner'
+    ]
+
+
+def test_anomaly_report_includes_current_terminal_marker(monkeypatch: pytest.MonkeyPatch):
+    """A current unanswered Douwe ping is surfaced to Slack."""
+    item = _report_item(42, ['needs-maintainer-action'])
+    activities = [_labeled(10), _marker(3, ['DouweM'], days=1)]
+    client = _mock_report_client(monkeypatch, item, activities)
+    assert monitor.anomaly_report(client, 'pydantic/pydantic-ai', now=NOW) == [
+        '<https://github.com/pydantic/pydantic-ai/issues/42|#42> is still waiting after the Douwe ping'
+    ]
+
+
+def test_anomaly_report_includes_reconciliation_failure(monkeypatch: pytest.MonkeyPatch):
+    """A missing successful reconciliation becomes a system-health exception."""
+    client = _mock_report_client(monkeypatch, None, [], recent_run=False)
+    assert monitor.anomaly_report(client, 'pydantic/pydantic-ai', now=NOW) == [
+        'The six-hour attention reconciliation has no successful run in the last eight hours'
     ]
