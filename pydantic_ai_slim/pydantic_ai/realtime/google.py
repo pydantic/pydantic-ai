@@ -352,7 +352,8 @@ class GoogleRealtimeModel(RealtimeModel):
     key, client, or region. Gemini Live is available on both surfaces.
 
     Args:
-        model: The model name, e.g. `gemini-live-2.5-flash` or `gemini-live-2.5-flash-native-audio`.
+        model: The model name, e.g. `gemini-2.5-flash-native-audio-latest` (an alias that tracks the
+            newest native-audio Live model) or `gemini-3.1-flash-live-preview`.
         provider: The provider to use for authentication and API access — `'google'` (Gemini Developer
             API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
         voice: Prebuilt voice for audio output, e.g. `Puck`, `Charon`, or `Kore`.
@@ -380,7 +381,7 @@ class GoogleRealtimeModel(RealtimeModel):
             SDK options not yet modelled here.
     """
 
-    model: str = 'gemini-live-2.5-flash'
+    model: str = 'gemini-2.5-flash-native-audio-latest'
     provider: InitVar[Provider[Client] | str] = 'google'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
     voice: str | None = None

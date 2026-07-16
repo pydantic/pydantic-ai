@@ -245,7 +245,7 @@ def test_config_full() -> None:
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._config('Be nice', tools, settings)  # pyright: ignore[reportPrivateUsage]
 
-    assert model.model_name == 'gemini-live-2.5-flash'
+    assert model.model_name == 'gemini-2.5-flash-native-audio-latest'
     assert config.response_modalities == [genai_types.Modality.AUDIO]
     assert config.system_instruction == 'Be nice'
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == 'Puck'  # type: ignore[union-attr]
@@ -640,7 +640,7 @@ async def test_connect_streams_events() -> None:
     model = _model(session, captured)
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
-    assert captured['model'] == 'gemini-live-2.5-flash'
+    assert captured['model'] == 'gemini-2.5-flash-native-audio-latest'
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
     # non-recoverable `SessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
     assert events[:4] == [

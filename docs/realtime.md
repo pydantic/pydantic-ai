@@ -58,7 +58,7 @@ from the `provider` argument, mirroring [`XaiModel`][pydantic_ai.models.xai.XaiM
 
 All three implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the
 rest of this guide applies to any of them — swap `OpenAIRealtimeModel('gpt-realtime')` for
-`GoogleRealtimeModel('gemini-live-2.5-flash')` or `XaiRealtimeModel('grok-voice-latest')`. A few
+`GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')` or `XaiRealtimeModel('grok-voice-latest')`. A few
 provider differences are worth knowing: Gemini expects **16 kHz** PCM input audio (OpenAI and xAI use
 24 kHz), produces a single response modality per session, and natively accepts **live video frames**
 sent as [`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
@@ -250,7 +250,7 @@ from pydantic_ai.realtime.google import (
 )
 
 model = GoogleRealtimeModel(
-    'gemini-live-2.5-flash-native-audio',
+    'gemini-2.5-flash-native-audio-latest',
     settings=GoogleRealtimeModelSettings(temperature=0.7, top_p=0.9),
     voice='Puck',
     language_code='en-US',                              # output language
@@ -445,7 +445,7 @@ from pydantic_ai.realtime.google import GoogleRealtimeModel
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
 async with agent.realtime_session(
-    model=GoogleRealtimeModel('gemini-live-2.5-flash-native-audio'),
+    model=GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
     capabilities=[WebSearch()],
 ) as session:
     async for event in session:
@@ -476,7 +476,7 @@ passing an unsupported one raises a [`UserError`][pydantic_ai.exceptions.UserErr
 model does support, before the session connects.
 
 !!! warning "`WebFetch` (URL context) isn't supported natively on native-audio models"
-    The `gemini-live-2.5-flash-native-audio` model supports `WebSearch` (Grounding with Google Search)
+    Gemini's native-audio Live models support `WebSearch` (Grounding with Google Search)
     but **not** native `WebFetch` (`url_context`): the connection opens, but the session drops with
     `Unexpected function call` the first time the model tries to fetch a URL.
 
@@ -596,7 +596,7 @@ from pydantic_ai.realtime import ReconnectPolicy
 from pydantic_ai.realtime.google import GoogleRealtimeModel
 
 model = GoogleRealtimeModel(
-    'gemini-live-2.5-flash',
+    'gemini-2.5-flash-native-audio-latest',
     enable_session_resumption=True,
     reconnect=ReconnectPolicy(max_attempts=5),
 )
