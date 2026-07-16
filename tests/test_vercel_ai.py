@@ -2785,7 +2785,7 @@ async def test_run_stream_error_closes_open_text():
     """
 
     async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-        for _ in range(50):
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
             yield 'lots of streamed text '
 
     agent = Agent(model=FunctionModel(stream_function=stream_text))
@@ -2803,6 +2803,10 @@ async def test_run_stream_error_closes_open_text():
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
     # `text-end` must land immediately before `error`; anything after `error` is dropped by the client.
     assert event_types[event_types.index('error') - 1] == 'text-end'
+    # ...and it must carry the same `id` as its `text-start`, or the client can't mark the part done.
+    text_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-start')
+    text_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-end')
+    assert text_end['id'] == text_start['id']
     assert event_types == snapshot(
         [
             'start',
@@ -2825,7 +2829,7 @@ async def test_run_stream_error_closes_open_thinking():
     async def stream_thinking(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
-        for _ in range(50):
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
             yield {0: DeltaThinkingPart(content='lots of thinking ')}
 
     agent = Agent(model=FunctionModel(stream_function=stream_thinking))
@@ -2842,6 +2846,10 @@ async def test_run_stream_error_closes_open_thinking():
 
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
     assert event_types[event_types.index('error') - 1] == 'reasoning-end'
+    # The `reasoning-end` must carry the same `id` as its `reasoning-start`, or the client can't mark the part done.
+    reasoning_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-start')
+    reasoning_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-end')
+    assert reasoning_end['id'] == reasoning_start['id']
     assert event_types == snapshot(
         [
             'start',

@@ -380,7 +380,7 @@ async def test_run_stream_error_closes_open_text() -> None:
     """
 
     async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-        for _ in range(50):
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
             yield 'lots of streamed text '
 
     agent = Agent(model=FunctionModel(stream_function=stream_text))
@@ -393,6 +393,10 @@ async def test_run_stream_error_closes_open_text() -> None:
 
     event_types = [e['type'] for e in events]
     assert event_types[event_types.index('RUN_ERROR') - 1] == 'TEXT_MESSAGE_END'
+    # The `TEXT_MESSAGE_END` must carry the same `messageId` as its `TEXT_MESSAGE_START`, or the client can't close the part.
+    message_start = next(e for e in events if e['type'] == 'TEXT_MESSAGE_START')
+    message_end = next(e for e in events if e['type'] == 'TEXT_MESSAGE_END')
+    assert message_end['messageId'] == message_start['messageId']
     assert event_types == snapshot(
         [
             'RUN_STARTED',
@@ -411,7 +415,7 @@ async def test_run_stream_error_closes_open_thinking() -> None:
     async def stream_thinking(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
-        for _ in range(50):
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
             yield {0: DeltaThinkingPart(content='lots of thinking ')}
 
     agent = Agent(model=FunctionModel(stream_function=stream_thinking))
