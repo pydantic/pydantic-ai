@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
@@ -41,7 +41,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -56,6 +56,18 @@ _CACHE_MIN_PREFIX_TOKENS = 1024
 
 def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
     return cache_read_tokens / input_tokens if input_tokens else 0.0
+
+
+def _prompt_cache_retention(model: Model) -> timedelta | None:
+    """The model's documented prompt-cache retention window, or `None` when it can't be determined."""
+    try:
+        return model.profile.get('prompt_cache_retention')
+    except NotImplementedError:
+        # `FallbackModel` has no profile of its own: it resolves a model per request and applies that
+        # model's profile during dispatch, and the resolved model isn't reachable from here — the
+        # response only carries its provider and model *names*. Without a retention window the
+        # collapse is classified `unknown` rather than failing an otherwise successful run.
+        return None
 
 
 @dataclass
@@ -370,7 +382,7 @@ class Instrumentation(AbstractCapability[Any]):
             # re-sent uncached either way, so the waste is real and reported, but the cause isn't
             # knowable from usage alone, so this never alerts.
             reason = 'unreported'
-        elif (retention := request_context.model.profile.get('prompt_cache_retention')) is None:
+        elif (retention := _prompt_cache_retention(request_context.model)) is None:
             reason = 'unknown'
         else:
             if (cache_point_ttl := _max_cache_point_ttl(request_context.messages)) is not None:

@@ -9,6 +9,7 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, CachePoint, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
@@ -71,6 +72,7 @@ def cache_spans(
     retention: timedelta | None = None,
     prompt: str | list[str | CachePoint] = 'prompt',
     sampler: Sampler | None = None,
+    use_fallback: bool = False,
 ) -> tuple[list[ReadableSpan], InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider(sampler=sampler) if sampler is not None else TracerProvider()
@@ -101,7 +103,7 @@ def cache_spans(
     profile = ModelProfile(prompt_cache_retention=retention) if retention is not None else None
     model = ResponseNameFunctionModel(model_function, model_name='cache-model', profile=profile)
     agent = Agent(
-        model,
+        FallbackModel(model) if use_fallback else model,
         capabilities=[
             Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
         ],
@@ -301,3 +303,23 @@ def test_unreported_usage_without_established_prefix_is_ignored() -> None:
         'pydantic_ai.cache.hit_ratio': 0.7,
         'pydantic_ai.cache.established_tokens': 1400,
     }
+
+
+def test_fallback_model_collapse_is_classified_not_raised() -> None:
+    """`FallbackModel` has no profile of its own, and the model that actually served the request isn't
+    reachable from here, so a collapse under it is classified `unknown` rather than raising
+    `NotImplementedError` and failing an otherwise successful run."""
+    spans, _ = cache_spans(
+        [CacheUsage(write=1400), CacheUsage(read=100)],
+        retention=timedelta(hours=1),
+        use_fallback=True,
+    )
+
+    assert cache_attributes(spans[-1]) == {
+        'pydantic_ai.cache.hit_ratio': 0.05,
+        'pydantic_ai.cache.established_tokens': 100,
+        'pydantic_ai.cache.collapsed': True,
+        'pydantic_ai.cache.wasted_tokens': 1300,
+        'pydantic_ai.cache.collapse_reason': 'unknown',
+    }
+    assert not spans[-1].events
