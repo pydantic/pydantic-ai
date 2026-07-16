@@ -98,6 +98,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     calls — otherwise a client that aborts at the error chunk (like the AI SDK) leaves the part
     stuck in a streaming state.
     """
+    _open_native_tool_call: NativeToolCallPart | None = None
+    """The native (builtin) tool call part currently being streamed, if any.
+
+    Tracked separately from `_open_response_part` because a `NativeToolCallPart` lands in neither it
+    (text/thinking only) nor `_pending_tool_calls` (function/output calls only), so the error path
+    would otherwise leave it dangling. Set on `PartStartEvent`, cleared on `PartEndEvent`, and closed
+    on error via `handle_builtin_tool_call_end` before `on_error`.
+    """
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -172,11 +180,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     if isinstance(event.part, TextPart | ThinkingPart):
                         self._open_response_part = event.part
+                    elif isinstance(event.part, NativeToolCallPart):
+                        self._open_native_tool_call = event.part
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, PartEndEvent):
                     if isinstance(event.part, TextPart | ThinkingPart):
                         self._open_response_part = None
+                    elif isinstance(event.part, NativeToolCallPart):
+                        self._open_native_tool_call = None
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     kind: Literal['function', 'output'] = (
@@ -226,6 +238,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 else:
                     async for e in self.handle_thinking_end(part):
                         yield e
+
+            # Close an open native tool call too, for the same reason — it's also response-side, so it
+            # comes before the request-side tool-call cleanup below.
+            if (native_call := self._open_native_tool_call) is not None:
+                self._open_native_tool_call = None
+                async for e in self.handle_builtin_tool_call_end(native_call):
+                    yield e
 
             # Close any pending tool calls before emitting the error,
             # so the UI doesn't show them as still running.

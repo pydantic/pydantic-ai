@@ -443,6 +443,52 @@ async def test_run_stream_error_closes_open_thinking() -> None:
     )
 
 
+async def test_run_stream_error_closes_open_native_tool_call() -> None:
+    """A mid-stream `UsageLimitExceeded` while a native tool call is open must emit `TOOL_CALL_END` before `RUN_ERROR`.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` is tracked in neither
+    `_open_response_part` nor `_pending_tool_calls`, so without an explicit close the AG-UI client is left with a
+    dangling tool call when the run errors.
+    """
+
+    async def stream_native_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns]:
+        # A native tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'hi'}
+            )
+        }
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the run
+        # errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='call_2',
+                    args={'query': ' '.join(f'word{i}' for i in range(40))},
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_native_tool_call))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TOOL_CALL_END'
+    # The `TOOL_CALL_END` must carry the same `toolCallId` as its `TOOL_CALL_START`, or the client can't close the call.
+    tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
+    tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
+    assert tool_end['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_ERROR'])
+
+
 async def test_multiple_messages() -> None:
     """Test with multiple different message types."""
     agent = Agent(

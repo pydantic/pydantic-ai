@@ -356,6 +356,40 @@ async def test_event_stream_error_closes_open_thinking():
     )
 
 
+async def test_event_stream_error_closes_open_native_tool_call():
+    """A mid-stream error while a native tool call is open closes it before the error.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` is tracked in
+    neither `_open_response_part` nor `_pending_tool_calls`, so the base class must close it itself —
+    otherwise a client that aborts at the error chunk leaves the call stuck streaming its input.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(
+            index=0,
+            part=NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'pydantic'}
+            ),
+        )
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<builtin-tool-call name='web_search'>{'query': 'pydantic'}",
+            "</builtin-tool-call name='web_search'>",
+            "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
