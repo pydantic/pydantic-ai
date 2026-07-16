@@ -91,6 +91,14 @@ def _marker_body(stage: int, recipients: Sequence[str]) -> str:
     return f'<!-- pydantic-ai-attention-monitor stage={stage} recipients={",".join(recipients)} -->'
 
 
+def _trusted_marker(activity: Activity) -> re.Match[str] | None:
+    """Return the host-appended marker, never model or contributor text."""
+    if activity['author'] != 'github-actions[bot]':
+        return None
+    matches = list(_MARKER.finditer(activity['body']))
+    return matches[-1] if matches else None
+
+
 def _current_recipients(assignees: Iterable[str], permissions: Mapping[str, str | None]) -> list[str]:
     maintainers = sorted(login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS)
     return maintainers or [_DEFAULT_RECIPIENT]
@@ -111,6 +119,22 @@ def _active_label_since(activities: Sequence[Activity]) -> dt.datetime | None:
 def _latest_action_label_event(activities: Sequence[Activity]) -> Activity | None:
     events = [activity for activity in activities if activity['label'] == _ACTION_LABEL]
     return max(events, key=lambda a: _parse_time(a['created_at']), default=None)
+
+
+def _latest_label_event(activities: Sequence[Activity], label: str) -> Activity | None:
+    events = [activity for activity in activities if activity['label'] == label]
+    return max(events, key=lambda a: _parse_time(a['created_at']), default=None)
+
+
+def _valid_override(labels: set[str], activities: Sequence[Activity], label: str) -> bool:
+    """Trust maintainer overrides and their deterministic workflow projection."""
+    latest = _latest_label_event(activities, label)
+    return (
+        label in labels
+        and latest is not None
+        and latest['kind'] == 'labeled'
+        and (latest['is_maintainer'] or latest['author'] == 'github-actions[bot]')
+    )
 
 
 def next_reminder(
@@ -137,7 +161,7 @@ def next_reminder(
         if activity['kind'] in {'assigned', 'unassigned'}:
             reset_at = max(reset_at, created_at)
             latest_marker = None
-        match = _MARKER.search(activity['body'])
+        match = _trusted_marker(activity)
         if match:
             marker_recipients = match.group('recipients').split(',')
             latest_marker = (created_at, int(match.group('stage')), marker_recipients)
@@ -171,7 +195,7 @@ def next_reminder(
 
 
 def _clean_context(value: str) -> str:
-    text = ' '.join(value.split()).strip()
+    text = ' '.join(value.split()).strip().replace('@', '@\u200b')
     if len(text) > 240:
         text = f'{text[:237].rstrip()}...'
     return text.rstrip('.') + '.' if text else 'A maintainer decision is still the next step.'
@@ -198,6 +222,7 @@ class GitHubClient:
 
     def __init__(self, token: str) -> None:
         self._token = token
+        self._permission_cache: dict[tuple[str, str], str | None] = {}
 
     def request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> Any:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -227,6 +252,23 @@ class GitHubClient:
     def delete(self, path: str) -> Any:
         return self.request('DELETE', path)
 
+    def permission(self, repo: str, login: str) -> str | None:
+        """Return a collaborator permission, cached for this process."""
+        if not login or _is_bot(login):
+            return None
+        key = (repo, login.casefold())
+        if key in self._permission_cache:
+            return self._permission_cache[key]
+        try:
+            permission = str(self.get(f'/repos/{repo}/collaborators/{login}/permission')['permission'])
+        except urllib.error.HTTPError as exc:
+            if exc.code in {403, 404}:
+                permission = None
+            else:
+                raise
+        self._permission_cache[key] = permission
+        return permission
+
     def paginate(self, path: str) -> list[dict[str, Any]]:
         separator = '&' if '?' in path else '?'
         page = 1
@@ -240,14 +282,7 @@ class GitHubClient:
 
 
 def _permission(client: GitHubClient, repo: str, login: str) -> str | None:
-    if not login or _is_bot(login):
-        return None
-    try:
-        return str(client.get(f'/repos/{repo}/collaborators/{login}/permission')['permission'])
-    except urllib.error.HTTPError as exc:
-        if exc.code in {403, 404}:
-            return None
-        raise
+    return client.permission(repo, login)
 
 
 def _actor(entry: Mapping[str, Any]) -> str:
@@ -340,7 +375,7 @@ def ensure_labels(client: GitHubClient, repo: str) -> list[str]:
     return created
 
 
-def handle_event(client: GitHubClient, repo: str, event: Mapping[str, Any], *, staged: bool) -> list[str]:
+def handle_event(client: GitHubClient, repo: str, event: Mapping[str, Any]) -> list[str]:
     """Apply deterministic ownership and maintainer override behavior."""
     item = event.get('issue') or event.get('pull_request')
     if not isinstance(item, Mapping):
@@ -356,31 +391,37 @@ def handle_event(client: GitHubClient, repo: str, event: Mapping[str, Any], *, s
     label_name = str(label_mapping.get('name') or '') if label_mapping else ''
     messages: list[str] = []
 
-    current, _, permissions = hydrate(client, repo, number)
-    maintainer_assignees = [
-        str(a['login'])
-        for a in current.get('assignees', [])
-        if permissions.get(str(a['login'])) in _MAINTAINER_PERMISSIONS
+    if (
+        action == 'labeled'
+        and label_name in {_FORCE_LABEL, _SKIP_LABEL}
+        and not is_maintainer
+        and actor != 'github-actions[bot]'
+    ):
+        _remove_label(client, repo, number, label_name)
+        return [f'ignored non-maintainer {label_name} override on #{number}']
+
+    assignees = [
+        str(assignee.get('login') or '')
+        for assignee in cast(Sequence[Mapping[str, object]], item_mapping.get('assignees') or [])
     ]
+    permissions = {login: _permission(client, repo, login) for login in assignees}
+    maintainer_assignees = [login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS]
     claim_events = {'issue_comment', 'pull_request_review', 'pull_request_review_comment'}
     event_name = os.environ.get('GITHUB_EVENT_NAME', '')
     if is_maintainer and action in {'created', 'submitted'} and event_name in claim_events and not maintainer_assignees:
-        if not staged:
-            _assign(client, repo, number, actor)
-        messages.append(f'{"would assign" if staged else "assigned"} @{actor} to #{number}')
+        _assign(client, repo, number, actor)
+        messages.append(f'assigned @{actor} to #{number}')
         maintainer_assignees = [actor]
 
     if is_maintainer and action == 'unlabeled' and label_name == _ACTION_LABEL:
-        if not staged:
-            _add_labels(client, repo, number, [_SKIP_LABEL])
-        messages.append(f'{"would add" if staged else "added"} {_SKIP_LABEL} to #{number}')
+        _add_labels(client, repo, number, [_SKIP_LABEL])
+        messages.append(f'added {_SKIP_LABEL} to #{number}')
 
     if action == 'labeled' and label_name in {_ACTION_LABEL, _FORCE_LABEL} and not maintainer_assignees:
-        if not staged:
-            if label_name == _FORCE_LABEL:
-                _add_labels(client, repo, number, [_ACTION_LABEL])
-            _assign(client, repo, number, _DEFAULT_RECIPIENT)
-        messages.append(f'{"would assign" if staged else "assigned"} @{_DEFAULT_RECIPIENT} to #{number}')
+        if label_name == _FORCE_LABEL:
+            _add_labels(client, repo, number, [_ACTION_LABEL])
+        _assign(client, repo, number, _DEFAULT_RECIPIENT)
+        messages.append(f'assigned @{_DEFAULT_RECIPIENT} to #{number}')
         maintainer_assignees = [_DEFAULT_RECIPIENT]
     if action == 'labeled' and label_name == _PRIORITY_LABEL and not maintainer_assignees:
         messages.append(f'ANOMALY #{number}: urgent item has no maintainer owner')
@@ -488,8 +529,14 @@ def apply_decision(
     item, activities, permissions = hydrate(client, repo, number)
     labels = _labels(item)
     messages: list[str] = []
+    for override in (_FORCE_LABEL, _SKIP_LABEL):
+        if override in labels and not _valid_override(labels, activities, override):
+            if not staged:
+                _remove_label(client, repo, number, override)
+            labels.remove(override)
+            messages.append(f'ANOMALY #{number}: ignored non-maintainer {override} override')
     if _FORCE_LABEL in labels and _SKIP_LABEL in labels:
-        return [f'ANOMALY #{number}: {_FORCE_LABEL} and {_SKIP_LABEL} coexist; suppressed']
+        return [*messages, f'ANOMALY #{number}: {_FORCE_LABEL} and {_SKIP_LABEL} coexist; suppressed']
     skip_result = _apply_skip_override(
         client,
         repo,
@@ -500,11 +547,11 @@ def apply_decision(
         staged=staged,
     )
     if skip_result is not None:
-        return skip_result
+        return [*messages, *skip_result]
 
     wants_action = _wants_maintainer_action(labels, decision)
     if decision['urgent'] and not wants_action:
-        return [f'ANOMALY #{number}: urgent item was not confidently routed to a maintainer']
+        return [*messages, f'ANOMALY #{number}: urgent item was not confidently routed to a maintainer']
     if not wants_action:
         if _ACTION_LABEL in labels and decision['confidence'] == 'high' and not staged:
             _remove_label(client, repo, number, _ACTION_LABEL)
@@ -517,22 +564,23 @@ def apply_decision(
         assignees = [str(a['login']) for a in item.get('assignees', [])]
         has_maintainer_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)
         return [
+            *messages,
             _apply_new_attention_label(
                 client,
                 repo,
                 number,
                 has_maintainer_owner=has_maintainer_owner,
                 staged=staged,
-            )
+            ),
         ]
 
     assignees = [str(a['login']) for a in item.get('assignees', [])]
     primary = _current_recipients(assignees, permissions)
     reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
     if reminder is None:
-        return [f'#{number}: label retained; no reminder due']
+        return [*messages, f'#{number}: label retained; no reminder due']
     if reminder['terminal_without_comment']:
-        return [f'ANOMALY #{number}: Douwe already owns this; two unanswered pings exhausted']
+        return [*messages, f'ANOMALY #{number}: Douwe already owns this; two unanswered pings exhausted']
     body = render_comment(reminder, decision['context'], primary)
     if not staged:
         client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
@@ -548,17 +596,21 @@ def anomaly_report(client: GitHubClient, repo: str, *, now: dt.datetime) -> list
     for item in items:
         number = int(item['number'])
         labels = _labels(item)
+        _, activities, permissions = hydrate(client, repo, number)
+        for override in (_FORCE_LABEL, _SKIP_LABEL):
+            if override in labels and not _valid_override(labels, activities, override):
+                anomalies.append(f'<{item["html_url"]}|#{number}> has a non-maintainer {override} override')
+                labels.remove(override)
         if _FORCE_LABEL in labels and _SKIP_LABEL in labels:
             anomalies.append(f'<{item["html_url"]}|#{number}> has conflicting force and skip overrides')
             continue
-        _, activities, permissions = hydrate(client, repo, number)
         assignees = [str(a['login']) for a in item.get('assignees', [])]
         maintainer_assignees = [login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS]
         reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
         stage_three_times = [
             _parse_time(activity['created_at'])
             for activity in activities
-            if _MARKER.search(activity['body']) and 'stage=3' in activity['body']
+            if (match := _trusted_marker(activity)) is not None and match.group('stage') == '3'
         ]
         terminal_marker = False
         if stage_three_times:
@@ -628,7 +680,7 @@ def main() -> int:
             parser.error('--event-path is required')
         created = ensure_labels(client, repo)
         event = cast(dict[str, Any], json.loads(Path(args.event_path).read_text(encoding='utf-8')))
-        lines = [*[f'created label {label}' for label in created], *handle_event(client, repo, event, staged=False)]
+        lines = [*[f'created label {label}' for label in created], *handle_event(client, repo, event)]
         if any(line.startswith('ANOMALY ') for line in lines):
             exit_code = 2
     elif args.mode == 'apply-decisions':

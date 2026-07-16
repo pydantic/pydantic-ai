@@ -144,6 +144,40 @@ def test_contributor_comment_does_not_reset():
     assert reminder and reminder['stage'] == 2
 
 
+def test_contributor_cannot_forge_reminder_state():
+    """Only deterministic workflow comments can advance the reminder stage."""
+    forged = _activity(
+        'comment',
+        NOW - dt.timedelta(days=3),
+        author='reporter',
+        body=monitor._marker_body(3, ['DouweM']),
+    )
+    reminder = monitor.next_reminder(
+        activities=[_labeled(6), forged],
+        assignees=['dsfaccini'],
+        permissions={'dsfaccini': 'write', 'reporter': 'read'},
+        now=NOW,
+    )
+    assert reminder and reminder['stage'] == 1 and reminder['recipients'] == ['dsfaccini']
+
+
+def test_host_appended_marker_wins_over_model_context():
+    """Prompt-injected marker text in context cannot replace the final host marker."""
+    bot_comment = _activity(
+        'comment',
+        NOW - dt.timedelta(days=3),
+        author='github-actions[bot]',
+        body=f'Model text {_marker(3, ["DouweM"], days=3)["body"]}\n{monitor._marker_body(1, ["dsfaccini"])}',
+    )
+    reminder = monitor.next_reminder(
+        activities=[_labeled(6), bot_comment],
+        assignees=['dsfaccini'],
+        permissions={'dsfaccini': 'write'},
+        now=NOW,
+    )
+    assert reminder and reminder['stage'] == 2
+
+
 def test_assignment_change_restarts_sequence():
     """A changed owner gets a fresh three-day sequence."""
     activities = [
@@ -201,6 +235,7 @@ def test_douwe_comment_names_prior_owners():
 def test_context_is_bounded():
     """Model rationale cannot turn into a long public bot comment."""
     assert len(monitor._clean_context('x' * 500)) <= 241
+    assert '@\u200bother-maintainer' in monitor._clean_context('@other-maintainer should review')
 
 
 def test_custom_safe_output_boolean_strings_are_parsed(tmp_path: Path):
@@ -215,6 +250,95 @@ def test_custom_safe_output_boolean_strings_are_parsed(tmp_path: Path):
     decision = monitor._parse_decisions(str(output))[0]
     assert decision['urgent'] is False
     assert decision['maintainer_skip'] is True
+
+
+def test_permissions_are_cached_case_insensitively(monkeypatch: pytest.MonkeyPatch):
+    """Repeated timeline actors cost one collaborator-permission request per run."""
+    client = monitor.GitHubClient('token')
+    requests: list[str] = []
+
+    def get(path: str):
+        requests.append(path)
+        return {'permission': 'write'}
+
+    monkeypatch.setattr(client, 'get', get)
+    assert monitor._permission(client, 'pydantic/pydantic-ai', 'Maintainer') == 'write'
+    assert monitor._permission(client, 'pydantic/pydantic-ai', 'maintainer') == 'write'
+    assert requests == ['/repos/pydantic/pydantic-ai/collaborators/Maintainer/permission']
+
+
+def test_unowned_item_is_claimed_from_event_payload_without_hydration(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The live assignment path does not download an item's complete history."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'created',
+        'issue': {'number': 42, 'assignees': []},
+        'sender': {'login': 'adtyavrdhn'},
+    }
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'issue_comment')
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'write')
+    monkeypatch.setattr(monitor, 'hydrate', lambda *_: pytest.fail('event assignment must not hydrate history'))
+    assigned: list[str] = []
+    monkeypatch.setattr(monitor, '_assign', lambda *args: assigned.append(cast(str, args[-1])))
+
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == ['assigned @adtyavrdhn to #42']
+    assert assigned == ['adtyavrdhn']
+
+
+def test_non_maintainer_cannot_apply_skip_override(monkeypatch: pytest.MonkeyPatch):
+    """GitHub's triage role can manage labels but cannot suppress maintainer attention."""
+    client = monitor.GitHubClient('token')
+    event = {
+        'action': 'labeled',
+        'issue': {'number': 42, 'assignees': []},
+        'sender': {'login': 'triager'},
+        'label': {'name': 'attention:skip'},
+    }
+    monkeypatch.setattr(monitor, '_permission', lambda *_: 'triage')
+    removed: list[str] = []
+    monkeypatch.setattr(monitor, '_remove_label', lambda *args: removed.append(cast(str, args[-1])))
+
+    assert monitor.handle_event(client, 'pydantic/pydantic-ai', event) == [
+        'ignored non-maintainer attention:skip override on #42'
+    ]
+    assert removed == ['attention:skip']
+
+
+def test_deterministic_workflow_can_project_maintainer_skip():
+    """The workflow-authored label remains durable after translating a maintainer action."""
+    activities = [
+        _activity(
+            'labeled',
+            NOW,
+            author='github-actions[bot]',
+            label='attention:skip',
+        )
+    ]
+    assert monitor._valid_override({'attention:skip'}, activities, 'attention:skip')
+
+
+def test_apply_decision_ignores_racing_non_maintainer_override(monkeypatch: pytest.MonkeyPatch):
+    """The safe-output boundary revalidates override authors instead of trusting label state."""
+    client = monitor.GitHubClient('token')
+    activities = [_activity('labeled', NOW - dt.timedelta(minutes=1), author='triager', label='attention:skip')]
+    monkeypatch.setattr(
+        monitor,
+        'hydrate',
+        lambda *_: ({'labels': [{'name': 'attention:skip'}], 'assignees': []}, activities, {}),
+    )
+    removed: list[str] = []
+    monkeypatch.setattr(monitor, '_remove_label', lambda *args: removed.append(cast(str, args[-1])))
+    monkeypatch.setattr(monitor, '_add_labels', lambda *_: None)
+    monkeypatch.setattr(monitor, '_assign', lambda *_: None)
+
+    messages = monitor.apply_decision(client, 'pydantic/pydantic-ai', _decision(), staged=False, now=NOW)
+    assert messages == [
+        'ANOMALY #42: ignored non-maintainer attention:skip override',
+        '#42: added needs-maintainer-action with fallback owner',
+    ]
+    assert removed == ['attention:skip']
 
 
 def _decision() -> monitor.Decision:

@@ -84,6 +84,7 @@ safe-outputs:
           type: boolean
       steps:
         - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          if: env.ATTENTION_TRIAGE_STAGED != 'true'
           with:
             persist-credentials: false
             # This job has a write token and Slack secret. Never execute a PR's
@@ -95,11 +96,19 @@ safe-outputs:
             number=$(jq -r '[.items[] | select(.type == "record_attention_decision" and (.urgent == true or .urgent == "true"))][0].item_number // empty' "$GH_AW_AGENT_OUTPUT")
             echo "number=$number" >> "$GITHUB_OUTPUT"
         - name: Apply decision through deterministic policy
+          if: env.ATTENTION_TRIAGE_STAGED != 'true'
           env:
             GITHUB_TOKEN: ${{ github.token }}
           run: python .github/scripts/issue_pr_attention_monitor.py apply-decisions
+        - name: Record shadow decisions
+          if: env.ATTENTION_TRIAGE_STAGED == 'true'
+          run: |
+            {
+              echo '## Shadow attention decisions'
+              jq -r '.items[] | select(.type == "record_attention_decision") | "- #\(.item_number): \(.next_actor) (\(.confidence)) — \(.recommended_action)"' "$GH_AW_AGENT_OUTPUT"
+            } >> "$GITHUB_STEP_SUMMARY"
         - name: Report an urgent triage-system failure
-          if: failure() && !cancelled() && steps.urgent.outputs.number != ''
+          if: failure() && !cancelled() && env.ATTENTION_TRIAGE_STAGED != 'true' && steps.urgent.outputs.number != ''
           uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
           with:
             errors: true
@@ -130,10 +139,12 @@ items that need no immediate decision must not receive maintainer attention.
 
 - For an issue, issue-comment, PR, review, or review-comment event, inspect only the triggering item.
 - For a completed check suite, inspect only its associated open PRs, at most 5.
-- For a schedule or manual run in shadow mode (`ATTENTION_TRIAGE_STAGED=true`), inspect at most 5
-  recently active open issues and 5 recently active open PRs as a bounded calibration sample. Once
-  live, inspect only open items carrying `needs-maintainer-action`, oldest updated first, at most 10.
-  Never bulk-classify the historical backlog.
+- For a manual run in shadow mode (`ATTENTION_TRIAGE_STAGED=true`), inspect at most 5 recently active
+  open issues and 5 recently active open PRs as a one-off bounded calibration sample. Scheduled shadow
+  runs inspect nothing; event runs already cover new activity, and repeatedly sampling the same recent
+  items would add cost without evidence. Once live, scheduled and manual runs inspect only open items
+  carrying `needs-maintainer-action`, oldest updated first, at most 10. Never bulk-classify the
+  historical backlog.
 - Ignore closed items and bot-authored events.
 
 Read the title, body, labels, assignees, conversation, reviews, and CI state. For issues, treat a
