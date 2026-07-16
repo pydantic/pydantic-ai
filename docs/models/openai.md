@@ -124,9 +124,9 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 ## Prompt Caching
 
-OpenAI applies [prompt caching](https://platform.openai.com/docs/guides/prompt-caching) automatically to prompts of at least 1,024 tokens — no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. See [Prompt Caching](../prompt-caching.md) for the cross-provider contract and how to monitor cache efficiency.
+OpenAI applies [prompt caching](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) automatically to prompts of at least 1,024 tokens — no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. See [Prompt Caching](../prompt-caching.md#enabling-prompt-caching) for the cross-provider contract and how to monitor cache efficiency.
 
-By default, cached prefixes are typically cleared after 5–10 minutes of inactivity. Set [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] to `'24h'` on supported models to opt into extended prompt caching, which keeps cached prefixes active for up to 24 hours:
+How long a cached prefix survives depends on the [retention policy](https://platform.openai.com/docs/guides/prompt-caching#prompt-cache-retention) in effect: `in_memory` clears it after 5–10 minutes of inactivity, while `24h` keeps it for up to a day. For models before GPT-5.6, the default follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it — and [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
 
 ```python
 from pydantic_ai import Agent
@@ -137,6 +137,8 @@ settings = OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+GPT-5.6 and later ignore the retention policy and keep a cached prefix eligible for reuse for at least 30 minutes instead.
 
 ## Responses API features
 

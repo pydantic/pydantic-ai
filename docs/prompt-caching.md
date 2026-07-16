@@ -6,7 +6,7 @@ Provider prompt caching reuses a processed prompt prefix and charges a steeply d
 
 | Provider | Behavior | Configuration |
 | --- | --- | --- |
-| [OpenAI](models/openai.md#prompt-caching) | Implicit for prompts of at least 1,024 tokens | Nothing to enable; [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] opts into extended retention |
+| [OpenAI](models/openai.md#prompt-caching) | Implicit for prompts of at least 1,024 tokens; retention depends on the account's policy | Nothing to enable; [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] selects the retention policy |
 | [Anthropic](models/anthropic.md#prompt-caching) | Explicit, with a 5-minute default TTL and a 1-hour opt-in | Cache settings or [`CachePoint`][pydantic_ai.messages.CachePoint] |
 | [Bedrock](models/bedrock.md#prompt-caching) | Explicit; minimum-token thresholds apply | [`CachePoint`][pydantic_ai.messages.CachePoint] and cache settings |
 | [OpenRouter](models/openrouter.md#prompt-caching) | Passes explicit caching through to Anthropic and Gemini models | Cache settings or [`CachePoint`][pydantic_ai.messages.CachePoint] |
@@ -42,7 +42,7 @@ Provider caches expire after idle gaps. This is unavoidable, but it creates a us
 
 Every response's [`RequestUsage`][pydantic_ai.usage.RequestUsage] normalizes `cache_read_tokens` and `cache_write_tokens` across providers. `input_tokens` always includes cached reads, so `cache_read_tokens / input_tokens` is a comparable hit ratio per request and, through [`RunUsage`][pydantic_ai.usage.RunUsage], per run.
 
-When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'ttl-expired'`, `'unknown'`, or `'unexpected'`. Only an `'unexpected'` collapse — one that happens while the provider's documented retention window should still be active — additionally emits a `pydantic_ai.cache.collapse` span event; model switches never register as collapses at all, since each provider and model's cache is tracked separately. See the [Logfire documentation](logfire.md#prompt-cache-health) for the authoritative attribute definitions.
+When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'unexpected'`, `'ttl-expired'`, `'unknown'`, or `'unreported'`. Only an `'unexpected'` collapse — one that happens while the provider's documented retention window should still be active — additionally emits a `pydantic_ai.cache.collapse` span event; model switches never register as collapses at all, since each provider and model's cache is tracked separately. See the [Logfire documentation](logfire.md#prompt-cache-health) for the authoritative attribute definitions.
 
 ## Rules for extension authors
 
