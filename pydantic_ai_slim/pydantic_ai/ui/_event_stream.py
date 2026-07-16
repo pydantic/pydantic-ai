@@ -12,6 +12,7 @@ from pydantic_ai import _utils
 from ..messages import (
     AgentStreamEvent,
     CompactionPart,
+    CustomEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -274,6 +275,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
+        - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -303,6 +305,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case OutputToolResultEvent():
                 async for e in self.handle_output_tool_result(event):
+                    yield e
+            case CustomEvent():
+                async for e in self.handle_custom_event(event):
                     yield e
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
@@ -648,6 +653,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The output tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[EventT]:
+        """Handle a `CustomEvent` emitted during the run via `emit_event`.
+
+        The default implementation drops the event. Protocol adapters override this to map custom events
+        onto their own event/chunk types.
+
+        Args:
+            event: The custom event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

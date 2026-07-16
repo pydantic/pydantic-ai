@@ -3463,7 +3463,44 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
+
+@dataclass(repr=False, kw_only=True)
+class CustomEvent:
+    """An application-defined event emitted into the agent's event stream.
+
+    Emit these from tools, capability hooks, or code driving [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter]
+    via [`RunContext.emit_event`][pydantic_ai.tools.RunContext.emit_event] or
+    [`AgentRun.emit_event`][pydantic_ai.run.AgentRun.emit_event] to surface progress updates, intermediate
+    results, or status information to consumers of the stream without adding to the model's context.
+    """
+
+    name: str
+    """The application-defined name of the event."""
+
+    data: Any = None
+    """The event payload.
+
+    Deliberately untyped so any application-defined payload can ride along. To flow through durable
+    execution and the UI adapters, the payload must be serializable by pydantic (e.g. a `BaseModel`,
+    a dataclass, or JSON-compatible primitives).
+    """
+
+    tool_call_id: str | None = None
+    """The tool call this event is associated with, if any.
+
+    Automatically stamped from [`RunContext.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] when the
+    event is emitted from within a tool call and doesn't already set one, so consumers can attribute the event
+    to the originating tool call.
+    """
+
+    event_kind: Literal['custom'] = 'custom'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent | CustomEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""
+"""An event in the agent stream: model response stream events, enqueued-message delivery events, response-handling events, and custom events."""

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
+    CustomEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -48,6 +49,7 @@ from ._utils import (
 try:
     from ag_ui.core import (
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         EventType,
         RunAgentInput,
         RunErrorEvent,
@@ -301,6 +303,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
+        # An `ag_ui.core.BaseEvent` payload is passed through verbatim, mirroring the tool-return metadata passthrough.
+        if isinstance(event.data, BaseEvent):
+            yield event.data
+        else:
+            # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
+            # so consumers can attribute it; otherwise the payload is the value directly.
+            value = {'tool_call_id': event.tool_call_id, 'data': event.data} if event.tool_call_id else event.data
+            yield AGUICustomEvent(name=event.name, value=value)
 
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):

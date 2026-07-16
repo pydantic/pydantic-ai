@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import TypeVar
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CustomEvent
 from pydantic_ai.tools import RunContext
 
 if TYPE_CHECKING:
@@ -43,6 +44,19 @@ class TemporalRunContext(RunContext[AgentDepsT]):
                 )
             else:
                 raise e
+
+    def emit_event(self, event: CustomEvent) -> None:
+        """Reject `emit_event` from inside a Temporal activity.
+
+        Tools run inside activities where the run's event stream isn't reachable, so custom events emitted
+        from tools can't currently flow back into the stream. Events emitted workflow-side (e.g. from
+        capability hooks) work as usual.
+        """
+        raise UserError(
+            'Emitting custom events from a tool is not supported under Temporal yet, as tools run inside '
+            'activities that cannot reach the run event stream. Emit events from capability hooks, which run '
+            'in the workflow, instead.'
+        )
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:

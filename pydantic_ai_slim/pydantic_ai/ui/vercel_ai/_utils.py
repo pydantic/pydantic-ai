@@ -165,7 +165,7 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
-_DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
+DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 
 
 def iter_metadata_chunks(
@@ -173,18 +173,18 @@ def iter_metadata_chunks(
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only `_DATA_CHUNK_TYPES` are
+    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
     yielded; protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, _DATA_CHUNK_TYPES):
+    if isinstance(possible, DATA_CHUNK_TYPES):
         yield possible
     elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
         for item in possible:  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, _DATA_CHUNK_TYPES):  # pragma: no branch
+            if isinstance(item, DATA_CHUNK_TYPES):  # pragma: no branch
                 yield item
 
 

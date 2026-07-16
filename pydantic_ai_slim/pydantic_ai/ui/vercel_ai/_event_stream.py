@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic_core import to_json
 
 from ...messages import (
+    CustomEvent,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
@@ -31,10 +32,17 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from ._utils import (
+    DATA_CHUNK_TYPES,
+    dump_message_metadata,
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -357,6 +365,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseChunk]:
+        # A data-carrying chunk payload (`DataChunk`, `SourceUrlChunk`, etc.) is passed through verbatim,
+        # mirroring the tool-return metadata passthrough.
+        if isinstance(event.data, DATA_CHUNK_TYPES):
+            yield event.data
+        else:
+            # When the event is tool-scoped, nest the payload under `data` alongside the `tool_call_id`
+            # so consumers can attribute it; otherwise the payload is the data directly.
+            data = {'tool_call_id': event.tool_call_id, 'data': event.data} if event.tool_call_id else event.data
+            yield DataChunk(type=f'data-{event.name}', data=data)
 
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id

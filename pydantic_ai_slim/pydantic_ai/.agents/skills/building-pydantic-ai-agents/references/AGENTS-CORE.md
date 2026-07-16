@@ -136,6 +136,21 @@ async def main():
     await agent.run('Do the task', event_stream_handler=stream_handler)
 ```
 
+To surface progress or intermediate results from a tool (or capability hook) into the same event stream without polluting the model's context, emit a `CustomEvent` via `ctx.emit_event()`. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` is auto-stamped. Code driving `agent.iter()` can inject events with `AgentRun.emit_event()`.
+
+```python
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2', name='progress_agent')
+
+
+@agent.tool
+async def process(ctx: RunContext, count: int) -> str:
+    for i in range(count):
+        ctx.emit_event(CustomEvent(name='progress', data={'done': i + 1, 'total': count}))
+    return 'done'
+```
+
 ## Handle Provider Failures
 
 Use `FallbackModel` when the user wants automatic provider or model failover.

@@ -288,6 +288,71 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+### Custom Events
+
+Alongside the framework's own events, a tool, [capability](capabilities.md) hook, or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
+
+From anywhere a [`RunContext`][pydantic_ai.tools.RunContext] is available, call [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] with a `CustomEvent` carrying a `name` and an optional `data` payload. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] is stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
+
+```python {title="custom_events.py"}
+from collections.abc import AsyncIterator
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
+
+
+async def model_function(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[DeltaToolCalls | str]:
+    if any(
+        isinstance(part, ToolReturnPart)
+        for message in messages
+        for part in message.parts
+    ):
+        yield 'All 3 files processed.'
+    else:
+        yield {
+            0: DeltaToolCall(
+                name='process_files', json_args='{"count": 3}', tool_call_id='process'
+            )
+        }
+
+
+agent = Agent(FunctionModel(stream_function=model_function))
+
+
+@agent.tool
+async def process_files(ctx: RunContext, count: int) -> str:
+    for i in range(1, count + 1):
+        # Do some long-running work, emitting a progress event after each step.
+        ctx.emit_event(CustomEvent(name='progress', data={'done': i, 'total': count}))
+    return f'Processed {count} files.'
+
+
+async def main():
+    progress: list[str] = []
+    async with agent.run_stream_events('Process my files') as events:
+        async for event in events:
+            if isinstance(event, CustomEvent) and event.name == 'progress':
+                progress.append(
+                    f'{event.data["done"]}/{event.data["total"]} (from {event.tool_call_id})'
+                )
+
+    print(progress)
+    #> ['1/3 (from process)', '2/3 (from process)', '3/3 (from process)']
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+!!! note
+    The `data` payload can be any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters it needs to be serializable by pydantic. Events emitted from tools running concurrently are drained in emission order on the next pull from the stream (best-effort ordering).
+
 ### Iterating Over an Agent's Graph
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.

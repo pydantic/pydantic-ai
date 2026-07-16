@@ -196,6 +196,8 @@ As the streaming model request activity, workflow, and workflow execution call a
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
+Emitting [custom events](../agent.md#custom-events) via [`ctx.emit_event()`][pydantic_ai.tools.RunContext.emit_event] from a tool is not currently supported, as tools run inside activities that cannot reach the run's event stream; doing so raises a `UserError`. Emit custom events from [capability](../capabilities.md) hooks, which run in the workflow, instead.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.2'`) and model instances. However, `TemporalAgent` does not support arbitrary model instances because they cannot be serialized for Temporal's replay mechanism.

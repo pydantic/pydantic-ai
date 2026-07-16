@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -1544,6 +1545,56 @@ async def test_run_stream_thinking_with_signature():
                 'type': 'message-metadata',
                 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
             },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_maps_to_data_chunk():
+    """A `CustomEvent` maps to a `data-{name}` chunk, nesting `tool_call_id` alongside the payload when set."""
+
+    async def event_generator():
+        yield CustomEvent(name='progress', data={'pct': 50})
+        yield CustomEvent(name='progress', data={'pct': 100}, tool_call_id='call_1')
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-progress', 'data': {'pct': 50}},
+            {'type': 'data-progress', 'data': {'tool_call_id': 'call_1', 'data': {'pct': 100}}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_custom_event_passes_through_data_chunk():
+    """A `CustomEvent` whose payload is already a data-carrying chunk is passed through verbatim."""
+
+    async def event_generator():
+        yield CustomEvent(name='progress', data=DataChunk(type='data-custom', data={'key': 'value'}))
+
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'data-custom', 'data': {'key': 'value'}},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',

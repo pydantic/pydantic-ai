@@ -19,6 +19,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CustomEvent as PydanticAICustomEvent,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -3663,6 +3664,81 @@ async def test_event_stream_back_to_back_text():
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Goodbye'},
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                'outcome': {'type': 'success'},
+            },
+        ]
+    )
+
+
+async def test_custom_event_maps_to_ag_ui_custom_event():
+    """A `CustomEvent` maps to an AG-UI `CustomEvent`, nesting `tool_call_id` alongside the payload when set."""
+
+    async def event_generator():
+        yield PydanticAICustomEvent(name='progress', data={'pct': 50})
+        yield PydanticAICustomEvent(name='progress', data={'pct': 100}, tool_call_id='call_1')
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'progress', 'value': {'pct': 50}},
+            {
+                'type': 'CUSTOM',
+                'timestamp': IsInt(),
+                'name': 'progress',
+                'value': {'tool_call_id': 'call_1', 'data': {'pct': 100}},
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                'outcome': {'type': 'success'},
+            },
+        ]
+    )
+
+
+async def test_custom_event_passes_through_ag_ui_base_event():
+    """A `CustomEvent` whose payload is an AG-UI event is passed through verbatim."""
+
+    async def event_generator():
+        yield PydanticAICustomEvent(
+            name='snapshot', data=StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={'key': 'value'})
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='go'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
