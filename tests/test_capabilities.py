@@ -8704,6 +8704,41 @@ class TestGetModelHook:
         )
         assert (await agent.run('hello')).output == 'second'
 
+    async def test_override_spec_model_uses_spec_model_id_resolver(self, monkeypatch: pytest.MonkeyPatch):
+        target = _text_model('resolved by spec')
+
+        @dataclass
+        class SpecResolver(AbstractCapability[None]):
+            @classmethod
+            def get_serialization_name(cls) -> str:
+                return 'SpecResolver'
+
+            async def resolve_model_id(
+                self, model_id: KnownModelName | str, *, ctx: ModelResolutionContext[None]
+            ) -> Model | None:
+                return target if model_id == 'custom-id' else None
+
+        monkeypatch.setitem(CAPABILITY_TYPES, 'SpecResolver', SpecResolver)
+        agent = Agent('test')
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}, model='custom-id'):
+            assert (await agent.run('hello')).output == 'resolved by spec'
+
+    async def test_wrapper_subclass_model_id_resolver_is_detected(self):
+        target = _text_model('resolved by wrapper')
+
+        @dataclass
+        class ResolvingWrapper(WrapperCapability[None]):
+            async def resolve_model_id(
+                self, model_id: KnownModelName | str, *, ctx: ModelResolutionContext[None]
+            ) -> Model | None:
+                return target if model_id == 'custom-id' else None
+
+        agent = Agent('test', capabilities=[ResolvingWrapper(wrapped=AbstractCapability())])
+
+        with agent.override(model='custom-id'):
+            assert (await agent.run('hello')).output == 'resolved by wrapper'
+
     async def test_dynamic_models_are_entered_once_per_run(self):
         class LifecycleModel(FunctionModel):
             entered = 0

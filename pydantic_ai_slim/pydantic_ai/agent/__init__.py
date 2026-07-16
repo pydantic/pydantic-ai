@@ -1081,6 +1081,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
+
         effective_output_retries = retry_overrides.get('output')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
@@ -1857,6 +1858,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         resolved = self._resolve_spec(spec)
 
+        # A spec capability replaces the agent's root capability for the duration of the
+        # override. Build it before resolving an overridden model so custom model IDs can
+        # be preserved for that capability's async, deps-aware resolver.
+        if resolved is not None and resolved.capability is not None:
+            override_caps = list(resolved.capability.capabilities)
+            _inject_auto_capabilities(override_caps)
+            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps)
+        else:
+            override_capability = None
+
         # Apply spec values as defaults where explicit params are not set
         if resolved is not None:
             if not _utils.is_set(name) and resolved.name is not None:
@@ -1883,10 +1894,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_token = None
 
         if _utils.is_set(model):
+            model_capability = override_capability or self._root_capability
             override_model = (
-                model
-                if isinstance(model, str) and self._root_capability.has_resolve_model_id
-                else models.infer_model(model)
+                model if isinstance(model, str) and model_capability.has_resolve_model_id else models.infer_model(model)
             )
             model_token = self._override_model.set(_utils.Some(override_model))
         else:
@@ -1931,10 +1941,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Set capability from spec, replacing the agent's existing root capability.
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
-        if resolved is not None and resolved.capability is not None:
-            override_caps = list(resolved.capability.capabilities)
-            _inject_auto_capabilities(override_caps)
-            override_capability = CombinedCapability(override_caps)
+        if override_capability is not None:
             cap_token = self._override_root_capability.set(_utils.Some(override_capability))
         else:
             cap_token = None

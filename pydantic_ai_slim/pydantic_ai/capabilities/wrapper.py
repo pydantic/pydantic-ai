@@ -113,7 +113,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def has_resolve_model_id(self) -> bool:
-        return self.wrapped.has_resolve_model_id
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
 
     async def resolve_model_id(
         self,
