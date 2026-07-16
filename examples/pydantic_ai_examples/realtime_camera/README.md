@@ -64,8 +64,9 @@ the assistant to *"clean this up"* or *"redraw it properly"*. It calls the `redr
 which is a regular [`@agent.tool`][pydantic_ai.Agent.tool] that the
 [`realtime_session`][pydantic_ai.Agent.realtime_session] executes automatically. The tool hands the
 current camera frame to a **separate vision agent** — a plain [`Agent`][pydantic_ai.Agent] running
-Opus via OpenRouter — that returns a clean, self-contained HTML version of the drawing. The browser
-renders it in an overlay and can export it to PNG client-side.
+Gemini, using the same `GOOGLE_API_KEY` as the live session — that returns a clean, self-contained
+HTML version of the drawing. The browser renders it in an overlay and can export it to PNG
+client-side.
 
 It runs as a [background tool][pydantic_ai.Agent.realtime_session] (it takes a moment), so the voice
 conversation keeps flowing while the diagram is drawn, then the model announces it when it appears.
@@ -76,8 +77,7 @@ up to 1920×1080 and captured at ~1600 px wide) that goes only to the drawing ag
 read hand-written labels without paying for high-res frames on every turn.
 
 ```bash
-export OPENROUTER_API_KEY=...                       # required for the drawing agent
-export CAMERA_DRAW_MODEL=anthropic/claude-opus-4.5  # optional: any vision model on OpenRouter
+export CAMERA_DRAW_MODEL=google:gemini-3.5-flash  # optional: any `provider:model` vision model
 export CAMERA_DRAW=false                            # optional: turn the feature off
 ```
 

@@ -40,10 +40,10 @@ assistant can answer with current facts and cite its sources as chips in the UI;
 
 **Redraw a sketch.** Show the camera a hand-drawn diagram (a system design, flow chart, wireframe)
 and ask the assistant to clean it up: it calls the `redraw_diagram` tool, which hands the current
-camera frame to a separate vision agent (Opus via OpenRouter by default) that recreates the sketch
-as a clean, self-contained HTML diagram. The browser renders it in an overlay and can export it to
-PNG client-side. Set `CAMERA_DRAW=false` to disable, `CAMERA_DRAW_MODEL` to pick the drawing model
-(needs `OPENROUTER_API_KEY`). Because Gemini Live can't combine function calling with Google Search
+camera frame to a separate vision agent (Gemini by default — same `GOOGLE_API_KEY`) that recreates the
+sketch as a clean, self-contained HTML diagram. The browser renders it in an overlay and can export it
+to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any `provider:model`
+vision model. Because Gemini Live can't combine function calling with Google Search
 grounding in one session, enabling the drawing tool turns web search off.
 """
 
@@ -109,10 +109,11 @@ TURN_COVERAGE = cast(
 PROACTIVE = os.environ.get('CAMERA_PROACTIVE', '').lower() in ('1', 'true', 'yes')
 AFFECTIVE = os.environ.get('CAMERA_AFFECTIVE', '').lower() in ('1', 'true', 'yes')
 # Sketch-to-diagram: a `redraw_diagram` tool hands the current camera frame to a separate vision
-# agent that recreates the drawing as clean HTML. On by default; needs `OPENROUTER_API_KEY` (the
-# drawing model is Opus via OpenRouter unless `CAMERA_DRAW_MODEL` overrides it).
+# agent that recreates the drawing as clean HTML. On by default; the drawing model defaults to
+# Gemini (same `GOOGLE_API_KEY` as the live session — no extra key). `CAMERA_DRAW_MODEL` takes any
+# `provider:model` string to use a different vision model.
 DRAW = os.environ.get('CAMERA_DRAW', 'true').lower() in ('1', 'true', 'yes')
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'anthropic/claude-opus-4.5')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
 # Grounding with Google Search (a native tool) — on by default; the native-audio Live models
 # support it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
 # (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
@@ -194,13 +195,8 @@ _FENCE_RE = re.compile(r'^```[a-zA-Z]*\n(.*)\n```$', re.DOTALL)
 
 @lru_cache(maxsize=1)
 def _draw_agent() -> Agent[None, str]:
-    """Build the vision agent that redraws sketches.
-
-    Built lazily so the example runs without an OpenRouter key unless the drawing tool is used.
-    """
-    from pydantic_ai.models.openrouter import OpenRouterModel
-
-    return Agent(OpenRouterModel(DRAW_MODEL), instructions=DRAW_INSTRUCTIONS)
+    """Build the vision agent that redraws sketches, lazily so it only needs credentials when used."""
+    return Agent(DRAW_MODEL, instructions=DRAW_INSTRUCTIONS)
 
 
 def _extract_html(text: str) -> str:
