@@ -112,6 +112,14 @@ Keep custom capabilities focused. If the user only needs one tool or one hook, d
 
 For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
 
+## Select a Model Dynamically
+
+Implement `get_model()` when reusable policy should choose the model. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, previous model, step number, messages, and accumulated usage.
+
+Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
+
+Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance.
+
 ## Defer Capability Loading
 
 For capabilities on demand, load [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.

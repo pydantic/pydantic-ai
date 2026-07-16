@@ -25,7 +25,13 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -48,6 +54,15 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
+
+ModelSelection: TypeAlias = 'Model | KnownModelName | str'
+"""A concrete model selection, before model ID resolution."""
+
+ModelSelector: TypeAlias = 'Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection | Awaitable[ModelSelection]]'
+"""A sync or async per-step model selector."""
+
+AgentModel: TypeAlias = 'ModelSelection | ModelSelector[AgentDepsT]'
+"""A static model selection or a callable evaluated for every request step."""
 
 RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
@@ -293,26 +308,27 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_model(self) -> Model | KnownModelName | str | None:
-        """Return the model this capability supplies for the agent, or None.
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        """Return a static model or a sync/async callable that selects one per request step."""
+        return None
 
-        This is the one way a capability can supply the `model` for an agent that has none, since
-        the model is resolved during run setup before any per-request hook fires. Return a
-        [`Model`][pydantic_ai.models.Model] instance or a model name string (e.g.
-        `'openai:gpt-5.2'`); strings flow through the same inference path as
-        [`Agent(model=...)`][pydantic_ai.Agent.__init__].
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `resolve_model_id`."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
 
-        The first capability (in user order) that returns a non-None model wins, and its model slots
-        in below a call-site `run(model=...)`/`iter(model=...)` argument and a run-level `spec=`
-        model, but above the agent constructor's model. The resulting precedence, from highest to
-        lowest, is: `run()`/`iter()` argument > run `spec=` model > capability `get_model()` > agent
-        constructor. An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins
-        over all of these, matching its documented semantics.
+    async def resolve_model_id(
+        self,
+        model_id: KnownModelName | str,
+        *,
+        ctx: ModelResolutionContext[AgentDepsT],
+    ) -> Model | None:
+        """Resolve a model ID, or return `None` to defer.
 
-        Unlike most `get_*` hooks, this is called on the construction-time capability instances
-        (before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]) and receives no
-        [`RunContext`][pydantic_ai.tools.RunContext], because it runs during run setup before the
-        run exists. Return values must therefore not depend on per-run state.
+        Later capabilities are tried first. When every capability returns `None`, the ID
+        is passed to [`infer_model`][pydantic_ai.models.infer_model]. The context provides
+        the agent and actual run dependencies, so resolution can configure tenant-specific
+        providers or look up models in a registry.
         """
         return None
 

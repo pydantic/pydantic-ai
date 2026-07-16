@@ -27,6 +27,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
@@ -34,7 +35,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -141,6 +142,28 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return merged if merged is not None else ModelSettings()
 
         return resolve
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        model: AgentModel[AgentDepsT] | None = None
+        for capability in self.capabilities:
+            if capability.defer_loading is not True and (capability_model := capability.get_model()) is not None:
+                model = capability_model
+        return model
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return any(capability.has_resolve_model_id for capability in self.capabilities)
+
+    async def resolve_model_id(
+        self,
+        model_id: KnownModelName | str,
+        *,
+        ctx: ModelResolutionContext[AgentDepsT],
+    ) -> Model | None:
+        for capability in reversed(self.capabilities):
+            if (model := await capability.resolve_model_id(model_id, ctx=ctx)) is not None:
+                return model
+        return None
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []

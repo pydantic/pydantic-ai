@@ -38,6 +38,7 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
+    ResolveModelId,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -82,7 +83,15 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
@@ -8596,8 +8605,8 @@ class TestGetModelHook:
             result = await agent.run('hello')
         assert result.output == 'from-override'
 
-    async def test_first_non_none_capability_wins(self):
-        """The first capability (in user order) that returns a non-None model wins."""
+    async def test_last_non_none_capability_wins(self):
+        """Later capability contributions override earlier ones."""
         agent = Agent(
             None,
             capabilities=[
@@ -8608,7 +8617,221 @@ class TestGetModelHook:
         )
 
         result = await agent.run('hello')
-        assert result.output == 'from-second'
+        assert result.output == 'from-third'
+
+    async def test_callable_selects_model_per_step(self):
+        first = FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('advance', '{}')]))
+
+        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.model_settings == {'max_tokens': 123}
+            return make_text_response('done')
+
+        second = FunctionModel(finish, settings={'max_tokens': 123})
+        selected_steps: list[int] = []
+
+        def select(ctx: ModelSelectionContext[int]) -> Model:
+            selected_steps.append(ctx.run_step)
+            assert ctx.deps == 42
+            return first if ctx.run_step == 1 else second
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[int]):
+            def get_model(self) -> Callable[[ModelSelectionContext[int]], Model]:
+                return select
+
+        agent = Agent(None, deps_type=int, capabilities=[AdaptiveModel()])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        result = await agent.run('hello', deps=42)
+        assert result.output == 'done'
+        assert selected_steps == [1, 2]
+
+    async def test_explicit_run_model_skips_selector(self):
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            raise AssertionError('selector should not run')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return select
+
+        result = await Agent(None, deps_type=type(None), capabilities=[AdaptiveModel()]).run(
+            'hello', model=_text_model('explicit')
+        )
+        assert result.output == 'explicit'
+
+    async def test_selected_model_id_is_resolved_with_deps(self):
+        target = _text_model('resolved')
+
+        def select(ctx: ModelSelectionContext[str]) -> str:
+            return 'alias'
+
+        def resolve(ctx: ModelResolutionContext[str], model_id: str) -> Model | None:
+            assert ctx.deps == 'tenant'
+            return target if model_id == 'alias' else None
+
+        @dataclass
+        class SelectAlias(AbstractCapability[str]):
+            def get_model(self) -> Callable[[ModelSelectionContext[str]], str]:
+                return select
+
+        agent = Agent(None, deps_type=str, capabilities=[SelectAlias(), ResolveModelId(resolve)])
+        result = await agent.run('hello', deps='tenant')
+        assert result.output == 'resolved'
+
+    async def test_constructor_model_id_is_resolved_with_deps(self):
+        target = _text_model('resolved')
+
+        def resolve(ctx: ModelResolutionContext[str], model_id: str) -> Model | None:
+            assert ctx.deps == 'tenant'
+            return target if model_id == 'alias' else None
+
+        agent = Agent('alias', deps_type=str, capabilities=[ResolveModelId(resolve)])
+        assert (await agent.run('hello', deps='tenant')).output == 'resolved'
+
+    async def test_later_model_id_resolver_wins(self):
+        first = _text_model('first')
+        second = _text_model('second')
+        agent = Agent(
+            'alias',
+            capabilities=[
+                ResolveModelId(lambda ctx, model_id: first),
+                ResolveModelId(lambda ctx, model_id: second),
+            ],
+        )
+        assert (await agent.run('hello')).output == 'second'
+
+    async def test_dynamic_models_are_entered_once_per_run(self):
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        first = LifecycleModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('advance', '{}')]))
+        second = LifecycleModel(lambda messages, info: make_text_response('done'))
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: first if ctx.run_step == 1 else second
+
+        agent = Agent(None, deps_type=type(None), capabilities=[AdaptiveModel()])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert (first.entered, first.exited) == (1, 1)
+        assert (second.entered, second.exited) == (1, 1)
+
+    async def test_selector_can_return_fallback_model(self):
+        def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('primary failed')
+
+        fallback = FallbackModel(FunctionModel(fail), _text_model('fallback'), fallback_on=RuntimeError)
+
+        @dataclass
+        class SelectFallback(AbstractCapability[None]):
+            def get_model(self) -> FallbackModel:
+                return fallback
+
+        agent = Agent(None, deps_type=type(None), capabilities=[SelectFallback()])
+        assert (await agent.run('hello')).output == 'fallback'
+
+    async def test_cross_run_suspended_resume_rejects_dynamic_model(self):
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: _text_model('selected')
+
+        history = [ModelResponse(parts=[], state='suspended')]
+        with pytest.raises(UserError, match='cannot be reconstructed unambiguously'):
+            agent = Agent(None, deps_type=type(None), capabilities=[AdaptiveModel()])
+            await agent.run(message_history=history)
+
+    async def test_cross_run_suspended_resume_rejects_for_run_dynamic_model(self):
+        @dataclass
+        class DynamicModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: _text_model('selected')
+
+        @dataclass
+        class BootstrapModel(AbstractCapability[None]):
+            def get_model(self) -> Model:
+                return _text_model('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return DynamicModel()
+
+        history = [ModelResponse(parts=[], state='suspended')]
+        with pytest.raises(UserError, match='cannot be reconstructed unambiguously'):
+            agent = Agent(None, deps_type=type(None), capabilities=[BootstrapModel()])
+            await agent.run(message_history=history)
+
+    async def test_system_prompt_parts_uses_selector_when_model_is_omitted(self):
+        selected = _text_model('selected')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[str]):
+            def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
+                return lambda ctx: selected
+
+        agent = Agent(None, deps_type=str, capabilities=[AdaptiveModel()])
+
+        @agent.system_prompt
+        def prompt(ctx: RunContext[str]) -> str:
+            assert ctx.model is selected
+            assert ctx.deps == 'tenant'
+            return 'system prompt'
+
+        assert await agent.system_prompt_parts(deps='tenant') == snapshot(
+            [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
+        )
+
+    async def test_callable_model_selection_streaming(self):
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'selected'
+
+        selected = FunctionModel(stream_function=stream)
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: selected
+
+        agent = Agent(None, deps_type=type(None), capabilities=[AdaptiveModel()])
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == 'selected'
+
+    async def test_agent_context_does_not_evaluate_dynamic_selector(self):
+        calls = 0
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            nonlocal calls
+            calls += 1
+            return _text_model('selected')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return select
+
+        agent = Agent(None, deps_type=type(None), capabilities=[AdaptiveModel()])
+        async with agent:
+            assert calls == 0
+
+        assert (await agent.run('hello')).output == 'selected'
+        assert calls == 1
 
     async def test_wrapper_capability_delegates(self):
         """A `WrapperCapability` surfaces its wrapped leaf's model."""

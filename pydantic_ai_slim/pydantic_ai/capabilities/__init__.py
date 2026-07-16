@@ -14,11 +14,14 @@ from ._dynamic import CapabilityFunc, DynamicCapability
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     AgentNode,
     CapabilityDescription,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
+    ModelSelection,
+    ModelSelector,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -46,6 +49,7 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .resolve_model_id import ModelIdResolver, ResolveModelId
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -93,12 +97,16 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentModel',
     'AgentNode',
     'CapabilityDescription',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
     'CapabilityRef',
+    'ModelSelection',
+    'ModelSelector',
+    'ModelIdResolver',
     'NodeResult',
     'RawToolArgs',
     'ValidatedToolArgs',
@@ -124,6 +132,7 @@ __all__ = [
     'ProcessEventStream',
     'ProcessHistory',
     'ReinjectSystemPrompt',
+    'ResolveModelId',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',

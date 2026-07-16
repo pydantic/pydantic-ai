@@ -318,6 +318,16 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request_index: int | None
 
     model: models.Model
+    model_selector: (
+        Callable[
+            [models.ModelSelectionContext[DepsT]],
+            models.Model | models.KnownModelName | str | Awaitable[models.Model | models.KnownModelName | str],
+        ]
+        | None
+    )
+    model_selected_for_step: int | None
+    resolve_model_id: Callable[[models.KnownModelName | str], Awaitable[models.Model]]
+    enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
@@ -1187,6 +1197,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        await _select_model(ctx)
+
         _refresh_loaded_capability_ids(ctx)
 
         _refresh_discovered_tool_names(ctx)
@@ -1932,6 +1944,30 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
+
+
+async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    selector = ctx.deps.model_selector
+    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+        return
+
+    agent = ctx.deps.agent
+    assert agent is not None
+    selection_ctx = models.ModelSelectionContext(
+        agent=agent,
+        deps=ctx.deps.user_deps,
+        model=ctx.deps.model,
+        run_step=ctx.state.run_step,
+        messages=ctx.state.message_history,
+        usage=ctx.state.usage,
+    )
+    selected = selector(selection_ctx)
+    if inspect.isawaitable(selected):
+        selected = await selected
+    model = await ctx.deps.resolve_model_id(selected) if isinstance(selected, str) else selected
+    await ctx.deps.enter_model(model)
+    ctx.deps.model = model
+    ctx.deps.model_selected_for_step = ctx.state.run_step
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

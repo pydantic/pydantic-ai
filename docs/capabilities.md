@@ -1185,16 +1185,32 @@ class DefaultModel(AbstractCapability):
 agent = Agent(capabilities=[DefaultModel('openai:gpt-5.2')])
 ```
 
-Return a [`Model`][pydantic_ai.models.Model] instance or a model name string; strings flow through the same inference path as [`Agent(model=...)`][pydantic_ai.Agent.__init__]. The first capability (in user order) that returns a non-`None` model wins.
+Return a [`Model`][pydantic_ai.models.Model] instance, a model name string, or a sync/async callable taking [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext]. A callable is evaluated before each new model request step, so it can select based on `ctx.deps`, `ctx.run_step`, message history, or usage:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai.models import ModelSelectionContext
+
+
+@dataclass
+class MyDeps:
+    use_frontier_model: bool
+
+
+def select_model(ctx: ModelSelectionContext[MyDeps]) -> str:
+    return 'openai:gpt-5.2' if ctx.deps.use_frontier_model else 'openai:gpt-5-mini'
+```
+
+The context has a separate type from [`RunContext`][pydantic_ai.tools.RunContext] because a full run context requires the model that is currently being selected. Later capability contributions override earlier ones, matching other capability configuration layers.
 
 A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
 
 `run()`/`iter()` argument › run `spec=` model › capability `get_model()` › agent constructor.
 
-An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. Like the other configuration hooks, `get_model` is called once at run setup on the construction-time capability instance, so it takes no `RunContext` and must not depend on per-run state.
+An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely. Continuation polling within a request step remains pinned to the selected model rather than invoking the selector again.
 
-!!! note "Contributing other configuration at run time"
-    `get_model` exists specifically because the model is needed before the run starts. For everything else a capability wants to compute per run — instructions, model settings, toolsets, native tools, and even a whole set of nested capabilities — resolve it inside [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] and return a capability carrying the result: its `get_instructions`, `get_model_settings`, `get_toolset`, and `get_native_tools` all flow through as usual. To materialize capabilities dynamically, return them from `for_run` (or use the [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] shorthand, which wraps a run-context function in a `DynamicCapability`).
+Model ID strings are passed through [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] before the default model inference. Use [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] to provide a sync or async resolver with access to the agent and run dependencies. This keeps model selection (which model to use) separate from model ID resolution (how to construct it).
 
 ### Configuration methods reference
 
@@ -1205,7 +1221,8 @@ An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins 
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | [Instructions](agent.md#instructions) (static strings, [template strings](agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | [Model settings](agent.md#model-run-settings) dict, or a callable for per-step settings |
-| [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`Model`][pydantic_ai.models.Model] ` \| `[`KnownModelName`][pydantic_ai.models.KnownModelName] ` \| str \| None` | [Model](models/overview.md) to run the agent with when it has none of its own |
+| [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] ` \| None` | Static or per-step [model](models/overview.md) selection |
+| [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] ` \| None` | Resolve a selected model ID using the agent and run dependencies |
 
 ### Hooking into the lifecycle
 
