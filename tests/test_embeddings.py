@@ -5,10 +5,12 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
+import httpx
 import pytest
 
 from ._inline_snapshot import snapshot
@@ -92,7 +94,21 @@ with try_import() as sentence_transformers_imports_successful:
 
 
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+# Pinned so a warm HF cache is served without revalidating files against the Hub.
+# Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
+# `test_stsb_model_pin_matches_ci` guards against drift.
 STSB_BERT_TINY_REVISION = 'f3cb857cba53019a20df283396bcca179cf051a4'
+
+
+def test_stsb_model_pin_matches_ci():
+    """Drift between this pin and ci.yml silently reintroduces per-run Hub downloads:
+    the stale cache key keeps exact-hitting, so CI never caches the new revision."""
+    ci_yml = Path(__file__).parent.parent / '.github' / 'workflows' / 'ci.yml'
+    if not ci_yml.is_file():  # pragma: lax no cover
+        pytest.skip('not running from a repo checkout')
+    content = ci_yml.read_text()
+    assert STSB_BERT_TINY_MODEL in content
+    assert STSB_BERT_TINY_REVISION in content, 'update the HF cache keys and warmup commands in ci.yml'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -1593,17 +1609,21 @@ class TestGoogle:
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
     def stsb_bert_tiny_model(self):
-        # The pinned commit revision makes a warm HF cache authoritative:
-        # huggingface_hub serves pinned files straight from disk without contacting
-        # the Hub, so no revalidation requests and none of the 429/504 flakes they
-        # cause. CI warms the cache out-of-band (see ci.yml); a cold cache downloads
-        # the model here on first use.
+        # The pinned commit revision lets huggingface_hub serve every model file
+        # straight from a warm cache without revalidating it against the Hub.
+        # Construction still fires a few metadata requests (model card, repo tree,
+        # adapter probe); those tolerate Hub HTTP errors, and connection-level
+        # failures fall through to the skip below. CI warms the cache out-of-band
+        # (see ci.yml); a cold cache downloads the model here on first use.
         try:
             model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
-        except OSError as e:  # pragma: lax no cover
-            # A cold cache with the Hub unreachable raises OSError; skip rather than
-            # fail so a HF outage never reds the whole suite. `lax` because this runs
-            # only during such outages: coverage must tolerate both outcomes.
+        except (OSError, RuntimeError, httpx.HTTPError) as e:  # pragma: lax no cover
+            # With the Hub unavailable, failures surface as OSError (HTTP-status
+            # errors), raw httpx errors (connect timeouts), or RuntimeError
+            # (huggingface_hub 1.x retries on a client it just closed after a
+            # connection error). Skip rather than fail so a HF outage never reds the
+            # whole suite. `lax` because this path runs only during outages:
+            # coverage must tolerate both outcomes.
             pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
         # If the model card didn't load, `model_id` is unset and the model reports
         # its name as 'unknown'. Set it explicitly so the reported name is

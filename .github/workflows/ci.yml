@@ -177,11 +177,14 @@ jobs:
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
-      # test model is on disk when the ST tests load it offline (see the
-      # `stsb_bert_tiny_model` fixture). On a cache miss, construct the pinned model
-      # once to prove the downloaded snapshot is usable before saving it. On a
-      # sustained HF outage the real-model smoke tests skip; deterministic adapter
-      # tests still preserve coverage.
+      # test model is on disk when the ST tests load it: the pinned revision is then
+      # served from cache without revalidating against the Hub (see the
+      # `stsb_bert_tiny_model` fixture). On a cache miss, fetch the full pinned
+      # snapshot — this job and `test-lowest-versions` share the cache key, so the
+      # cached snapshot must not depend on which resolution flavor warmed it — then
+      # construct the model once to prove it is usable before saving. On a sustained
+      # HF outage the real-model smoke tests skip; deterministic adapter tests still
+      # preserve coverage.
       - name: pre-download sentence-transformers test model
         id: sentence-transformers-download
         if: >-
@@ -191,7 +194,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -286,8 +289,8 @@ jobs:
         env:
           UV_FROZEN: "0"
 
-      # Warm the HF cache out-of-band (see the `test` job) so the ST tests load
-      # the model offline from disk instead of revalidating it against HF Hub.
+      # Warm the HF cache out-of-band: full pinned snapshot, then a validation
+      # construct (see the matching step in the `test` job for the full rationale).
       - name: pre-download sentence-transformers test model
         id: sentence-transformers-download
         if: >-
@@ -296,7 +299,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --no-sync python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
