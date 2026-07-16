@@ -1065,6 +1065,20 @@ async def test_stream_output_keeps_digit_ending_partial_string(
         ]
 
 
+async def test_stream_output_keeps_incomplete_unicode_escape(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact escape boundary."""
+    stream = [text_chunk('{"value":"\\u12'), text_chunk('34"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_StringField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': '\u1234'},
+            {'value': '\u1234'},
+        ]
+
+
 class _PartialIntField(TypedDict):
     value: int
     label: NotRequired[str]

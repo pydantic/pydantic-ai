@@ -807,9 +807,13 @@ class MistralStreamedResponse(StreamedResponse):
                         continue
                 elif text[-1:].isdigit():
                     # Probe whether a decimal continuation would invalidate the schema.
-                    extended_json = cast(
-                        dict[str, JsonValue], pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings')
-                    )
+                    try:
+                        extended_json = cast(
+                            dict[str, JsonValue],
+                            pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings'),
+                        )
+                    except ValueError:
+                        continue
                     if not MistralStreamedResponse._validate_required_json_schema(
                         extended_json, output_tool.parameters_json_schema
                     ):
