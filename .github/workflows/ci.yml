@@ -154,14 +154,16 @@ jobs:
 
       - run: uv sync --only-dev
 
-      - name: cache HuggingFace models
+      # Cache only the immutable model used by `TestSentenceTransformers`. The old
+      # shared HF cache could be populated first by a matrix job that never downloaded
+      # this model, permanently turning an exact cache hit into a cold model cache.
+      - name: restore sentence-transformers test model
+        id: sentence-transformers-cache
         if: matrix.python-version != '3.14' && matrix.install.name == 'all-extras'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            hf-${{ runner.os }}-
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
       # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
@@ -175,16 +177,24 @@ jobs:
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
-      # test model is on disk when the ST tests load it offline (see the
-      # `stsb_bert_tiny_model` fixture). Download the snapshot without constructing
-      # the model here, since the tests construct it themselves. On a sustained HF
-      # outage the cache stays cold and those tests skip instead of erroring the job.
+      # test model is on disk when the ST tests load it: the pinned revision is then
+      # served from cache without revalidating against the Hub (see the
+      # `stsb_bert_tiny_model` fixture). On a cache miss, fetch the full pinned
+      # snapshot — this job and `test-lowest-versions` share the cache key, so the
+      # cached snapshot must not depend on which resolution flavor warmed it — then
+      # construct the model once to prove it is usable before saving. On a sustained
+      # HF outage the real-model smoke tests skip; deterministic adapter tests still
+      # preserve coverage.
       - name: pre-download sentence-transformers test model
-        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
+        id: sentence-transformers-download
+        if: >-
+          matrix.install.name == 'all-extras'
+          && matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -192,6 +202,18 @@ jobs:
           done
           echo "sentence-transformers test model unavailable after retries; ST tests will skip"
           exit 1
+
+      # A failed non-fatal download must not become an immutable exact cache hit.
+      - name: save sentence-transformers test model
+        if: >-
+          matrix.install.name == 'all-extras'
+          && matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+          && steps.sentence-transformers-download.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
       # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
@@ -243,14 +265,13 @@ jobs:
 
       - run: mkdir .coverage
 
-      - name: cache HuggingFace models
+      - name: restore sentence-transformers test model
+        id: sentence-transformers-cache
         if: matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            hf-${{ runner.os }}-
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
       # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
       # different temporalio version than the frozen lockfile, wanting a different binary. A stale
@@ -268,14 +289,17 @@ jobs:
         env:
           UV_FROZEN: "0"
 
-      # Warm the HF cache out-of-band (see the `test` job) so the ST tests load
-      # the model offline from disk instead of revalidating it against HF Hub.
+      # Warm the HF cache out-of-band: full pinned snapshot, then a validation
+      # construct (see the matching step in the `test` job for the full rationale).
       - name: pre-download sentence-transformers test model
-        if: matrix.python-version != '3.14'
+        id: sentence-transformers-download
+        if: >-
+          matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -283,6 +307,16 @@ jobs:
           done
           echo "sentence-transformers test model unavailable after retries; ST tests will skip"
           exit 1
+
+      - name: save sentence-transformers test model
+        if: >-
+          matrix.python-version != '3.14'
+          && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
+          && steps.sentence-transformers-download.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
+          key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
