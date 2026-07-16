@@ -1360,9 +1360,9 @@ class BaseToolReturnPart:
             elif isinstance(item, str):
                 result.append(item)
             elif mode == 'str':
-                result.append(tool_return_ta.dump_json(item).decode())
+                result.append(tool_return_ta.dump_json(item, by_alias=True).decode())
             else:
-                result.append(tool_return_ta.dump_python(item, mode='json'))
+                result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
 
     def model_response_str(self) -> str:
@@ -1375,7 +1375,7 @@ class BaseToolReturnPart:
             return ''
         if isinstance(value, str):
             return value
-        return tool_return_ta.dump_json(value).decode()
+        return tool_return_ta.dump_json(value, by_alias=True).decode()
 
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
@@ -1386,7 +1386,7 @@ class BaseToolReturnPart:
         value, _ = self._unwrap_data()
         if value is None:
             return {}
-        json_content = tool_return_ta.dump_python(value, mode='json')
+        json_content = tool_return_ta.dump_python(value, mode='json', by_alias=True)
         if _utils.is_str_dict(json_content):
             return json_content
         else:
