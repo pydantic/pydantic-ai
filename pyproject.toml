@@ -207,6 +207,8 @@ include = [
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/issue_pr_attention_monitor.py",
+    ".github/scripts/test_issue_pr_attention_monitor.py",
 ]
 
 [tool.ruff.lint]
@@ -306,13 +308,7 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = [
-    "tests",
-    "docs/.hooks",
-    ".github/scripts/test_ci_duration.py",
-    ".github/scripts/test_pydantic_ai_runner.py",
-    ".github/scripts/test_issue_pr_attention_monitor.py",
-]
+testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 filterwarnings = [
     "error",

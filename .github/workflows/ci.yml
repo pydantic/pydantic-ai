@@ -50,6 +50,12 @@ jobs:
       # (.github/scripts/pydantic-ai-runner).
       - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0" "pydantic-monty==0.0.16"
 
+      - name: Test GitHub agentic workflow policy
+        run: >-
+          uv run pytest
+          .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_issue_pr_attention_monitor.py
+
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --all-files --verbose

@@ -1,0 +1,30 @@
+name: Issue and PR attention health
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- this read-only observer executes no
+  # code from the triggering run and sends a fixed message through a pinned action.
+  workflow_run:
+    workflows:
+      - Pydantic AI Attention Triage
+      - Issue and PR attention operations
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  report-failure:
+    if: >-
+      github.repository == 'pydantic/pydantic-ai' &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    environment: pydantic-ai-triage
+    timeout-minutes: 5
+    steps:
+      - name: Report attention-system failure
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          errors: true
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":warning: The Pydantic AI attention monitor failed. <${{ github.event.workflow_run.html_url }}|View run>."

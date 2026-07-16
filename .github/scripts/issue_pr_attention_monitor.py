@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Apply deterministic ownership and reminder policy around agentic triage.
+"""Apply the deterministic policy around agentic issue and PR triage.
 
-The model may only propose the next actor and a short rationale. This module
-owns every GitHub mutation, validates human overrides, and computes all clocks.
+The model decides only whether a maintainer is the next actor. This module owns
+label changes, ownership, reminder timing, and every write to GitHub.
 """
 
 from __future__ import annotations
@@ -24,18 +24,11 @@ from typing_extensions import TypedDict
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-_DEFAULT_RECIPIENT = 'adtyavrdhn'
-_DOUWE_RECIPIENT = 'DouweM'
+_MAX_REMINDERS = 20
+_DEFAULT_OWNER = 'adtyavrdhn'
+_FINAL_RECIPIENT = 'DouweM'
 _ACTION_LABEL = 'needs-maintainer-action'
-_FORCE_LABEL = 'attention:force'
-_SKIP_LABEL = 'attention:skip'
-_PRIORITY_LABEL = 'p:1-highest'
 _MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
-_LABEL_DEFINITIONS: dict[str, tuple[str, str]] = {
-    _ACTION_LABEL: ('d4c5f9', 'The next meaningful action must come from a maintainer'),
-    _FORCE_LABEL: ('b60205', 'Maintainer override: force attention triage'),
-    _SKIP_LABEL: ('cfd3d7', 'Maintainer override: do not request attention'),
-}
 _MARKER = re.compile(
     r'<!-- pydantic-ai-attention-monitor stage=(?P<stage>[123]) '
     r'recipients=(?P<recipients>[A-Za-z0-9,-]+) -->'
@@ -43,7 +36,7 @@ _MARKER = re.compile(
 
 
 class Activity(TypedDict):
-    """One timeline event relevant to reminder state."""
+    """One timeline event relevant to ownership or reminder state."""
 
     kind: str
     author: str
@@ -55,23 +48,18 @@ class Activity(TypedDict):
 
 
 class Reminder(TypedDict):
-    """A deterministic reminder that is currently due."""
+    """A reminder that is due now."""
 
     stage: Literal[1, 2, 3]
     recipients: list[str]
-    due_at: str
-    terminal_without_comment: bool
 
 
 class Decision(TypedDict):
-    """The narrow structured judgment accepted from the agent."""
+    """The complete model-controlled surface."""
 
     item_number: int
     next_actor: Literal['maintainer', 'contributor', 'automation', 'none', 'uncertain']
     confidence: Literal['high', 'medium', 'low']
-    recommended_action: str
-    context: str
-    urgent: bool
 
 
 def _parse_time(value: str) -> dt.datetime:
@@ -90,22 +78,14 @@ def _marker_body(stage: int, recipients: Sequence[str]) -> str:
     return f'<!-- pydantic-ai-attention-monitor stage={stage} recipients={",".join(recipients)} -->'
 
 
-def _trusted_marker(activity: Activity) -> re.Match[str] | None:
-    """Return the host-appended marker, never model or contributor text."""
-    if activity['author'] != 'github-actions[bot]':
-        return None
-    matches = list(_MARKER.finditer(activity['body']))
-    return matches[-1] if matches else None
-
-
 def _current_recipients(assignees: Iterable[str], permissions: Mapping[str, str | None]) -> list[str]:
     maintainers = sorted(login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS)
-    return maintainers or [_DEFAULT_RECIPIENT]
+    return maintainers or [_DEFAULT_OWNER]
 
 
 def _active_label_since(activities: Sequence[Activity]) -> dt.datetime | None:
     active_since: dt.datetime | None = None
-    for activity in sorted(activities, key=lambda a: _parse_time(a['created_at'])):
+    for activity in sorted(activities, key=lambda value: _parse_time(value['created_at'])):
         if activity['label'] != _ACTION_LABEL:
             continue
         if activity['kind'] == 'labeled':
@@ -115,24 +95,7 @@ def _active_label_since(activities: Sequence[Activity]) -> dt.datetime | None:
     return active_since
 
 
-def _latest_label_event(activities: Sequence[Activity], label: str) -> Activity | None:
-    events = [activity for activity in activities if activity['label'] == label]
-    return max(events, key=lambda a: _parse_time(a['created_at']), default=None)
-
-
-def _valid_override(labels: set[str], activities: Sequence[Activity], label: str) -> bool:
-    """Trust maintainer overrides and their deterministic workflow projection."""
-    latest = _latest_label_event(activities, label)
-    return (
-        label in labels
-        and latest is not None
-        and latest['kind'] == 'labeled'
-        and (latest['is_maintainer'] or latest['author'] == 'github-actions[bot]')
-    )
-
-
-def _resets_reminder(activity: Activity, permissions: Mapping[str, str | None]) -> bool:
-    """Return whether an activity starts a fresh owner-response window."""
+def _resets_clock(activity: Activity, permissions: Mapping[str, str | None]) -> bool:
     if activity['is_maintainer'] and activity['kind'] in {'comment', 'review', 'review_comment'}:
         return True
     return (
@@ -141,22 +104,14 @@ def _resets_reminder(activity: Activity, permissions: Mapping[str, str | None]) 
     )
 
 
-def _latest_reminder_marker(
-    activities: Sequence[Activity],
-    permissions: Mapping[str, str | None],
-    label_since: dt.datetime,
-) -> tuple[dt.datetime, int, list[str]] | None:
-    """Return the latest marker in the current label and ownership-response cycle."""
-    latest_marker: tuple[dt.datetime, int, list[str]] | None = None
-    for activity in sorted(activities, key=lambda a: _parse_time(a['created_at'])):
-        created_at = _parse_time(activity['created_at'])
-        if created_at < label_since:
-            continue
-        if _resets_reminder(activity, permissions):
-            latest_marker = None
-        if match := _trusted_marker(activity):
-            latest_marker = (created_at, int(match.group('stage')), match.group('recipients').split(','))
-    return latest_marker
+def _trusted_marker(activity: Activity) -> tuple[int, list[str]] | None:
+    if activity['author'] != 'github-actions[bot]':
+        return None
+    matches = list(_MARKER.finditer(activity['body']))
+    if not matches:
+        return None
+    match = matches[-1]
+    return int(match.group('stage')), match.group('recipients').split(',')
 
 
 def next_reminder(
@@ -166,61 +121,44 @@ def next_reminder(
     permissions: Mapping[str, str | None],
     now: dt.datetime,
 ) -> Reminder | None:
-    """Return the next due reminder from label, maintainer, assignment, and marker events."""
+    """Return the next reminder after three quiet days, or None."""
     label_since = _active_label_since(activities)
     if label_since is None:
         return None
-    recipients = _current_recipients(assignees, permissions)
+
     reset_at = label_since
-    for activity in sorted(activities, key=lambda a: _parse_time(a['created_at'])):
+    latest_marker: tuple[dt.datetime, int, list[str]] | None = None
+    for activity in sorted(activities, key=lambda value: _parse_time(value['created_at'])):
         created_at = _parse_time(activity['created_at'])
         if created_at < label_since:
             continue
-        if _resets_reminder(activity, permissions):
-            reset_at = max(reset_at, created_at)
-    latest_marker = _latest_reminder_marker(activities, permissions, label_since)
+        if _resets_clock(activity, permissions):
+            reset_at = created_at
+            latest_marker = None
+        marker = _trusted_marker(activity)
+        if marker:
+            latest_marker = created_at, marker[0], marker[1]
 
+    recipients = _current_recipients(assignees, permissions)
     if latest_marker is None:
-        due_at = reset_at + _SLA
-        if now < due_at:
-            return None
-        return Reminder(stage=1, recipients=recipients, due_at=due_at.isoformat(), terminal_without_comment=False)
+        return Reminder(stage=1, recipients=recipients) if now >= reset_at + _SLA else None
 
-    marker_at, stage, marker_recipients = latest_marker
+    marker_at, stage, previous_recipients = latest_marker
     if stage == 3:
         return None
-    if stage in {1, 2} and {r.casefold() for r in marker_recipients} != {r.casefold() for r in recipients}:
-        due_at = max(reset_at, marker_at) + _SLA
-        if now < due_at:
-            return None
-        return Reminder(stage=1, recipients=recipients, due_at=due_at.isoformat(), terminal_without_comment=False)
-    due_at = marker_at + _SLA
-    if now < due_at:
+    if {login.casefold() for login in previous_recipients} != {login.casefold() for login in recipients}:
+        return Reminder(stage=1, recipients=recipients) if now >= marker_at + _SLA else None
+    if now < marker_at + _SLA:
         return None
     if stage == 1:
-        return Reminder(stage=2, recipients=recipients, due_at=due_at.isoformat(), terminal_without_comment=False)
-    terminal = any(r.casefold() == _DOUWE_RECIPIENT.casefold() for r in recipients)
-    return Reminder(
-        stage=3,
-        recipients=[_DOUWE_RECIPIENT],
-        due_at=due_at.isoformat(),
-        terminal_without_comment=terminal,
-    )
+        return Reminder(stage=2, recipients=recipients)
+    if any(login.casefold() == _FINAL_RECIPIENT.casefold() for login in recipients):
+        return None
+    return Reminder(stage=3, recipients=[_FINAL_RECIPIENT])
 
 
-def _clean_context(value: str) -> str:
-    fallback = 'A maintainer decision is still the next step.'
-    text = ' '.join(value.split()).strip()
-    if re.search(r'https?://|www\.|<|>|!\[|\]\s*\(', text, flags=re.IGNORECASE):
-        return fallback
-    text = re.sub(r'[`*_~#|\[\]()]', '', text).replace('@', '@\u200b')
-    if len(text) > 240:
-        text = f'{text[:237].rstrip()}...'
-    return text.rstrip('.') + '.' if text else fallback
-
-
-def render_comment(reminder: Reminder, context: str, primary_recipients: Sequence[str]) -> str:
-    """Render a concise reminder with hidden deterministic state."""
+def render_comment(reminder: Reminder, primary_recipients: Sequence[str]) -> str:
+    """Render a concise fixed reminder; no model text reaches GitHub."""
     mentions = ' '.join(f'@{login}' for login in reminder['recipients'])
     if reminder['stage'] == 1:
         message = f'{mentions} This needs an eye — could you please take a call on what should be done here?'
@@ -229,14 +167,14 @@ def render_comment(reminder: Reminder, context: str, primary_recipients: Sequenc
     else:
         owners = ' '.join(f'@{login}' for login in primary_recipients)
         message = (
-            f'@{_DOUWE_RECIPIENT} This still needs an eye after two pings to {owners} — '
+            f'@{_FINAL_RECIPIENT} This still needs an eye after two pings to {owners} — '
             'could you please take a call on the next step?'
         )
-    return f'{message}\n\n**Context:** {_clean_context(context)}\n\n{_marker_body(reminder["stage"], reminder["recipients"])}'
+    return f'{message}\n\n{_marker_body(reminder["stage"], reminder["recipients"])}'
 
 
 class GitHubClient:
-    """Minimal authenticated GitHub REST client."""
+    """Small authenticated GitHub REST client."""
 
     def __init__(self, token: str) -> None:
         self._token = token
@@ -257,9 +195,7 @@ class GitHubClient:
             },
         )
         with urllib.request.urlopen(request, timeout=30) as response:
-            if response.status == 204:
-                return None
-            return json.load(response)
+            return None if response.status == 204 else json.load(response)
 
     def get(self, path: str) -> Any:
         return self.request('GET', path)
@@ -271,21 +207,18 @@ class GitHubClient:
         return self.request('DELETE', path)
 
     def permission(self, repo: str, login: str) -> str | None:
-        """Return a collaborator permission, cached for this process."""
         if not login or _is_bot(login):
             return None
-        key = (repo, login.casefold())
-        if key in self._permission_cache:
-            return self._permission_cache[key]
-        try:
-            permission = str(self.get(f'/repos/{repo}/collaborators/{login}/permission')['permission'])
-        except urllib.error.HTTPError as exc:
-            if exc.code in {403, 404}:
-                permission = None
-            else:
-                raise
-        self._permission_cache[key] = permission
-        return permission
+        key = repo, login.casefold()
+        if key not in self._permission_cache:
+            try:
+                value = self.get(f'/repos/{repo}/collaborators/{login}/permission')
+                self._permission_cache[key] = str(value['permission'])
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {403, 404}:
+                    raise
+                self._permission_cache[key] = None
+        return self._permission_cache[key]
 
     def paginate(self, path: str) -> list[dict[str, Any]]:
         separator = '&' if '?' in path else '?'
@@ -299,28 +232,23 @@ class GitHubClient:
             page += 1
 
 
-def _permission(client: GitHubClient, repo: str, login: str) -> str | None:
-    return client.permission(repo, login)
-
-
 def _actor(entry: Mapping[str, Any]) -> str:
     user = entry.get('user') or entry.get('actor')
-    user_mapping = cast(Mapping[str, object], user) if isinstance(user, Mapping) else None
-    return str(user_mapping.get('login') or '') if user_mapping else ''
+    return str(cast(Mapping[str, object], user).get('login') or '') if isinstance(user, Mapping) else ''
 
 
 def _activity(kind: str, entry: Mapping[str, Any], *, created_key: str = 'created_at') -> Activity:
     label = entry.get('label')
     assignee = entry.get('assignee')
-    label_mapping = cast(Mapping[str, object], label) if isinstance(label, Mapping) else None
-    assignee_mapping = cast(Mapping[str, object], assignee) if isinstance(assignee, Mapping) else None
     return Activity(
         kind=kind,
         author=_actor(entry),
         created_at=str(entry[created_key]),
         body=str(entry.get('body') or ''),
-        label=str(label_mapping.get('name') or '') if label_mapping else '',
-        assignee=str(assignee_mapping.get('login') or '') if assignee_mapping else '',
+        label=str(cast(Mapping[str, object], label).get('name') or '') if isinstance(label, Mapping) else '',
+        assignee=(
+            str(cast(Mapping[str, object], assignee).get('login') or '') if isinstance(assignee, Mapping) else ''
+        ),
         is_maintainer=False,
     )
 
@@ -328,44 +256,44 @@ def _activity(kind: str, entry: Mapping[str, Any], *, created_key: str = 'create
 def hydrate(
     client: GitHubClient, repo: str, number: int
 ) -> tuple[dict[str, Any], list[Activity], dict[str, str | None]]:
-    """Load one item, its relevant timeline, and actor permissions."""
+    """Load authoritative item, activity, and maintainer permissions."""
     item = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     timeline = [
         _activity(str(event.get('event') or ''), event)
         for event in client.paginate(f'/repos/{repo}/issues/{number}/timeline')
         if event.get('created_at')
     ]
-    comments = [_activity('comment', c) for c in client.paginate(f'/repos/{repo}/issues/{number}/comments')]
+    comments = [_activity('comment', entry) for entry in client.paginate(f'/repos/{repo}/issues/{number}/comments')]
     reviews: list[Activity] = []
     review_comments: list[Activity] = []
     if 'pull_request' in item:
         reviews = [
-            _activity('review', r, created_key='submitted_at')
-            for r in client.paginate(f'/repos/{repo}/pulls/{number}/reviews')
-            if r.get('submitted_at')
+            _activity('review', entry, created_key='submitted_at')
+            for entry in client.paginate(f'/repos/{repo}/pulls/{number}/reviews')
+            if entry.get('submitted_at')
         ]
         review_comments = [
-            _activity('review_comment', c) for c in client.paginate(f'/repos/{repo}/pulls/{number}/comments')
+            _activity('review_comment', entry) for entry in client.paginate(f'/repos/{repo}/pulls/{number}/comments')
         ]
     activities = [*timeline, *comments, *reviews, *review_comments]
     logins = {
-        *[str(a['login']) for a in item.get('assignees', [])],
+        *[str(assignee['login']) for assignee in item.get('assignees', [])],
         *[activity['author'] for activity in activities if activity['author']],
         *[activity['assignee'] for activity in activities if activity['assignee']],
     }
-    permissions = {login: _permission(client, repo, login) for login in logins}
+    permissions = {login: client.permission(repo, login) for login in logins}
     for activity in activities:
         activity['is_maintainer'] = permissions.get(activity['author']) in _MAINTAINER_PERMISSIONS
     return item, activities, permissions
 
 
-def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[str]) -> None:
-    client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': list(labels)})
+def _add_label(client: GitHubClient, repo: str, number: int) -> None:
+    client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': [_ACTION_LABEL]})
 
 
-def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
+def _remove_label(client: GitHubClient, repo: str, number: int) -> None:
     try:
-        client.delete(f'/repos/{repo}/issues/{number}/labels/{urllib.parse.quote(label, safe="")}')
+        client.delete(f'/repos/{repo}/issues/{number}/labels/{urllib.parse.quote(_ACTION_LABEL, safe="")}')
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
             raise
@@ -375,463 +303,199 @@ def _assign(client: GitHubClient, repo: str, number: int, login: str) -> None:
     client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [login]})
 
 
-def ensure_labels(client: GitHubClient, repo: str) -> list[str]:
-    """Ensure the three policy labels exist without changing existing definitions."""
-    created: list[str] = []
-    for name, (color, description) in _LABEL_DEFINITIONS.items():
-        try:
-            client.get(f'/repos/{repo}/labels/{urllib.parse.quote(name, safe="")}')
-            continue
-        except urllib.error.HTTPError as exc:
-            if exc.code != 404:
-                raise
-        try:
-            client.post(f'/repos/{repo}/labels', {'name': name, 'color': color, 'description': description})
-            created.append(name)
-        except urllib.error.HTTPError as exc:
-            if exc.code != 422:  # another run may have created it concurrently
-                raise
-    return created
+def ensure_label(client: GitHubClient, repo: str) -> None:
+    """Create the single policy label if it does not exist."""
+    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
+    try:
+        client.get(f'/repos/{repo}/labels/{encoded}')
+        return
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+    try:
+        client.post(
+            f'/repos/{repo}/labels',
+            {
+                'name': _ACTION_LABEL,
+                'color': 'd4c5f9',
+                'description': 'The next meaningful action must come from a maintainer',
+            },
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code != 422:  # A concurrent run may have created it.
+            raise
 
 
-def handle_event(client: GitHubClient, repo: str, event: Mapping[str, Any]) -> list[str]:
-    """Apply deterministic ownership and maintainer override behavior."""
+def handle_event(client: GitHubClient, repo: str, event: Mapping[str, Any], event_name: str) -> list[str]:
+    """Enforce label authority and claim unowned items on maintainer response."""
     item = event.get('issue') or event.get('pull_request')
     if not isinstance(item, Mapping):
         return ['event has no issue or pull request']
     item_mapping = cast(Mapping[str, object], item)
-    number = int(cast(int | str, item_mapping['number']))
-    actor = str(cast(Mapping[str, Any], event.get('sender') or {}).get('login') or '')
-    actor_permission = _permission(client, repo, actor)
-    is_maintainer = actor_permission in _MAINTAINER_PERMISSIONS and not _is_bot(actor)
+    raw_number = item_mapping['number']
+    if not isinstance(raw_number, int):
+        raise ValueError('Event item number must be an integer')
+    number = raw_number
+    actor = str(cast(Mapping[str, object], event.get('sender') or {}).get('login') or '')
+    is_maintainer = client.permission(repo, actor) in _MAINTAINER_PERMISSIONS and not _is_bot(actor)
     action = str(event.get('action') or '')
     label = event.get('label')
-    label_mapping = cast(Mapping[str, object], label) if isinstance(label, Mapping) else None
-    label_name = str(label_mapping.get('name') or '') if label_mapping else ''
-    messages: list[str] = []
+    label_name = str(cast(Mapping[str, object], label).get('name') or '') if isinstance(label, Mapping) else ''
 
-    if (
-        label_name in {_ACTION_LABEL, _FORCE_LABEL, _SKIP_LABEL}
-        and not is_maintainer
-        and actor != 'github-actions[bot]'
-    ):
+    if label_name == _ACTION_LABEL and not is_maintainer and actor != 'github-actions[bot]':
         if action == 'labeled':
-            _remove_label(client, repo, number, label_name)
-            return [f'ignored non-maintainer {label_name} override on #{number}']
+            _remove_label(client, repo, number)
+            return [f'ignored non-maintainer label addition on #{number}']
         if action == 'unlabeled':
-            _add_labels(client, repo, number, [label_name])
-            return [f'restored non-maintainer removal of {label_name} on #{number}']
+            _add_label(client, repo, number)
+            return [f'restored non-maintainer label removal on #{number}']
 
-    if action == 'labeled' and label_name == _SKIP_LABEL:
-        if _ACTION_LABEL in _labels(item_mapping):
-            _remove_label(client, repo, number, _ACTION_LABEL)
-        return [f'applied {_SKIP_LABEL} override on #{number}']
-
-    assignees = [
-        str(assignee.get('login') or '')
-        for assignee in cast(Sequence[Mapping[str, object]], item_mapping.get('assignees') or [])
-    ]
-    permissions = {login: _permission(client, repo, login) for login in assignees}
-    maintainer_assignees = [login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS]
-    claim_events = {'issue_comment', 'pull_request_review', 'pull_request_review_comment'}
-    event_name = os.environ.get('GITHUB_EVENT_NAME', '')
-    if is_maintainer and action in {'created', 'submitted'} and event_name in claim_events and not maintainer_assignees:
+    response_events = {'issue_comment', 'pull_request_review', 'pull_request_review_comment'}
+    if not (is_maintainer and (event_name in response_events or label_name == _ACTION_LABEL)):
+        return [f'no deterministic change for #{number}']
+    current = cast(Mapping[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    assignees = [str(value['login']) for value in current.get('assignees', [])]
+    has_owner = any(client.permission(repo, login) in _MAINTAINER_PERMISSIONS for login in assignees)
+    if is_maintainer and event_name in response_events and action in {'created', 'submitted'} and not has_owner:
         _assign(client, repo, number, actor)
-        messages.append(f'assigned @{actor} to #{number}')
-        maintainer_assignees = [actor]
+        return [f'assigned @{actor} to #{number}']
+    if is_maintainer and action == 'labeled' and label_name == _ACTION_LABEL and not has_owner:
+        _assign(client, repo, number, _DEFAULT_OWNER)
+        return [f'assigned @{_DEFAULT_OWNER} to #{number}']
+    return [f'no deterministic change for #{number}']
 
-    if is_maintainer and action == 'unlabeled' and label_name == _ACTION_LABEL:
-        _add_labels(client, repo, number, [_SKIP_LABEL])
-        messages.append(f'added {_SKIP_LABEL} to #{number}')
 
-    if (
-        action == 'labeled'
-        and label_name in {_ACTION_LABEL, _FORCE_LABEL}
-        and not maintainer_assignees
-        and _SKIP_LABEL not in _labels(item_mapping)
-    ):
-        if label_name == _FORCE_LABEL:
-            _add_labels(client, repo, number, [_ACTION_LABEL])
-        _assign(client, repo, number, _DEFAULT_RECIPIENT)
-        messages.append(f'assigned @{_DEFAULT_RECIPIENT} to #{number}')
-        maintainer_assignees = [_DEFAULT_RECIPIENT]
-    if action == 'labeled' and label_name == _PRIORITY_LABEL and not maintainer_assignees:
-        messages.append(f'ANOMALY #{number}: urgent item has no maintainer owner')
-    return messages
+def _latest_maintainer_label_event(activities: Sequence[Activity]) -> Activity | None:
+    events = [activity for activity in activities if activity['label'] == _ACTION_LABEL and activity['is_maintainer']]
+    return max(events, key=lambda value: _parse_time(value['created_at']), default=None)
+
+
+def _action_label_is_authorized(activities: Sequence[Activity]) -> bool:
+    """Require the current label addition to come from a maintainer or this workflow."""
+    events = [activity for activity in activities if activity['label'] == _ACTION_LABEL]
+    latest = max(events, key=lambda value: _parse_time(value['created_at']), default=None)
+    return bool(
+        latest
+        and latest['kind'] == 'labeled'
+        and (latest['is_maintainer'] or latest['author'] == 'github-actions[bot]')
+    )
 
 
 def _parse_decisions(path: str) -> list[Decision]:
-    raw_data: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(raw_data, Mapping):
-        raise ValueError('Agent output must be an object')
-    data = cast(Mapping[str, object], raw_data)
+    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(loaded, Mapping):
+        raise ValueError('Agent output must contain an `items` list')
+    data = cast(Mapping[str, object], loaded)
     raw_items = data.get('items')
     if not isinstance(raw_items, list):
         raise ValueError('Agent output must contain an `items` list')
     decisions: list[Decision] = []
-    for raw_item in cast(list[object], raw_items):
-        if not isinstance(raw_item, Mapping):
-            raise ValueError('Every agent output item must be an object')
-        raw = cast(Mapping[str, object], raw_item)
+    for value in cast(list[object], raw_items):
+        if not isinstance(value, Mapping):
+            continue
+        raw = cast(Mapping[str, object], value)
         if raw.get('type') != 'record_attention_decision':
             continue
-        item_number = raw.get('item_number')
-        if not isinstance(item_number, str) or re.fullmatch(r'[1-9][0-9]*', item_number) is None:
-            raise ValueError('Decision `item_number` must be a positive decimal string')
-        next_actor = raw.get('next_actor')
-        if not isinstance(next_actor, str) or next_actor not in {
-            'maintainer',
-            'contributor',
-            'automation',
-            'none',
-            'uncertain',
-        }:
-            raise ValueError(f'Invalid `next_actor`: {next_actor!r}')
+        number = raw.get('item_number')
+        actor = raw.get('next_actor')
         confidence = raw.get('confidence')
-        if not isinstance(confidence, str) or confidence not in {'high', 'medium', 'low'}:
+        if not isinstance(number, str) or re.fullmatch(r'[1-9][0-9]*', number) is None:
+            raise ValueError('Decision `item_number` must be a positive decimal string')
+        if actor not in {'maintainer', 'contributor', 'automation', 'none', 'uncertain'}:
+            raise ValueError(f'Invalid `next_actor`: {actor!r}')
+        if confidence not in {'high', 'medium', 'low'}:
             raise ValueError(f'Invalid `confidence`: {confidence!r}')
-        recommended_action = raw.get('recommended_action')
-        context = raw.get('context')
-        if not isinstance(recommended_action, str) or not isinstance(context, str):
-            raise ValueError('Decision text fields must be strings')
-        urgent = raw.get('urgent', False)
-        if not isinstance(urgent, bool) and urgent not in {'true', 'false'}:
-            raise ValueError('Decision `urgent` must be a boolean')
         decisions.append(
             Decision(
-                item_number=int(item_number),
-                next_actor=cast(Literal['maintainer', 'contributor', 'automation', 'none', 'uncertain'], next_actor),
+                item_number=int(number),
+                next_actor=cast(Literal['maintainer', 'contributor', 'automation', 'none', 'uncertain'], actor),
                 confidence=cast(Literal['high', 'medium', 'low'], confidence),
-                recommended_action=recommended_action,
-                context=context,
-                urgent=urgent is True or str(urgent).casefold() == 'true',
             )
         )
     return decisions
 
 
-def _event_item_number(event: Mapping[str, Any]) -> int | None:
+def eligible_numbers(event: Mapping[str, Any], event_name: str) -> set[int]:
+    """Return the only item numbers an agent output may mutate."""
     item = event.get('issue') or event.get('pull_request')
-    if not isinstance(item, Mapping):
-        return None
-    number = cast(Mapping[str, object], item).get('number')
-    return number if isinstance(number, int) and number > 0 else None
+    if isinstance(item, Mapping):
+        number = cast(Mapping[str, object], item).get('number')
+        return {number} if isinstance(number, int) and number > 0 else set()
+    if event_name != 'check_suite' or not isinstance(event.get('check_suite'), Mapping):
+        return set()
+    pull_requests = cast(Mapping[str, object], event['check_suite']).get('pull_requests')
+    if not isinstance(pull_requests, Sequence):
+        return set()
+    return {
+        number
+        for value in cast(Sequence[object], pull_requests)[:5]
+        if isinstance(value, Mapping)
+        and isinstance(number := cast(Mapping[str, object], value).get('number'), int)
+        and number > 0
+    }
 
 
-def _recent_sample_numbers(client: GitHubClient, repo: str) -> set[int]:
-    """Return the bounded manual shadow sample described in the agent prompt."""
-    numbers: set[int] = set()
-    for item_type in ('issue', 'pr'):
-        query = urllib.parse.quote(f'repo:{repo} is:open is:{item_type}')
-        result = cast(
-            Mapping[str, Any],
-            client.get(f'/search/issues?q={query}&sort=updated&order=desc&per_page=5'),
-        )
-        for item in cast(Sequence[Mapping[str, object]], result.get('items') or []):
-            number = item.get('number')
-            if isinstance(number, int) and number > 0:
-                numbers.add(number)
-    return numbers
-
-
-def _reconciliation_numbers(client: GitHubClient, repo: str) -> set[int]:
-    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
-    items = cast(
-        Sequence[Mapping[str, object]],
-        client.get(f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc&per_page=10'),
-    )
-    numbers: set[int] = set()
-    for item in items:
-        number = item.get('number')
-        if isinstance(number, int) and number > 0:
-            numbers.add(number)
-    return numbers
-
-
-def eligible_decision_numbers(
-    client: GitHubClient,
-    repo: str,
-    *,
-    event_name: str,
-    event: Mapping[str, Any],
-    staged: bool,
-) -> set[int]:
-    """Derive the only repository items an agent output may target."""
-    event_number = _event_item_number(event)
-    if event_number is not None:
-        return {event_number}
-    if event_name == 'check_suite':
-        check_suite = event.get('check_suite')
-        if not isinstance(check_suite, Mapping):
-            return set()
-        pull_requests = cast(Mapping[str, object], check_suite).get('pull_requests')
-        if not isinstance(pull_requests, Sequence):
-            return set()
-        numbers: set[int] = set()
-        for pull_request in cast(Sequence[object], pull_requests)[:5]:
-            if isinstance(pull_request, Mapping):
-                number = cast(Mapping[str, object], pull_request).get('number')
-                if isinstance(number, int) and number > 0:
-                    numbers.add(number)
-        return numbers
-    if event_name == 'schedule':
-        return set() if staged else _reconciliation_numbers(client, repo)
-    if event_name == 'workflow_dispatch':
-        return _recent_sample_numbers(client, repo) if staged else _reconciliation_numbers(client, repo)
-    return set()
-
-
-def _validate_decision_targets(decisions: Sequence[Decision], eligible_numbers: set[int]) -> None:
-    numbers = [decision['item_number'] for decision in decisions]
-    if len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains duplicate decisions for one item')
-    unexpected = set(numbers) - eligible_numbers
-    if unexpected:
-        raise ValueError(f'Agent output targets ineligible item numbers: {sorted(unexpected)}')
-
-
-def _apply_new_attention_label(
-    client: GitHubClient,
-    repo: str,
-    number: int,
-    *,
-    has_maintainer_owner: bool,
-    staged: bool,
-) -> str:
-    """Atomically add attention and a fallback owner when one is needed."""
-    if not staged:
-        _add_labels(client, repo, number, [_ACTION_LABEL])
-        try:
-            if not has_maintainer_owner:
-                _assign(client, repo, number, _DEFAULT_RECIPIENT)
-        except Exception:
-            _remove_label(client, repo, number, _ACTION_LABEL)
-            raise
-    owner_note = 'existing maintainer owner' if has_maintainer_owner else 'fallback owner'
-    return f'#{number}: {"would add" if staged else "added"} {_ACTION_LABEL} with {owner_note}'
-
-
-def _wants_maintainer_action(labels: set[str], decision: Decision) -> bool:
-    """Resolve the force override and high-confidence classifier threshold."""
-    return _FORCE_LABEL in labels or (decision['next_actor'] == 'maintainer' and decision['confidence'] == 'high')
-
-
-def _latest_removal_is_maintainer_override(labels: set[str], activities: Sequence[Activity]) -> bool:
-    """Whether the current absence of attention came from a maintainer removal."""
-    latest = _latest_label_event(activities, _ACTION_LABEL)
-    return (
-        _ACTION_LABEL not in labels and latest is not None and latest['kind'] == 'unlabeled' and latest['is_maintainer']
-    )
-
-
-def _apply_skip_override(
-    client: GitHubClient,
-    repo: str,
-    number: int,
-    *,
-    labels: set[str],
-    activities: Sequence[Activity],
-    staged: bool,
-) -> list[str] | None:
-    """Apply or preserve a human-maintainer suppression, if one exists."""
-    if _SKIP_LABEL in labels:
-        if _ACTION_LABEL in labels and not staged:
-            _remove_label(client, repo, number, _ACTION_LABEL)
-        return [f'#{number}: maintainer skip override preserved']
-    if _latest_removal_is_maintainer_override(labels, activities):
-        if not staged:
-            _add_labels(client, repo, number, [_SKIP_LABEL])
-        return [f'#{number}: preserved latest maintainer label-removal override']
-    return None
-
-
-def _remove_attention_if_current(client: GitHubClient, repo: str, number: int) -> str:
-    """Remove attention only if no racing authoritative state supersedes it."""
-    item, activities, _ = hydrate(client, repo, number)
-    labels = _labels(item)
-    if item.get('state', 'open') != 'open' or _ACTION_LABEL not in labels:
-        return f'#{number}: state changed before label removal; left unchanged'
-    if _valid_override(labels, activities, _FORCE_LABEL):
-        return f'#{number}: force override appeared before label removal; left unchanged'
-    if _valid_override(labels, activities, _SKIP_LABEL):
-        return f'#{number}: maintainer skip override preserved'
-    _remove_label(client, repo, number, _ACTION_LABEL)
-    return f'#{number}: removed {_ACTION_LABEL}'
-
-
-def _add_attention_if_current(client: GitHubClient, repo: str, number: int) -> str:
-    """Add attention using current ownership and suppression state."""
-    item, activities, permissions = hydrate(client, repo, number)
-    labels = _labels(item)
-    if item.get('state', 'open') != 'open':
-        return f'#{number}: state changed before attention was added; left unchanged'
-    if _valid_override(labels, activities, _SKIP_LABEL) or _latest_removal_is_maintainer_override(labels, activities):
-        return f'#{number}: maintainer suppression appeared; left unchanged'
-    if _ACTION_LABEL in labels:
-        return f'#{number}: attention was already added by another actor'
-    assignees = [str(a['login']) for a in item.get('assignees', [])]
-    has_maintainer_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)
-    return _apply_new_attention_label(
-        client,
-        repo,
-        number,
-        has_maintainer_owner=has_maintainer_owner,
-        staged=False,
-    )
-
-
-def _post_reminder_if_current(
-    client: GitHubClient,
-    repo: str,
-    number: int,
-    *,
-    context: str,
-    now: dt.datetime,
-) -> str:
-    """Recompute authoritative state immediately before posting a reminder."""
-    item, activities, permissions = hydrate(client, repo, number)
-    labels = _labels(item)
-    if item.get('state', 'open') != 'open' or _ACTION_LABEL not in labels:
-        return f'#{number}: state changed before reminder; no comment posted'
-    if _valid_override(labels, activities, _SKIP_LABEL):
-        return f'#{number}: maintainer skip override appeared; no comment posted'
-    assignees = [str(a['login']) for a in item.get('assignees', [])]
-    primary = _current_recipients(assignees, permissions)
-    reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
-    if reminder is None:
-        return f'#{number}: label retained; no reminder due'
-    if reminder['terminal_without_comment']:
-        return f'ANOMALY #{number}: Douwe already owns this; two unanswered pings exhausted'
-    body = render_comment(reminder, context, primary)
-    client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
-    return f'#{number}: posted reminder {reminder["stage"]}'
-
-
-def apply_decision(
-    client: GitHubClient,
-    repo: str,
-    decision: Decision,
-    *,
-    staged: bool,
-    now: dt.datetime,
-) -> list[str]:
-    """Validate and apply one model decision through the deterministic policy."""
+def apply_decision(client: GitHubClient, repo: str, decision: Decision, *, staged: bool) -> str:
+    """Apply one decision after reloading authoritative state."""
     number = decision['item_number']
     item, activities, permissions = hydrate(client, repo, number)
     if item.get('state', 'open') != 'open':
-        return [f'#{number}: ignored because the item is not open']
+        return f'#{number}: ignored because it is closed'
     labels = _labels(item)
-    messages: list[str] = []
-    for override in (_FORCE_LABEL, _SKIP_LABEL):
-        if override in labels and not _valid_override(labels, activities, override):
-            if not staged:
-                _remove_label(client, repo, number, override)
-            labels.remove(override)
-            messages.append(f'ANOMALY #{number}: ignored non-maintainer {override} override')
-    if _FORCE_LABEL in labels and _SKIP_LABEL in labels:
-        return [*messages, f'ANOMALY #{number}: {_FORCE_LABEL} and {_SKIP_LABEL} coexist; suppressed']
-    skip_result = _apply_skip_override(
-        client,
-        repo,
-        number,
-        labels=labels,
-        activities=activities,
-        staged=staged,
-    )
-    if skip_result is not None:
-        return [*messages, *skip_result]
+    latest_label = _latest_maintainer_label_event(activities)
+    wants_attention = decision['next_actor'] == 'maintainer' and decision['confidence'] == 'high'
 
-    wants_action = _wants_maintainer_action(labels, decision)
-    if decision['urgent'] and not wants_action:
-        return [*messages, f'ANOMALY #{number}: urgent item was not confidently routed to a maintainer']
-    if not wants_action:
-        if _ACTION_LABEL in labels and decision['confidence'] == 'high' and not staged:
-            messages.append(_remove_attention_if_current(client, repo, number))
-        else:
-            messages.append(f'#{number}: abstained or next actor is not a maintainer')
-        return messages
-
-    if _ACTION_LABEL not in labels:
+    # A maintainer's latest manual label action is authoritative until another
+    # maintainer changes it. Model classifications never override it.
+    if latest_label:
+        return f'#{number}: preserved maintainer label decision'
+    if decision['confidence'] != 'high':
+        return f'#{number}: abstained at {decision["confidence"]} confidence'
+    if wants_attention and _ACTION_LABEL not in labels:
+        if staged:
+            return f'#{number}: would add {_ACTION_LABEL}'
+        ensure_label(client, repo)
+        assignees = [str(value['login']) for value in item.get('assignees', [])]
+        has_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)
+        _add_label(client, repo, number)
+        try:
+            if not has_owner:
+                _assign(client, repo, number, _DEFAULT_OWNER)
+        except Exception:
+            _remove_label(client, repo, number)
+            raise
+        return f'#{number}: added {_ACTION_LABEL}'
+    if not wants_attention and _ACTION_LABEL in labels:
         if not staged:
-            return [*messages, _add_attention_if_current(client, repo, number)]
-        assignees = [str(a['login']) for a in item.get('assignees', [])]
-        has_maintainer_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)
-        return [
-            *messages,
-            _apply_new_attention_label(
-                client,
-                repo,
-                number,
-                has_maintainer_owner=has_maintainer_owner,
-                staged=staged,
-            ),
-        ]
+            _remove_label(client, repo, number)
+        return f'#{number}: {"would remove" if staged else "removed"} {_ACTION_LABEL}'
+    return f'#{number}: label already matches decision'
 
+
+def run_reminders(client: GitHubClient, repo: str, *, staged: bool, now: dt.datetime) -> list[str]:
+    """Post at most a bounded number of due reminders on labeled open items."""
     if not staged:
-        return [*messages, _post_reminder_if_current(client, repo, number, context=decision['context'], now=now)]
-
-    assignees = [str(a['login']) for a in item.get('assignees', [])]
-    reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
-    if reminder is None:
-        return [*messages, f'#{number}: label retained; no reminder due']
-    if reminder['terminal_without_comment']:
-        return [*messages, f'ANOMALY #{number}: Douwe already owns this; two unanswered pings exhausted']
-    messages.append(f'#{number}: {"would post" if staged else "posted"} reminder {reminder["stage"]}')
-    return messages
-
-
-def anomaly_report(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
-    """Collect exception-only items for the weekly Slack report."""
-    items_by_number: dict[int, dict[str, Any]] = {}
-    for label in (_ACTION_LABEL, _FORCE_LABEL, _SKIP_LABEL, _PRIORITY_LABEL):
-        encoded = urllib.parse.quote(label, safe='')
-        for item in client.paginate(f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc'):
-            items_by_number[int(item['number'])] = item
-    anomalies: list[str] = []
-    for item in items_by_number.values():
+        ensure_label(client, repo)
+    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
+    items = client.paginate(f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc')
+    lines: list[str] = []
+    for item in items:
         number = int(item['number'])
-        labels = _labels(item)
-        _, activities, permissions = hydrate(client, repo, number)
-        for override in (_FORCE_LABEL, _SKIP_LABEL):
-            if override in labels and not _valid_override(labels, activities, override):
-                anomalies.append(f'<{item["html_url"]}|#{number}> has a non-maintainer {override} override')
-                labels.remove(override)
-        if _FORCE_LABEL in labels and _SKIP_LABEL in labels:
-            anomalies.append(f'<{item["html_url"]}|#{number}> has conflicting force and skip overrides')
+        current, activities, permissions = hydrate(client, repo, number)
+        if _ACTION_LABEL not in _labels(current) or not _action_label_is_authorized(activities):
             continue
-        if _SKIP_LABEL in labels:
-            continue
-        assignees = [str(a['login']) for a in item.get('assignees', [])]
-        maintainer_assignees = [login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS]
+        assignees = [str(value['login']) for value in current.get('assignees', [])]
+        primary = _current_recipients(assignees, permissions)
         reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
-        label_since = _active_label_since(activities)
-        latest_marker = (
-            _latest_reminder_marker(activities, permissions, label_since) if label_since is not None else None
-        )
-        terminal_marker = latest_marker is not None and latest_marker[1] == 3
-        if terminal_marker:
-            anomalies.append(f'<{item["html_url"]}|#{number}> is still waiting after the Douwe ping')
-        elif reminder and reminder['terminal_without_comment']:
-            anomalies.append(f'<{item["html_url"]}|#{number}> exhausted two pings with Douwe already assigned')
-        elif _PRIORITY_LABEL in labels and not any(
-            permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees
-        ):
-            anomalies.append(f'<{item["html_url"]}|#{number}> is urgent but has no maintainer owner')
-        elif not maintainer_assignees:
-            anomalies.append(f'<{item["html_url"]}|#{number}> has no maintainer owner')
-        elif reminder:
-            anomalies.append(f'<{item["html_url"]}|#{number}> reminder stage {reminder["stage"]} remains due')
-    workflow_runs = cast(
-        Mapping[str, Any],
-        client.get(
-            f'/repos/{repo}/actions/workflows/pydantic-ai-attention-triage.lock.yml/runs'
-            '?event=schedule&status=success&per_page=1'
-        ),
-    )
-    runs = cast(list[dict[str, Any]], workflow_runs.get('workflow_runs') or [])
-    if not runs or now - _parse_time(str(runs[0]['created_at'])) > dt.timedelta(hours=8):
-        anomalies.append('The six-hour attention reconciliation has no successful run in the last eight hours')
-    return anomalies
+        if reminder is None:
+            continue
+        body = render_comment(reminder, primary)
+        if not staged:
+            client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
+        lines.append(f'#{number}: {"would post" if staged else "posted"} reminder {reminder["stage"]}')
+        if len(lines) >= _MAX_REMINDERS:
+            break
+    return lines
 
 
 def _write_summary(lines: Sequence[str]) -> None:
@@ -844,67 +508,43 @@ def _write_summary(lines: Sequence[str]) -> None:
 
 
 def main() -> int:
-    """Run deterministic event, decision-application, or reporting mode."""
+    """Run event handling, decision application, or scheduled reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['setup', 'event', 'apply-decisions', 'report'])
+    parser.add_argument('mode', choices=['event', 'apply-decisions', 'remind'])
     parser.add_argument('--event-path', default=os.environ.get('GITHUB_EVENT_PATH'))
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
-    parser.add_argument('--report-path')
-    parser.add_argument('--github-output')
     args = parser.parse_args()
     token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
     if not token:
         print('GITHUB_TOKEN or GH_TOKEN is required', file=sys.stderr)
         return 1
+
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     staged = os.environ.get('ATTENTION_TRIAGE_STAGED', 'true').casefold() != 'false'
-    now = dt.datetime.now(dt.timezone.utc)
-    exit_code = 0
-
-    if args.mode == 'setup':
-        lines = [f'created label {label}' for label in ensure_labels(client, repo)]
-    elif args.mode == 'event':
-        if not args.event_path:
-            parser.error('--event-path is required')
-        created = ensure_labels(client, repo)
-        event = cast(dict[str, Any], json.loads(Path(args.event_path).read_text(encoding='utf-8')))
-        lines = [*[f'created label {label}' for label in created], *handle_event(client, repo, event)]
-        if any(line.startswith('ANOMALY ') for line in lines):
-            exit_code = 2
-    elif args.mode == 'apply-decisions':
-        if not args.agent_output:
-            parser.error('--agent-output is required')
-        if not args.event_path:
-            parser.error('--event-path is required')
-        lines: list[str] = []
-        decisions = _parse_decisions(args.agent_output)
-        event = cast(dict[str, Any], json.loads(Path(args.event_path).read_text(encoding='utf-8')))
-        eligible_numbers = eligible_decision_numbers(
-            client,
-            repo,
-            event_name=os.environ.get('GITHUB_EVENT_NAME', ''),
-            event=event,
-            staged=staged,
-        )
-        _validate_decision_targets(decisions, eligible_numbers)
-        urgent_number = next((decision['item_number'] for decision in decisions if decision['urgent']), None)
-        if args.github_output and urgent_number is not None:
-            with Path(args.github_output).open('a', encoding='utf-8') as github_output:
-                github_output.write(f'urgent_number={urgent_number}\n')
-        for decision in decisions:
-            decision_lines = apply_decision(client, repo, decision, staged=staged, now=now)
-            lines.extend(decision_lines)
-            if decision['urgent'] and any(line.startswith('ANOMALY ') for line in decision_lines):
-                exit_code = 2
+    event_name = os.environ.get('GITHUB_EVENT_NAME', '')
+    if args.mode == 'remind':
+        lines = run_reminders(client, repo, staged=staged, now=dt.datetime.now(dt.timezone.utc))
     else:
-        lines = anomaly_report(client, repo, now=now)
-        if args.report_path:
-            Path(args.report_path).write_text(json.dumps({'anomalies': lines}), encoding='utf-8')
+        if not args.event_path:
+            parser.error('--event-path is required')
+        event = cast(dict[str, Any], json.loads(Path(args.event_path).read_text(encoding='utf-8')))
+        if args.mode == 'event':
+            ensure_label(client, repo)
+            lines = handle_event(client, repo, event, event_name)
+        else:
+            if not args.agent_output:
+                parser.error('--agent-output is required')
+            decisions = _parse_decisions(args.agent_output)
+            allowed = eligible_numbers(event, event_name)
+            numbers = [decision['item_number'] for decision in decisions]
+            if len(numbers) != len(set(numbers)) or set(numbers) - allowed:
+                raise ValueError('Agent output contains duplicate or ineligible item numbers')
+            lines = [apply_decision(client, repo, decision, staged=staged) for decision in decisions]
     _write_summary(lines)
     for line in lines:
         print(line)
-    return exit_code
+    return 0
 
 
 if __name__ == '__main__':

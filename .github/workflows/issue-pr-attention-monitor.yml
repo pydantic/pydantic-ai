@@ -5,70 +5,44 @@ on:
     types: [labeled, unlabeled]
   issue_comment:
     types: [created]
-  # zizmor: ignore[dangerous-triggers] -- only label metadata is handled, the default
-  # branch is checked out explicitly, and no pull request code or action is executed.
+  # zizmor: ignore[dangerous-triggers] -- only label metadata is handled and
+  # only the default-branch policy script is executed.
   pull_request_target:
     types: [labeled, unlabeled]
   pull_request_review:
     types: [submitted]
   pull_request_review_comment:
     types: [created]
-  # zizmor: ignore[dangerous-triggers] -- this observes only a named default-branch workflow,
-  # parses a digits-only item number, never checks out run code, and grants a read-only token.
-  workflow_run:
-    workflows: [Pydantic AI Attention Triage]
-    types: [completed]
   schedule:
-    # Weekly exception report, Monday at 09:00 UTC.
-    - cron: '0 9 * * 1'
+    - cron: '17 */6 * * *'
   workflow_dispatch: {}
 
 permissions: {}
 
 concurrency:
-  group: >-
-    issue-pr-attention-operations-${{
-      github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.id || github.run_id
-    }}
+  group: issue-pr-attention-${{ github.event.issue.number || github.event.pull_request.number || 'reminders' }}
   cancel-in-progress: false
 
 jobs:
-  setup:
-    if: github.repository == 'pydantic/pydantic-ai' && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
-      - name: Ensure attention policy labels exist
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python .github/scripts/issue_pr_attention_monitor.py setup
-
-  event-operations:
+  event:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
       github.event_name != 'schedule' &&
-      github.event_name != 'workflow_dispatch' &&
-      (
-        github.event_name == 'issues' ||
-        github.event_name == 'pull_request_target' ||
-        (
-          github.event_name == 'issue_comment' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
-        ) ||
-        (
-          github.event_name == 'pull_request_review' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
-        ) ||
-        (
-          github.event_name == 'pull_request_review_comment' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      github.event_name != 'workflow_dispatch'
+      && (
+        github.event_name == 'issues'
+        || github.event_name == 'pull_request_target'
+        || (
+          github.event_name == 'issue_comment'
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        )
+        || (
+          github.event_name == 'pull_request_review'
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
+        )
+        || (
+          github.event_name == 'pull_request_review_comment'
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
         )
       )
     runs-on: ubuntu-latest
@@ -82,136 +56,28 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
-
-      - name: Verify the default-branch policy installation
-        id: policy
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [[ -f .github/scripts/issue_pr_attention_monitor.py ]]; then
-            echo 'ready=true' >> "$GITHUB_OUTPUT"
-          elif gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/issue-pr-attention-monitor.yml?ref=${DEFAULT_BRANCH}" >/dev/null 2>&1; then
-            echo '::error::The installed attention workflow is missing its deterministic policy script.'
-            exit 1
-          else
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo '::notice::Skipping the one-time bootstrap run until the workflow and policy script reach the default branch.'
-          fi
-
-      - name: Apply deterministic ownership and override policy
-        if: steps.policy.outputs.ready == 'true'
+      - name: Apply ownership and label policy
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/issue_pr_attention_monitor.py event
 
-  event-failure-report:
-    needs: event-operations
-    if: always() && !cancelled() && needs.event-operations.result == 'failure'
-    runs-on: ubuntu-latest
-    environment: pydantic-ai-triage
-    timeout-minutes: 5
-    permissions:
-      issues: read
-      pull-requests: read
-    steps:
-      - name: Check current priority labels
-        id: priority
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ITEM_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-        run: |
-          labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ITEM_NUMBER}" --jq '.labels[].name')
-          if grep -Fxq 'p:1-highest' <<< "$labels"; then
-            echo 'urgent=true' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Report an urgent event-system failure
-        if: steps.priority.outputs.urgent == 'true'
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
-        with:
-          errors: true
-          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            text: ":warning: Attention triage failed on an urgent item: ${{ github.event.issue.html_url || github.event.pull_request.html_url }}. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>."
-
-  agentic-failure-report:
-    if: >-
-      github.repository == 'pydantic/pydantic-ai' &&
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion != 'success'
-    runs-on: ubuntu-latest
-    environment: pydantic-ai-triage
-    timeout-minutes: 5
-    permissions:
-      issues: read
-      pull-requests: read
-    steps:
-      - name: Resolve a failed run to a current urgent item
-        id: urgent
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
-        run: |
-          if [[ "$RUN_TITLE" =~ \[item:([1-9][0-9]*)\]$ ]]; then
-            item_number="${BASH_REMATCH[1]}"
-            labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${item_number}" --jq '.labels[].name')
-            if grep -Fxq 'p:1-highest' <<< "$labels"; then
-              echo "item_number=${item_number}" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Report an urgent agentic-system failure
-        if: steps.urgent.outputs.item_number != ''
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
-        with:
-          errors: true
-          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            text: ":warning: Attention triage failed on urgent item <${{ github.server_url }}/${{ github.repository }}/issues/${{ steps.urgent.outputs.item_number }}|#${{ steps.urgent.outputs.item_number }}>. <${{ github.event.workflow_run.html_url }}|View failed run>."
-
-  anomaly-report:
+  reminders:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    environment: pydantic-ai-triage
     timeout-minutes: 20
     permissions:
-      actions: read
       contents: read
-      issues: read
-      pull-requests: read
+      issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
-
-      - name: Build exception-only report
-        id: report
+      - name: Ping unattended maintainers
         env:
+          ATTENTION_TRIAGE_STAGED: ${{ vars.ATTENTION_TRIAGE_STAGED || 'true' }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python .github/scripts/issue_pr_attention_monitor.py report --report-path "$RUNNER_TEMP/report.json"
-          count=$(jq '.anomalies | length' "$RUNNER_TEMP/report.json")
-          echo "has_anomalies=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          {
-            echo 'text<<EOF'
-            echo ':warning: *Pydantic AI attention exceptions*'
-            jq -r '.anomalies[] | "• " + .' "$RUNNER_TEMP/report.json"
-            echo "• <${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|Workflow run>"
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Send exception report to Slack
-        if: steps.report.outputs.has_anomalies == 'true'
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
-        with:
-          errors: true
-          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            text: ${{ toJSON(steps.report.outputs.text) }}
+        run: python .github/scripts/issue_pr_attention_monitor.py remind
