@@ -4629,3 +4629,39 @@ def test_tooloutput_rejects_negative_max_retries():
 def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
     out = ToolOutput(int, max_retries=max_retries)
     assert out.max_retries == max_retries
+
+
+def test_tool_return_part_serializes_with_serialization_alias():
+    """Tool return serialization uses field aliases so wire output matches return_schema.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6542: the
+    `return_schema` is generated with `mode='serialization'` (advertising the
+    `serialization_alias`), but `ToolReturnPart.model_response_str()` and
+    `model_response_object()` must also serialize with `by_alias=True` so the payload
+    keys agree with the schema the model received.
+    """
+
+    class OutputModel(BaseModel):
+        value: int = Field(serialization_alias='wireOut')
+
+    def my_tool() -> OutputModel:
+        return OutputModel(value=1)
+
+    tool = Tool(my_tool)
+    # The advertised return schema uses the serialization alias.
+    return_schema = tool.function_schema.return_schema
+    assert 'wireOut' in return_schema.get('properties', {})
+
+    part = ToolReturnPart(tool_name='my_tool', content=my_tool(), tool_call_id='call-1')
+
+    # String serialization should use the alias key.
+    serialized_str = part.model_response_str()
+    assert json.loads(serialized_str) == {'wireOut': 1}
+
+    # Object serialization should use the alias key.
+    serialized_obj = part.model_response_object()
+    assert serialized_obj == {'wireOut': 1}
+
+    # The wire output keys agree with the advertised return schema properties.
+    assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
+    assert set(serialized_obj) == set(return_schema.get('properties', {}))

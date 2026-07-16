@@ -142,7 +142,6 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
             pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
 
 
-@pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', list(find_filter_examples()))
 def test_docs_examples(
     example: CodeExample,
