@@ -16,6 +16,13 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  # PRs: one group per ref so newer pushes cancel superseded in-flight runs.
+  # push/tag: one group per run_id so main and tag runs never share a group
+  # (avoids GitHub's pending-run cancellation between distinct main commits).
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: lint
@@ -148,6 +155,7 @@ jobs:
       - run: uv sync --only-dev
 
       - name: cache HuggingFace models
+        if: matrix.python-version != '3.14' && matrix.install.name == 'all-extras'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/huggingface
@@ -168,14 +176,15 @@ jobs:
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it offline (see the
-      # `stsb_bert_tiny_model` fixture). On a sustained HF outage the cache stays
-      # cold and those tests skip instead of erroring the whole job.
+      # `stsb_bert_tiny_model` fixture). Download the snapshot without constructing
+      # the model here, since the tests construct it themselves. On a sustained HF
+      # outage the cache stays cold and those tests skip instead of erroring the job.
       - name: pre-download sentence-transformers test model
         if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -235,6 +244,7 @@ jobs:
       - run: mkdir .coverage
 
       - name: cache HuggingFace models
+        if: matrix.python-version != '3.14'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/huggingface
@@ -265,7 +275,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --no-sync python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
+            if uv run --no-sync python -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -322,6 +332,7 @@ jobs:
       - name: get coverage files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: coverage-*
           merge-multiple: true
           path: .coverage
 
