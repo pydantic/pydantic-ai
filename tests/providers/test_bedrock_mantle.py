@@ -1,18 +1,15 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
+from typing_extensions import assert_never
 
 from pydantic_ai import UserError
-from pydantic_ai.models import Model, infer_model, infer_model_profile
-from pydantic_ai.models.bedrock import BedrockConverseModel
-from pydantic_ai.models.bedrock_mantle import (
-    BedrockMantleChatModel,
-    BedrockMantleMessagesModel,
-    BedrockMantleResponsesModel,
-)
+from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import infer_provider_class
@@ -25,6 +22,12 @@ with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrockMantle
     from openai import AsyncBedrockOpenAI
 
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.bedrock_mantle import (
+        BedrockMantleChatModel,
+        BedrockMantleMessagesModel,
+        BedrockMantleResponsesModel,
+    )
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -186,43 +189,57 @@ def test_bedrock_mantle_provider_rejects_wrong_interfaces() -> None:
 
 
 @pytest.mark.parametrize(
-    ('model_id', 'model_class', 'system', 'base_url'),
+    ('model_id', 'model_interface', 'system', 'base_url'),
     [
         (
             'bedrock:openai.gpt-5.6-luna',
-            BedrockMantleResponsesModel,
+            'responses',
             'bedrock-mantle',
             'https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
         ),
         (
             'bedrock:openai.gpt-oss-120b',
-            BedrockConverseModel,
+            'converse',
             'bedrock',
             'https://bedrock-runtime.us-east-1.amazonaws.com',
         ),
         (
             'bedrock-mantle:openai.gpt-oss-120b',
-            BedrockMantleResponsesModel,
+            'responses',
             'bedrock-mantle',
             'https://bedrock-mantle.us-east-1.api.aws/v1/',
         ),
         (
             'bedrock-mantle:openai.gpt-oss-safeguard-20b',
-            BedrockMantleChatModel,
+            'chat',
             'bedrock-mantle',
             'https://bedrock-mantle.us-east-1.api.aws/v1/',
         ),
         (
             'bedrock-mantle:anthropic.claude-sonnet-5',
-            BedrockMantleMessagesModel,
+            'messages',
             'bedrock-mantle',
             'https://bedrock-mantle.us-east-1.api.aws/anthropic/',
         ),
     ],
 )
-def test_bedrock_mantle_infer_model(model_id: str, model_class: type[Model], system: str, base_url: str) -> None:
+def test_bedrock_mantle_infer_model(
+    model_id: str,
+    model_interface: Literal['responses', 'converse', 'chat', 'messages'],
+    system: str,
+    base_url: str,
+) -> None:
     model = infer_model(model_id)
-    assert isinstance(model, model_class)
+    if model_interface == 'responses':
+        assert isinstance(model, BedrockMantleResponsesModel)
+    elif model_interface == 'converse':
+        assert isinstance(model, BedrockConverseModel)
+    elif model_interface == 'chat':
+        assert isinstance(model, BedrockMantleChatModel)
+    elif model_interface == 'messages':
+        assert isinstance(model, BedrockMantleMessagesModel)
+    else:
+        assert_never(model_interface)
     assert (model.model_name, model.system, model.base_url) == (model_id.partition(':')[2], system, base_url)
 
 

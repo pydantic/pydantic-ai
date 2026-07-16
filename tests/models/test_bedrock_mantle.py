@@ -6,14 +6,22 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models.bedrock_mantle import (
-    BedrockMantleChatModel,
-    BedrockMantleMessagesModel,
-    BedrockMantleResponsesModel,
-)
-from pydantic_ai.providers.bedrock import BedrockProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.bedrock_mantle import (
+        BedrockMantleChatModel,
+        BedrockMantleMessagesModel,
+        BedrockMantleResponsesModel,
+    )
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+    pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
+]
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
