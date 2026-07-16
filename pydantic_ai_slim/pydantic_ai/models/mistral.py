@@ -797,29 +797,22 @@ class MistralStreamedResponse(StreamedResponse):
                 ):
                     continue
 
-                # Matches enabled by the widened numeric compatibility can also be incomplete numeric tokens:
-                # an integer can be the prefix of a decimal number, and an integral float can be followed by an
-                # exponent. Only emit these newly supported matches once the accumulated JSON is complete.
+                # Numeric tokens at the end of a partial document may be extended by the next chunk.
                 if not MistralStreamedResponse._validate_required_json_schema(
                     output_json, output_tool.parameters_json_schema, allow_widened_numeric_match=False
                 ):
                     try:
-                        # A successful complete parse of `text` is identical to `output_json`, so only
-                        # completeness is checked and the parsed value is discarded.
                         pydantic_core.from_json(text)
                     except ValueError:
                         continue
-
-                # Guard against a trailing integer token that can still extend into a
-                # non-integer on the next chunk (e.g. "1" -> "1.5"). The widened-match
-                # gate above covers float-for-integer and int-for-number, but leaves the
-                # strict int-for-integer case unprotected. When the accumulated text ends
-                # with a JSON number the document may not yet be closed; run a non-partial
-                # parse to confirm completeness before emitting.
-                if MistralStreamedResponse._ends_with_incomplete_integer(text, output_tool.parameters_json_schema):
-                    try:
-                        pydantic_core.from_json(text)
-                    except ValueError:
+                elif text[-1:].isdigit():
+                    # Probe whether a decimal continuation would invalidate the schema.
+                    extended_json = cast(
+                        dict[str, JsonValue], pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings')
+                    )
+                    if not MistralStreamedResponse._validate_required_json_schema(
+                        extended_json, output_tool.parameters_json_schema
+                    ):
                         continue
 
                 # The following part_id will be thrown away
@@ -866,18 +859,6 @@ class MistralStreamedResponse(StreamedResponse):
                     return False
 
         return True
-
-    @staticmethod
-    def _ends_with_incomplete_integer(text: str, schema: dict[str, Any]) -> bool:
-        """Check whether extending the final token to a decimal makes the partial JSON invalid."""
-        if not text or not text[-1].isdigit():
-            return False
-
-        # The original partial parse is an object; extending its final token cannot change the root type.
-        extended_json = cast(
-            dict[str, JsonValue], pydantic_core.from_json(f'{text}.5', allow_partial='trailing-strings')
-        )
-        return not MistralStreamedResponse._validate_required_json_schema(extended_json, schema)
 
 
 VALID_JSON_TYPE_MAPPING: dict[str, Any] = {
