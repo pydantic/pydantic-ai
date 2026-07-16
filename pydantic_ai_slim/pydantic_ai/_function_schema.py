@@ -93,7 +93,7 @@ class FunctionSchema:
     ) -> tuple[list[Any], dict[str, Any]]:
         args = [ctx] if self.takes_ctx else []
         for positional_field in self.positional_fields:
-            args.append(args_dict.pop(positional_field))  # pragma: no cover
+            args.append(args_dict.pop(positional_field))
         if self.var_positional_field:
             args.extend(args_dict.pop(self.var_positional_field))
 
@@ -201,7 +201,7 @@ def function_schema(  # noqa: C901
             metadata = td_schema.setdefault('metadata', {})
             metadata['is_model_like'] = is_model_like(annotation)
 
-            if p.kind == Parameter.POSITIONAL_ONLY:
+            if p.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
                 positional_fields.append(field_name)
             elif p.kind == Parameter.VAR_POSITIONAL:
                 var_positional_field = field_name

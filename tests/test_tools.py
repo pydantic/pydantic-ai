@@ -1455,6 +1455,22 @@ def test_async_function_tool_consistent_with_schema():
     assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
+@pytest.mark.anyio
+async def test_positional_or_keyword_with_var_args():
+    """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6540.
+    """
+
+    def f(r0: int, *values: int) -> dict[str, Any]:
+        return {'r0': r0, 'values': list(values)}
+
+    tool = Tool(f)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RequestUsage())
+    result = await tool.function_schema.call({'r0': 1, 'values': [0]}, ctx)
+    assert result == {'r0': 1, 'values': [0]}
+
+
 def test_tool_retries():
     prepare_tools_retries: list[int] = []
     prepare_retries: list[int] = []
