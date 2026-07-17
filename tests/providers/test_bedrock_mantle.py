@@ -88,6 +88,7 @@ def test_bedrock_mantle_accepts_http_client() -> None:
 
 def test_bedrock_mantle_requires_region_or_base_url(env: TestEnv) -> None:
     env.remove('AWS_DEFAULT_REGION')
+    env.remove('AWS_REGION')
     with pytest.raises(UserError, match='region'):
         BedrockMantleProvider()
 
@@ -158,6 +159,15 @@ def test_bedrock_mantle_requires_bedrock_mantle_provider() -> None:
 def test_bedrock_mantle_rejects_non_openai_model() -> None:
     with pytest.raises(UserError, match='not an OpenAI model'):
         infer_model('bedrock-mantle:anthropic.claude-sonnet-5', lambda _: BedrockMantleProvider())
+
+
+def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
+    # Constructing the wrong model class for a model's endpoint family would misroute the request, so
+    # it's rejected at construction with a pointer to the right class.
+    with pytest.raises(UserError, match='Chat Completions API'):
+        BedrockMantleResponsesModel('openai.gpt-oss-safeguard-20b')
+    with pytest.raises(UserError, match='Responses API'):
+        BedrockMantleChatModel('openai.gpt-5.6-luna')
 
 
 def test_bedrock_converse_rejects_gpt5() -> None:

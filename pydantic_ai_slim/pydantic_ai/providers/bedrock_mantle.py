@@ -155,6 +155,12 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            assert (aws_access_key_id, aws_secret_access_key, aws_session_token, profile_name) == (
+                None,
+                None,
+                None,
+                None,
+            ), 'Cannot provide both `openai_client` and AWS credentials'
             self._client = openai_client
             return
 

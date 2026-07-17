@@ -5,6 +5,7 @@ from typing import Literal
 
 from openai import AsyncOpenAI
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai import (
     OpenAIChatModel,
     OpenAIChatModelSettings,
@@ -66,7 +67,15 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
         """
         provider = BedrockMantleProvider() if isinstance(provider, str) else provider
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
-        self._mantle_client = provider.openai_client(self.profile.get('bedrock_mantle_interface', 'openai-responses'))
+        interface = self.profile.get('bedrock_mantle_interface', 'openai-responses')
+        if interface == 'chat':
+            raise UserError(
+                f'Model {model_name!r} is served on the Bedrock Mantle Chat Completions API; '
+                'construct it with `BedrockMantleChatModel` instead.'
+            )
+        self._mantle_client = provider.openai_client(
+            'openai-responses' if interface == 'openai-responses' else 'responses'
+        )
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -98,7 +107,13 @@ class BedrockMantleChatModel(OpenAIChatModel):
         """
         provider = BedrockMantleProvider() if isinstance(provider, str) else provider
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
-        self._mantle_client = provider.openai_client(self.profile.get('bedrock_mantle_interface', 'chat'))
+        interface = self.profile.get('bedrock_mantle_interface', 'chat')
+        if interface != 'chat':
+            raise UserError(
+                f'Model {model_name!r} is served on the Bedrock Mantle Responses API; '
+                'construct it with `BedrockMantleResponsesModel` instead.'
+            )
+        self._mantle_client = provider.openai_client('chat')
 
     @property
     def client(self) -> AsyncOpenAI:

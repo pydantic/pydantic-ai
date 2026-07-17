@@ -66,9 +66,9 @@ The model name determines the endpoint family:
 
 | Model name | Interface |
 |---|---|
-| `bedrock-mantle:openai.gpt-5.4...`, `gpt-5.5...`, or `gpt-5.6...` | OpenAI Responses at `/openai/v1` |
-| `bedrock-mantle:openai.gpt-oss-*` | OpenAI Responses at `/v1` |
-| `bedrock-mantle:openai.gpt-oss-safeguard-*` | OpenAI Chat Completions at `/v1` |
+| GPT-5.4+, e.g. `bedrock-mantle:openai.gpt-5.6-luna` | OpenAI Responses at `/openai/v1` |
+| GPT-OSS, e.g. `bedrock-mantle:openai.gpt-oss-120b` | OpenAI Responses at `/v1` |
+| GPT-OSS Safeguard, e.g. `bedrock-mantle:openai.gpt-oss-safeguard-20b` | OpenAI Chat Completions at `/v1` |
 
 The `bedrock:` prefix stays on the Converse API; requesting a GPT-5.4+ model through it raises an error pointing you to `bedrock-mantle:`, since those models are not served by Converse.
 
