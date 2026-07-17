@@ -84,11 +84,29 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
     return cassette_names
 
 
-# Cassette subdirectories that aren't backed by `pytest.mark.vcr`, so this VCR-oriented check can't
-# match them to a test. The realtime WebSocket tests (one `test_<provider>_ws.py` file per provider)
-# replay through a custom engine (`ws_cassettes.py`) rather than pytest-recording, so their cassettes
-# are validated there instead. Keyed off the `_ws` naming convention so a new provider doesn't break this.
-_NON_VCR_CASSETTE_SUFFIX = '_ws'
+# Cassette subdirectories backed by the realtime WebSocket engine (`tests/realtime/ws_cassettes.py`)
+# rather than `pytest.mark.vcr` (one `test_<provider>_ws.py` file per provider). They follow the same
+# `cassettes/<module>/<test_name>.yaml` convention, but their tests carry no vcr marker, so every test
+# function in the module counts. Keyed off the `_ws` naming convention so a new provider fits in.
+_WS_CASSETTE_SUFFIX = '_ws'
+
+
+def _collect_all_tests_from_file(path: Path) -> set[str]:
+    """Parse a Python test file and return cassette names for every test function (no marker needed)."""
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except SyntaxError:
+        return set()
+
+    cassette_names: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith('test_'):
+            cassette_names.add(_sanitize_cassette_name(node.name))
+        elif isinstance(node, ast.ClassDef):
+            for method in ast.iter_child_nodes(node):
+                if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef) and method.name.startswith('test_'):
+                    cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
+    return cassette_names
 
 
 def get_all_cassettes() -> dict[str, set[str]]:
@@ -99,7 +117,7 @@ def get_all_cassettes() -> dict[str, set[str]]:
         if not cassette_dir.is_dir():
             continue
         for subdir in cassette_dir.iterdir():
-            if subdir.is_dir() and not subdir.name.endswith(_NON_VCR_CASSETTE_SUFFIX):
+            if subdir.is_dir():
                 test_stem = subdir.name
                 # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
                 cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
@@ -109,11 +127,14 @@ def get_all_cassettes() -> dict[str, set[str]]:
 
 
 def get_all_tests() -> dict[str, set[str]]:
-    """Use AST parsing to find all VCR-marked tests and their cassette names."""
+    """Use AST parsing to find all cassette-backed tests and their cassette names."""
     tests: dict[str, set[str]] = defaultdict(set)
 
     for test_file in Path('tests').rglob('test_*.py'):
-        cassette_names = _collect_vcr_tests_from_file(test_file)
+        if test_file.stem.endswith(_WS_CASSETTE_SUFFIX):
+            cassette_names = _collect_all_tests_from_file(test_file)
+        else:
+            cassette_names = _collect_vcr_tests_from_file(test_file)
         if cassette_names:
             tests[test_file.stem].update(cassette_names)
 
@@ -121,6 +142,7 @@ def get_all_tests() -> dict[str, set[str]]:
 
 
 def main() -> int:
+    """Match every cassette file to a test and report orphans; returns a non-zero exit code if any."""
     verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
     print('Collecting cassettes...')
