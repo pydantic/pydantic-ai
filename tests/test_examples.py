@@ -635,6 +635,10 @@ tool_responses: dict[tuple[str, str], str] = {
         'weather_forecast',
         'The forecast in Paris on 2030-01-01 is 24°C and sunny.',
     ): 'It will be warm and sunny in Paris on Tuesday.',
+    (
+        'delete_file',
+        'Deleting files is not allowed',
+    ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
 }
 
 
@@ -1077,13 +1081,13 @@ async def stream_model_logic(  # noqa: C901
             if chunk:
                 yield ' '.join(chunk)
 
-    async def stream_tool_call_response(r: ToolCallPart) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_tool_call_response(r: ToolCallPart, index: int = 1) -> AsyncIterator[DeltaToolCalls]:
         json_text = r.args_as_json_str()
 
-        yield {1: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
+        yield {index: DeltaToolCall(name=r.tool_name, tool_call_id=r.tool_call_id)}
         for chunk_index in range(0, len(json_text), 15):
             text_chunk = json_text[chunk_index : chunk_index + 15]
-            yield {1: DeltaToolCall(json_args=text_chunk)}
+            yield {index: DeltaToolCall(json_args=text_chunk)}
 
     async def stream_part_response(
         r: str | ToolCallPart | Sequence[ToolCallPart],
@@ -1092,8 +1096,8 @@ async def stream_model_logic(  # noqa: C901
             async for chunk in stream_text_response(r):
                 yield chunk
         elif isinstance(r, Sequence):
-            for part in r:
-                async for chunk in stream_tool_call_response(part):
+            for index, part in enumerate(r, 1):
+                async for chunk in stream_tool_call_response(part, index):
                     yield chunk
         else:
             async for chunk in stream_tool_call_response(r):
