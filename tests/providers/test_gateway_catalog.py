@@ -7,7 +7,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import known_model_names
+from pydantic_ai.models import infer_model, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -47,7 +47,13 @@ def _gateway_supported_providers() -> set[str]:
 
 
 async def _run_gateway_smoke_test(model_name: str) -> None:
-    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries={'tools': 3, 'output': 3})
+    model = infer_model(model_name)
+    # Reasoning models (OpenAI o-series, DeepSeek R1, etc.) always spend tokens on reasoning before
+    # emitting any output, so a tiny budget can be exhausted before a visible reply is produced
+    # (`finish_reason='length'` with no parts). Give them more headroom while keeping the cheap
+    # models cheap.
+    max_tokens = 4096 if model.profile.get('thinking_always_enabled', False) else 256
+    agent = Agent(model, model_settings={'max_tokens': max_tokens}, retries={'tools': 3, 'output': 3})
     result = await agent.run('Reply with exactly OK.')
     assert result.output.strip()
 

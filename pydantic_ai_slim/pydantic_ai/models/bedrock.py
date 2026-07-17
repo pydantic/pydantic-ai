@@ -88,7 +88,6 @@ if TYPE_CHECKING:
         ContentBlockUnionTypeDef,
         ConverseRequestTypeDef,
         ConverseResponseTypeDef,
-        ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
         ConverseTokensRequestTypeDef,
@@ -105,6 +104,7 @@ if TYPE_CHECKING:
         S3LocationTypeDef,
         ServiceTierTypeDef,
         SystemContentBlockTypeDef,
+        TokenUsageTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
         ToolResultBlockOutputTypeDef,
@@ -129,6 +129,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+_BEDROCK_USAGE_FIELDS = frozenset(
+    {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
+)
 
 
 def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
@@ -562,6 +565,15 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+
+        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
+        # strict-forcing check below also applies when native mode is reached via the profile default
+        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
+        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self.profile.get('default_structured_output_mode', 'tool')
+        )
+
         if (
             self.profile.get('supports_json_schema_output', False)
             and model_request_parameters.output_mode == 'native'
@@ -761,16 +773,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                         )
 
-        input_tokens = response['usage']['inputTokens']
-        output_tokens = response['usage']['outputTokens']
-        cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
-        cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
-        u = usage.RequestUsage(
-            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-        )
+        u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
         provider_details = {'finish_reason': raw_finish_reason}
@@ -1220,7 +1223,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
-        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
+        # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1547,7 +1550,9 @@ class BedrockStreamedResponse(StreamedResponse):
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
-                            self._usage += self._map_usage(metadata)
+                            self._usage += _map_usage(
+                                metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                            )
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
                         start = content_block_start['start']
@@ -1666,17 +1671,18 @@ class BedrockStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         return self._timestamp
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
-        input_tokens = metadata['usage']['inputTokens']
-        output_tokens = metadata['usage']['outputTokens']
-        cache_read_tokens = metadata['usage'].get('cacheReadInputTokens', 0)
-        cache_write_tokens = metadata['usage'].get('cacheWriteInputTokens', 0)
-        return usage.RequestUsage(
-            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-        )
+
+def _map_usage(usage_data: TokenUsageTypeDef, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
+    details: dict[str, int] = {
+        k: v for k, v in usage_data.items() if k not in _BEDROCK_USAGE_FIELDS if isinstance(v, int)
+    }
+    return usage.RequestUsage.extract(
+        dict(model=remove_bedrock_geo_prefix(model), usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='bedrock',
+        details=details or None,
+    )
 
 
 class _AsyncIteratorWrapper(Generic[T]):

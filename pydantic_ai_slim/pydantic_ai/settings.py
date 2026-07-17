@@ -155,16 +155,16 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock (Anthropic and Amazon Nova models only)
     """
 
-    timeout: float | Timeout
+    timeout: int | float | Timeout
     """Override the client-level default timeout for a request, in seconds.
 
     Supported by:
 
-    * Gemini
+    * Gemini (numeric seconds only, not `httpx.Timeout`)
     * Anthropic
     * OpenAI
     * Groq
-    * Mistral
+    * Mistral (numeric seconds only, not `httpx.Timeout`)
     * xAI
     """
 

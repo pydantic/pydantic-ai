@@ -104,7 +104,6 @@ PreviewGroqModelNames = Literal[
     'meta-llama/llama-4-maverick-17b-128e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
-    'moonshotai/kimi-k2-instruct-0905',
     'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
