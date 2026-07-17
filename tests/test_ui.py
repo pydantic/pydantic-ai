@@ -10,13 +10,16 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     ForceDownloadMode,
@@ -57,7 +60,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
@@ -465,6 +468,116 @@ async def test_run_stream_external_tools():
     )
 
 
+async def test_run_stream_deferred_tool_requests_and_results():
+    """`DeferredToolRequestsEvent` and `DeferredToolResultsEvent` emit no protocol events by default.
+
+    The base `UIEventStream` dispatches them to the `handle_deferred_tool_requests` and
+    `handle_deferred_tool_results` no-op hooks, so a run whose deferred calls are resolved inline by a
+    `HandleDeferredToolCalls` handler produces the same protocol stream as one without deferral.
+    """
+
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(model=TestModel(), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{'x': 0}",
+            '<final-result tool_name=None />',
+            "</tool-call name='my_tool'>",
+            '</response>',
+            '<request>',
+            "<function-tool-call name='my_tool'>{'x': 0}</function-tool-call>",
+            "<function-tool-result name='my_tool'>1</function-tool-result>",
+            '</request>',
+            '<response>',
+            '<text follows_text=False>',
+            '<final-result tool_name=None />',
+            '{"my_t',
+            'ool":1}',
+            '</text followed_by_text=False>',
+            '</response>',
+            '<run-result>{"my_tool":1}</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+class DeferredAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-requests approvals={[part.tool_name for part in event.requests.approvals]!r} />'
+
+    async def handle_deferred_tool_results(self, event: DeferredToolResultsEvent) -> AsyncIterator[str]:
+        yield f'<deferred-tool-results approvals={list(event.results.approvals)!r} />'
+
+
+async def test_event_stream_deferred_tool_hook_overrides():
+    """Subclasses can override `handle_deferred_tool_requests`/`handle_deferred_tool_results` to notify the frontend mid-stream."""
+
+    async def event_generator():
+        yield DeferredToolRequestsEvent(
+            requests=DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='approval_1')]
+            )
+        )
+        yield DeferredToolResultsEvent(results=DeferredToolResults(approvals={'approval_1': True}))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+    event_stream = DeferredAwareUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<deferred-tool-requests approvals=['my_tool'] />",
+            "<deferred-tool-results approvals=['approval_1'] />",
+            '</stream>',
+        ]
+    )
+
+
+class EnqueuedAwareUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[str]:
+        yield f'<enqueued-messages id={event.enqueue_id!r} count={len(event.messages)} />'
+
+
+async def test_event_stream_enqueued_messages_hook():
+    """`EnqueuedMessagesEvent` dispatches to a no-op `handle_enqueued_messages` hook that subclasses can override to surface delivered messages to the frontend."""
+
+    def event_generator():
+        async def generate():
+            yield EnqueuedMessagesEvent(enqueue_id='enqueue_1', messages=(ModelRequest.user_text_prompt('Enqueued!'),))
+
+        return generate()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Call a tool')])
+
+    base_events = [event async for event in DummyUIEventStream(run_input=request).transform_stream(event_generator())]
+    assert base_events == snapshot(['<stream>', '</stream>'])
+
+    events = [
+        event async for event in EnqueuedAwareUIEventStream(run_input=request).transform_stream(event_generator())
+    ]
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<enqueued-messages id='enqueue_1' count=1 />",
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_output_tool():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -552,7 +665,7 @@ async def test_run_stream_response_error():
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
             "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
-            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries</error>",
             '</request>',
             '</stream>',
         ]
@@ -1571,8 +1684,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert len(captured) == 1
     history_seen_by_model = captured[0]
     assert not any(
-        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
-        for message in history_seen_by_model
+        isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
 
 
