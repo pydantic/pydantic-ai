@@ -2645,6 +2645,60 @@ def test_toolset_capability_get_toolset():
     assert list(combined.toolsets) == [ts, ts_b]
 
 
+def test_capability_stamps_id_on_contributed_function_toolset():
+    """A capability's `id` is stamped on its contributed function toolset so it can be used with
+    durable execution, which wraps leaf toolsets by `id` at construction time. User-provided
+    toolsets keep their own ids and are never overwritten."""
+    from pydantic_ai.toolsets import CombinedToolset
+
+    def my_tool(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    stamped = Capability[object](id='billing', tools=[my_tool]).get_toolset()
+    assert isinstance(stamped, FunctionToolset)
+    assert stamped.id == 'billing'
+
+    # No id → stays None (status quo; setting `id=` is what makes durable-exec errors actionable).
+    unstamped = Capability[object](tools=[my_tool]).get_toolset()
+    assert isinstance(unstamped, FunctionToolset)
+    assert unstamped.id is None
+
+    # An empty capability still returns its (live) function toolset carrying the id.
+    empty = Capability[object](id='billing').get_toolset()
+    assert isinstance(empty, FunctionToolset)
+    assert empty.id == 'billing'
+
+    # Combined with a user toolset: the function toolset gets the capability id; the user toolset
+    # keeps its own id.
+    user_toolset = FunctionToolset[object](id='user-ts')
+    combined = cast(
+        CombinedToolset, Capability[object](id='billing', tools=[my_tool], toolsets=[user_toolset]).get_toolset()
+    )
+    function_toolset, provided = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.id == 'billing'
+    assert provided is user_toolset
+
+
+def test_native_or_local_stamps_id_on_local_toolset():
+    """`NativeOrLocalTool` stamps its `id` on the FunctionToolset wrapping a bare local callable, so
+    the local fallback can be used with durable execution."""
+    from pydantic_ai.capabilities import NativeOrLocalTool
+    from pydantic_ai.toolsets import PreparedToolset
+
+    def local_search(query: str) -> str:
+        return 'result'  # pragma: no cover
+
+    cap = NativeOrLocalTool[object](native=WebSearchTool(), local=local_search, id='search')
+    toolset = cap.get_toolset()
+    # native + local → the local FunctionToolset is wrapped in a PreparedToolset that tags it
+    # `unless_native`; the leaf underneath carries the id.
+    assert isinstance(toolset, PreparedToolset)
+    leaf = toolset.wrapped
+    assert isinstance(leaf, FunctionToolset)
+    assert leaf.id == 'search'
+
+
 def _noop_greet(name: str) -> str:
     return f'Hello, {name}!'  # pragma: no cover
 
@@ -7776,6 +7830,60 @@ class TestMCPCapability:
         native_sse = cap_sse.get_native_tools()[0]
         assert isinstance(native_sse, MCPServerTool)
         assert native_sse.id == 'server1.example.com-sse'
+
+    def test_mcp_local_toolset_id_derived(self):
+        """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable
+        execution. Precedence: explicit `id` → native `MCPServerTool` id → host+slug from the URL,
+        else `None` when there's nothing to derive from."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
+        from fastmcp import FastMCP
+
+        from pydantic_ai.mcp import MCPToolset
+
+        # (capability, expected local toolset id)
+        cases: list[tuple[MCP[object], str | None]] = [
+            # id derived from the URL (host + path slug)
+            (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
+            # explicit id wins
+            (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
+            # native MCPServerTool id is reused for the local fallback
+            (
+                MCP[object](
+                    url='https://mcp.example.com/api',
+                    native=MCPServerTool(id='custom-mcp', url='https://mcp.example.com/api'),
+                    local=True,
+                ),
+                'custom-mcp',
+            ),
+            # `local='https://…'` override with no `url=`: id derived from the override URL,
+            # exercising `_derive_id` deriving from the override URL even when `self.url` is `None`
+            (MCP[object](local='https://other.example.com/sse'), 'other.example.com-sse'),
+            # non-URL local input (in-process `FastMCP` server) wrapped into an `MCPToolset`,
+            # inheriting the explicit id
+            (MCP[object](id='local-mcp', local=FastMCP('test-server')), 'local-mcp'),
+            # nothing to derive from — no id, no native tool, no URL → stays None
+            (MCP[object](local=FastMCP('test-server')), None),
+        ]
+        for cap, expected_id in cases:
+            local = cap.local
+            assert isinstance(local, MCPToolset)
+            assert local.id == expected_id
+
+    def test_mcp_callable_native_without_url_or_id_errors(self):
+        """A `native=<callable>` factory paired with a local fallback has nothing to derive the
+        `unless_native` marker from (no `url=`, no `id=`, non-`MCPServerTool` native), so
+        `get_toolset()` raises an actionable `UserError` rather than a bare `AssertionError`."""
+
+        async def native_factory(ctx: RunContext[object]) -> MCPServerTool:
+            return MCPServerTool(id='x', url='https://mcp.example.com/api')  # pragma: no cover
+
+        def local_tool() -> str:
+            return 'local'  # pragma: no cover
+
+        cap = MCP[object](native=native_factory, local=local_tool)
+        with pytest.raises(UserError, match='needs a stable `id` to tie the two together'):
+            cap.get_toolset()
 
     async def test_mcp_explicit_native_id_marks_local_fallback(self):
         """An explicit native MCP tool keeps the local fallback tied to that server id."""
