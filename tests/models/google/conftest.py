@@ -26,9 +26,7 @@ def _function_calling_mode(request: Any) -> str | None:
     `request` is a VCR `Request` (untyped in practice), so it's typed loosely here.
     """
     body: Any = request.body
-    if isinstance(body, (str, bytes, bytearray)):
-        body = json.loads(body) if body else {}
-    data: dict[str, Any] = body
+    data: dict[str, Any] = json.loads(body) if body else {}
     tool_config: Any = data.get('toolConfig') or {}
     fc_config: Any = tool_config.get('functionCallingConfig') or {}
     mode: Any = fc_config.get('mode')
