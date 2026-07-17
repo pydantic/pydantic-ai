@@ -1681,8 +1681,7 @@ class TestGoogle:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
+    def _load_stsb_bert_tiny_model(self):
         # The pinned commit revision lets huggingface_hub serve every model file
         # straight from a warm cache without revalidating it against the Hub.
         # Construction still fires a few metadata requests (model card, repo tree,
@@ -1691,12 +1690,10 @@ class TestSentenceTransformers:
         # (see ci.yml); a cold cache downloads the model here on first use.
         try:
             model = SentenceTransformer(STSB_BERT_TINY_MODEL, revision=STSB_BERT_TINY_REVISION)
-        except (OSError, RuntimeError, httpx.HTTPError) as e:  # pragma: lax no cover
+        except (OSError, RuntimeError, httpx.HTTPError) as e:
             # Skip only when the Hub is unavailable (see `_hf_hub_unavailable`) so a
             # HF outage never reds the whole suite; anything else (bad pin, auth
-            # problem, corrupt cache, dependency mismatch) fails loudly. `lax`
-            # because this path runs only during outages: coverage must tolerate
-            # both outcomes.
+            # problem, corrupt cache, dependency mismatch) fails loudly.
             if not _hf_hub_unavailable(e):
                 raise
             pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
@@ -1706,6 +1703,19 @@ class TestSentenceTransformers:
         model.model_card_data.model_id = STSB_BERT_TINY_MODEL
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
+
+    @pytest.fixture(scope='session')
+    def stsb_bert_tiny_model(self):
+        return self._load_stsb_bert_tiny_model()
+
+    def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline')))
+        skip = MagicMock(side_effect=RuntimeError('skipped'))
+        monkeypatch.setattr(pytest, 'skip', skip)
+
+        with pytest.raises(RuntimeError, match='skipped'):
+            self._load_stsb_bert_tiny_model()
+        skip.assert_called_once_with('sentence-transformers test model unavailable (HF Hub): offline')
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:

@@ -267,6 +267,27 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_first_failed_instrumented_excludes_request_parameters(capfire: CaptureLogfire) -> None:
+    """A fallback to a later model must not re-add `model_request_parameters` when the setting is off.
+
+    `FallbackModel` refreshes the span attributes for the model it actually used; it keys off whether
+    the attribute was emitted at span open, so `include_model_request_parameters=False` stays honored
+    even after a fallback overwrites the model attributes.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    agent = Agent(
+        model=fallback_model,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_model_request_parameters=False))],
+    )
+    result = agent.run_sync('hello')
+    assert result.output == snapshot('success')
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert attrs['gen_ai.request.model'] == 'function:success_response:'
+    assert 'model_request_parameters' not in attrs
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
