@@ -126,12 +126,25 @@ def test_owner_change_restarts_at_stage_one() -> None:
     activities = [
         activity('labeled', 10, label=monitor._ACTION_LABEL),
         marker(1, 7, 'old-owner'),
-        activity('assigned', 4, assignee='new-owner'),
+        activity('assigned', 4, author='reviewer', assignee='new-owner', is_maintainer=True),
     ]
-    permissions = {'old-owner': 'write', 'new-owner': 'write'}
+    permissions = {'old-owner': 'write', 'new-owner': 'write', 'reviewer': 'write'}
     assert monitor.next_reminder(activities=activities, assignees=['new-owner'], permissions=permissions, now=NOW) == {
         'stage': 1,
         'recipients': ['new-owner'],
+    }
+
+
+def test_non_maintainer_assignment_does_not_reset_clock() -> None:
+    activities = [
+        activity('labeled', 10, label=monitor._ACTION_LABEL),
+        marker(1, 7),
+        activity('assigned', 1, author='contributor', assignee='new-owner'),
+    ]
+    permissions = {'owner': 'write', 'new-owner': 'write'}
+    assert monitor.next_reminder(activities=activities, assignees=['owner'], permissions=permissions, now=NOW) == {
+        'stage': 2,
+        'recipients': ['owner'],
     }
 
 
@@ -158,6 +171,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.permissions: dict[str, str | None] = {}
         self.posts: list[tuple[str, dict[str, object]]] = []
+        self.deletes: list[str] = []
         self.responses: dict[str, Any] = {}
 
     def permission(self, repo: str, login: str) -> str | None:
@@ -171,6 +185,10 @@ class FakeClient:
 
     def post(self, path: str, payload: dict[str, object]) -> Any:
         self.posts.append((path, payload))
+        return {}
+
+    def delete(self, path: str) -> Any:
+        self.deletes.append(path)
         return {}
 
     def paginate(self, path: str, *, max_pages: int = monitor._MAX_ACTIVITY_PAGES) -> list[dict[str, Any]]:
@@ -238,14 +256,32 @@ def test_reconciliation_preserves_existing_owner(monkeypatch: pytest.MonkeyPatch
     assert monitor.run_reminders(client, 'repo', staged=True, now=NOW) == []
 
 
-def test_reminders_ignore_unauthorized_label(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reminders_remove_unauthorized_label(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeClient()
     query = '/repos/repo/issues?state=open&labels=needs-maintainer-action&sort=updated&direction=asc&per_page=100'
     client.responses[query] = [item(labels=[monitor._ACTION_LABEL])]
     unauthorized = activity('labeled', 4, author='contributor', label=monitor._ACTION_LABEL)
     hydrated(monkeypatch, value=item(labels=[monitor._ACTION_LABEL]), activities=[unauthorized], permissions={})
+    monkeypatch.setattr(monitor, 'ensure_label', lambda client, repo: None)
 
-    assert monitor.run_reminders(client, 'repo', staged=True, now=NOW) == []
+    assert monitor.run_reminders(client, 'repo', staged=False, now=NOW) == [
+        '#42: removed unauthorized needs-maintainer-action'
+    ]
+    assert client.posts == []
+    assert client.deletes == ['/repos/repo/issues/42/labels/needs-maintainer-action']
+
+
+def test_closed_item_is_not_reconciled_after_hydration(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = FakeClient()
+    query = '/repos/repo/issues?state=open&labels=needs-maintainer-action&sort=updated&direction=asc&per_page=100'
+    client.responses[query] = [item(labels=[monitor._ACTION_LABEL])]
+    current = item(labels=[monitor._ACTION_LABEL])
+    current['state'] = 'closed'
+    authorized = activity('labeled', 4, author='david', label=monitor._ACTION_LABEL, is_maintainer=True)
+    hydrated(monkeypatch, value=current, activities=[authorized], permissions={'david': 'write'})
+    monkeypatch.setattr(monitor, 'ensure_label', lambda client, repo: None)
+
+    assert monitor.run_reminders(client, 'repo', staged=False, now=NOW) == []
     assert client.posts == []
 
 

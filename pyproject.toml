@@ -308,7 +308,12 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
+testpaths = [
+    "tests",
+    "docs/.hooks",
+    ".github/scripts/test_ci_duration.py",
+    ".github/scripts/test_issue_pr_attention_monitor.py",
+]
 xfail_strict = true
 filterwarnings = [
     "error",

@@ -102,13 +102,11 @@ def _active_label_since(activities: Sequence[Activity]) -> dt.datetime | None:
     return active_since
 
 
-def _resets_clock(activity: Activity, permissions: Mapping[str, str | None]) -> bool:
+def _resets_clock(activity: Activity) -> bool:
     if activity['is_maintainer'] and activity['kind'] in {'comment', 'review', 'review_comment'}:
         return True
     return (
-        activity['kind'] in {'assigned', 'unassigned'}
-        and activity['author'] != 'github-actions[bot]'
-        and permissions.get(activity['assignee']) in _MAINTAINER_PERMISSIONS
+        activity['kind'] in {'assigned', 'unassigned'} and not _is_bot(activity['author']) and activity['is_maintainer']
     )
 
 
@@ -141,7 +139,7 @@ def next_reminder(
         created_at = _parse_time(activity['created_at'])
         if created_at < label_since:
             continue
-        if _resets_clock(activity, permissions):
+        if _resets_clock(activity):
             reset_at = created_at
             reset_after_label = True
             latest_marker = None
@@ -213,6 +211,9 @@ class GitHubClient:
 
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         return self.request('POST', path, payload)
+
+    def delete(self, path: str) -> Any:
+        return self.request('DELETE', path)
 
     def permission(self, repo: str, login: str) -> str | None:
         if not login or _is_bot(login):
@@ -302,6 +303,15 @@ def hydrate(
 
 def _assign(client: GitHubClient, repo: str, number: int, login: str) -> None:
     client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [login]})
+
+
+def _remove_label(client: GitHubClient, repo: str, number: int) -> None:
+    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
+    try:
+        client.delete(f'/repos/{repo}/issues/{number}/labels/{encoded}')
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:  # A concurrent event may have removed it already.
+            raise
 
 
 def ensure_label(client: GitHubClient, repo: str) -> None:
@@ -573,7 +583,14 @@ def run_reminders(client: GitHubClient, repo: str, *, staged: bool, now: dt.date
         except (RuntimeError, urllib.error.HTTPError):
             failures += 1
             continue
-        if _ACTION_LABEL not in _labels(current) or not _action_label_is_authorized(activities):
+        if _ACTION_LABEL not in _labels(current):
+            continue
+        if not _action_label_is_authorized(activities):
+            if not staged:
+                _remove_label(client, repo, number)
+            lines.append(f'#{number}: {"would remove" if staged else "removed"} unauthorized {_ACTION_LABEL}')
+            continue
+        if current.get('state') != 'open':
             continue
         assignees = [str(value['login']) for value in current.get('assignees', [])]
         has_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)

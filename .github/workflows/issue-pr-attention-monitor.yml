@@ -27,6 +27,6 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
       - name: Reconcile maintainer-approved attention items
         env:
-          ATTENTION_TRIAGE_STAGED: ${{ vars.ATTENTION_TRIAGE_STAGED || 'false' }}
+          ATTENTION_TRIAGE_STAGED: ${{ vars.ATTENTION_TRIAGE_STAGED }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/issue_pr_attention_monitor.py reconcile
