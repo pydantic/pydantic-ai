@@ -1913,7 +1913,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
-            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps)
+            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
+                self
+            )
         else:
             override_capability = None
 

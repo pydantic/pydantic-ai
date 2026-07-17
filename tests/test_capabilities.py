@@ -9023,17 +9023,27 @@ class TestGetModelHook:
 
     async def test_override_spec_model_uses_spec_model_id_resolver(self, monkeypatch: pytest.MonkeyPatch):
         target = _text_model('resolved by spec')
+        bound_agents: list[AbstractAgent[None, Any]] = []
 
         @dataclass
         class SpecResolver(AbstractCapability[None]):
+            bound: bool = False
+
             @classmethod
             def get_serialization_name(cls) -> str:
                 return 'SpecResolver'
 
+            def for_agent(self, agent: AbstractAgent[None, Any]) -> SpecResolver:
+                bound_agents.append(agent)
+                return replace(self, bound=True)
+
+            def get_model(self) -> Model | None:
+                return target if self.bound else None
+
             async def resolve_model_id(
                 self, ctx: ModelResolutionContext[None], *, model_id: KnownModelName | str
             ) -> Model | None:
-                return target if model_id == 'custom-id' else None
+                return target if self.bound and model_id == 'custom-id' else None
 
         monkeypatch.setitem(CAPABILITY_TYPES, 'SpecResolver', SpecResolver)
         agent = Agent('test')
@@ -9044,6 +9054,11 @@ class TestGetModelHook:
         with agent.override(spec={'capabilities': ['SpecResolver']}):
             with agent.override(model='custom-id'):
                 assert (await agent.run('hello')).output == 'resolved by spec'
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}):
+            assert (await agent.run('hello')).output == 'resolved by spec'
+
+        assert bound_agents == [agent, agent, agent]
 
     async def test_wrapper_subclass_model_id_resolver_is_detected(self):
         target = _text_model('resolved by wrapper')
