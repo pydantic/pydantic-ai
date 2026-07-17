@@ -1,0 +1,89 @@
+{
+  "skill_name": "migrating-langchain-to-pydantic-ai",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Migrate evals/files/simple_agent.py from LangChain to native Pydantic AI. Preserve its authenticated-customer boundary, structured result, dynamic locale instructions, and approval requirement for refunds. Write migrated_agent.py and test_migrated_agent.py without making a live model request.",
+      "expected_output": "A runnable Pydantic AI vertical slice and deterministic tests that preserve output, authorization, dynamic instructions, and deferred approval behavior without retaining LangChain imports.",
+      "files": [
+        "evals/files/simple_agent.py"
+      ],
+      "assertions": [
+        "migrated_agent.py contains no LangChain or LangGraph imports",
+        "Authenticated customer identity and the order service are typed dependencies rather than model-chosen tool arguments",
+        "The terminal result is represented by a typed Pydantic output model",
+        "Locale-dependent instructions are derived from RunContext",
+        "Tests capture model requests and prove locale-dependent instructions change for at least two dependency values",
+        "Refund approval uses Pydantic AI deferred tool approval rather than prompt-only authorization",
+        "Tests exercise authenticated identity propagation and concealment plus typed output without a live provider call",
+        "Tests prove a denied refund never calls the service and an approved resume calls it exactly once with the original authenticated customer and order"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Audit evals/files/persistent_graph.py and write a migration ledger plus an incremental Pydantic AI migration plan. Do not implement it. The current workflow must survive process restarts and must never charge an order twice after replay.",
+      "expected_output": "An evidence-based plan that separates conversation history, workflow state, approval correlation, and side-effect recovery instead of treating message history as a LangGraph checkpoint replacement.",
+      "files": [
+        "evals/files/persistent_graph.py"
+      ],
+      "assertions": [
+        "The ledger accounts for every state field, node, interrupt, checkpointer, and external charge side effect",
+        "The plan explicitly states that Pydantic AI message history is not a full LangGraph checkpoint",
+        "Approval correlation and durable resume are owned by an application or durable workflow boundary",
+        "The charge operation retains an idempotency key and defines replay behavior for an unknown-after-crash outcome",
+        "Pydantic message continuation is not described as restoring full graph or workflow state",
+        "The first migration slice is reversible and has concrete parity tests"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Using references/PROJECT-PATTERNS.md, propose the safest first production migration slice for the pinned Open Deep Research architecture. Include the boundary contract, parity risks, benchmark evidence, and cutover sequence. Do not rewrite the whole research graph.",
+      "expected_output": "A project-scale strangler plan that preserves the four-phase research topology, migrates clarification or brief generation first, and leaves supervisor fan-out, citations, and final report quality behind measured boundaries.",
+      "files": [
+        "references/PROJECT-PATTERNS.md"
+      ],
+      "assertions": [
+        "The plan defines a typed framework-neutral request boundary",
+        "The plan defines a versioned event boundary with correlation and ordering semantics",
+        "The plan defines a typed final-result boundary",
+        "Clarification or research-brief generation is selected before the supervisor, researchers, or final writer",
+        "The four-phase graph topology and phase-specific model configuration remain explicit",
+        "Supervisor fan-out, reducer order, cancellation, shared usage, raw-note provenance, and citation behavior appear in the parity ledger",
+        "Existing LangSmith benchmark cases are ported or adapted for source-target comparison",
+        "The plan includes shadow comparison before routing production research requests",
+        "Supervisor and final-writer migration remains blocked until the narrower slice proves its boundary"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Audit evals/files/semantic_traps.py for LangChain/LangGraph to Pydantic AI non-equivalences. Do not perform a full migration or write executable code. For every gap, name the concrete Pydantic AI primitive, adapter, durable integration, or external capability that can preserve the behavior; record its residual limitation and use only validated-native, validated-adapter, integration-required, or blocker as workaround_status. Write semantic_gap_register.md and semantic_gap_register.json outside the repository, starting from evals/files/semantic_gap_register.template.json. In one pinned uv environment containing LangChain 1.x and LangGraph 1.x, first run evals/verify_semantic_eval.py OUTPUT_DIR --pydantic-repo . --write-evidence so the evaluator records exact provenance and oracle_observations, copy those four observed objects into the template rows, then run the same command without --write-evidence. The verifier runs checked-in behavioral oracles without executing agent-authored Python and creates verified_evidence.json as its fourth, evaluator-owned artifact.",
+      "expected_output": "An upfront Markdown register and declarative JSON register whose entrypoint trace, state boundaries, observed non-equivalences, executable workarounds, residuals, owners, import provenance, and checkout SHA pass evaluator-owned behavioral oracles.",
+      "files": [
+        "evals/files/semantic_traps.py",
+        "evals/files/semantic_gap_register.template.json",
+        "references/SEMANTIC-GAPS.md",
+        "evals/verify_semantic_eval.py",
+        "evals/semantic_oracles.py"
+      ],
+      "assertions": [
+        "The response warns before proposing mappings that the migration is not 1:1 and uses a semantic-gap register",
+        "Every gap names a concrete workable Pydantic AI primitive, adapter, durable integration, or external capability plus a residual limitation; redesign alone is not accepted",
+        "Every gap is classified as validated-native, validated-adapter, integration-required, or blocker according to disposable parity evidence",
+        "The public stream entrypoint is traced and the report notices that the separately defined agent factory is not invoked by that path",
+        "The register distinguishes dependencies, messages, workflow state, checkpointer state, and long-term memory",
+        "The prompt analysis catches that multiple LangChain dynamic prompts can replace each other while Pydantic AI instructions compose",
+        "Structured output transport is chosen explicitly rather than assuming a bare schema uses the same provider or tool strategy",
+        "Tool retry, graph recursion, per-run and per-thread model-call limits, Pydantic request limits, and tool-call limits remain distinct",
+        "The return_direct behavior of the transitional LangChain tool bridge is audited",
+        "Interrupt restart, positional versus tool-call-ID correlation, pre-interrupt side effects, and durable approval resume are covered",
+        "Fan-out reducer, concurrent failure, cancellation, result order, and Pydantic shared-state race risks are covered",
+        "Streaming uses an application-owned contract and tests run versus chosen streaming API finalization",
+        "evidence.json records evaluator-measured LangChain, LangGraph, and Pydantic AI versions, module import origins, Pydantic AI checkout SHA, and oracle observations from the same isolated process",
+        "semantic_gap_register.json matches evaluator-owned measurements for prompt replacement versus instruction composition, retry call counts, interrupt re-execution and approval, and run versus streaming finalization",
+        "The approval row records evaluator-owned rejection of forged unknown, foreign-principal, and already-consumed correlation while the protected side effect executes once",
+        "evals/verify_semantic_eval.py independently accepts the declarative artifacts, runs only checked-in oracles against the local Pydantic AI checkout, detects repository mutation, and writes verified_evidence.json",
+        "Every unproved durability, replay, exactly-once, and reconnect behavior retains an explicit integration owner instead of being called native"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate LangChain to Pydantic AI"
+  short_description: "Migrate LangChain and LangGraph safely"
+  default_prompt: "Use $migrating-langchain-to-pydantic-ai to identify non-1:1 LangChain or LangGraph behavior, prove a concrete Pydantic AI workaround with disposable parity spikes, and migrate it safely."

@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Please port services/support_agent.py from LangChain create_agent to Pydantic AI and keep its approval middleware and typed response intact.",
+    "should_trigger": true
+  },
+  {
+    "query": "We need a migration plan for our StateGraph researcher; checkpoints, Send fan-out, and interrupt resume all have to survive the move.",
+    "should_trigger": true
+  },
+  {
+    "query": "Can you review this PR that replaces create_deep_agent with Pydantic AI Harness and look for lost sandbox or subagent behavior?",
+    "should_trigger": false
+  },
+  {
+    "query": "Inventory the LangChain and LangSmith coupling in ~/src/customer-assistant before we start a Pydantic AI strangler migration.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our agent is mostly LCEL plus two tools and structured output. Work out whether it should become a Pydantic AI Agent or plain async Python.",
+    "should_trigger": true
+  },
+  {
+    "query": "Map ToolRuntime.context, dynamic_prompt middleware, and response_format to native Pydantic AI without exposing tenant_id to the model.",
+    "should_trigger": true
+  },
+  {
+    "query": "How would you migrate the Open Deep Research supervisor and researcher subgraphs incrementally? We cannot regress citation quality.",
+    "should_trigger": true
+  },
+  {
+    "query": "We're replacing LangGraph in a payment workflow. Audit whether message_history, deferred tools, and Temporal preserve checkpoint and replay semantics.",
+    "should_trigger": true
+  },
+  {
+    "query": "Move one read-only Open SWE reviewer path to Pydantic AI while leaving webhooks, sandboxes, and CI monitoring alone.",
+    "should_trigger": false
+  },
+  {
+    "query": "The repo still imports langchain_core messages through helper modules. Find the migration surface and propose parity tests before dependency removal.",
+    "should_trigger": true
+  },
+  {
+    "query": "Build a brand-new Pydantic AI weather agent with two function tools; there is no existing LangChain code.",
+    "should_trigger": false
+  },
+  {
+    "query": "Upgrade our existing LangChain application from 0.3 to 1.x and fix the deprecated imports.",
+    "should_trigger": false
+  },
+  {
+    "query": "Explain what LangGraph StateGraph nodes and reducers are, with a small tutorial example.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a new LangChain tool for looking up invoices and register it with create_agent.",
+    "should_trigger": false
+  },
+  {
+    "query": "Convert these Pydantic v1 data models and validators to Pydantic v2.",
+    "should_trigger": false
+  },
+  {
+    "query": "Port our TypeScript LangChain.js chatbot to the Vercel AI SDK.",
+    "should_trigger": false
+  },
+  {
+    "query": "Compare LangChain and Pydantic AI at a high level for an architecture presentation; we are not migrating anything yet.",
+    "should_trigger": false
+  },
+  {
+    "query": "Our app is already native Pydantic AI. Add a third function tool and stream its events to the UI.",
+    "should_trigger": false
+  },
+  {
+    "query": "Replace the LangSmith OpenTelemetry exporter in our non-agent FastAPI service with Logfire.",
+    "should_trigger": false
+  },
+  {
+    "query": "Migrate an OpenAI Agents SDK handoff application to Pydantic AI; it has never used LangChain.",
+    "should_trigger": false
+  }
+]
