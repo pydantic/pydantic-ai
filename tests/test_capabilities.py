@@ -8623,6 +8623,14 @@ class TestGetModelHook:
         async with agent:
             assert (await agent.run('hello')).output == 'from-capability'
 
+    async def test_agent_context_uses_model_override(self):
+        """The agent context enters an override model instead of a capability model."""
+        agent = Agent(None, capabilities=[_ModelCap(model=_text_model('from-capability'))])
+
+        with agent.override(model=_text_model('from-override')):
+            async with agent:
+                assert (await agent.run('hello')).output == 'from-override'
+
     async def test_override_model_beats_capability_model(self):
         """`agent.override(model=...)` wins over a capability-supplied model, per its docs."""
         agent = Agent(None, capabilities=[_ModelCap(model='test')])
