@@ -9238,6 +9238,26 @@ class TestGetModelHook:
             assert (inferred_models[0].entered, inferred_models[0].exited) == (1, 0)
         assert inferred_models[0].exited == 1
 
+    async def test_system_prompt_parts_resolves_static_capability_model_id(self, monkeypatch: pytest.MonkeyPatch):
+        inferred_models: list[Model] = []
+
+        def infer_model(model_id: str) -> Model:
+            assert model_id == 'custom-model'
+            model = _text_model('selected')
+            inferred_models.append(model)
+            return model
+
+        monkeypatch.setattr('pydantic_ai.models.infer_model', infer_model)
+        agent = Agent(None, capabilities=[_ModelCap(model='custom-model')])
+
+        assert await agent.system_prompt_parts() == []
+        assert len(inferred_models) == 1
+
+        async with agent:
+            assert len(inferred_models) == 2
+            assert await agent.system_prompt_parts() == []
+            assert len(inferred_models) == 2
+
     async def test_system_prompt_parts_requires_a_model(self):
         agent = Agent(None)
         with pytest.raises(UserError, match='supplied by a capability'):
