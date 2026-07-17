@@ -78,7 +78,11 @@ from pydantic_ai.realtime import (
     SpeechStartedEvent,
     TurnCompleteEvent,
 )
-from pydantic_ai.realtime.google import AutomaticVAD, GoogleRealtimeModel
+from pydantic_ai.realtime.google import (
+    AutomaticVAD,
+    GoogleRealtimeModel,
+    GoogleRealtimeModelSettings,
+)
 
 load_dotenv()
 
@@ -269,23 +273,27 @@ def _build_model(params: Mapping[str, str]) -> GoogleRealtimeModel:
             end_sensitivity=end if end in ('high', 'low') else None,
         )
     coverage = params.get('turn_coverage') or TURN_COVERAGE
-    return GoogleRealtimeModel(
-        params.get('model') or MODEL,
+    settings = GoogleRealtimeModelSettings(
         voice=params.get('voice') or VOICE,
-        language_code=params.get('language') or None,
-        response_modality=cast(
+        output_modality=cast(
             "Literal['audio', 'text']", params.get('modality', 'audio')
         ),
-        proactive_audio=_truthy(params['proactive'])
+        google_proactive_audio=_truthy(params['proactive'])
         if 'proactive' in params
         else PROACTIVE,
-        affective_dialog=_truthy(params['affective'])
+        google_affective_dialog=_truthy(params['affective'])
         if 'affective' in params
         else AFFECTIVE,
-        turn_coverage=coverage
-        if coverage in ('activity_only', 'all_input', 'all_video')
-        else None,
-        vad=vad,
+    )
+    if language_code := params.get('language'):
+        settings['google_language_code'] = language_code
+    if coverage in ('activity_only', 'all_input', 'all_video'):
+        settings['google_turn_coverage'] = coverage
+    if vad is not None:
+        settings['google_vad'] = vad
+    return GoogleRealtimeModel(
+        params.get('model') or MODEL,
+        settings=settings,
         provider=GoogleCloudProvider(project=GCP_PROJECT, location=GCP_LOCATION)
         if USE_VERTEX
         else 'google',

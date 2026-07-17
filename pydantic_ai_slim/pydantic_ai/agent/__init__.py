@@ -117,7 +117,7 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -2659,7 +2659,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def realtime_session(
         self,
-        model: RealtimeModel,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,
@@ -2735,7 +2735,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 transcripts. Defaults to `'transcript_only'` (drop audio bytes); see
                 [`AudioRetention`][pydantic_ai.realtime.AudioRetention].
         """
-        from ..realtime import RealtimeSession
+        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+
+        if not isinstance(model, RealtimeModel):
+            model = infer_realtime_model(model)
 
         deps = self._get_deps(deps)
         run_context = RunContext[AgentDepsT](

@@ -43,7 +43,6 @@ from ..native_tools import AbstractNativeTool
 from ..providers import infer_provider
 from ..tools import ToolDefinition
 from ._base import (
-    KnownRealtimeTranscriptionModelName,
     RealtimeEvent,
     RealtimeModel,
     RealtimeModelProfile,
@@ -70,6 +69,18 @@ if TYPE_CHECKING:
 # the `'auto'` sentinel (see `resolve_transcription_model`) so it can change without altering the behavior
 # of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
+
+
+class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
+    """Settings specific to xAI realtime models."""
+
+    xai_turn_detection: ServerVAD | None
+    """How the server decides when the user's turn ends.
+
+    A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] (the default when absent) configures
+    automatic detection; `None` disables it for manual turn-taking (push-to-talk), where you drive
+    the turn with `commit_audio()` + `create_response()`.
+    """
 
 
 def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
@@ -116,19 +127,8 @@ class XaiRealtimeModel(RealtimeModel):
             pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
-        voice: Voice for audio output — one of `eve` (default), `ara`, `rex`, `sal`, `leo`, or a custom
-            voice ID. `None` uses the server default (`eve`).
-        input_transcription_model: Model used to transcribe the user's audio input, so their turns are
-            captured into history. `'auto'` (the default) uses xAI's recommended realtime transcription
-            model; pass a specific id to pin one, or `None` to disable transcription (see `audio_retention`
-            to retain the raw audio instead). Transcripts are surfaced at the end of each user turn (see
-            [`map_event`][pydantic_ai.realtime.xai.map_event]).
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
-        turn_detection: How the server decides when the user's turn ends. A
-            [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] (the default) configures automatic
-            detection; `None` disables it for manual turn-taking (push-to-talk), where you drive the turn
-            with `commit_audio()` + `create_response()`.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionErrorEvent` instead.
@@ -137,10 +137,7 @@ class XaiRealtimeModel(RealtimeModel):
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
-    voice: str | None = None
-    input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
-    turn_detection: ServerVAD | None = field(default_factory=ServerVAD)
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
@@ -167,11 +164,6 @@ class XaiRealtimeModel(RealtimeModel):
         return 'xai'
 
     @property
-    def _resolved_transcription_model(self) -> str | None:
-        """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
-        return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
-
-    @property
     def profile(self) -> RealtimeModelProfile:
         # `supports_output_truncation=False`: xAI has no `conversation.item.truncate`, so barge-in cancels the
         # response (`supports_interruption`) but can't sync the transcript to a mid-audio playback point.
@@ -185,29 +177,35 @@ class XaiRealtimeModel(RealtimeModel):
         )
 
     def _session_config(
-        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: RealtimeModelSettings | None
+        self,
+        instructions: str,
+        tools: list[ToolDefinition] | None,
+        model_settings: XaiRealtimeModelSettings | None,
     ) -> dict[str, Any]:
+        model_settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
         audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
-        if (transcription_model := self._resolved_transcription_model) is not None:
+        transcription_model = resolve_transcription_model(
+            model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
+        )
+        if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
         config: dict[str, Any] = {
             'instructions': instructions,
-            'turn_detection': turn_detection_config(self.turn_detection),
+            'turn_detection': turn_detection_config(model_settings.get('xai_turn_detection', ServerVAD())),
             'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
         }
-        if self.voice:
-            config['voice'] = self.voice
+        if voice := model_settings.get('voice'):
+            config['voice'] = voice
         if tools:
             config['tools'] = [tool_def_to_openai(t) for t in tools]
-        if model_settings:
-            if (max_tokens := model_settings.get('max_tokens')) is not None:
-                config['max_output_tokens'] = max_tokens
-            if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
-                config['parallel_tool_calls'] = parallel_tool_calls
-            if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
-                config['tool_choice'] = tool_choice
+        if (max_tokens := model_settings.get('max_tokens')) is not None:
+            config['max_output_tokens'] = max_tokens
+        if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+            config['parallel_tool_calls'] = parallel_tool_calls
+        if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
+            config['tool_choice'] = tool_choice
         return config
 
     @asynccontextmanager
@@ -225,7 +223,9 @@ class XaiRealtimeModel(RealtimeModel):
         headers = {'Authorization': f'Bearer {self._api_key}'}
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)
-        session_config = self._session_config(instructions, tools, model_settings)
+        settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        session_config = self._session_config(instructions, tools, settings)
+        transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake) before opening the next, so sockets don't
@@ -255,7 +255,7 @@ class XaiRealtimeModel(RealtimeModel):
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,
-                input_transcription_enabled=self._resolved_transcription_model is not None,
+                input_transcription_enabled=transcription_enabled,
             )
         finally:
             if cm is not None:

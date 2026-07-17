@@ -44,7 +44,6 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
-    KnownRealtimeTranscriptionModelName,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -85,11 +84,32 @@ _AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
 __all__ = (
     'OpenAIRealtimeModel',
+    'OpenAIRealtimeModelSettings',
     'OpenAIRealtimeConnection',
     'ServerVAD',
     'SemanticVAD',
     'map_event',
 )
+
+
+class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
+    """Settings specific to OpenAI realtime models."""
+
+    openai_turn_detection: ServerVAD | SemanticVAD | None
+    """How the server decides when the user's turn ends.
+
+    A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] (the default when absent) or
+    [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] configures automatic detection; `None`
+    disables it for manual turn-taking (push-to-talk), where you drive the turn with
+    `commit_audio()` + `create_response()`.
+    """
+    openai_input_noise_reduction: Literal['near_field', 'far_field']
+    """Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference) microphones.
+
+    Absent disables it.
+    """
+    openai_output_speed: float
+    """Playback speed multiplier for generated audio (0.25-1.5)."""
 
 
 def _int(value: Any) -> int:
@@ -355,21 +375,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
-        voice: Voice for audio output, e.g. `alloy`, `echo`, or `shimmer`.
-        input_transcription_model: Model used to transcribe the user's audio input, so their turns are
-            captured into history. `'auto'` (the default) uses OpenAI's recommended realtime transcription
-            model; pass a specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable
-            transcription (see `audio_retention` to retain the raw audio instead).
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
-        turn_detection: How the server decides when the user's turn ends. A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]
-            (the default) or [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] configures automatic
-            detection; `None` disables it for manual turn-taking (push-to-talk), where you drive the turn
-            with `commit_audio()` + `create_response()`.
-        input_noise_reduction: Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference)
-            microphones. `None` disables it.
-        output_modalities: The modalities the model may produce, `('audio',)` (default) or `('text',)`.
-        output_speed: Playback speed multiplier for generated audio (0.25-1.5). `None` uses the default.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionErrorEvent` instead.
@@ -378,13 +385,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
-    voice: str | None = None
-    input_transcription_model: KnownRealtimeTranscriptionModelName | str | None = 'auto'
     handshake_timeout: float = 30.0
-    turn_detection: ServerVAD | SemanticVAD | None = field(default_factory=ServerVAD)
-    input_noise_reduction: Literal['near_field', 'far_field'] | None = None
-    output_modalities: tuple[Literal['audio', 'text'], ...] = ('audio',)
-    output_speed: float | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
@@ -412,11 +413,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self._provider.name
 
     @property
-    def _resolved_transcription_model(self) -> str | None:
-        """The concrete transcription model id (`'auto'` resolved), or `None` when transcription is off."""
-        return resolve_transcription_model(self.input_transcription_model, default=_AUTO_TRANSCRIPTION_MODEL)
-
-    @property
     def profile(self) -> RealtimeModelProfile:
         return RealtimeModelProfile(
             supports_image_input=True,
@@ -428,38 +424,44 @@ class OpenAIRealtimeModel(RealtimeModel):
         )
 
     def _session_config(
-        self, instructions: str, tools: list[ToolDefinition] | None, model_settings: RealtimeModelSettings | None
+        self,
+        instructions: str,
+        tools: list[ToolDefinition] | None,
+        model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
+        model_settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
             'format': {'type': 'audio/pcm', 'rate': 24000},
-            'turn_detection': turn_detection_config(self.turn_detection),
+            'turn_detection': turn_detection_config(model_settings.get('openai_turn_detection', ServerVAD())),
         }
-        if (transcription_model := self._resolved_transcription_model) is not None:
+        transcription_model = resolve_transcription_model(
+            model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
+        )
+        if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
-        if self.input_noise_reduction is not None:
-            audio_input['noise_reduction'] = {'type': self.input_noise_reduction}
+        if (noise_reduction := model_settings.get('openai_input_noise_reduction')) is not None:
+            audio_input['noise_reduction'] = {'type': noise_reduction}
         audio_output: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
-        if self.voice:
-            audio_output['voice'] = self.voice
-        if self.output_speed is not None:
-            audio_output['speed'] = self.output_speed
+        if voice := model_settings.get('voice'):
+            audio_output['voice'] = voice
+        if (output_speed := model_settings.get('openai_output_speed')) is not None:
+            audio_output['speed'] = output_speed
         config: dict[str, Any] = {
             'type': 'realtime',
             'instructions': instructions,
-            'output_modalities': list(self.output_modalities),
+            'output_modalities': [model_settings.get('output_modality', 'audio')],
             'audio': {'input': audio_input, 'output': audio_output},
         }
         if tools:
             config['tools'] = [tool_def_to_openai(t) for t in tools]
-        if model_settings:
-            # Note: GA realtime sessions have no `temperature` field, so it is intentionally not forwarded.
-            if (max_tokens := model_settings.get('max_tokens')) is not None:
-                config['max_output_tokens'] = max_tokens
-            if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
-                config['parallel_tool_calls'] = parallel_tool_calls
-            if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
-                config['tool_choice'] = tool_choice
+        # Note: GA realtime sessions have no `temperature` field, so it is intentionally not forwarded.
+        if (max_tokens := model_settings.get('max_tokens')) is not None:
+            config['max_output_tokens'] = max_tokens
+        if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+            config['parallel_tool_calls'] = parallel_tool_calls
+        if (tool_choice := tool_choice_config(model_settings.get('tool_choice'))) is not None:
+            config['tool_choice'] = tool_choice
         return config
 
     @asynccontextmanager
@@ -478,7 +480,9 @@ class OpenAIRealtimeModel(RealtimeModel):
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.
         inject_trace_context(headers)
-        session_config = self._session_config(instructions, tools, model_settings)
+        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        session_config = self._session_config(instructions, tools, settings)
+        transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
         # (including one left half-open by a failed handshake) before opening the next, so sockets
@@ -508,7 +512,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,
-                input_transcription_enabled=self._resolved_transcription_model is not None,
+                input_transcription_enabled=transcription_enabled,
             )
         finally:
             if cm is not None:

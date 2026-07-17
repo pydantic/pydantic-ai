@@ -42,8 +42,8 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed')
 
 
-def _model(**kwargs: Any) -> XaiRealtimeModel:
-    return XaiRealtimeModel(provider=XaiProvider(api_key='k'), **kwargs)
+def _model(settings: RealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
+    return XaiRealtimeModel(provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
 
 
 # --- event mapping: the one divergence from the OpenAI codec -------------------------------------
@@ -99,7 +99,7 @@ def test_profile() -> None:
 
 def test_session_config_shape() -> None:
     """`voice` and `turn_detection` sit at the session top level (unlike OpenAI's nested GA shape)."""
-    model = _model(voice='ara')
+    model = _model(RealtimeModelSettings(voice='ara'))
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('Be nice', tools, None)  # pyright: ignore[reportPrivateUsage]
     assert config == {
@@ -129,19 +129,25 @@ def test_session_config_transcription_auto_by_default() -> None:
 
 def test_session_config_transcription_explicit_override() -> None:
     """An explicit model id is used verbatim, overriding the `'auto'` default."""
-    config = _model(input_transcription_model='grok-transcribe-next')._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, rt_xai.XaiRealtimeModelSettings(input_transcription_model='grok-transcribe-next')
+    )
     assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe-next'}
 
 
 def test_session_config_transcription_disabled() -> None:
     """`input_transcription_model=None` opts out of transcription."""
-    config = _model(input_transcription_model=None)._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, rt_xai.XaiRealtimeModelSettings(input_transcription_model=None)
+    )
     assert 'transcription' not in config['audio']['input']
 
 
 def test_session_config_manual_turn_detection_is_null() -> None:
     """`turn_detection=None` disables VAD (push-to-talk), sent as an explicit null."""
-    config = _model(turn_detection=None)._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, rt_xai.XaiRealtimeModelSettings(xai_turn_detection=None)
+    )
     assert config['turn_detection'] is None
 
 
@@ -151,7 +157,7 @@ def test_session_config_no_voice_by_default() -> None:
 
 
 def test_session_config_forwards_model_settings() -> None:
-    settings = RealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
+    settings = rt_xai.XaiRealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
     model = _model(settings=settings)
     assert model.settings == settings
     config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
@@ -162,7 +168,7 @@ def test_session_config_forwards_model_settings() -> None:
 
 def test_session_config_omits_absent_model_settings() -> None:
     """Absent realtime settings are omitted from the session config."""
-    config = _model()._session_config('hi', None, RealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config('hi', None, rt_xai.XaiRealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert 'max_output_tokens' not in config
     assert 'parallel_tool_calls' not in config
     assert 'tool_choice' not in config
@@ -257,7 +263,9 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     fake_connect = FakeConnect(ws)
     monkeypatch.setattr(rt_xai.websockets, 'connect', fake_connect)
 
-    model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'), voice='eve')
+    model = XaiRealtimeModel(
+        'grok-voice-latest', provider=XaiProvider(api_key='k'), settings=RealtimeModelSettings(voice='eve')
+    )
     async with model.connect(instructions='Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
         events = [e async for e in conn]

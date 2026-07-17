@@ -237,10 +237,14 @@ def test_profile() -> None:
 
 
 def test_config_full() -> None:
-    settings = GoogleRealtimeModelSettings(max_tokens=256, temperature=0.5, top_p=0.9)
-    model = GoogleRealtimeModel(
-        voice='Puck', vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400), settings=settings
+    settings = GoogleRealtimeModelSettings(
+        max_tokens=256,
+        temperature=0.5,
+        top_p=0.9,
+        voice='Puck',
+        google_vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400),
     )
+    model = GoogleRealtimeModel(settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._config('Be nice', tools, settings)  # pyright: ignore[reportPrivateUsage]
@@ -260,7 +264,11 @@ def test_config_full() -> None:
 
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:
-    model = GoogleRealtimeModel(response_modality='text', input_transcription=False, output_transcription=False)
+    model = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(
+            output_modality='text', google_input_transcription=False, google_output_transcription=False
+        )
+    )
     config = model._config('', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.response_modalities == [genai_types.Modality.TEXT]
     assert config.system_instruction is None  # empty instructions → not set
@@ -731,7 +739,11 @@ async def test_iter_ends_on_api_error_close() -> None:
 
 
 def test_speech_config_voice_and_language() -> None:
-    speech = GoogleRealtimeModel(voice='Puck', language_code='pl-PL')._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]
+    speech = (
+        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(voice='Puck', google_language_code='pl-PL'))
+        ._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+        .speech_config
+    )
     assert speech is not None
     assert speech.language_code == 'pl-PL'
     assert speech.voice_config.prebuilt_voice_config.voice_name == 'Puck'  # type: ignore[union-attr]
@@ -740,7 +752,11 @@ def test_speech_config_voice_and_language() -> None:
 
 def test_speech_config_multi_speaker_overrides_voice() -> None:
     # multi_speaker and voice are mutually exclusive in the API → multi_speaker wins, voice dropped.
-    model = GoogleRealtimeModel(voice='Puck', multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'}))
+    model = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(
+            voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
+        )
+    )
     speech = model._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]
     assert speech is not None
     assert speech.voice_config is None
@@ -755,9 +771,13 @@ def test_speech_config_absent_when_unset() -> None:
 
 def test_realtime_input_full() -> None:
     model = GoogleRealtimeModel(
-        vad=AutomaticVAD(disabled=True, start_sensitivity='high', end_sensitivity='low', silence_duration_ms=300),
-        activity_handling='no_interruption',
-        turn_coverage='all_video',
+        settings=GoogleRealtimeModelSettings(
+            google_vad=AutomaticVAD(
+                disabled=True, start_sensitivity='high', end_sensitivity='low', silence_duration_ms=300
+            ),
+            google_activity_handling='no_interruption',
+            google_turn_coverage='all_video',
+        )
     )
     rt = model._config('hi', None, None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
     assert rt is not None
@@ -777,7 +797,13 @@ def test_realtime_input_absent_when_unset() -> None:
 
 def test_vad_without_sensitivities() -> None:
     # a bare `AutomaticVAD()` sets a detection block but leaves sensitivities/disabled unset.
-    rt = GoogleRealtimeModel(vad=AutomaticVAD())._config('hi', None, None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
+    rt = (
+        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad=AutomaticVAD()))
+        ._config(  # pyright: ignore[reportPrivateUsage]
+            'hi', None, None
+        )
+        .realtime_input_config
+    )
     detection = rt.automatic_activity_detection  # type: ignore[union-attr]
     assert detection.disabled is None  # type: ignore[union-attr]
     assert detection.start_of_speech_sensitivity is None  # type: ignore[union-attr]
@@ -785,7 +811,9 @@ def test_vad_without_sensitivities() -> None:
 
 
 def test_affective_and_proactive_audio() -> None:
-    config = GoogleRealtimeModel(affective_dialog=True, proactive_audio=True)._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(google_affective_dialog=True, google_proactive_audio=True)
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.enable_affective_dialog is True
     assert config.proactivity.proactive_audio is True  # type: ignore[union-attr]
 
@@ -797,14 +825,18 @@ def test_affective_and_proactive_default_off() -> None:
 
 
 def test_transcription_language_codes() -> None:
-    config = GoogleRealtimeModel(transcription_language_codes=['pl-PL'])._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(google_transcription_language_codes=['pl-PL'])
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.input_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
     assert config.output_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
 
 
 def test_context_compression_and_session_resumption() -> None:
     model = GoogleRealtimeModel(
-        context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000),
+        settings=GoogleRealtimeModelSettings(
+            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000)
+        ),
         enable_session_resumption=True,
     )
     config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
@@ -841,7 +873,9 @@ def test_generation_params_from_model_settings() -> None:
 
 
 def test_config_overrides_escape_hatch() -> None:
-    model = GoogleRealtimeModel(config_overrides={'explicit_vad_signal': True})
+    model = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(google_config_overrides={'explicit_vad_signal': True})
+    )
     assert model._config('hi', None, None).explicit_vad_signal is True  # pyright: ignore[reportPrivateUsage]
 
 

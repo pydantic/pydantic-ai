@@ -226,13 +226,16 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart, SpeechPartDelta
 from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main(microphone_chunk: bytes):
-    async with agent.realtime_session(model=OpenAIRealtimeModel('gpt-realtime')) as session:
+    settings = OpenAIRealtimeModelSettings(voice='alloy')
+    async with agent.realtime_session(
+        model='openai:gpt-realtime', model_settings=settings
+    ) as session:
         await session.send_audio(microphone_chunk)  # PCM16 bytes
         async for event in session:
             match event:

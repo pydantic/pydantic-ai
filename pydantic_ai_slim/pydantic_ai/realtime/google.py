@@ -104,6 +104,34 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_video_resolution: genai_types.MediaResolution
     """The video resolution to use for the model."""
 
+    google_language_code: str
+    """BCP-47 language code for audio output."""
+    google_multi_speaker: MultiSpeaker
+    """Per-speaker voice assignments; takes precedence over `voice`."""
+    google_affective_dialog: bool
+    """Whether to enable emotion-aware delivery (native-audio models only)."""
+    google_proactive_audio: bool
+    """Whether the model may decide *when* to respond, including staying silent on input not
+    addressed to it (native-audio models only). Useful for "react to the camera" experiences."""
+    google_input_transcription: bool
+    """Whether to transcribe input audio. Defaults to `True`."""
+    google_output_transcription: bool
+    """Whether to transcribe output audio. Defaults to `True`."""
+    google_transcription_language_codes: list[str]
+    """Language hints applied to input and output transcription."""
+    google_vad: AutomaticVAD
+    """Server-side voice activity detection settings."""
+    google_activity_handling: Literal['interrupts', 'no_interruption']
+    """Whether detected user activity interrupts the model."""
+    google_turn_coverage: Literal['activity_only', 'all_input', 'all_video']
+    """Which realtime input is attached to a turn — `'activity_only'`, `'all_input'` (everything
+    between turns too), or `'all_video'` (all video frames plus audio during activity; ideal for
+    live-camera use). Absent uses the provider default."""
+    google_context_compression: ContextCompression
+    """Sliding-window context compression for long-running sessions."""
+    google_config_overrides: dict[str, Any]
+    """Raw values merged last into the Google `LiveConnectConfig`."""
+
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
@@ -339,9 +367,9 @@ def _ws_trace_context(client: Client) -> Generator[None]:
 class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
 
-    Generation parameters (`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`) and the Google-specific
-    `google_thinking_config` / `google_video_resolution` are read from `model_settings` at connect time,
-    consistent with the rest of pydantic-ai. The fields here cover session configuration.
+    Session and generation configuration is read from
+    [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings], passed
+    through `settings` as model-level defaults or as `model_settings` when opening a session.
 
     Authentication and the underlying `google-genai` client come from a
     [`Provider`][pydantic_ai.providers.Provider], mirroring [`GoogleModel`][pydantic_ai.models.google.GoogleModel].
@@ -356,50 +384,18 @@ class GoogleRealtimeModel(RealtimeModel):
             newest native-audio Live model) or `gemini-3.1-flash-live-preview`.
         provider: The provider to use for authentication and API access — `'google'` (Gemini Developer
             API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
-        voice: Prebuilt voice for audio output, e.g. `Puck`, `Charon`, or `Kore`.
-        language_code: BCP-47 language for audio output, e.g. `en-US` or `pl-PL`.
-        multi_speaker: Per-speaker voice assignment for multi-speaker output (overrides `voice`).
-        affective_dialog: Enable emotion-aware delivery (native-audio models only).
-        proactive_audio: Let the model decide *when* to respond, including staying silent on input not
-            addressed to it (native-audio models only). Useful for "react to the camera" experiences.
-        response_modality: The single modality the model produces — `audio` (default) or `text`.
-        input_transcription: Whether to ask the provider to transcribe the user's audio input.
-        output_transcription: Whether to ask the provider to transcribe the model's audio output.
-        transcription_language_codes: Language hint(s) applied to both input and output transcription.
-        vad: Server-side voice activity detection settings; `None` uses the provider defaults.
-        activity_handling: Whether the start of user activity interrupts the model (`interrupts`) or
-            not (`no_interruption`).
-        turn_coverage: Which realtime input is attached to a turn — `activity_only`, `all_input`
-            (everything between turns too), or `all_video` (all video frames plus audio during
-            activity; ideal for live-camera use). `None` (default) uses the provider default.
-        context_compression: Sliding-window context compression for long-running sessions.
+        settings: Model-level defaults for session and generation configuration.
         enable_session_resumption: Request session-resumption handles so a dropped connection can be
             transparently resumed (see `reconnect`).
         reconnect: Backoff policy for transparently re-dialing a dropped session; requires
             `enable_session_resumption=True`. `None` (default) makes a drop end the stream.
-        config_overrides: Raw keys merged last into the built `LiveConnectConfig`, an escape hatch for
-            SDK options not yet modelled here.
     """
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
     provider: InitVar[Provider[Client] | str] = 'google'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
-    voice: str | None = None
-    language_code: str | None = None
-    multi_speaker: MultiSpeaker | None = None
-    affective_dialog: bool = False
-    proactive_audio: bool = False
-    response_modality: Literal['audio', 'text'] = 'audio'
-    input_transcription: bool = True
-    output_transcription: bool = True
-    transcription_language_codes: list[str] | None = None
-    vad: AutomaticVAD | None = None
-    activity_handling: Literal['interrupts', 'no_interruption'] | None = None
-    turn_coverage: Literal['activity_only', 'all_input', 'all_video'] | None = None
-    context_compression: ContextCompression | None = None
     enable_session_resumption: bool = False
     reconnect: ReconnectPolicy | None = None
-    config_overrides: dict[str, Any] | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
 
     def __post_init__(self, provider: Provider[Client] | str) -> None:
@@ -433,14 +429,17 @@ class GoogleRealtimeModel(RealtimeModel):
             supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         )
 
-    def _speech_config(self) -> genai_types.SpeechConfig | None:
+    def _speech_config(self, model_settings: GoogleRealtimeModelSettings) -> genai_types.SpeechConfig | None:
         """Build the speech/voice config from `voice`, `multi_speaker`, and `language_code`.
 
         `multi_speaker` takes precedence over `voice` (they are mutually exclusive in the API).
         """
         voice_config: genai_types.VoiceConfig | None = None
         multi_speaker_config: genai_types.MultiSpeakerVoiceConfig | None = None
-        if self.multi_speaker is not None:
+        multi_speaker = model_settings.get('google_multi_speaker')
+        voice = model_settings.get('voice')
+        language_code = model_settings.get('google_language_code')
+        if multi_speaker is not None:
             multi_speaker_config = genai_types.MultiSpeakerVoiceConfig(
                 speaker_voice_configs=[
                     genai_types.SpeakerVoiceConfig(
@@ -449,38 +448,41 @@ class GoogleRealtimeModel(RealtimeModel):
                             prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
                         ),
                     )
-                    for speaker, voice in self.multi_speaker.voices.items()
+                    for speaker, voice in multi_speaker.voices.items()
                 ]
             )
-        elif self.voice:
+        elif voice:
             voice_config = genai_types.VoiceConfig(
-                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=self.voice)
+                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
             )
-        if voice_config is None and multi_speaker_config is None and self.language_code is None:
+        if voice_config is None and multi_speaker_config is None and language_code is None:
             return None
         return genai_types.SpeechConfig(
             voice_config=voice_config,
             multi_speaker_voice_config=multi_speaker_config,
-            language_code=self.language_code,
+            language_code=language_code,
         )
 
-    def _realtime_input_config(self) -> genai_types.RealtimeInputConfig | None:
+    def _realtime_input_config(
+        self, model_settings: GoogleRealtimeModelSettings
+    ) -> genai_types.RealtimeInputConfig | None:
         """Build the turn-taking config from `vad`, `activity_handling`, and `turn_coverage`."""
         detection: genai_types.AutomaticActivityDetection | None = None
-        if self.vad is not None:
+        vad = model_settings.get('google_vad')
+        if vad is not None:
             detection = genai_types.AutomaticActivityDetection(
-                disabled=self.vad.disabled or None,
-                start_of_speech_sensitivity=_START_SENSITIVITY[self.vad.start_sensitivity]
-                if self.vad.start_sensitivity
+                disabled=vad.disabled or None,
+                start_of_speech_sensitivity=_START_SENSITIVITY[vad.start_sensitivity]
+                if vad.start_sensitivity
                 else None,
-                end_of_speech_sensitivity=_END_SENSITIVITY[self.vad.end_sensitivity]
-                if self.vad.end_sensitivity
-                else None,
-                prefix_padding_ms=self.vad.prefix_padding_ms,
-                silence_duration_ms=self.vad.silence_duration_ms,
+                end_of_speech_sensitivity=_END_SENSITIVITY[vad.end_sensitivity] if vad.end_sensitivity else None,
+                prefix_padding_ms=vad.prefix_padding_ms,
+                silence_duration_ms=vad.silence_duration_ms,
             )
-        activity = _ACTIVITY_HANDLING[self.activity_handling] if self.activity_handling else None
-        coverage = _TURN_COVERAGE[self.turn_coverage] if self.turn_coverage else None
+        activity_handling = model_settings.get('google_activity_handling')
+        turn_coverage = model_settings.get('google_turn_coverage')
+        activity = _ACTIVITY_HANDLING[activity_handling] if activity_handling else None
+        coverage = _TURN_COVERAGE[turn_coverage] if turn_coverage else None
         if detection is None and activity is None and coverage is None:
             return None
         return genai_types.RealtimeInputConfig(
@@ -517,28 +519,34 @@ class GoogleRealtimeModel(RealtimeModel):
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
     ) -> genai_types.LiveConnectConfig:
-        modality = genai_types.Modality.AUDIO if self.response_modality == 'audio' else genai_types.Modality.TEXT
+        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        modality = (
+            genai_types.Modality.AUDIO
+            if settings.get('output_modality', 'audio') == 'audio'
+            else genai_types.Modality.TEXT
+        )
         config = genai_types.LiveConnectConfig(response_modalities=[modality])
         if instructions:
             config.system_instruction = instructions
-        config.speech_config = self._speech_config()
-        if self.input_transcription:
+        config.speech_config = self._speech_config(settings)
+        transcription_language_codes = settings.get('google_transcription_language_codes')
+        if settings.get('google_input_transcription', True):
             config.input_audio_transcription = genai_types.AudioTranscriptionConfig(
-                language_codes=self.transcription_language_codes
+                language_codes=transcription_language_codes
             )
-        if self.output_transcription:
+        if settings.get('google_output_transcription', True):
             config.output_audio_transcription = genai_types.AudioTranscriptionConfig(
-                language_codes=self.transcription_language_codes
+                language_codes=transcription_language_codes
             )
-        config.realtime_input_config = self._realtime_input_config()
-        if self.affective_dialog:
+        config.realtime_input_config = self._realtime_input_config(settings)
+        if settings.get('google_affective_dialog', False):
             config.enable_affective_dialog = True
-        if self.proactive_audio:
+        if settings.get('google_proactive_audio', False):
             config.proactivity = genai_types.ProactivityConfig(proactive_audio=True)
-        if self.context_compression is not None:
+        if (context_compression := settings.get('google_context_compression')) is not None:
             config.context_window_compression = genai_types.ContextWindowCompressionConfig(
-                trigger_tokens=self.context_compression.trigger_tokens,
-                sliding_window=genai_types.SlidingWindow(target_tokens=self.context_compression.target_tokens),
+                trigger_tokens=context_compression.trigger_tokens,
+                sliding_window=genai_types.SlidingWindow(target_tokens=context_compression.target_tokens),
             )
         if self.enable_session_resumption:
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)
@@ -550,9 +558,9 @@ class GoogleRealtimeModel(RealtimeModel):
         genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
         if genai_tools:
             config.tools = genai_tools
-        self._apply_generation(config, cast('GoogleRealtimeModelSettings | None', model_settings))
-        if self.config_overrides:
-            for key, value in self.config_overrides.items():
+        self._apply_generation(config, settings)
+        if config_overrides := settings.get('google_config_overrides'):
+            for key, value in config_overrides.items():
                 setattr(config, key, value)
         return config
 
@@ -567,6 +575,7 @@ class GoogleRealtimeModel(RealtimeModel):
         messages: Sequence[ModelMessage] | None = None,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
+        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.
         reconnectable = self.reconnect is not None and self.enable_session_resumption
@@ -579,9 +588,7 @@ class GoogleRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
-            config = self._config(
-                instructions, tools, model_settings, native_tools=native_tools, resumption_handle=handle
-            )
+            config = self._config(instructions, tools, settings, native_tools=native_tools, resumption_handle=handle)
             opening = client.aio.live.connect(model=self.model, config=config)
             with _single_ws_user_agent(client), _ws_trace_context(client):
                 session = await opening.__aenter__()
@@ -600,7 +607,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 provider_name=self._provider.name,
                 dial=dial if reconnectable else None,
                 reconnect=self.reconnect if reconnectable else None,
-                input_transcription_enabled=self.input_transcription,
+                input_transcription_enabled=settings.get('google_input_transcription', True),
             )
         finally:
             if cm is not None:

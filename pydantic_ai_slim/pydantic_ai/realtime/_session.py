@@ -227,8 +227,8 @@ class RealtimeSession:
             # contract. Make the contradictory config an explicit error rather than a silent gap.
             raise UserError(
                 "This realtime session can't capture the user's turns: input transcription is disabled "
-                "and `audio_retention` doesn't retain input audio. Enable transcription (set the model's "
-                "`input_transcription_model`), or pass `audio_retention='input'` or `'both'` to keep the "
+                "and `audio_retention` doesn't retain input audio. Enable transcription in the model settings, "
+                "or pass `audio_retention='input'` or `'both'` to keep the "
                 'raw audio instead.'
             )
         self.usage = usage if usage is not None else RunUsage()
@@ -276,11 +276,14 @@ class RealtimeSession:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
 
-    async def send(self, content: RealtimeSessionInput | str | BinaryContent) -> None:
+    async def send(
+        self, content: RealtimeSessionInput | str | BinaryContent | Sequence[RealtimeSessionInput | str | BinaryContent]
+    ) -> None:
         """Feed content into the session.
 
         Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
-        text as a `str`, or image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. All
+        text as a `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a
+        sequence of these inputs, dispatched in order. All
         inputs dispatch through the typed helpers (`send_audio`, `send_text`, `send_image`,
         `commit_audio`, `clear_audio`, `create_response`, `truncate_output`, `interrupt`), preserving
         the same history bookkeeping and model-profile guards.
@@ -317,6 +320,9 @@ class RealtimeSession:
             await self.truncate_output(content.audio_end_ms)
         elif isinstance(content, CancelResponse):
             await self.interrupt()
+        elif isinstance(content, Sequence):
+            for item in content:
+                await self.send(item)
         else:
             # Unreachable for a well-typed caller: `RealtimeSessionInput` is exhausted above and excludes
             # `ToolResult`. Guard the untyped-caller case (a `ToolResult` passed dynamically) with a clear

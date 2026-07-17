@@ -41,12 +41,13 @@ concurrently so the model can keep speaking while it works.
 | --- | --- |
 | [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] | Provider ABC; `connect()` opens a connection. |
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
+| [`KnownRealtimeModelName`][pydantic_ai.realtime.KnownRealtimeModelName] / [`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model] | Provider-prefixed model IDs and inference. |
 | [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 | [`ToolRunner`][pydantic_ai.realtime.ToolRunner] | Async callable a session uses to execute a tool by name. |
 
 **Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts plain `str`,
-image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a precise
+image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of these, or a precise
 [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]:
 data — [`AudioInput`][pydantic_ai.realtime.AudioInput],
 [`TextInput`][pydantic_ai.realtime.TextInput],
@@ -97,10 +98,11 @@ control-plane events above (`TurnCompleteEvent`, `SpeechStartedEvent`, `SpeechSt
 The OpenAI Realtime API provider. Requires the `realtime` and `openai` optional groups
 (`pip install "pydantic-ai-slim[realtime,openai]"`).
 
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] configures the session,
-including turn-taking via [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] /
-[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] (or `None` for push-to-talk) and resilience
-via [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy].
+[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] configures
+the session, including turn-taking via [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] /
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] (or `None` for push-to-talk); resilience
+comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel].
 
 ::: pydantic_ai.realtime.openai
 
@@ -112,12 +114,12 @@ The Gemini Live API provider. Requires the `google` optional group
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] runs over the `google-genai`
 SDK (which manages the WebSocket transport). Gemini expects **16 kHz** PCM input (output is 24 kHz),
 produces one response modality per session, and natively accepts live video frames sent as
-[`ImageInput`][pydantic_ai.realtime.ImageInput]. It exposes Gemini Live's configuration as optional
-fields — turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] plus
-`activity_handling`/`turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
-long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression], and resilience via
-session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]. Generation
-parameters use [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
+[`ImageInput`][pydantic_ai.realtime.ImageInput]. It exposes Gemini Live's session and generation
+configuration through [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] —
+turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] plus
+`google_activity_handling`/`google_turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
+and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
+resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
 
 ::: pydantic_ai.realtime.google
 

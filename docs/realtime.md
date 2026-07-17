@@ -201,31 +201,36 @@ forwarding requires the target model's profile to declare audio-input support, w
 
 ## Configuring the session
 
-Session behaviour is configured on the provider model. For OpenAI, on
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]:
+Session behaviour is configured through realtime model settings. The simplest path uses a
+provider-prefixed model ID and per-session settings:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime import RealtimeModelSettings
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel, SemanticVAD
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings, SemanticVAD
 
-model = OpenAIRealtimeModel(
-    'gpt-realtime',
-    settings=RealtimeModelSettings(max_tokens=2_000, parallel_tool_calls=True),
+settings = OpenAIRealtimeModelSettings(
+    max_tokens=2_000,
+    parallel_tool_calls=True,
     voice='alloy',
-    turn_detection=SemanticVAD(eagerness='high'),  # how eagerly the model takes its turn
-    input_noise_reduction='near_field',            # tuned for a headset mic
-    output_speed=1.1,                              # speak slightly faster
+    openai_turn_detection=SemanticVAD(eagerness='high'),
+    openai_input_noise_reduction='near_field',
+    openai_output_speed=1.1,
 )
+
+async with agent.realtime_session(
+    model='openai:gpt-realtime', model_settings=settings
+) as session:
+    ...
 ```
 
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] contains the settings shared by
-all realtime providers: `tool_choice`, `parallel_tool_calls`, and `max_tokens`. Set defaults on the
-model as above, then override individual values for one session:
+all realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
+`input_transcription_model`, and `output_modality`. You can instead set defaults on a model and
+override individual values for one session:
 
 ```python {test="skip" lint="skip"}
 async with agent.realtime_session(
-    model=model,
-    model_settings=RealtimeModelSettings(max_tokens=4_000),
+    model=OpenAIRealtimeModel('gpt-realtime', settings=settings),
+    model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
 ) as session:
     ...
 ```
@@ -250,30 +255,31 @@ from pydantic_ai.realtime.google import (
     MultiSpeaker,
 )
 
-model = GoogleRealtimeModel(
-    'gemini-2.5-flash-native-audio-latest',
-    settings=GoogleRealtimeModelSettings(temperature=0.7, top_p=0.9),
+settings = GoogleRealtimeModelSettings(
+    temperature=0.7,
+    top_p=0.9,
     voice='Puck',
-    language_code='en-US',                              # output language
-    affective_dialog=True,                              # emotion-aware delivery (native-audio)
-    proactive_audio=True,                               # model decides when to speak (native-audio)
-    vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low'),
-    turn_coverage='all_video',                          # keep every video frame in context
-    context_compression=ContextCompression(trigger_tokens=16000, target_tokens=8000),
-    config_overrides={'explicit_vad_signal': True},     # escape hatch for unmodelled SDK fields
+    google_language_code='en-US',
+    google_affective_dialog=True,
+    google_proactive_audio=True,
+    google_vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low'),
+    google_turn_coverage='all_video',
+    google_context_compression=ContextCompression(trigger_tokens=16000, target_tokens=8000),
+    google_config_overrides={'explicit_vad_signal': True},
 )
+model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=settings)
 ```
 
 | Field | What it does |
 | --- | --- |
-| `voice`, `language_code`, `multi_speaker` ([`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker]) | Prebuilt voice, output language, per-speaker voices |
-| `affective_dialog`, `proactive_audio` | Emotion-aware delivery; let the model decide when to speak (native-audio models) |
-| `vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | VAD `disabled`, start/end sensitivity, padding/silence |
-| `activity_handling`, `turn_coverage` | Whether activity interrupts; which input a turn covers (`activity_only`/`all_input`/`all_video`) |
-| `input_transcription`, `output_transcription`, `transcription_language_codes` | Transcription on/off and language hints |
-| `context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
+| `voice`, `google_language_code`, `google_multi_speaker` ([`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker]) | Prebuilt voice, output language, per-speaker voices |
+| `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery; let the model decide when to speak (native-audio models) |
+| `google_vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | VAD `disabled`, start/end sensitivity, padding/silence |
+| `google_activity_handling`, `google_turn_coverage` | Whether activity interrupts; which input a turn covers (`activity_only`/`all_input`/`all_video`) |
+| `google_input_transcription`, `google_output_transcription`, `google_transcription_language_codes` | Transcription on/off and language hints |
+| `google_context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
 | `enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](#reconnecting)) |
-| `config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
+| `google_config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
 
 Authentication comes from the `provider` argument, mirroring
 [`GoogleModel`][pydantic_ai.models.google.GoogleModel]: pass `provider='google'` (the default,
@@ -287,14 +293,14 @@ OpenAI provider's [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] turn-dete
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime.openai import ServerVAD
-from pydantic_ai.realtime.xai import XaiRealtimeModel
+from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
-model = XaiRealtimeModel(
-    'grok-voice-latest',
+settings = XaiRealtimeModelSettings(
     voice='eve',                                       # eve (default), ara, rex, sal, leo, or a custom ID
-    turn_detection=ServerVAD(threshold=0.85),          # or None for push-to-talk
+    xai_turn_detection=ServerVAD(threshold=0.85),      # or None for push-to-talk
     input_transcription_model='auto',                  # the default (see Transcribing user input)
 )
+model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 ```
 
 The shared realtime settings can be configured on the model or passed to `realtime_session`. Grok
@@ -313,7 +319,7 @@ xAI transcribe the user's audio with a dedicated model, set via `input_transcrip
 | An explicit id (e.g. `'gpt-4o-transcribe'`) | Used verbatim. Known ids autocomplete via [`KnownRealtimeTranscriptionModelName`][pydantic_ai.realtime.KnownRealtimeTranscriptionModelName], but any string works. |
 | `None` | Transcription disabled — no transcription model is sent. No user transcripts arrive, so [`audio_retention`](#message-history) **must** be `'input'`/`'both'` to keep the raw audio; each user turn is then finalized as an audio-only [`SpeechPart`][pydantic_ai.messages.SpeechPart] (no transcript, so not usable for a text handoff). Disabling transcription while `audio_retention` doesn't retain input audio raises a `UserError`, since the user's turns would otherwise be silently dropped from history. |
 
-Gemini transcribes with a boolean `input_transcription` (on by default) rather than a model id: the
+Gemini transcribes with `google_input_transcription` (on by default) rather than a model id: the
 Live model transcribes natively, so there is no separate transcription model to choose.
 
 ## Turn-taking and barge-in
@@ -324,7 +330,7 @@ stopped speaking, commits the audio, and triggers a response — and interrupts 
 user barges in. [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] uses a model to decide turn
 boundaries instead. [Push-to-talk](#push-to-talk-manual-turn-taking) drives turns manually instead of
 by detection. Gemini's native-audio models also decide on their own when to speak, via
-`proactive_audio`.
+`google_proactive_audio`.
 
 When the user barges in you get a [`SpeechStartedEvent`][pydantic_ai.realtime.SpeechStartedEvent] event; stop
 playing any buffered model audio immediately, and call
@@ -348,13 +354,15 @@ Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
 ### Push-to-talk (manual turn-taking)
 
-Disable automatic detection with `turn_detection=None` and drive the turn yourself: stream audio,
+Disable automatic detection with `openai_turn_detection=None` and drive the turn yourself: stream audio,
 [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user's turn, then
 [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] to ask the model to reply.
 [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio] discards uncommitted audio.
 
 ```python {test="skip" lint="skip"}
-model = OpenAIRealtimeModel('gpt-realtime', turn_detection=None)
+model = OpenAIRealtimeModel(
+    'gpt-realtime', settings=OpenAIRealtimeModelSettings(openai_turn_detection=None)
+)
 async with agent.realtime_session(model=model) as session:
     await session.send_audio(chunk)
     await session.commit_audio()
@@ -404,9 +412,9 @@ await session.send_image(jpeg_bytes, mime_type='image/jpeg')
 ```
 
 **Live vision (Gemini).** For a "show the camera and ask about it" experience, stream frames
-continuously and set `turn_coverage='all_video'` so every frame stays in context. Because a frame
+continuously and set `google_turn_coverage='all_video'` so every frame stays in context. Because a frame
 alone never triggers a turn, drive proactive narration by periodically sending a short text turn
-("say what changed, else stay silent"); combine with `proactive_audio=True` (native-audio) so the
+("say what changed, else stay silent"); combine with `google_proactive_audio=True` (native-audio) so the
 model keeps quiet when nothing changed.
 
 ## Tool calling

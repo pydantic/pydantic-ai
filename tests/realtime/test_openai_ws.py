@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, SessionErrorEvent, TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeModelSettings, SessionErrorEvent, TurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -80,7 +80,9 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history."""
     provider, _ = openai_ws_cassette
-    model = OpenAIRealtimeModel('gpt-realtime', provider=provider, output_modalities=('text',))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=RealtimeModelSettings(output_modality='text')
+    )
     agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
 
     @agent.tool_plain
@@ -137,7 +139,9 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
 async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
     provider, cassette = openai_ws_cassette
-    model = OpenAIRealtimeModel('gpt-realtime', provider=provider, output_modalities=('text',))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=RealtimeModelSettings(output_modality='text')
+    )
     agent = Agent()
 
     history = [

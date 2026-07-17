@@ -57,7 +57,13 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
-    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from pydantic_ai.realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeSession,
+    )
 
 
 T = TypeVar('T')
@@ -1521,7 +1527,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @asynccontextmanager
     async def realtime_session(
         self,
-        model: RealtimeModel,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,

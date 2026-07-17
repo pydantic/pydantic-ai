@@ -719,6 +719,15 @@ async def test_send_accepts_plain_content() -> None:
     )
 
 
+async def test_send_accepts_sequence() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+
+    await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
+
+    assert conn.sent == [TextInput(text='look at this'), ImageInput(data=b'image', mime_type='image/png')]
+
+
 async def test_send_rejects_unsupported_binary_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)

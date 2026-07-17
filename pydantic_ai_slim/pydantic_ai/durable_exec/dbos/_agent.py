@@ -45,7 +45,13 @@ from ._utils import StepConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
-    from pydantic_ai.realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from pydantic_ai.realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeSession,
+    )
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
@@ -1068,7 +1074,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     @asynccontextmanager
     async def realtime_session(
         self,
-        model: RealtimeModel,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,
