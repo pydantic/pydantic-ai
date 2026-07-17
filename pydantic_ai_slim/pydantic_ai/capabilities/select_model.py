@@ -11,7 +11,7 @@ from .abstract import AbstractCapability, ModelSelector
 class SelectModel(AbstractCapability[AgentDepsT]):
     """Select a model before each logical model request step.
 
-    The selector receives a [`ModelSelectionContext`][pydantic_ai.ModelSelectionContext]
+    The selector receives a [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext]
     containing the run dependencies, message history, accumulated usage, and lower-precedence
     model. It may be synchronous or asynchronous and return either a model instance or model ID.
     """

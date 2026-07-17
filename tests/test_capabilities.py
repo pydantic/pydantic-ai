@@ -8783,6 +8783,40 @@ class TestGetModelHook:
         assert (await agent.run('hello')).output == 'done'
         assert resolutions == 1
 
+    async def test_dynamic_model_id_is_resolved_once_per_run(self):
+        requests = 0
+        selections = 0
+        resolutions = 0
+
+        def request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+            return make_text_response('done')
+
+        selected = FunctionModel(request)
+
+        def select(ctx: ModelSelectionContext[None]) -> str:
+            nonlocal selections
+            selections += 1
+            return 'alias'
+
+        def resolve(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+            nonlocal resolutions
+            resolutions += 1
+            return selected if model_id == 'alias' else None
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select), ResolveModelId(resolve)])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        assert (await agent.run('hello')).output == 'done'
+        assert selections == 2
+        assert resolutions == 1
+
     async def test_unchanged_for_run_selector_is_not_repeated_on_first_step(self):
         selections = 0
 

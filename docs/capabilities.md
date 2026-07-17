@@ -586,6 +586,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ```python {title="adaptive_model.py"}
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai import Agent, ModelSelectionContext
 from pydantic_ai.capabilities import SelectModel
@@ -593,17 +594,20 @@ from pydantic_ai.capabilities import SelectModel
 
 @dataclass
 class Deps:
-    use_frontier_model: bool
+    """Dependencies that influence model selection."""
+
+    task_complexity: Literal['standard', 'complex']
 
 
 def select_model(ctx: ModelSelectionContext[Deps]) -> str:
-    return 'openai:gpt-5.2' if ctx.deps.use_frontier_model else 'openai:gpt-5-mini'
+    """Use the larger model for complex tasks."""
+    return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
 
 
-agent = Agent(None, deps_type=Deps, capabilities=[SelectModel(select_model)])
+agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])
 ```
 
-A static selection is resolved once per run. A callable is evaluated before each new logical model request step; provider-side continuation polling within the same step remains pinned to the selected model. See [Selecting the model](#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
+`SelectModel` always receives a callable, which is evaluated before each new logical model request step. The callable may be synchronous or asynchronous. When it returns the same model ID on multiple steps, the resolved model/provider instance is reused for the rest of that run. Provider-side continuation polling within the same step remains pinned to the selected model. See [Selecting the model](#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
 
 ### ResolveModelId
 
@@ -611,23 +615,37 @@ A static selection is resolved once per run. A callable is evaluated before each
 
 ```python {title="resolve_model_id.py"}
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic_ai import Agent, ModelResolutionContext
 from pydantic_ai.capabilities import ResolveModelId
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 
 @dataclass
 class Deps:
-    models: dict[str, Model]
+    """Per-user provider credentials."""
+
+    openai_api_key: str
 
 
 def resolve_model(ctx: ModelResolutionContext[Deps], model_id: str) -> Model | None:
-    return ctx.deps.models.get(model_id)
+    """Resolve IDs in the `user:` namespace with the current user's credentials."""
+    if not model_id.startswith('user:'):
+        return None
+
+    def provider_factory(provider_name: str) -> Provider[Any]:
+        if provider_name == 'openai':
+            return OpenAIProvider(api_key=ctx.deps.openai_api_key)
+        return infer_provider(provider_name)
+
+    return infer_model(model_id.removeprefix('user:'), provider_factory)
 
 
 agent = Agent(
-    'tenant:fast',
+    'user:openai:gpt-5.6-sol',
     deps_type=Deps,
     capabilities=[ResolveModelId(resolve_model)],
 )
@@ -1223,30 +1241,36 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 Override [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] when model selection is one part of a larger custom capability. Return a [`Model`][pydantic_ai.models.Model], a model ID string, or a sync/async callable taking [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext]. This example chooses a model from dependencies on every request step:
 
 ```python {title="custom_model_selection.py"}
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai import Agent, ModelSelectionContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelSelector
 
 
 @dataclass
 class Deps:
-    use_frontier_model: bool
+    """Dependencies that influence model selection."""
+
+    task_complexity: Literal['standard', 'complex']
 
 
 class AdaptiveModel(AbstractCapability[Deps]):
-    def get_model(self) -> Callable[[ModelSelectionContext[Deps]], str]:
+    """Select a model for each request step."""
+
+    def get_model(self) -> ModelSelector[Deps]:
         return self.select_model
 
     def select_model(self, ctx: ModelSelectionContext[Deps]) -> str:
-        return 'openai:gpt-5.2' if ctx.deps.use_frontier_model else 'openai:gpt-5-mini'
+        return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
 
 
-agent = Agent(None, deps_type=Deps, capabilities=[AdaptiveModel()])
+agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 ```
 
-[`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in the returned async selector.
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+
+A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
 A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
 
@@ -1264,28 +1288,43 @@ Override [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.reso
 
 ```python {title="custom_model_id_resolution.py"}
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic_ai import Agent, ModelResolutionContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 
 @dataclass
 class Deps:
-    models: dict[str, Model]
+    """Per-user provider credentials."""
+
+    openai_api_key: str
 
 
-class RegistryModels(AbstractCapability[Deps]):
+class UserModelResolver(AbstractCapability[Deps]):
+    """Resolve user-scoped model IDs with per-user credentials."""
+
     async def resolve_model_id(
         self,
         ctx: ModelResolutionContext[Deps],
         *,
         model_id: KnownModelName | str,
     ) -> Model | None:
-        return ctx.deps.models.get(model_id)
+        if not model_id.startswith('user:'):
+            return None
+
+        def provider_factory(provider_name: str) -> Provider[Any]:
+            if provider_name == 'openai':
+                return OpenAIProvider(api_key=ctx.deps.openai_api_key)
+            return infer_provider(provider_name)
+
+        return infer_model(model_id.removeprefix('user:'), provider_factory)
 
 
-agent = Agent('tenant:fast', deps_type=Deps, capabilities=[RegistryModels()])
+agent = Agent('user:openai:gpt-5.6-sol', deps_type=Deps, capabilities=[UserModelResolver()])
 ```
 
 The constructor ID remains a string through [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent], so a bound capability can install a resolver without default inference first constructing a provider with different configuration or credentials.
@@ -1318,16 +1357,20 @@ Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] 
 from dataclasses import dataclass, replace
 from typing import Any
 
+from typing_extensions import Self
+
 from pydantic_ai import Agent
-from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
 class AgentIdentity(AbstractCapability[Any]):
+    """Add the bound agent's name to its instructions."""
+
     agent_name: str | None = None
 
-    def for_agent(self, agent: AbstractAgent[Any, Any]) -> 'AgentIdentity':
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> Self:
         return replace(self, agent_name=agent.name)
 
     def get_instructions(self) -> str:
@@ -1340,6 +1383,8 @@ sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
 ```
 
 Return a new bound copy rather than mutating the original when the same capability may be attached to multiple agents. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] propagate binding to their children, and the bound copy participates in all configuration hooks, including `get_model()` and `resolve_model_id()`.
+
+The parameter is typed as [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] so reusable capabilities depend only on the portable agent interface and remain compatible with custom agent implementations. Runs through a [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] are delegated to its wrapped agent, so Pydantic AI's built-in wrappers do not rebind the capability to the outer wrapper.
 
 `for_agent()` sees the constructor model exactly as the caller supplied it. In particular, a model ID remains a string while binding runs, so a bound capability can introduce `resolve_model_id()` without the default inference first constructing a provider with the wrong configuration or credentials. If the bound capability tree has no resolver and `defer_model_check=False`, normal model inference happens after binding.
 

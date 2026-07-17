@@ -1164,6 +1164,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             bootstrap_capability = CombinedCapability(model_layers)
         else:
             bootstrap_capability = model_layers[0]
+        resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
 
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
@@ -1174,7 +1175,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
         default_model = (
-            await self._resolve_model_selection(self._pick_raw_model(model), capability=bootstrap_capability, deps=deps)
+            await self._resolve_model_selection(
+                self._pick_raw_model(model),
+                capability=bootstrap_capability,
+                deps=deps,
+                resolved_models=resolved_models_by_selection,
+            )
             if has_default_model
             else None
         )
@@ -1188,7 +1194,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
             )
             model_used = await self._evaluate_model_contribution(
-                model_contribution, capability=bootstrap_capability, ctx=selection_ctx
+                model_contribution,
+                capability=bootstrap_capability,
+                ctx=selection_ctx,
+                resolved_models=resolved_models_by_selection,
             )
         elif default_model is not None:
             model_used = default_model
@@ -1496,7 +1505,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capability_owns_current_model = True
         elif run_model_contribution is not None:
             model_used = await self._resolve_model_selection(
-                run_model_contribution, capability=run_capability, deps=deps
+                run_model_contribution,
+                capability=run_capability,
+                deps=deps,
+                resolved_models=resolved_models_by_selection,
             )
             model_selector = None
             model_selected_for_step = None
@@ -1514,7 +1526,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def evaluate_model_selector(
             selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
         ) -> models.Model:
-            return await self._evaluate_model_contribution(selector, capability=run_capability, ctx=selection_ctx)
+            return await self._evaluate_model_contribution(
+                selector,
+                capability=run_capability,
+                ctx=selection_ctx,
+                resolved_models=resolved_models_by_selection,
+            )
 
         model_stack: AsyncExitStack | None = None
         entered_model_ids = self._entered_model_ids.copy()
@@ -2601,15 +2618,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
+        resolved_models: dict[tuple[int, str], models.Model] | None = None,
     ) -> models.Model:
         """Resolve a concrete model selection through the capability chain."""
         if not isinstance(selection, str):
             return selection
-        if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
+        cache_key = (id(capability), selection)
+        if resolved_models is not None and (resolved_model := resolved_models.get(cache_key)) is not None:
+            return resolved_model
+        if entered_model := self._entered_models_by_selection.get(cache_key):
+            if resolved_models is not None:
+                resolved_models[cache_key] = entered_model
             return entered_model
         resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
         resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-        return resolved if resolved is not None else models.infer_model(selection)
+        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if resolved_models is not None:
+            resolved_models[cache_key] = resolved_model
+        return resolved_model
 
     async def _evaluate_model_contribution(
         self,
@@ -2617,12 +2643,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         capability: AbstractCapability[AgentDepsT],
         ctx: models.ModelSelectionContext[AgentDepsT],
+        resolved_models: dict[tuple[int, str], models.Model] | None = None,
     ) -> models.Model:
         """Evaluate a static or dynamic model contribution and resolve its result."""
         selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
         if inspect.isawaitable(selection):
             selection = await selection
-        return await self._resolve_model_selection(selection, capability=capability, deps=ctx.deps)
+        return await self._resolve_model_selection(
+            selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
+        )
 
     @staticmethod
     def _check_dynamic_model_resume(

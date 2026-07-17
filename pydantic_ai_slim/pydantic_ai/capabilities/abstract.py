@@ -333,7 +333,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
         where the first resolver to return a model wins.
 
-        See [Selecting a model](../capabilities.md#selecting-a-model) for precedence,
+        See [Selecting the model](../capabilities.md#selecting-the-model) for precedence,
         bootstrap, and deferred-capability semantics.
         """
         return None
