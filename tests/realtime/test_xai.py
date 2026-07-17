@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 import base64
 import json
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import pytest
@@ -17,6 +18,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
@@ -44,6 +47,19 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / webs
 
 def _model(settings: RealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
     return XaiRealtimeModel(provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
+
+
+def _connect(
+    model: XaiRealtimeModel,
+    instructions: str,
+    *,
+    messages: list[ModelMessage] | None = None,
+) -> AbstractAsyncContextManager[XaiRealtimeConnection]:
+    return model.connect(
+        messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
 
 # --- event mapping: the one divergence from the OpenAI codec -------------------------------------
@@ -266,7 +282,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     model = XaiRealtimeModel(
         'grok-voice-latest', provider=XaiProvider(api_key='k'), settings=RealtimeModelSettings(voice='eve')
     )
-    async with model.connect(instructions='Be nice') as conn:
+    async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
         events = [e async for e in conn]
 
@@ -293,7 +309,7 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
     model = XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k'))
     tracer = TracerProvider().get_tracer('test')
     with tracer.start_as_current_span('root'):
-        async with model.connect(instructions='hi') as conn:
+        async with _connect(model, 'hi') as conn:
             _ = [e async for e in conn]
 
     assert fake_connect.headers is not None
@@ -327,7 +343,7 @@ async def test_connect_seeds_message_history_as_output_text(monkeypatch: pytest.
     ]
 
     model = _model()
-    async with model.connect(instructions='hi', messages=history) as conn:
+    async with _connect(model, 'hi', messages=history) as conn:
         assert isinstance(conn, XaiRealtimeConnection)
 
     seeded = [json.loads(frame) for frame in ws.sent[1:]]  # ws.sent[0] is the session.update handshake
@@ -361,7 +377,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
     model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0))
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
     assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
@@ -400,7 +416,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
     monkeypatch.setattr(rt_xai.websockets, 'connect', _DropThenFail())
     model = _model(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
     assert any(isinstance(e, SessionErrorEvent) and not e.recoverable for e in events)
@@ -422,7 +438,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
 
     monkeypatch.setattr(rt_xai.websockets, 'connect', _FailingConnect())
     with pytest.raises(ConnectionError, match='refused'):
-        async with _model().connect(instructions='x'):
+        async with _connect(_model(), 'x'):
             pass  # pragma: no cover
 
 
@@ -439,7 +455,7 @@ async def test_provider_str_resolves_key_from_env(monkeypatch: pytest.MonkeyPatc
 
     model = XaiRealtimeModel()
     assert model.model_name == 'grok-voice-latest'
-    async with model.connect(instructions='hi'):
+    async with _connect(model, 'hi'):
         pass
     assert fake_connect.headers == {'Authorization': 'Bearer env-key'}
 

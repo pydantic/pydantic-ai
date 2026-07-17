@@ -69,7 +69,13 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
-from pydantic_ai.realtime import RealtimeConnection, RealtimeModel, RealtimeModelProfile, RealtimeSession
+from pydantic_ai.realtime import (
+    RealtimeConnection,
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
@@ -2295,11 +2301,9 @@ class _FakeRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: Any = None,
-        native_tools: Any = None,
-        model_settings: Any = None,
-        messages: Any = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[_FakeRealtimeConnection]:
         yield _FakeRealtimeConnection()
 

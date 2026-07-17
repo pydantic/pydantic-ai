@@ -29,6 +29,7 @@ from ..messages import (
     SpeechPartDelta,
 )
 from ._base import (
+    DEFAULT_REALTIME_PROFILE,
     AudioDelta,
     AudioInput,
     AudioRetention,
@@ -59,6 +60,7 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnCompleteEvent,
+    merge_realtime_profile,
 )
 from ._session import RealtimeSession
 
@@ -141,4 +143,6 @@ __all__ = (
     'infer_realtime_model',
     'ImageInput',
     'TextInput',
+    'DEFAULT_REALTIME_PROFILE',
+    'merge_realtime_profile',
 )

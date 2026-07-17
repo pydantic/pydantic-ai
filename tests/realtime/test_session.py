@@ -12,6 +12,7 @@ from inline_snapshot import snapshot
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -36,6 +37,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
@@ -219,15 +221,13 @@ class FakeRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[FakeRealtimeConnection]:
-        self.last_instructions = instructions
-        self.last_tools = tools
-        self.last_native_tools = native_tools
+        self.last_instructions = get_instructions(messages) or ''
+        self.last_tools = model_request_parameters.function_tools
+        self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
         self.last_messages = messages
         yield self._connection
@@ -1486,7 +1486,10 @@ async def test_agent_realtime_session_seeds_message_history() -> None:
     async with agent.realtime_session(model=model, message_history=seed) as session:
         _ = [e async for e in session]
         assert session.all_messages() == seed  # seeded into the session's history
-    assert model.last_messages == seed  # forwarded to the provider for wire-level seeding
+    assert model.last_messages == [
+        *seed,
+        ModelRequest(parts=[]),
+    ]  # provider request view includes the current instruction-bearing request
 
 
 async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None:

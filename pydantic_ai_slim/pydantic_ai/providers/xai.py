@@ -2,12 +2,15 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.providers import Provider
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from xai_sdk import AsyncClient
@@ -79,6 +82,14 @@ class XaiProvider(Provider[AsyncClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return grok_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return {
+            'supports_manual_turn_control': True,
+            'supports_interruption': True,
+            'supports_session_seeding': True,
+        }
 
     @overload
     def __init__(

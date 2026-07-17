@@ -30,6 +30,7 @@ except ImportError as _import_error:
         'you can use the `google` optional group - `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -41,6 +42,7 @@ from ..messages import (
     TextPart,
     UserPromptPart,
 )
+from ..models import ModelRequestParameters
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -65,7 +67,6 @@ from ._base import (
     RealtimeConnection,
     RealtimeInput,
     RealtimeModel,
-    RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectedEvent,
     ReconnectPolicy,
@@ -389,18 +390,9 @@ class GoogleRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
-    @property
-    def profile(self) -> RealtimeModelProfile:
-        # Gemini Live drives turns with automatic VAD only (no manual commit/create) and has no
-        # server-side response cancel/truncate, so `supports_manual_turn_control` and `supports_interruption` are off.
-        return RealtimeModelProfile(
-            supports_image_input=True,
-            supports_manual_turn_control=False,
-            supports_interruption=False,
-            supports_output_truncation=False,
-            supports_session_seeding=True,
-            supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
-        )
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
     def _speech_config(self, model_settings: GoogleRealtimeModelSettings) -> genai_types.SpeechConfig | None:
         """Build the speech/voice config from `voice`, `multi_speaker`, and `language_code`.
@@ -541,14 +533,13 @@ class GoogleRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        instructions = get_instructions(messages) or ''
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.
         reconnectable = self.reconnect is not None and settings.get('google_enable_session_resumption', False)
@@ -561,7 +552,13 @@ class GoogleRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
-            config = self._config(instructions, tools, settings, native_tools=native_tools, resumption_handle=handle)
+            config = self._config(
+                instructions,
+                model_request_parameters.function_tools,
+                settings,
+                native_tools=model_request_parameters.native_tools,
+                resumption_handle=handle,
+            )
             opening = client.aio.live.connect(model=self.model, config=config)
             with _single_ws_user_agent(client), _ws_trace_context(client):
                 session = await opening.__aenter__()
@@ -573,7 +570,7 @@ class GoogleRealtimeModel(RealtimeModel):
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
             # resumption restores server state, and a `ReconnectedEvent` starts a fresh turn.
-            if turns := _seed_turns(messages or ()):
+            if turns := _seed_turns(messages):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
                 session,

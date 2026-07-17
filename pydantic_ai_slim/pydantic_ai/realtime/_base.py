@@ -31,13 +31,13 @@ from ..messages import (
     PartStartEvent,
     UserPromptPart,
 )
-from ..models import AbstractModel
+from ..models import AbstractModel, ModelRequestParameters
 from ..native_tools import AbstractNativeTool
 from ..settings import ToolChoice
-from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
 if TYPE_CHECKING:
+    from ..providers import Provider
     from ._openai_protocol import SemanticVAD, ServerVAD
 
 AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input', 'output', 'both'])
@@ -409,7 +409,7 @@ control-plane events.
 """
 
 
-class RealtimeModelProfile(TypedDict):
+class RealtimeModelProfile(TypedDict, total=False):
     """Describes what a [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] supports, so a session can tailor its behavior to the model.
 
     Mirrors the shape and `supports_`-prefixed naming of
@@ -421,8 +421,8 @@ class RealtimeModelProfile(TypedDict):
     mid-session. Read a model's via [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile];
     each flag maps to the session methods a provider may not support.
 
-    Every field is required (`total=True`): a model returns its profile wholesale, so each provider
-    states support for every capability explicitly rather than relying on defaults.
+    All fields are optional; absent keys use
+    [`DEFAULT_REALTIME_PROFILE`][pydantic_ai.realtime.DEFAULT_REALTIME_PROFILE].
     """
 
     supports_image_input: bool
@@ -454,6 +454,30 @@ class RealtimeModelProfile(TypedDict):
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
+
+
+DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
+    'supports_image_input': False,
+    'supports_manual_turn_control': False,
+    'supports_interruption': False,
+    'supports_output_truncation': False,
+    'supports_session_seeding': False,
+    'supported_native_tools': frozenset(),
+}
+"""Fully populated default realtime model profile."""
+
+
+def merge_realtime_profile(
+    base: RealtimeModelProfile | None, *overrides: RealtimeModelProfile | None
+) -> RealtimeModelProfile:
+    """Merge realtime profiles, with later layers overriding earlier ones."""
+    resolved: RealtimeModelProfile = {}
+    if base:
+        resolved.update(base)
+    for override in overrides:
+        if override:
+            resolved.update(override)
+    return resolved
 
 
 class RealtimeConnection(ABC):
@@ -503,6 +527,11 @@ class RealtimeModel(AbstractModel):
     settings: RealtimeModelSettings | None = None
     """Model settings used as defaults for realtime sessions."""
 
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the native tool types implemented by this realtime model class."""
+        return frozenset()
+
     def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
         """Merge model-level defaults with connection-level overrides."""
         settings = self.settings.copy() if self.settings else None
@@ -517,25 +546,19 @@ class RealtimeModel(AbstractModel):
     def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         """Open a connection to the realtime model.
 
         Args:
-            instructions: System instructions for the session.
-            tools: Tool definitions the model may invoke.
-            native_tools: Provider-native tools (e.g. [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool])
-                the model runs server-side. These are validated against the model's
-                [`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools]
-                profile before `connect` is called.
-            model_settings: Optional provider-specific settings.
-            messages: Optional prior conversation to seed the session with, projected to the provider's
+            messages: Prior conversation and the current request carrying session instructions,
+                projected to the provider's
                 initial conversation items. Only text/transcript content is seeded (v1): audio is not
                 replayed. Providers degrade gracefully, dropping content they can't project.
+            model_settings: Optional provider-specific settings.
+            model_request_parameters: Function and native tools available to the session.
 
         Returns:
             An async context manager yielding a [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection].
@@ -549,10 +572,16 @@ class RealtimeModel(AbstractModel):
         raise NotImplementedError
 
     @property
-    @abstractmethod
     def profile(self) -> RealtimeModelProfile:
-        """The operations this model supports, so a session can reject unsupported ones up front."""
-        raise NotImplementedError
+        """Resolve provider facts and intersect native tools with this model's implementation."""
+        provider: Provider[object] | None = getattr(self, '_provider', None)
+        provider_profile = provider.realtime_model_profile(self.model_name) if provider is not None else None
+        resolved = merge_realtime_profile(DEFAULT_REALTIME_PROFILE, provider_profile)
+        profile_supported = resolved.get('supported_native_tools', frozenset())
+        effective_tools = profile_supported & self.__class__.supported_native_tools()
+        if effective_tools != profile_supported:
+            resolved = merge_realtime_profile(resolved, RealtimeModelProfile(supported_native_tools=effective_tools))
+        return resolved
 
 
 @dataclass

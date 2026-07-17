@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 import pytest
@@ -11,7 +12,15 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, PartEndEvent, PartStartEvent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
@@ -52,6 +61,19 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+
+def _connect(
+    model: GoogleRealtimeModel,
+    instructions: str,
+    *,
+    messages: list[ModelMessage] | None = None,
+) -> AbstractAsyncContextManager[GoogleRealtimeConnection]:
+    return model.connect(
+        messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
 
 class _RecordingSession:
@@ -215,17 +237,17 @@ def test_profile() -> None:
     profile = GoogleRealtimeModel().profile
     # Gemini Live has no manual turn control or server-side interruption (automatic VAD only).
     assert (
-        profile['supports_image_input'],
-        profile['supports_manual_turn_control'],
-        profile['supports_interruption'],
-        profile['supports_session_seeding'],
+        profile.get('supports_image_input'),
+        profile.get('supports_manual_turn_control'),
+        profile.get('supports_interruption'),
+        profile.get('supports_session_seeding'),
     ) == (
         True,
         False,
         False,
         True,
     )
-    assert profile['supported_native_tools'] == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
 
 # --- config ------------------------------------------------------------------
@@ -634,7 +656,7 @@ async def test_connect_streams_events() -> None:
     session = _RecordingSession([[_turn('hi')], [_turn('bye')]])
     captured: dict[str, Any] = {}
     model = _model(session, captured)
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-2.5-flash-native-audio-latest'
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
@@ -668,7 +690,7 @@ async def test_connect_seeds_message_history() -> None:
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
     model = _model(session)
-    async with model.connect(instructions='x', messages=history) as conn:
+    async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
     # A single seed batch of context turns, sent without `turn_complete` so the model doesn't respond.
@@ -695,7 +717,7 @@ async def test_connect_seed_drops_non_text_and_textless_turns() -> None:
         ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')]),
     ]
     model = _model(session)
-    async with model.connect(instructions='x', messages=history) as conn:
+    async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
     turns = session.client_content[0]['turns']
@@ -709,11 +731,11 @@ async def test_connect_wires_reconnect_only_with_resumption() -> None:
         reconnect=ReconnectPolicy(),
         settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
     )
-    async with on.connect(instructions='x') as conn:
+    async with _connect(on, 'x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
     # reconnect without resumption would lose state → not wired.
     off = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy())
-    async with off.connect(instructions='x') as conn:
+    async with _connect(off, 'x') as conn:
         assert conn._dial is None and conn._reconnect is None  # pyright: ignore[reportPrivateUsage]
 
 
@@ -974,7 +996,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
         settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
         reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False),
     )
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert events[0] == ReconnectedEvent()
     assert events[1:3] == [Transcript(text='back', is_final=True), TurnCompleteEvent(interrupted=False)]

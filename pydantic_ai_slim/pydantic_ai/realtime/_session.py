@@ -296,7 +296,7 @@ class RealtimeSession:
             self._history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
         elif isinstance(content, BinaryContent):
             if content.is_image:
-                self._require_capability(self._profile['supports_image_input'], 'send', 'image input')
+                self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
                 await self._connection.send(ImageInput(data=content.data, mime_type=content.media_type))
             elif content.is_audio:
                 await self.send_audio(content.data)
@@ -311,7 +311,7 @@ class RealtimeSession:
             await self._connection.send(content)
             self._history.append(ModelRequest(parts=[UserPromptPart(content=content.text)]))
         elif isinstance(content, ImageInput):
-            self._require_capability(self._profile['supports_image_input'], 'send', 'image input')
+            self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
             await self._connection.send(content)
         elif isinstance(content, CommitAudio):
             await self.commit_audio()
@@ -344,12 +344,16 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
-        self._require_capability(self._profile['supports_manual_turn_control'], 'commit_audio', 'manual turn-taking')
+        self._require_capability(
+            self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
+        )
         await self._connection.send(CommitAudio())
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
-        self._require_capability(self._profile['supports_manual_turn_control'], 'clear_audio', 'manual turn-taking')
+        self._require_capability(
+            self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
+        )
         await self._connection.send(ClearAudio())
         # Drop the locally retained copy too (with `audio_retention='input'`/`'both'`), or the discarded
         # audio would still be attached to the next finalized user turn.
@@ -357,7 +361,9 @@ class RealtimeSession:
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
-        self._require_capability(self._profile['supports_manual_turn_control'], 'create_response', 'manual turn-taking')
+        self._require_capability(
+            self._profile.get('supports_manual_turn_control', False), 'create_response', 'manual turn-taking'
+        )
         await self._connection.send(CreateResponse())
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
@@ -371,11 +377,11 @@ class RealtimeSession:
             audio_end_ms: Milliseconds of the current output audio that were actually played. When
                 given, the output item is truncated to this point before the response is cancelled.
         """
-        self._require_capability(self._profile['supports_interruption'], 'interrupt', 'interruption')
+        self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
         # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
         # output item, so a truncate sent afterwards could no-op.
         if audio_end_ms is not None:
-            if not self._profile['supports_output_truncation']:
+            if not self._profile.get('supports_output_truncation', False):
                 raise UserError(
                     'This realtime model does not support output truncation, so `interrupt(audio_end_ms=...)` '
                     'is unavailable. Call `interrupt()` without `audio_end_ms` to cancel without truncating.'

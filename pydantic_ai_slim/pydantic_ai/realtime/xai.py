@@ -37,15 +37,15 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `realtime` and `xai` optional groups - `pip install "pydantic-ai-slim[realtime,xai]"`'
     ) from _import_error
 
+from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage
-from ..native_tools import AbstractNativeTool
+from ..models import ModelRequestParameters
 from ..providers import infer_provider
 from ..tools import ToolDefinition
 from ._base import (
     RealtimeCodecEvent,
     RealtimeModel,
-    RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectPolicy,
     inject_trace_context,
@@ -152,19 +152,6 @@ class XaiRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return 'xai'
 
-    @property
-    def profile(self) -> RealtimeModelProfile:
-        # `supports_output_truncation=False`: xAI has no `conversation.item.truncate`, so barge-in cancels the
-        # response (`supports_interruption`) but can't sync the transcript to a mid-audio playback point.
-        return RealtimeModelProfile(
-            supports_image_input=False,
-            supports_manual_turn_control=True,
-            supports_interruption=True,
-            supports_output_truncation=False,
-            supports_session_seeding=True,
-            supported_native_tools=frozenset(),
-        )
-
     def _session_config(
         self,
         instructions: str,
@@ -204,11 +191,9 @@ class XaiRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[XaiRealtimeConnection]:
         # The `model` query parameter is required: without it the server silently falls back to a default.
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
@@ -217,7 +202,8 @@ class XaiRealtimeModel(RealtimeModel):
         inject_trace_context(headers)
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        session_config = self._session_config(instructions, tools, settings)
+        instructions = get_instructions(messages) or ''
+        session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
@@ -242,7 +228,7 @@ class XaiRealtimeModel(RealtimeModel):
             ws = await dial()
             # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
             # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
-            for item in seed_items(messages or ()):
+            for item in seed_items(messages):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield XaiRealtimeConnection(
                 ws,

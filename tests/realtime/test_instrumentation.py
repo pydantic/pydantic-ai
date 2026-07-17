@@ -23,9 +23,9 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
@@ -41,7 +41,6 @@ from pydantic_ai.realtime import (
     Transcript,
     TurnCompleteEvent,
 )
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .test_session import make_tool_manager
@@ -99,11 +98,9 @@ class _Model(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         yield self._connection
 

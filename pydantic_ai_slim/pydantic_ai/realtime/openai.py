@@ -31,9 +31,10 @@ if TYPE_CHECKING:
     # protocol helpers below (e.g. from the xAI realtime provider) doesn't require the `openai` package.
     from openai import AsyncOpenAI
 
+from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage
-from ..native_tools import AbstractNativeTool
+from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -48,7 +49,6 @@ from ._base import (
     RealtimeConnection,
     RealtimeInput,
     RealtimeModel,
-    RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectedEvent,
     ReconnectPolicy,
@@ -401,17 +401,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
-    @property
-    def profile(self) -> RealtimeModelProfile:
-        return RealtimeModelProfile(
-            supports_image_input=True,
-            supports_manual_turn_control=True,
-            supports_interruption=True,
-            supports_output_truncation=True,
-            supports_session_seeding=True,
-            supported_native_tools=frozenset(),
-        )
-
     def _session_config(
         self,
         instructions: str,
@@ -457,11 +446,9 @@ class OpenAIRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
         headers = {'Authorization': f'Bearer {self._provider.client.api_key}'}
@@ -471,7 +458,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         inject_trace_context(headers)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        session_config = self._session_config(instructions, tools, settings)
+        instructions = get_instructions(messages) or ''
+        session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
@@ -496,7 +484,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             ws = await dial()
             # Seed prior conversation once, after the initial handshake. Reconnects deliberately don't
             # re-seed: server state is lost on drop and a `ReconnectedEvent` starts a fresh turn.
-            for item in seed_items(messages or ()):
+            for item in seed_items(messages):
                 await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(
                 ws,

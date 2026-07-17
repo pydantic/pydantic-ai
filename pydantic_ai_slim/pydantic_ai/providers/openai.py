@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import httpx
 
@@ -9,6 +9,9 @@ from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from openai import AsyncOpenAI
@@ -37,6 +40,16 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return openai_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return {
+            'supports_image_input': True,
+            'supports_manual_turn_control': True,
+            'supports_interruption': True,
+            'supports_output_truncation': True,
+            'supports_session_seeding': True,
+        }
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

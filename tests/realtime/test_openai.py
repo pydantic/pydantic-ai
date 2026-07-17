@@ -6,7 +6,8 @@ import asyncio
 import base64
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import pytest
@@ -14,6 +15,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime import (
@@ -26,6 +29,7 @@ from pydantic_ai.realtime import (
     InputSpeechEndEvent,
     InputSpeechStartEvent,
     InputTranscript,
+    RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectedEvent,
     SessionUsageEvent,
@@ -46,6 +50,21 @@ from pydantic_ai.realtime.openai import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+
+
+def _connect(
+    model: OpenAIRealtimeModel,
+    instructions: str,
+    *,
+    messages: Sequence[ModelMessage] | None = None,
+    tools: list[ToolDefinition] | None = None,
+    model_settings: RealtimeModelSettings | None = None,
+) -> AbstractAsyncContextManager[OpenAIRealtimeConnection]:
+    return model.connect(
+        messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(function_tools=tools or []),
+    )
 
 
 def test_map_audio_delta() -> None:
@@ -282,7 +301,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     )
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
 
-    async with model.connect(instructions='Be nice', tools=tools) as conn:
+    async with _connect(model, 'Be nice', tools=tools) as conn:
         events = [e async for e in conn]
 
     assert events == [Transcript(text='hi', is_final=True)]
@@ -325,7 +344,7 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
     model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
     tracer = TracerProvider().get_tracer('test')
     with tracer.start_as_current_span('root'):
-        async with model.connect(instructions='hi') as conn:
+        async with _connect(model, 'hi') as conn:
             _ = [e async for e in conn]
 
     assert fake_connect.headers is not None
@@ -439,7 +458,7 @@ async def test_connect_skips_unrelated_events_during_handshake(monkeypatch: pyte
     ws = FakeWebSocket([rate_limits, _created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         assert [e async for e in conn] == []
 
 
@@ -450,7 +469,7 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     with pytest.raises(RuntimeError, match='invalid model'):
-        async with model.connect(instructions='x'):
+        async with _connect(model, 'x'):
             pass  # pragma: no cover
 
 
@@ -467,7 +486,7 @@ async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime', settings=RealtimeModelSettings(handshake_timeout=0.02))
     with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
-        async with model.connect(instructions='x'):
+        async with _connect(model, 'x'):
             pass  # pragma: no cover
 
 
@@ -487,7 +506,7 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
     monkeypatch.setattr(rt_openai.websockets, 'connect', _FailingConnect())
     model = OpenAIRealtimeModel('gpt-realtime')
     with pytest.raises(ConnectionError, match='refused'):
-        async with model.connect(instructions='x'):
+        async with _connect(model, 'x'):
             pass  # pragma: no cover
 
 
@@ -497,7 +516,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
     ws = FakeWebSocket([_created(), _updated(), b'\x00binary', audio])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert events == [AudioDelta(data=b'\x09')]
 
@@ -515,7 +534,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     ws = FakeWebSocket([_created(), _updated(), bad_json, non_object, bad_audio, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == [
         'SessionErrorEvent',
@@ -532,7 +551,7 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x'):
+    async with _connect(model, 'x'):
         pass
     session = json.loads(ws.sent[0])['session']
     assert 'tools' not in session
@@ -560,7 +579,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x', messages=history):
+    async with _connect(model, 'x', messages=history):
         pass
 
     # After the `session.update` handshake frame, one `conversation.item.create` per projected item.
@@ -584,7 +603,7 @@ async def test_connect_seeds_multimodal_user_prompt_as_text(monkeypatch: pytest.
         ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png'), 'describe this'])])
     ]
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x', messages=history):
+    async with _connect(model, 'x', messages=history):
         pass
     items = [json.loads(frame) for frame in ws.sent[1:]]
     assert [(i['item']['role'], i['item']['content'][0]) for i in items] == [
@@ -793,7 +812,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
     model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
     assert events == [ReconnectedEvent(), Transcript(text='hi', is_final=True)]
@@ -981,7 +1000,7 @@ async def test_connect_tool_without_description(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})]
-    async with model.connect(instructions='x', tools=tools):
+    async with _connect(model, 'x', tools=tools):
         pass
     tool = json.loads(ws.sent[0])['session']['tools'][0]
     assert tool == {'type': 'function', 'name': 'ping', 'parameters': {'type': 'object'}}
@@ -992,7 +1011,7 @@ async def test_connect_without_transcription_model_omits_transcription(monkeypat
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime', settings=RealtimeModelSettings(input_transcription_model=None))
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         # A disabled transcription model reports `input_transcription_enabled=False`, so the session
         # finalizes user turns from retained audio instead of waiting for transcripts that never arrive.
         assert conn.input_transcription_enabled is False
@@ -1007,7 +1026,7 @@ async def test_connect_transcription_model_explicit_override(monkeypatch: pytest
     model = OpenAIRealtimeModel(
         'gpt-realtime', settings=RealtimeModelSettings(input_transcription_model='gpt-4o-transcribe')
     )
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         assert conn.input_transcription_enabled is True
     assert json.loads(ws.sent[0])['session']['audio']['input']['transcription'] == {'model': 'gpt-4o-transcribe'}
 
@@ -1017,7 +1036,7 @@ async def test_connect_applies_max_tokens_without_temperature(monkeypatch: pytes
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x', model_settings=RealtimeModelSettings(max_tokens=256)):
+    async with _connect(model, 'x', model_settings=RealtimeModelSettings(max_tokens=256)):
         pass
     session = json.loads(ws.sent[0])['session']
     assert session['max_output_tokens'] == 256
@@ -1031,7 +1050,7 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     ws = FakeWebSocket([_created(), _updated(), unmapped, done])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime')
-    async with model.connect(instructions='x') as conn:
+    async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     assert events == [TurnCompleteEvent(interrupted=False)]
 
@@ -1081,7 +1100,7 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=OpenAIProvider(base_url='https://proxy.example/v1', api_key='k')
     )
-    async with model.connect(instructions='x'):
+    async with _connect(model, 'x'):
         pass
     assert fake_connect.url == 'wss://proxy.example/v1/realtime?model=gpt-realtime'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
@@ -1098,10 +1117,29 @@ def test_azure_provider_is_rejected() -> None:
 def test_profile() -> None:
     profile = OpenAIRealtimeModel('gpt-realtime').profile
     assert (
-        profile['supports_image_input'],
-        profile['supports_manual_turn_control'],
-        profile['supports_interruption'],
-        profile['supports_output_truncation'],
-        profile['supports_session_seeding'],
+        profile.get('supports_image_input'),
+        profile.get('supports_manual_turn_control'),
+        profile.get('supports_interruption'),
+        profile.get('supports_output_truncation'),
+        profile.get('supports_session_seeding'),
     ) == (True, True, True, True, True)
-    assert profile['supported_native_tools'] == frozenset()
+    assert profile.get('supported_native_tools') == frozenset()
+
+
+def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_native_tools() -> None:
+    class ProfileProvider(OpenAIProvider):
+        @staticmethod
+        def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+            return RealtimeModelProfile(
+                supports_image_input=model_name == 'image-model',
+                supported_native_tools=frozenset({WebSearchTool}),
+            )
+
+    provider = ProfileProvider(api_key='k')
+    image_profile = OpenAIRealtimeModel('image-model', provider=provider).profile
+    text_profile = OpenAIRealtimeModel('text-model', provider=provider).profile
+
+    assert image_profile.get('supports_image_input') is True
+    assert text_profile.get('supports_image_input') is False
+    assert image_profile.get('supports_interruption') is False  # merged from the default
+    assert image_profile.get('supported_native_tools') == frozenset()  # model class implements none

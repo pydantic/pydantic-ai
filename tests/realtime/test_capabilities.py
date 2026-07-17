@@ -16,10 +16,12 @@ from contextlib import asynccontextmanager
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeCodecEvent,
@@ -86,15 +88,13 @@ class _RecordingModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        native_tools: list[AbstractNativeTool] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        messages: Sequence[ModelMessage] | None = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        self.instructions = instructions
-        self.tools = tools
-        self.native_tools = native_tools
+        self.instructions = get_instructions(messages)
+        self.tools = model_request_parameters.function_tools
+        self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
         yield _Connection()
 

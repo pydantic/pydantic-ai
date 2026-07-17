@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -36,11 +36,17 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import MCP, Capability, Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.models import ModelRequestParameters, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime import RealtimeConnection, RealtimeModel, RealtimeModelProfile, RealtimeSession
+from pydantic_ai.realtime import (
+    RealtimeConnection,
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -930,11 +936,9 @@ class _FakeRealtimeModel(RealtimeModel):
     async def connect(
         self,
         *,
-        instructions: str,
-        tools: Any = None,
-        native_tools: Any = None,
-        model_settings: Any = None,
-        messages: Any = None,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[_FakeRealtimeConnection]:
         yield _FakeRealtimeConnection()
 

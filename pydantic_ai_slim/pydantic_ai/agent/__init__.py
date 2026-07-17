@@ -2843,7 +2843,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # connecting, rather than mid-session. This is the signal a caller or capability needs to fall
         # back (e.g. to a local tool); the session itself does not fall back automatically.
         model_profile = model.profile
-        supported_native_tools = model_profile['supported_native_tools']
+        supported_native_tools = model_profile.get('supported_native_tools', frozenset())
         if unsupported_native_tools := [t for t in native_tools if not isinstance(t, tuple(supported_native_tools))]:
             unsupported = ', '.join(sorted(type(t).__name__ for t in unsupported_native_tools))
             supported = ', '.join(sorted(t.__name__ for t in supported_native_tools)) or 'none'
@@ -2883,19 +2883,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
+            request_messages = [
+                *(message_history or ()),
+                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+            ]
+            model_request_parameters = models.ModelRequestParameters(
+                function_tools=tool_defs,
+                native_tools=native_tools,
+            )
 
-            if message_history and not model_profile['supports_session_seeding']:
+            if message_history and not model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
                 )
 
             async with model.connect(
-                instructions=resolved_instructions,
-                tools=tool_defs,
-                native_tools=native_tools,
+                messages=request_messages,
                 model_settings=effective_model_settings,
-                messages=message_history,
+                model_request_parameters=model_request_parameters,
             ) as connection:
                 yield RealtimeSession(
                     connection,

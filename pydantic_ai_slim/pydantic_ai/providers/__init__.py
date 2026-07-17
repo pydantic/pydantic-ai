@@ -9,7 +9,7 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
 import httpx
@@ -17,6 +17,9 @@ from typing_extensions import Self, TypeVar
 
 from ..exceptions import UserError
 from ..profiles import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime import RealtimeModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
@@ -89,6 +92,11 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
+        """The realtime model profile for the named model, if available."""
+        return None
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         """Update the SDK client's internal HTTP client reference.
