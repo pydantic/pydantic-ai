@@ -3000,6 +3000,44 @@ def test_openai_map_tool_search_call_unit():
     assert mixed.content == {'discovered_tools': [{'name': 'real'}]}
 
 
+async def test_openai_native_tool_search_null_call_id_pairs_positionally(allow_model_requests: None):
+    """When the hosted Responses API returns `call_id: null` on both the
+    `tool_search_call` and its matching `tool_search_output` (stateless requests
+    with no `previous_response_id`), `_process_response` must still pair them
+    positionally instead of dropping the discovered tools."""
+    pytest.importorskip('openai')
+
+    call = ResponseToolSearchCall(
+        id='tsc_1',
+        arguments={'paths': ['get_exchange_rate']},
+        call_id=None,
+        execution='server',
+        status='completed',
+        type='tool_search_call',
+    )
+    output = ResponseToolSearchOutputItem(
+        id='tso_1',
+        call_id=None,
+        execution='server',
+        status='completed',
+        tools=[
+            FunctionTool(name='get_exchange_rate', description='', parameters={}, strict=False, type='function'),
+        ],
+        type='tool_search_output',
+    )
+    response = response_message([call, output])
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    model_response = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response, OpenAIResponsesModelSettings(), ModelRequestParameters(function_tools=[], native_tools=[])
+    )
+
+    return_parts = [part for part in model_response.parts if isinstance(part, NativeToolSearchReturnPart)]
+    assert len(return_parts) == 1
+    assert return_parts[0].content == {'discovered_tools': [{'name': 'get_exchange_rate'}]}
+
+
 @pytest.mark.vcr
 async def test_openai_native_tool_search_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI Responses: native server-executed `tool_search`

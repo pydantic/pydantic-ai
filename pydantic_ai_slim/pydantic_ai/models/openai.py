@@ -2078,14 +2078,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
-        # Index tool_search_output items by call_id so we can pair them with the
-        # corresponding tool_search_call when we encounter it (they may come in either
-        # order).
-        tool_search_outputs: dict[str, responses.ResponseToolSearchOutputItem] = {
-            output_item.call_id: output_item
-            for output_item in response.output
-            if isinstance(output_item, responses.ResponseToolSearchOutputItem) and output_item.call_id is not None
-        }
+        # Index tool_search_output items so we can pair them with the corresponding
+        # tool_search_call when we encounter it (they may come in either order).
+        # When the output carries a `call_id`, use it as the join key. The hosted
+        # Responses API returns `call_id: null` on both the `tool_search_call` and the
+        # matching `tool_search_output` for stateless requests (no
+        # `previous_response_id`), so outputs without a `call_id` are collected
+        # positionally and paired with the next null-`call_id` call in document order.
+        tool_search_outputs: dict[str, responses.ResponseToolSearchOutputItem] = {}
+        unpaired_tool_search_outputs: list[responses.ResponseToolSearchOutputItem] = []
+        for output_item in response.output:
+            if not isinstance(output_item, responses.ResponseToolSearchOutputItem):
+                continue
+            if output_item.call_id is not None:
+                tool_search_outputs[output_item.call_id] = output_item
+            else:
+                unpaired_tool_search_outputs.append(output_item)
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -2180,7 +2188,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # `ToolReturnPart` is produced by the tool runner, not here.
                     items.append(_map_client_tool_search_call(item, self.system))
                 else:
-                    output_item = tool_search_outputs.get(item.call_id) if item.call_id else None
+                    if item.call_id:
+                        output_item = tool_search_outputs.get(item.call_id)
+                    elif unpaired_tool_search_outputs:
+                        output_item = unpaired_tool_search_outputs.pop(0)
+                    else:
+                        output_item = None
                     call_part, return_part = _map_tool_search_call(item, output_item, self.system)
                     items.append(call_part)
                     items.append(return_part)
