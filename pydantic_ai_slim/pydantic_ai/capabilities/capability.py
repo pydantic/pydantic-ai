@@ -95,7 +95,10 @@ class Capability(AbstractCapability[AgentDepsT]):
         self.defer_loading = defer_loading
         self.toolsets = resolved_toolsets
         self.tools = tools
-        self._function_toolset = FunctionToolset[AgentDepsT](tools)
+        # Stamp the capability's `id` onto its contributed function toolset so it can be used with
+        # durable execution, which wraps leaf toolsets by `id` at construction time (see
+        # `capabilities.md`). User-provided `toolsets=` keep their own ids and are never overwritten.
+        self._function_toolset = FunctionToolset[AgentDepsT](tools, id=id)
         self._instructions = list(normalize_instructions(instructions))
 
     @classmethod

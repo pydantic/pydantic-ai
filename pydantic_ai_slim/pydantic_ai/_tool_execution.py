@@ -821,12 +821,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             metadata=self.deferred_metadata,
         )
 
+        # Emit the batch of deferred requests so stream consumers can observe the pending
+        # interactions without coupling to the resolution handler. (Each deferred call already
+        # emitted its own `FunctionToolCallEvent`.)
+        yield _messages.DeferredToolRequestsEvent(deferred_tool_requests)
+
         # Let capability handlers resolve deferred calls inline (one shot).
         # Results are fed back through the existing tool-execution pipeline so that
         # approvals, denials, retries, and ToolReturn unwrapping all behave identically
         # to the UserPromptNode resume path.
         handler_results = await self.tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
+            yield _messages.DeferredToolResultsEvent(handler_results)
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call
@@ -866,6 +872,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+                # A resolved call can defer again when it re-executes (e.g. an approved tool raises
+                # `CallDeferred`). No second `DeferredToolRequestsEvent` is emitted for these: the
+                # batch was already announced above, and re-announcing the same tool call IDs
+                # (possibly under a different kind) would be ambiguous for consumers. The final
+                # pending batch still surfaces as the run's `DeferredToolRequests` output below.
                 if deferred_tool_requests is None:
                     deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])
