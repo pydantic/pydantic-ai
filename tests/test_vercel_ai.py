@@ -3736,7 +3736,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     )
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.skipif(not starlette_import_successful(), reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
     request = SubmitMessage(
@@ -3812,7 +3812,7 @@ def test_manage_system_prompt_visible_in_vercel_adapter_signatures():
     assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.skipif(not starlette_import_successful(), reason='Starlette is not installed')
 async def test_dispatch_request_with_tool_approval():
     """Test that dispatch_request with sdk_version=6 enables tool approval."""
 
@@ -6585,7 +6585,7 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.skipif(not starlette_import_successful(), reason='Starlette is not installed')
 @pytest.mark.parametrize('allow_uploaded_files', [True, False])
 async def test_from_request_threads_allow_uploaded_files(allow_uploaded_files: bool):
     """`allow_uploaded_files` passed to the public `from_request` entry point reaches the sanitizer.
@@ -6679,7 +6679,7 @@ def test_constructor_preserve_file_data_deprecated_alias():
         assert VercelAIAdapter(agent=agent, run_input=run_input).allow_uploaded_files is False
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.skipif(not starlette_import_successful(), reason='Starlette is not installed')
 async def test_dispatch_request_preserve_file_data_deprecated_alias():
     """The deprecated `preserve_file_data` argument to `dispatch_request` maps onto `allow_uploaded_files`."""
     run_input = SubmitMessage(
