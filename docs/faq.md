@@ -2,7 +2,7 @@
 
 ## How do deferred tools and prompt caching work together?
 
-Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front.
+Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front ([Google lays its cache out differently](#does-changing-a-tool-definition-always-break-the-cache)).
 
 [Tool search](tools-advanced.md#tool-search) and [deferred loading](toolsets.md#deferred-loading) exist to grow the set of tools the model can reach *without* editing that prefix. Pydantic AI picks the strategy per provider automatically, and the trade-off is about caching:
 
