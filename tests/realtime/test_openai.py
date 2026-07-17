@@ -23,17 +23,12 @@ from pydantic_ai.realtime import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
-    ImageInput,
+    InputSpeechEndEvent,
+    InputSpeechStartEvent,
     InputTranscript,
-    RateLimit,
-    RateLimitsEvent,
     RealtimeModelSettings,
     ReconnectedEvent,
-    SessionErrorEvent,
     SessionUsageEvent,
-    SpeechStartedEvent,
-    SpeechStoppedEvent,
-    TextInput,
     ToolCall,
     ToolResult,
     Transcript,
@@ -41,6 +36,7 @@ from pydantic_ai.realtime import (
     TurnCompleteEvent,
     openai as rt_openai,
 )
+from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
 from pydantic_ai.realtime.openai import (
     OpenAIRealtimeConnection,
@@ -170,16 +166,11 @@ def test_map_rate_limits() -> None:
             ],
         }
     )
-    assert event == RateLimitsEvent(
-        limits=[
-            RateLimit(name='requests', limit=100, remaining=99, reset_seconds=1.5),
-            RateLimit(name='tokens', limit=None, remaining=None, reset_seconds=2.0),
-        ]
-    )
+    assert event is None
 
 
 def test_map_rate_limits_non_list() -> None:
-    assert map_event({'type': 'rate_limits.updated'}) == RateLimitsEvent(limits=[])
+    assert map_event({'type': 'rate_limits.updated'}) is None
 
 
 def test_map_usage_full_payload() -> None:
@@ -216,11 +207,11 @@ def test_map_usage_minimal_and_missing() -> None:
 
 
 def test_map_speech_started() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_started'}) == SpeechStartedEvent()
+    assert map_event({'type': 'input_audio_buffer.speech_started'}) == InputSpeechStartEvent()
 
 
 def test_map_speech_stopped() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == SpeechStoppedEvent()
+    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == InputSpeechEndEvent()
 
 
 def test_map_unknown_event_returns_none() -> None:
@@ -347,7 +338,7 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
-            openai_turn_detection=rt_openai.ServerVAD(
+            turn_detection=rt_openai.ServerVAD(
                 threshold=0.7,
                 prefix_padding_ms=200,
                 silence_duration_ms=400,
@@ -371,7 +362,7 @@ def test_session_config_server_vad_params() -> None:
 
 def test_session_config_semantic_vad() -> None:
     model = OpenAIRealtimeModel(
-        settings=rt_openai.OpenAIRealtimeModelSettings(openai_turn_detection=rt_openai.SemanticVAD(eagerness='high'))
+        settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=rt_openai.SemanticVAD(eagerness='high'))
     )
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
@@ -383,7 +374,7 @@ def test_session_config_semantic_vad() -> None:
 
 
 def test_session_config_manual_turn_detection_is_null() -> None:
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_turn_detection=None))
+    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=None))
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] is None
 
@@ -474,7 +465,7 @@ class HangingWebSocket(FakeWebSocket):
 async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = HangingWebSocket([])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', handshake_timeout=0.02)
+    model = OpenAIRealtimeModel('gpt-realtime', settings=RealtimeModelSettings(handshake_timeout=0.02))
     with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
         async with model.connect(instructions='x'):
             pass  # pragma: no cover

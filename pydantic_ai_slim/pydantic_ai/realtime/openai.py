@@ -44,8 +44,8 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
+    RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -95,14 +95,6 @@ __all__ = (
 class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to OpenAI realtime models."""
 
-    openai_turn_detection: ServerVAD | SemanticVAD | None
-    """How the server decides when the user's turn ends.
-
-    A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] (the default when absent) or
-    [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] configures automatic detection; `None`
-    disables it for manual turn-taking (push-to-talk), where you drive the turn with
-    `commit_audio()` + `create_response()`.
-    """
     openai_input_noise_reduction: Literal['near_field', 'far_field']
     """Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference) microphones.
 
@@ -265,7 +257,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(json.dumps(event))
 
-    def _map_event(self, data: dict[str, Any]) -> RealtimeEvent | None:
+    def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         """Map a raw provider frame to a codec event.
 
         A hook so protocol clones (e.g. the xAI Grok Voice provider) can reuse the whole connection while
@@ -273,7 +265,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         return map_event(data)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         while True:
             try:
                 async for raw in self._ws:
@@ -303,14 +295,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
                 return
 
-    async def _decode_frame(self, raw: str) -> list[RealtimeEvent]:
+    async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:
         """Parse one text frame into events, updating tracked response state.
 
         Raises `ValueError` (incl. `json.JSONDecodeError` / `binascii.Error`) on a malformed payload.
         """
         data = loads_obj(raw)
         event_type = data.get('type')
-        events: list[RealtimeEvent] = []
+        events: list[RealtimeCodecEvent] = []
         if event_type == 'response.created':
             self._response_active = True
         elif event_type in AUDIO_DELTA_TYPES:
@@ -375,8 +367,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
-        handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
-            before failing, so `connect()` doesn't hang if the server never responds.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionErrorEvent` instead.
@@ -385,7 +375,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
-    handshake_timeout: float = 30.0
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
@@ -433,7 +422,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
             'format': {'type': 'audio/pcm', 'rate': 24000},
-            'turn_detection': turn_detection_config(model_settings.get('openai_turn_detection', ServerVAD())),
+            'turn_detection': turn_detection_config(model_settings.get('turn_detection', ServerVAD())),
         }
         transcription_model = resolve_transcription_model(
             model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
@@ -481,6 +470,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         # `httpx` client, which would otherwise inject it.
         inject_trace_context(headers)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
         session_config = self._session_config(instructions, tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
@@ -497,9 +487,9 @@ class OpenAIRealtimeModel(RealtimeModel):
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            await expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.created', timeout=handshake_timeout)
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
-            await expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.updated', timeout=handshake_timeout)
             return ws
 
         try:

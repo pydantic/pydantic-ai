@@ -28,7 +28,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeModelSettings, SessionErrorEvent, TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeModelSettings, TurnCompleteEvent
+from pydantic_ai.realtime._base import SessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -52,7 +53,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 
     events: list[Any] = []
     async with agent.realtime_session(model=model, audio_retention='output') as session:
-        await session.send_text('Say a short greeting.')
+        await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
@@ -61,7 +62,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'SessionUsageEvent', 'PartEndEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'TurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())])
@@ -92,7 +93,7 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
 
     events: list[Any] = []
     async with agent.realtime_session(model=model) as session:
-        await session.send_text('What is the weather in London?')
+        await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
@@ -151,7 +152,7 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
 
     events: list[Any] = []
     async with agent.realtime_session(model=model, message_history=history) as session:
-        await session.send_text('What is my name and favorite color?')
+        await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)

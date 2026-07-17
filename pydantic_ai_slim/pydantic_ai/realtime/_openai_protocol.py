@@ -34,13 +34,11 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
     AudioDelta,
+    InputSpeechEndEvent,
+    InputSpeechStartEvent,
     InputTranscript,
-    RateLimit,
-    RateLimitsEvent,
-    RealtimeEvent,
+    RealtimeCodecEvent,
     SessionErrorEvent,
-    SpeechStartedEvent,
-    SpeechStoppedEvent,
     ToolCall,
     Transcript,
     TurnCompleteEvent,
@@ -157,27 +155,6 @@ def loads_obj(raw: str) -> dict[str, Any]:
     return cast('dict[str, Any]', data)
 
 
-def _map_rate_limits(data: dict[str, Any]) -> RateLimitsEvent:
-    """Map a `rate_limits.updated` event to a [`RateLimitsEvent`][pydantic_ai.realtime.RateLimitsEvent]."""
-    entries = data.get('rate_limits')
-    limits: list[RateLimit] = []
-    for entry in cast('list[Any]', entries) if isinstance(entries, list) else []:
-        item = obj(entry)
-        name = item.get('name')
-        if not isinstance(name, str):
-            continue
-        reset = item.get('reset_seconds')
-        limits.append(
-            RateLimit(
-                name=name,
-                limit=item.get('limit') if isinstance(item.get('limit'), int) else None,
-                remaining=item.get('remaining') if isinstance(item.get('remaining'), int) else None,
-                reset_seconds=float(reset) if isinstance(reset, (int, float)) and not isinstance(reset, bool) else None,
-            )
-        )
-    return RateLimitsEvent(limits=limits)
-
-
 def _is_function_call_only(output: Any) -> bool:
     """Whether a `response.done` output list contains only function calls."""
     entries = cast('list[Any]', output)
@@ -186,7 +163,7 @@ def _is_function_call_only(output: Any) -> bool:
     return bool(entries) and all(obj(entry).get('type') == 'function_call' for entry in entries)
 
 
-def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
+def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map a `response.done` event, returning `None` for function-call-only responses.
 
     A response whose only output is function calls is an intermediate step: the session executes the
@@ -202,8 +179,8 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
     return TurnCompleteEvent(interrupted=response.get('status') == 'cancelled')
 
 
-def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
-    """Map a raw OpenAI Realtime event to a [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent].
+def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+    """Map a raw OpenAI Realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent].
 
     Returns `None` for events that carry no session-relevant content (e.g. `session.created`).
     """
@@ -241,13 +218,10 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
         )
 
     if event_type == 'input_audio_buffer.speech_started':
-        return SpeechStartedEvent()
+        return InputSpeechStartEvent()
 
     if event_type == 'input_audio_buffer.speech_stopped':
-        return SpeechStoppedEvent()
-
-    if event_type == 'rate_limits.updated':
-        return _map_rate_limits(data)
+        return InputSpeechEndEvent()
 
     if event_type == 'response.done':
         return _map_response_done(data)

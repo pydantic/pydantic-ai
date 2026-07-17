@@ -22,8 +22,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
@@ -43,7 +43,7 @@ class _Connection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield TurnCompleteEvent()
 
 

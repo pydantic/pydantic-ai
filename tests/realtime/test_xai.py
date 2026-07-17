@@ -24,10 +24,10 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectedEvent,
-    SessionErrorEvent,
     ToolCall,
     Transcript,
 )
+from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -146,7 +146,7 @@ def test_session_config_transcription_disabled() -> None:
 def test_session_config_manual_turn_detection_is_null() -> None:
     """`turn_detection=None` disables VAD (push-to-talk), sent as an explicit null."""
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(xai_turn_detection=None)
+        'hi', None, rt_xai.XaiRealtimeModelSettings(turn_detection=None)
     )
     assert config['turn_detection'] is None
 

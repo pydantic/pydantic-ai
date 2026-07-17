@@ -7,7 +7,7 @@ just conversation with live vision.
 
 It showcases the Gemini provider's native **live video** support: each camera frame is an
 [`ImageInput`][pydantic_ai.realtime.ImageInput] sent with
-[`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]; the audio is the usual
+[`send`][pydantic_ai.realtime.RealtimeSession.send]; the audio is the usual
 speech-to-speech path. (See the [realtime guide](https://ai.pydantic.dev/realtime/).)
 
 ## Run
@@ -121,7 +121,7 @@ straight through. (`ngrok http 8000` works the same way.)
 ```
 browser ──mic PCM16@16k (binary WS)──┐
         ──camera JPEG frames (JSON WS)─┤→  FastAPI /ws  →  Agent.realtime_session(GoogleRealtimeModel)
-        ◀──model audio (binary WS)─────┘                    └ send_audio / send_image / receive
+        ◀──model audio (binary WS)─────┘                    └ send_audio / send / receive
         ◀──transcripts (JSON WS)───────┘
 ```
 

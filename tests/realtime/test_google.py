@@ -11,27 +11,22 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, PartEndEvent, PartStartEvent
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
-    ImageInput,
+    InputSpeechStartEvent,
     InputTranscript,
-    NativeToolParts,
     RealtimeModelSettings,
     ReconnectedEvent,
-    SessionErrorEvent,
     SessionUsageEvent,
-    SourcesEvent,
-    SpeechStartedEvent,
-    TextInput,
     ToolCall,
     ToolResult,
     Transcript,
     TurnCompleteEvent,
-    WebSource,
 )
+from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -427,7 +422,7 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         Transcript(text='Sunny', is_final=False),
-        SpeechStartedEvent(),
+        InputSpeechStartEvent(),
         TurnCompleteEvent(interrupted=False),
     ]
 
@@ -446,12 +441,9 @@ def test_map_tool_call_and_usage() -> None:
     ]
 
 
-def test_map_grounding_and_url_context_to_sources_and_native_tool_parts() -> None:
-    # A grounded turn produces two events from the same metadata: the UI-facing `SourcesEvent` (flattened,
-    # lossy) and `NativeToolParts` carrying the native tool parts for history. The `NativeToolParts` parts
-    # must match the classic `GoogleModel` shapes exactly (web_search + web_fetch, full `content` dicts
-    # including a source's `domain` and a fetch's retrieval status, which `SourcesEvent` drops), so a grounded
-    # voice turn's history is indistinguishable from a classic run's. Kept as a unit test because a
+def test_map_grounding_and_url_context_to_native_tool_part_events() -> None:
+    # Grounding streams native tool parts matching the classic `GoogleModel` shapes exactly (web_search +
+    # web_fetch, including a source's `domain` and a fetch's retrieval status). Kept as a unit test because a
     # cassette can't reliably force the model to ground and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -479,55 +471,48 @@ def test_map_grounding_and_url_context_to_sources_and_native_tool_parts() -> Non
             ),
         )
     )
-    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        SourcesEvent(
-            sources=[
-                WebSource(url='https://example.com', title='Example'),
-                WebSource(url='https://fetched.example'),
+    parts = [
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['weather rome']},
+            tool_call_id=IsStr(),
+            provider_name='google',
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[
+                {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
+                # The `web=None` chunk is dropped; the uri-less one round-trips, matching classic.
+                {'domain': None, 'title': None, 'uri': None},
             ],
-            queries=['weather rome'],
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            provider_name='google',
         ),
-        NativeToolParts(
-            parts=[
-                NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'queries': ['weather rome']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {'domain': 'example.com', 'title': 'Example', 'uri': 'https://example.com'},
-                        # Unlike `SourcesEvent`, grounding history keeps every non-None `web` chunk verbatim
-                        # (the `web=None` chunk is dropped, the uri-less one round-trips), matching classic.
-                        {'domain': None, 'title': None, 'uri': None},
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-                NativeToolCallPart(
-                    tool_name='web_fetch',
-                    args={'urls': ['https://fetched.example']},
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_fetch',
-                    content=[
-                        {
-                            'retrieved_url': 'https://fetched.example',
-                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
-                        },
-                        {'retrieved_url': None, 'url_retrieval_status': None},
-                    ],
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-            ]
+        NativeToolCallPart(
+            tool_name='web_fetch',
+            args={'urls': ['https://fetched.example']},
+            tool_call_id=IsStr(),
+            provider_name='google',
         ),
+        NativeToolReturnPart(
+            tool_name='web_fetch',
+            content=[
+                {
+                    'retrieved_url': 'https://fetched.example',
+                    'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                },
+                {'retrieved_url': None, 'url_retrieval_status': None},
+            ],
+            tool_call_id=IsStr(),
+            timestamp=IsDatetime(),
+            provider_name='google',
+        ),
+    ]
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        event
+        for index, part in enumerate(parts)
+        for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
     ]
 
 
@@ -536,8 +521,8 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     # `code_execution_result` parts on the model turn. They map to a `NativeToolCallPart` /
     # `NativeToolReturnPart` pair byte-identical to the classic `GoogleModel`'s (tool_name
     # `code_execution`, `args`/`content` from the SDK models' JSON dump), sharing a single `tool_call_id`
-    # so the return pairs with its call, and are carried on `NativeToolParts` for history — not yielded
-    # live. The spoken transcript still comes through as its own `Transcript`. Kept as a unit test because
+    # so the return pairs with its call, and stream as part start/end events. The spoken transcript still
+    # comes through as its own `Transcript`. Kept as a unit test because
     # a cassette can't reliably force the model to run code and the recording key only exposes audio-out.
     conn = _conn(_RecordingSession())
     message = genai_types.LiveServerMessage(
@@ -559,25 +544,28 @@ def test_map_code_execution_to_native_tool_parts() -> None:
             )
         )
     )
+    parts = [
+        NativeToolCallPart(
+            tool_name='code_execution',
+            args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
+            tool_call_id=(code_id := IsSameStr()),
+            provider_name='google',
+        ),
+        NativeToolReturnPart(
+            tool_name='code_execution',
+            content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
+            tool_call_id=code_id,
+            timestamp=IsDatetime(),
+            provider_name='google',
+        ),
+    ]
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         Transcript(text='The answer is 2.', is_final=False, output_text=True),
-        NativeToolParts(
-            parts=[
-                NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(1 + 1)', 'language': 'PYTHON'},
-                    tool_call_id=(code_id := IsSameStr()),
-                    provider_name='google',
-                ),
-                NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '2\n'},
-                    tool_call_id=code_id,
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                ),
-            ]
-        ),
+        *[
+            event
+            for index, part in enumerate(parts)
+            for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
+        ],
     ]
 
 
@@ -716,7 +704,11 @@ async def test_connect_seed_drops_non_text_and_textless_turns() -> None:
 
 async def test_connect_wires_reconnect_only_with_resumption() -> None:
     # reconnect + session resumption → the connection can re-dial.
-    on = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy(), enable_session_resumption=True)
+    on = _model(
+        _RecordingSession([[_turn('hi')]]),
+        reconnect=ReconnectPolicy(),
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
+    )
     async with on.connect(instructions='x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
     # reconnect without resumption would lose state → not wired.
@@ -835,9 +827,9 @@ def test_transcription_language_codes() -> None:
 def test_context_compression_and_session_resumption() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000)
+            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000),
+            google_enable_session_resumption=True,
         ),
-        enable_session_resumption=True,
     )
     config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     cwc = config.context_window_compression
@@ -848,7 +840,9 @@ def test_context_compression_and_session_resumption() -> None:
 
 
 def test_session_resumption_passes_handle() -> None:
-    config = GoogleRealtimeModel(enable_session_resumption=True)._config('hi', None, None, resumption_handle='h9')  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True))._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, None, resumption_handle='h9'
+    )
     assert config.session_resumption.handle == 'h9'  # type: ignore[union-attr]
 
 
@@ -977,7 +971,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),
-        enable_session_resumption=True,
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
         reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False),
     )
     async with model.connect(instructions='x') as conn:

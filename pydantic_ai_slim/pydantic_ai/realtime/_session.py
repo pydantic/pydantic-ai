@@ -4,16 +4,17 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pydantic_core
+from anyio import Lock
 from opentelemetry.trace import Span, SpanKind
 from typing_extensions import assert_never
 
 from .._instrumentation import response_attributes, safe_to_json
-from ..exceptions import UsageLimitExceeded, UserError
+from ..exceptions import ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -30,10 +31,13 @@ from ..messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
+from ..tool_manager import ToolManager
+from ..tools import ToolDenied
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
     AudioDelta,
@@ -44,20 +48,18 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
+    InputSpeechEndEvent,
+    InputSpeechStartEvent,
     InputTranscript,
-    NativeToolParts,
-    RateLimitsEvent,
+    RealtimeCodecEvent,
     RealtimeConnection,
+    RealtimeError,
     RealtimeEvent,
     RealtimeModelProfile,
-    RealtimeSessionEvent,
     RealtimeSessionInput,
     ReconnectedEvent,
     SessionErrorEvent,
     SessionUsageEvent,
-    SourcesEvent,
-    SpeechStartedEvent,
-    SpeechStoppedEvent,
     TextInput,
     ToolCall,
     ToolResult,
@@ -68,9 +70,6 @@ from ._base import (
 
 if TYPE_CHECKING:
     from ..models.instrumented import InstrumentationSettings
-
-ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
-"""Async callable executing a tool given its name, parsed arguments, and call id; returns the string result."""
 
 # Realtime providers stream raw PCM audio; there's no container to carry a richer media type, so
 # retained audio is tagged as `audio/pcm`.
@@ -98,21 +97,20 @@ _TranslatableEvent: TypeAlias = (
     | Transcript
     | InputTranscript
     | TurnCompleteEvent
-    | SpeechStartedEvent
-    | SpeechStoppedEvent
-    | RateLimitsEvent
+    | InputSpeechStartEvent
+    | InputSpeechEndEvent
     | ReconnectedEvent
-    | SourcesEvent
-    | NativeToolParts
+    | PartStartEvent
+    | PartEndEvent
     | SessionErrorEvent
 )
 
 
-def _as_event(item: object) -> RealtimeSessionEvent:
+def _as_event(item: object) -> RealtimeEvent:
     """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
     if isinstance(item, Exception):
         raise item
-    return cast('RealtimeSessionEvent', item)
+    return cast('RealtimeEvent', item)
 
 
 def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
@@ -194,7 +192,7 @@ class RealtimeSession:
     def __init__(
         self,
         connection: RealtimeConnection,
-        tool_runner: ToolRunner,
+        tool_manager: ToolManager[Any],
         *,
         instrumentation: InstrumentationSettings | None = None,
         model_name: str | None = None,
@@ -207,7 +205,9 @@ class RealtimeSession:
         conversation_id: str | None = None,
     ) -> None:
         self._connection = connection
-        self._tool_runner = tool_runner
+        self._tool_manager = tool_manager
+        self._tool_run_step = 0
+        self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else _FULL_PROFILE
         self._model_name = model_name
@@ -284,19 +284,20 @@ class RealtimeSession:
         Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput], plain
         text as a `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a
         sequence of these inputs, dispatched in order. All
-        inputs dispatch through the typed helpers (`send_audio`, `send_text`, `send_image`,
-        `commit_audio`, `clear_audio`, `create_response`, `truncate_output`, `interrupt`), preserving
-        the same history bookkeeping and model-profile guards.
+        Inputs preserve the same history bookkeeping and model-profile guards as the dedicated
+        control methods.
 
         [`ToolResult`][pydantic_ai.realtime.ToolResult] is deliberately excluded (`RealtimeSessionInput`
         is [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] minus `ToolResult`): the session sends
         tool results itself as each tool completes (see `_execute_tool`).
         """
         if isinstance(content, str):
-            await self.send_text(content)
+            await self._connection.send(TextInput(text=content))
+            self._history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
         elif isinstance(content, BinaryContent):
             if content.is_image:
-                await self.send_image(content.data, mime_type=content.media_type)
+                self._require_capability(self._profile['supports_image_input'], 'send', 'image input')
+                await self._connection.send(ImageInput(data=content.data, mime_type=content.media_type))
             elif content.is_audio:
                 await self.send_audio(content.data)
             else:
@@ -307,9 +308,11 @@ class RealtimeSession:
         elif isinstance(content, AudioInput):
             await self.send_audio(content.data)
         elif isinstance(content, TextInput):
-            await self.send_text(content.text)
+            await self._connection.send(content)
+            self._history.append(ModelRequest(parts=[UserPromptPart(content=content.text)]))
         elif isinstance(content, ImageInput):
-            await self.send_image(content.data, mime_type=content.mime_type)
+            self._require_capability(self._profile['supports_image_input'], 'send', 'image input')
+            await self._connection.send(content)
         elif isinstance(content, CommitAudio):
             await self.commit_audio()
         elif isinstance(content, ClearAudio):
@@ -317,7 +320,7 @@ class RealtimeSession:
         elif isinstance(content, CreateResponse):
             await self.create_response()
         elif isinstance(content, TruncateOutput):
-            await self.truncate_output(content.audio_end_ms)
+            await self.interrupt(audio_end_ms=content.audio_end_ms)
         elif isinstance(content, CancelResponse):
             await self.interrupt()
         elif isinstance(content, Sequence):
@@ -339,16 +342,6 @@ class RealtimeSession:
             # transcript is approximate (see `audio_retention`).
             self._input_audio.extend(data)
 
-    async def send_text(self, text: str) -> None:
-        """Send a complete text turn to the model."""
-        await self._connection.send(TextInput(text=text))
-        self._history.append(ModelRequest(parts=[UserPromptPart(content=text)]))
-
-    async def send_image(self, data: bytes, *, mime_type: str = 'image/jpeg') -> None:
-        """Send an image frame as conversation context (e.g. a video frame)."""
-        self._require_capability(self._profile['supports_image_input'], 'send_image', 'image input')
-        await self._connection.send(ImageInput(data=data, mime_type=mime_type))
-
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
         self._require_capability(self._profile['supports_manual_turn_control'], 'commit_audio', 'manual turn-taking')
@@ -366,11 +359,6 @@ class RealtimeSession:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
         self._require_capability(self._profile['supports_manual_turn_control'], 'create_response', 'manual turn-taking')
         await self._connection.send(CreateResponse())
-
-    async def truncate_output(self, audio_end_ms: int) -> None:
-        """Truncate the model's current audio output at `audio_end_ms` (see `TruncateOutput`)."""
-        self._require_capability(self._profile['supports_output_truncation'], 'truncate_output', 'output truncation')
-        await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
 
     async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
@@ -402,7 +390,7 @@ class RealtimeSession:
 
     # --- history assembly -------------------------------------------------------------------------
 
-    def _ensure_active_assistant(self, *, output_text: bool = False) -> list[RealtimeSessionEvent]:
+    def _ensure_active_assistant(self, *, output_text: bool = False) -> list[RealtimeEvent]:
         """Start an assistant output part if one isn't already in flight.
 
         `output_text` selects a plain [`TextPart`][pydantic_ai.messages.TextPart] (the model's
@@ -420,7 +408,7 @@ class RealtimeSession:
         self._assistant_transcript = ''
         return [PartStartEvent(index=self._active_assistant_index, part=part)]
 
-    def _handle_assistant_transcript(self, text: str, *, output_text: bool = False) -> list[RealtimeSessionEvent]:
+    def _handle_assistant_transcript(self, text: str, *, output_text: bool = False) -> list[RealtimeEvent]:
         events = self._ensure_active_assistant(output_text=output_text)
         active = self._active_assistant
         assert active is not None
@@ -435,14 +423,14 @@ class RealtimeSession:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
 
-    def _handle_assistant_audio(self, data: bytes) -> list[RealtimeSessionEvent]:
+    def _handle_assistant_audio(self, data: bytes) -> list[RealtimeEvent]:
         events = self._ensure_active_assistant()
         if self._retain_output:
             self._output_audio.extend(data)
         events.append(PartDeltaEvent(index=self._active_assistant_index, delta=SpeechPartDelta(audio_chunk=data)))
         return events
 
-    def _finalize_assistant_part(self) -> list[RealtimeSessionEvent]:
+    def _finalize_assistant_part(self) -> list[RealtimeEvent]:
         """End the in-flight assistant part, appending it to the current response if it has content."""
         if self._active_assistant is None:
             return []
@@ -520,17 +508,17 @@ class RealtimeSession:
             span.set_attributes(response_attributes(response, response.model_name or self._model_name))
         span.end()
 
-    def _handle_turn_complete(self, event: RealtimeSessionEvent) -> list[RealtimeSessionEvent]:
-        # Catch-all boundary for an audio-only user turn on providers that don't emit `SpeechStoppedEvent`
+    def _handle_turn_complete(self, event: RealtimeEvent) -> list[RealtimeEvent]:
+        # Catch-all boundary for an audio-only user turn on providers that don't emit `InputSpeechEndEvent`
         # (e.g. Gemini): finalize it before the assistant response so history reads user-then-assistant.
-        # A no-op when `SpeechStoppedEvent`/`commit_audio` already finalized it (nothing left retained).
+        # A no-op when `InputSpeechEndEvent`/`commit_audio` already finalized it (nothing left retained).
         events = self._finalize_audio_only_user()
         events.extend(self._finalize_assistant_part())
         self._finalize_response()
         events.append(event)
         return events
 
-    def _handle_tool_call_part(self, call_part: ToolCallPart) -> list[RealtimeSessionEvent]:
+    def _handle_tool_call_part(self, call_part: ToolCallPart) -> list[RealtimeEvent]:
         """Fold a tool call into the current response and close it out (its result follows in a request)."""
         self._ensure_chat_span()
         events = self._finalize_assistant_part()
@@ -541,7 +529,7 @@ class RealtimeSession:
         self._finalize_response()
         return events
 
-    def _complete_tool_call(self, call_part: ToolCallPart, result: str) -> list[RealtimeSessionEvent]:
+    def _complete_tool_call(self, call_part: ToolCallPart, result: str) -> list[RealtimeEvent]:
         return_part = ToolReturnPart(tool_name=call_part.tool_name, content=result, tool_call_id=call_part.tool_call_id)
         self._insert_tool_return(call_part, ModelRequest(parts=[return_part]))
         return [FunctionToolResultEvent(part=return_part)]
@@ -569,8 +557,8 @@ class RealtimeSession:
         # tool started), so this is unreachable; append rather than drop the result if it ever isn't.
         self._history.append(request)  # pragma: no cover
 
-    def _handle_input_transcript(self, text: str, is_final: bool) -> list[RealtimeSessionEvent]:
-        events: list[RealtimeSessionEvent] = []
+    def _handle_input_transcript(self, text: str, is_final: bool) -> list[RealtimeEvent]:
+        events: list[RealtimeEvent] = []
         if self._active_user is None:
             part = SpeechPart(speaker='user', transcript='')
             self._active_user = part
@@ -585,7 +573,7 @@ class RealtimeSession:
             events.extend(self._finalize_user())
         return events
 
-    def _finalize_user(self) -> list[RealtimeSessionEvent]:
+    def _finalize_user(self) -> list[RealtimeEvent]:
         if self._active_user is None:
             return []  # pragma: no cover
         part = self._active_user
@@ -600,7 +588,7 @@ class RealtimeSession:
             self._history.append(ModelRequest(parts=[part]))
         return [PartEndEvent(index=0, part=part)]
 
-    def _finalize_audio_only_user(self) -> list[RealtimeSessionEvent]:
+    def _finalize_audio_only_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn from retained input audio when no transcript will arrive.
 
         With input transcription disabled but input audio retained (`audio_retention='input'`/`'both'`),
@@ -628,7 +616,7 @@ class RealtimeSession:
         # streaming consumer still sees the user turn boundary.
         return [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)]
 
-    def _translate_event(self, event: _TranslatableEvent) -> list[RealtimeSessionEvent]:
+    def _translate_event(self, event: _TranslatableEvent) -> list[RealtimeEvent]:
         """Translate a low-level codec event into shared session events, building history as a side effect.
 
         Tool calls and usage are handled in `_handle_pump_event` (they interact with the queue and
@@ -644,37 +632,39 @@ class RealtimeSession:
             return self._handle_assistant_transcript(event.text, output_text=event.output_text)
         if isinstance(event, InputTranscript):
             return self._handle_input_transcript(event.text, event.is_final)
-        if isinstance(event, SpeechStoppedEvent):
+        if isinstance(event, InputSpeechEndEvent):
             # The user's speech segment ended (server VAD). Finalize an audio-only user turn from retained
             # input audio if transcription is off (a no-op otherwise), then pass the boundary event through.
             return [*self._finalize_audio_only_user(), event]
         if isinstance(event, TurnCompleteEvent):
             return self._handle_turn_complete(event)
-        if isinstance(event, NativeToolParts):
-            # Fold reconstructed native tool parts (web grounding / code execution) into the current
-            # response's history (see `_finalize_response`) without yielding them; for grounding the
-            # paired `SourcesEvent` event carries the same activity for the UI.
+        if isinstance(event, PartStartEvent):
+            # Providers emit native tool activity as ordinary part events. Buffer the started part for
+            # the assistant response while streaming the same event to the caller.
             self._ensure_chat_span()
-            self._native_tool_parts.extend(event.parts)
-            return []
+            self._native_tool_parts.append(event.part)
+            return [event]
+        if isinstance(event, PartEndEvent):
+            return [event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
             (
-                SpeechStartedEvent,
+                InputSpeechStartEvent,
                 ReconnectedEvent,
-                RateLimitsEvent,
-                SourcesEvent,
-                SessionErrorEvent,
             ),
         ):
             return [event]
+        if isinstance(event, SessionErrorEvent):
+            if event.recoverable:
+                return []
+            raise RealtimeError(event.message)
         assert_never(event)
 
     # --- instrumentation --------------------------------------------------------------------------
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         settings = self._instrumentation
         if settings is None:
             async for event in self._stream():
@@ -741,38 +731,50 @@ class RealtimeSession:
             result = error
         else:
             assert args is not None
+            async with self._tool_manager_lock:
+                ctx = self._tool_manager.ctx
+                if ctx is not None and ctx.run_step < self._tool_run_step:
+                    self._tool_manager = await self._tool_manager.for_run_step(
+                        replace(ctx, run_step=self._tool_run_step)
+                    )
+            tool_call = ToolCallPart(tool_name=call.tool_name, args=args, tool_call_id=call.tool_call_id)
             try:
-                result = await self._tool_runner(call.tool_name, args, call.tool_call_id)
+                tool_result = await self._tool_manager.handle_call(tool_call)
+            except ToolRetryError as e:
+                result = e.tool_retry.model_response()
             except Exception as e:
                 result = f'Error: {e}'
+            else:
+                if isinstance(tool_result, ToolDenied):
+                    result = tool_result.message
+                elif isinstance(tool_result, ToolReturn):
+                    # A realtime tool result travels back over the provider's string-only tool-output
+                    # channel, so — unlike the graph's `_call_tool`, which surfaces `ToolReturn.content`
+                    # as extra model-facing content and keeps `metadata` — only the `return_value` is
+                    # sent; `content` / `metadata` are dropped. A limitation of the provider channel.
+                    result = str(tool_result.return_value)
+                else:
+                    result = str(tool_result)
         await self._connection.send(ToolResult(tool_call_id=call.tool_call_id, output=result))
         return result
 
     # --- streaming --------------------------------------------------------------------------------
 
-    def _tool_call_limit_error(self) -> SessionErrorEvent | None:
-        """A non-recoverable `SessionErrorEvent` if running one more tool would breach the limits, else `None`."""
+    def _check_tool_call_limit(self) -> None:
+        # Let `UsageLimitExceeded` propagate (caught by the pump and re-raised to the consumer), matching
+        # how a regular `run`/`iter` surfaces a usage limit rather than wrapping it in another error.
         if self._usage_limits is None:
-            return None
+            return
         projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
-        try:
-            self._usage_limits.check_before_tool_call(projected)
-        except UsageLimitExceeded as e:
-            return SessionErrorEvent(message=str(e), type='usage_limit_exceeded', recoverable=False)
-        return None
+        self._usage_limits.check_before_tool_call(projected)
 
-    def _token_limit_error(self) -> SessionErrorEvent | None:
-        """A non-recoverable `SessionErrorEvent` if accumulated token usage breaches the limits, else `None`."""
+    def _check_token_limit(self) -> None:
         if self._usage_limits is None:
-            return None
-        try:
-            self._usage_limits.check_tokens(self.usage)
-        except UsageLimitExceeded as e:
-            return SessionErrorEvent(message=str(e), type='usage_limit_exceeded', recoverable=False)
-        return None
+            return
+        self._usage_limits.check_tokens(self.usage)
 
     async def _run_tool(
-        self, call: ToolCall, call_part: ToolCallPart, queue: asyncio.Queue[RealtimeSessionEvent | object]
+        self, call: ToolCall, call_part: ToolCallPart, queue: asyncio.Queue[RealtimeEvent | object]
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
@@ -788,15 +790,13 @@ class RealtimeSession:
 
     async def _handle_pump_event(
         self,
-        event: RealtimeEvent,
-        queue: asyncio.Queue[RealtimeSessionEvent | object],
+        event: RealtimeCodecEvent,
+        queue: asyncio.Queue[RealtimeEvent | object],
         background: set[asyncio.Task[None]],
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
         if isinstance(event, ToolCall):
-            if (limit_error := self._tool_call_limit_error()) is not None:
-                await queue.put(limit_error)
-                return True
+            self._check_tool_call_limit()
             self.usage.tool_calls += 1
             call_part = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
             for out in self._handle_tool_call_part(call_part):
@@ -810,20 +810,19 @@ class RealtimeSession:
             self.usage.incr(event.usage)
             self.usage.requests += 1
             self._pending_response_usage = self._pending_response_usage + event.usage
-            if (limit_error := self._token_limit_error()) is not None:
-                await queue.put(limit_error)
-                return True
-            await queue.put(event)
+            self._check_token_limit()
             return False
+        if isinstance(event, TurnCompleteEvent):
+            self._tool_run_step += 1
         for out in self._translate_event(event):
             await queue.put(out)
         return False
 
-    async def _stream(self) -> AsyncIterator[RealtimeSessionEvent]:
+    async def _stream(self) -> AsyncIterator[RealtimeEvent]:
         # Both the upstream connection and finished tools feed a single queue, so a tool completion
         # wakes the consumer immediately instead of waiting for the next
         # provider event (which may never come while the model is idle).
-        queue: asyncio.Queue[RealtimeSessionEvent | object] = asyncio.Queue()
+        queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
         closed = object()  # sentinel: the upstream connection has been fully drained
         background: set[asyncio.Task[None]] = set()
         pump_error: Exception | None = None

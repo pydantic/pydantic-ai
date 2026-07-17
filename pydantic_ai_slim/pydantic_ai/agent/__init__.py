@@ -140,6 +140,7 @@ __all__ = (
     'capture_run_messages',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
+    'ToolDenied',
 )
 
 
@@ -2883,25 +2884,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
 
-            async def tool_runner(name: str, args: dict[str, Any], call_id: str) -> str:
-                # Route through `ToolManager` so realtime tool calls get the same argument
-                # validation, `args_validator`, capability hooks, and retry/control-flow handling
-                # as `run`/`iter`.
-                call = _messages.ToolCallPart(tool_name=name, args=args, tool_call_id=call_id)
-                try:
-                    result = await tool_manager.handle_call(call)
-                except exceptions.ToolRetryError as e:
-                    return e.tool_retry.model_response()
-                if isinstance(result, ToolDenied):
-                    return result.message
-                if isinstance(result, _messages.ToolReturn):
-                    # A realtime tool result travels back over the provider's string-only tool-output
-                    # channel, so — unlike the graph's `_call_tool`, which surfaces `ToolReturn.content`
-                    # as extra model-facing content and keeps `metadata` — only the `return_value` is
-                    # sent; `content` / `metadata` are dropped. A limitation of the provider channel.
-                    return str(result.return_value)
-                return str(result)
-
             if message_history and not model_profile['supports_session_seeding']:
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '
@@ -2917,7 +2899,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ) as connection:
                 yield RealtimeSession(
                     connection,
-                    tool_runner,
+                    tool_manager,
                     instrumentation=session_instrumentation_settings,
                     model_name=model.model_name,
                     agent_name=self.name,

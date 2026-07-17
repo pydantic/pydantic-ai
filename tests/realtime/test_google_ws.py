@@ -58,7 +58,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
     events: list[Any] = []
     async with agent.realtime_session(model=model, audio_retention='output') as session:
-        await session.send_text('Say a short greeting.')
+        await session.send('Say a short greeting.')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
@@ -96,7 +96,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
 
     events: list[Any] = []
     async with agent.realtime_session(model=model) as session:
-        await session.send_text('What is the weather in London?')
+        await session.send('What is the weather in London?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)
@@ -152,7 +152,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
 
     events: list[Any] = []
     async with agent.realtime_session(model=model, message_history=history) as session:
-        await session.send_text('What is my name and favorite color?')
+        await session.send('What is my name and favorite color?')
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
                 events.append(event)

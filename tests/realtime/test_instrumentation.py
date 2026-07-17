@@ -29,13 +29,13 @@ from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
+    RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
-    RealtimeSession,
+    RealtimeSession as _RealtimeSession,
     SessionUsageEvent,
     ToolCall,
     Transcript,
@@ -44,22 +44,28 @@ from pydantic_ai.realtime import (
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .test_session import make_tool_manager
+
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = pytest.mark.anyio
 
 
+def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
+    return _RealtimeSession(connection, make_tool_manager(runner), **kwargs)
+
+
 class _Connection(RealtimeConnection):
     """Replays a fixed list of events; records nothing of interest for these tests."""
 
-    def __init__(self, events: list[RealtimeEvent]) -> None:
+    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         self._events = events
 
     async def send(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
 

@@ -43,7 +43,7 @@ from ..native_tools import AbstractNativeTool
 from ..providers import infer_provider
 from ..tools import ToolDefinition
 from ._base import (
-    RealtimeEvent,
+    RealtimeCodecEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
@@ -60,7 +60,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
-from .openai import OpenAIRealtimeConnection, ServerVAD
+from .openai import OpenAIRealtimeConnection, SemanticVAD, ServerVAD
 
 if TYPE_CHECKING:
     from ..providers.xai import XaiProvider
@@ -74,17 +74,9 @@ _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models."""
 
-    xai_turn_detection: ServerVAD | None
-    """How the server decides when the user's turn ends.
 
-    A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] (the default when absent) configures
-    automatic detection; `None` disables it for manual turn-taking (push-to-talk), where you drive
-    the turn with `commit_audio()` + `create_response()`.
-    """
-
-
-def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
-    """Map a raw xAI Grok Voice realtime event to a [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent].
+def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+    """Map a raw xAI Grok Voice realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent].
 
     xAI clones the OpenAI Realtime protocol, so all but one event map identically via the OpenAI codec.
     The exception is input audio transcription: xAI emits cumulative
@@ -108,7 +100,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     input-transcription events (see [`map_event`][pydantic_ai.realtime.xai.map_event]).
     """
 
-    def _map_event(self, data: dict[str, Any]) -> RealtimeEvent | None:
+    def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
 
 
@@ -127,8 +119,6 @@ class XaiRealtimeModel(RealtimeModel):
             pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
-        handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
-            before failing, so `connect()` doesn't hang if the server never responds.
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
             `SessionErrorEvent` instead.
@@ -137,7 +127,6 @@ class XaiRealtimeModel(RealtimeModel):
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
     settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
-    handshake_timeout: float = 30.0
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
@@ -191,9 +180,12 @@ class XaiRealtimeModel(RealtimeModel):
         )
         if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
+        turn_detection = model_settings.get('turn_detection', ServerVAD())
+        if isinstance(turn_detection, SemanticVAD):
+            turn_detection = ServerVAD()
         config: dict[str, Any] = {
             'instructions': instructions,
-            'turn_detection': turn_detection_config(model_settings.get('xai_turn_detection', ServerVAD())),
+            'turn_detection': turn_detection_config(turn_detection),
             'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
         }
         if voice := model_settings.get('voice'):
@@ -224,6 +216,7 @@ class XaiRealtimeModel(RealtimeModel):
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
         session_config = self._session_config(instructions, tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
@@ -240,9 +233,9 @@ class XaiRealtimeModel(RealtimeModel):
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            await expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.created', timeout=handshake_timeout)
             await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
-            await expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+            await expect_event(ws, 'session.updated', timeout=handshake_timeout)
             return ws
 
         try:
