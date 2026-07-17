@@ -20,6 +20,28 @@ except ImportError as e:
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
 
+# Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
+# the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
+# snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`) don't support reasoning and are
+# deliberately excluded; keep this set in sync with the ids reporting `capabilities.reasoning`
+# on the Mistral `/v1/models` API. The `-latest` aliases resolve to a reasoning model on the
+# public API; on private deployments they may point to an older non-reasoning snapshot.
+# See https://docs.mistral.ai/capabilities/reasoning/.
+#
+# This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
+# against Mistral's La Plateforme API and only the native route can translate `thinking` to
+# Mistral's 'high'/'none'. OpenAI-compatible routes (LiteLLM etc.) would emit OpenAI-style effort
+# values ('medium', 'low') these models reject, so they must keep ignoring `thinking`.
+_ADJUSTABLE_REASONING_MODELS = frozenset(
+    {
+        'mistral-small-latest',
+        'mistral-small-2603',
+        'mistral-medium-latest',
+        'mistral-medium-3-5',
+        'mistral-medium-2604',
+    }
+)
+
 
 class MistralProvider(Provider[Mistral]):
     """Provider for Mistral API."""
@@ -38,7 +60,10 @@ class MistralProvider(Provider[Mistral]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
-        return merge_profile(mistral_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        profile = mistral_model_profile(model_name)
+        if profile is None and model_name in _ADJUSTABLE_REASONING_MODELS:
+            profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...

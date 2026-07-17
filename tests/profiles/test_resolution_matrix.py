@@ -1076,15 +1076,14 @@ def test_azure_mistral_prefix():
 
 
 def test_azure_mistral_small_latest():
-    """The Azure route reuses the Mistral profile, so the adjustable-reasoning
-    flags surface here too."""
+    """The Azure route reuses the shared Mistral profile, which no longer advertises thinking for
+    adjustable models, so `thinking` is ignored here. Adjustable reasoning is native-provider-only."""
     from pydantic_ai.providers.azure import AzureProvider
 
     profile = AzureProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_thinking': True,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -1373,9 +1372,9 @@ def test_litellm_magistral():
 
 
 def test_litellm_mistral_small_latest():
-    """LiteLLM's Mistral route keeps the OpenAI baseline (structured output, inline system
-    prompts) underneath the Mistral thinking flags; a bare non-None Mistral profile must not
-    displace it."""
+    """LiteLLM's Mistral route must NOT advertise thinking for adjustable models: LiteLLM rejects
+    `reasoning_effort` for non-magistral mistral models, so this route falls back to the plain
+    OpenAI profile. Adjustable reasoning is native-provider-only."""
     from pydantic_ai.providers.litellm import LiteLLMProvider
 
     profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')
@@ -1385,7 +1384,6 @@ def test_litellm_mistral_small_latest():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
-            'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
