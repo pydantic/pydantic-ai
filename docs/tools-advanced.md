@@ -491,7 +491,7 @@ Tool retries are tracked **per tool**: every function tool has its own counter, 
 !!! note
     The agent-wide default and its per-run override apply to function tools and output tools. MCP tools registered through a durable-exec wrapper ([`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] / [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent]) do not yet honor them and fall back to their toolset-level `max_retries` (default `1`); see [pydantic-ai#5180](https://github.com/pydantic/pydantic-ai/issues/5180).
 
-#### Which retry limit wins
+### Which retry limit wins
 
 Two independent budgets — the **tool** budget (per function/output tool) and the **output** budget (output validation) — each resolve through the same layered precedence. The first layer that sets a value wins; unset layers fall through to the next:
 

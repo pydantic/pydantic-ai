@@ -172,7 +172,9 @@ class ToolManager(Generic[AgentDepsT]):
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
-        if self.ctx.retries.get(name, 0) == max_retries:
+        # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
+        # (the count starts at 0 and only ever grows, so it would never equal a negative target).
+        if self.ctx.retries.get(name, 0) >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
@@ -620,7 +622,7 @@ class ToolManager(Generic[AgentDepsT]):
         # Output validators see the *global* output-retry budget (`max_output_retries`), so the same
         # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
         # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
-        # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
+        # `validated.ctx`. Termination on the tool path checks `retries[name] >= tool.max_retries`
         # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
         # `max_output_retries`, the validator's `ctx.last_attempt` can fire before the run actually
         # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
