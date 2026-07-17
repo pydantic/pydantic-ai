@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
 from pydantic_ai import Agent
 from pydantic_ai.models import ModelRequestParameters
@@ -198,3 +199,62 @@ async def test_google_default_tools_use_validated_mode(
     first_request = get_first_post_body(vcr)
     assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
     assert len(first_request['tools'][0]['functionDeclarations']) == 2
+
+
+class Address(BaseModel):
+    street: str
+    unit: str | None = None
+
+
+class HostileToStrict(BaseModel):
+    """A schema carrying the shapes OpenAI/Anthropic strict mode reject or lossily rewrite.
+
+    `minLength`/`maxLength`, a lookaround `pattern`, a free-form dict (`additionalProperties`), a
+    `set` (`uniqueItems`), numeric bounds, a `tuple` (`prefixItems`), optional fields (absent from
+    `required`), and a nested object with its own optional field. `GoogleJsonSchemaTransformer`
+    keeps all of these, so they reach Gemini unchanged and exercise what `VALIDATED` tolerates.
+    """
+
+    # `python-re` so the lookaround `password` pattern below is definable — Pydantic's default Rust
+    # engine rejects lookaround before the schema could ever reach Gemini.
+    model_config = ConfigDict(regex_engine='python-re')
+
+    name: str = Field(min_length=1, max_length=50)
+    homepage: AnyUrl
+    password: str = Field(pattern=r'(?=.*[0-9]).+')
+    metadata: dict[str, str]
+    tags: set[str]
+    score: float = Field(ge=0, le=1)
+    retries: int = 3
+    nickname: str | None = None
+    coordinate: tuple[float, float]
+    address: Address
+
+
+async def test_google_validated_accepts_strict_incompatible_schema(
+    allow_model_requests: None,
+    google_model: GoogleModelFactory,
+    vcr: Any,
+):
+    """Gemini `VALIDATED` accepts a schema that OpenAI/Anthropic strict mode would reject or rewrite.
+
+    This is the safety proof behind defaulting supported models to `VALIDATED`: `HostileToStrict`
+    carries every reject-trigger our OpenAI/Anthropic transformers flag. Gemini accepts it end-to-end
+    under `VALIDATED` and returns a schema-adherent call — the `register` tool only runs if the args
+    passed Pydantic validation — so the default doesn't break complex schemas.
+    """
+    agent = Agent(google_model('gemini-2.5-flash'))
+
+    @agent.tool_plain
+    def register(profile: HostileToStrict) -> str:
+        return f'Registered {profile.name} with {len(profile.tags)} tags.'
+
+    result = await agent.run(
+        'Register a user with name John Doe, homepage https://example.com, password Secret1, '
+        'metadata city=NYC, tags premium and user, score 0.9, coordinate 1.0 and 2.0, and '
+        'address 123 Main St. Use the register tool.'
+    )
+    assert result.output == snapshot('User John Doe registered successfully with 2 tags.')
+
+    first_request = get_first_post_body(vcr)
+    assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
