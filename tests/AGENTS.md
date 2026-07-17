@@ -130,6 +130,10 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+### Making body assertions drift-safe with per-test matchers
+
+VCR's default matchers ignore the request body, so a test that asserts on a recorded request field (e.g. via `get_first_post_body`) keeps passing even if the live code stops producing that field — the stale cassette replays regardless. When a test explicitly asserts an outbound wire field, make that field part of the cassette match so drift fails the test instead of hiding. Register a custom matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])` (adds to the defaults rather than replacing them); see `tests/models/google/conftest.py`'s `function_calling_mode` matcher. Standard practice: any field a test explicitly asserts should also gate cassette matching.
+
 ## Key Fixtures
 
 ### From `conftest.py`

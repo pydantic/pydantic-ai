@@ -171,6 +171,7 @@ def test_google_strict_resolution_via_transformer():
 # =============================================================================
 
 
+@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
 async def test_google_default_tools_use_validated_mode(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
@@ -231,6 +232,7 @@ class HostileToStrict(BaseModel):
     address: Address
 
 
+@pytest.mark.vcr(additional_matchers=['function_calling_mode'])
 async def test_google_validated_accepts_strict_incompatible_schema(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
@@ -256,5 +258,8 @@ async def test_google_validated_accepts_strict_incompatible_schema(
     )
     assert result.output == snapshot('User John Doe registered successfully with 2 tags.')
 
+    # The `function_calling_mode` matcher (see conftest) makes `mode` part of the cassette match, so
+    # this assertion has teeth on replay: if the code stopped sending `VALIDATED`, no interaction would
+    # match and the test would fail rather than silently reading the stale recorded body.
     first_request = get_first_post_body(vcr)
     assert first_request['toolConfig']['functionCallingConfig']['mode'] == 'VALIDATED'
