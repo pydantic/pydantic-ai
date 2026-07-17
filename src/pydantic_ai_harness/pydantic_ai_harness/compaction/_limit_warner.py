@@ -121,6 +121,13 @@ class LimitWarner(AbstractCapability[AgentDepsT]):
             if not isinstance(msg, ModelRequest):
                 cleaned.append(msg)
                 continue
+            # An already-empty request has no warnings to strip; keep it. pydantic-ai's
+            # empty-response retry appends a `ModelRequest` with no parts, and dropping it
+            # would leave history ending on a `ModelResponse`, which fails the next
+            # request's "must end with a ModelRequest" precondition.
+            if not msg.parts:
+                cleaned.append(msg)
+                continue
             parts = [p for p in msg.parts if not self._is_marker_part(p)]
             if not parts:
                 continue

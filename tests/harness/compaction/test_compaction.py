@@ -808,6 +808,20 @@ class TestLimitWarnerEdgeCases:
         assert len(first.parts) == 1
 
     @pytest.mark.anyio
+    async def test_keeps_already_empty_request(self):
+        """An already-empty ModelRequest must survive stripping so history still ends with a
+        ModelRequest. pydantic-ai's empty-response retry appends an empty ModelRequest;
+        dropping it left history ending on a ModelResponse and crashed the next request with
+        `Processed history must end with a ModelRequest`."""
+        lw = LimitWarner(max_iterations=100)
+        messages: list[ModelMessage] = [_user('real'), ModelResponse(parts=[]), ModelRequest(parts=[])]
+        rc = _make_request_context(messages)
+        ctx = _make_ctx(requests=5)
+        result = await lw.before_model_request(ctx, rc)
+        assert len(result.messages) == 3
+        assert isinstance(result.messages[-1], ModelRequest)
+
+    @pytest.mark.anyio
     async def test_context_warning_below_threshold(self):
         """Context window should not warn when below threshold."""
         lw = LimitWarner(max_context_tokens=1000)
