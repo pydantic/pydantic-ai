@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import to_json
 
+from pydantic_ai import _utils
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -24,6 +26,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.profiles import _max_cache_point_ttl  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
@@ -38,11 +41,39 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
+
+
+_CACHE_COLLAPSE_RATIO = 0.5
+"""A request reading back less than this fraction of the established prefix counts as a collapse."""
+_CACHE_MIN_PREFIX_TOKENS = 1024
+"""Only judge collapse once the established prefix reaches this size (Anthropic's minimum cacheable prefix)."""
+
+
+def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
+    return cache_read_tokens / input_tokens if input_tokens else 0.0
+
+
+def _prompt_cache_retention(model: Model) -> timedelta | None:
+    """The model's documented prompt-cache retention window, or `None` when it can't be determined."""
+    try:
+        return model.profile.get('prompt_cache_retention')
+    except NotImplementedError:
+        # `FallbackModel` has no profile of its own: it resolves a model per request and applies that
+        # model's profile during dispatch, and the resolved model isn't reachable from here — the
+        # response only carries its provider and model *names*. Without a retention window the
+        # collapse is classified `unknown` rather than failing an otherwise successful run.
+        return None
+
+
+@dataclass
+class _CacheMark:
+    established_tokens: int
+    last_seen: datetime
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -61,6 +92,14 @@ class Instrumentation(AbstractCapability[Any]):
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
+
+    Prompt-cache health is recorded on model-request spans using the
+    `pydantic_ai.cache.hit_ratio`, `pydantic_ai.cache.established_tokens`,
+    `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and
+    `pydantic_ai.cache.collapse_reason` attributes. Collapses are classified as
+    `unexpected`, `ttl-expired`, `unknown`, or `unreported`; only `unexpected` collapses
+    emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
+    prefix moved while it should still have been warm.
     """
 
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
@@ -80,6 +119,9 @@ class Instrumentation(AbstractCapability[Any]):
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
+    _cache_marks: dict[tuple[str | None, str | None], _CacheMark] = field(
+        default_factory=lambda: {}, repr=False, init=False
+    )
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -121,6 +163,8 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
+        # `replace` is shallow, so mutable per-run state must be reset explicitly.
+        inst._cache_marks = {}
         return inst
 
     # ------------------------------------------------------------------
@@ -216,14 +260,20 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
 
-        usage_attrs = (
-            {
-                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
-            }
-            if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
-        )
+        usage_attrs: dict[str, int | float] = {
+            **(
+                {
+                    k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
+                    for k, v in ctx.usage.opentelemetry_attributes().items()
+                }
+                if settings.use_aggregated_usage_attribute_names
+                else ctx.usage.opentelemetry_attributes()
+            )
+        }
+        if ctx.usage.cache_read_tokens > 0:
+            usage_attrs['pydantic_ai.cache.hit_ratio'] = _cache_hit_ratio(
+                ctx.usage.cache_read_tokens, ctx.usage.input_tokens
+            )
 
         return {
             **usage_attrs,
@@ -276,7 +326,83 @@ class Instrumentation(AbstractCapability[Any]):
             # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
             # for non-streaming requests this reads the `None` default.
             finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
+            self._record_cache_health(request_context, response)
             return response
+
+    def _record_cache_health(self, request_context: ModelRequestContext, response: ModelResponse) -> None:
+        usage = response.usage
+        read = usage.cache_read_tokens
+        write = usage.cache_write_tokens
+        # Keyed on the response: `FallbackModel` resolves the model inside `request()`, so only the
+        # response says which provider and model actually served this request. A switch therefore
+        # starts a fresh mark (never a collapse), and switching back is judged against the old one.
+        key = (response.provider_name, response.model_name)
+        mark = self._cache_marks.get(key)
+        established = mark.established_tokens if mark else 0
+
+        # A response reporting neither reads nor writes never engaged the provider's cache.
+        unreported = not read and not write
+        if unreported and not established:
+            return
+
+        now = _utils.now_utc()
+        collapsed = established >= _CACHE_MIN_PREFIX_TOKENS and read < established * _CACHE_COLLAPSE_RATIO
+        updated_established = established
+        if not unreported:
+            # After a collapse the mark re-baselines to what this request established, so a
+            # deliberate bust (compaction, a rewritten prompt) is reported once rather than against
+            # a stale high-water mark on every later request.
+            updated_established = read + write if collapsed else max(established, read + write)
+            self._cache_marks[key] = _CacheMark(established_tokens=updated_established, last_seen=now)
+        # An unreported response tells us nothing about the provider's copy of the prefix — it may
+        # still be sitting there, aging toward its TTL — so the mark and its idle clock stay put.
+
+        span = get_current_span()
+        if not span.is_recording():
+            return
+
+        # The cache is in play for this request (or was for an earlier one on the same key), so both
+        # are meaningful: a request that establishes a prefix without reading any of it back honestly
+        # has a `0.0` hit ratio, and that cold-start cost belongs in the run's cache-efficiency picture.
+        span.set_attribute('pydantic_ai.cache.hit_ratio', _cache_hit_ratio(read, usage.input_tokens))
+        span.set_attribute('pydantic_ai.cache.established_tokens', updated_established)
+
+        if not collapsed:
+            return
+
+        wasted = established - read
+        span.set_attribute('pydantic_ai.cache.collapsed', True)
+        span.set_attribute('pydantic_ai.cache.wasted_tokens', wasted)
+
+        if unreported:
+            # Ambiguous by construction: providers that report cache writes (Anthropic, Bedrock) show
+            # `0/0` when the cache wasn't engaged at all — caching disabled for this request, or a
+            # prompt below the minimum cacheable size — while providers that only report reads
+            # (OpenAI's implicit caching) show `0/0` for a full cache miss. The established prefix was
+            # re-sent uncached either way, so the waste is real and reported, but the cause isn't
+            # knowable from usage alone, so this never alerts.
+            reason = 'unreported'
+        elif (retention := _prompt_cache_retention(request_context.model)) is None:
+            reason = 'unknown'
+        else:
+            if (cache_point_ttl := _max_cache_point_ttl(request_context.messages)) is not None:
+                retention = max(retention, cache_point_ttl)
+            assert mark is not None  # a collapse requires an established mark
+            reason = 'ttl-expired' if now - mark.last_seen > retention else 'unexpected'
+        span.set_attribute('pydantic_ai.cache.collapse_reason', reason)
+
+        if reason == 'unexpected':
+            # Response-derived keys isolate fallback/model switches while retaining the old key if a run switches back.
+            event_attributes: dict[str, str | int] = {
+                'established_tokens': established,
+                'cache_read_tokens': read,
+                'wasted_tokens': wasted,
+            }
+            if response.provider_name is not None:
+                event_attributes['provider_name'] = response.provider_name
+            if response.model_name is not None:  # pragma: no branch
+                event_attributes['model_name'] = response.model_name
+            span.add_event('pydantic_ai.cache.collapse', attributes=event_attributes)
 
     # ------------------------------------------------------------------
     # wrap_tool_execute — tool execution span

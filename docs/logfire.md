@@ -249,6 +249,33 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Prompt-cache health
+
+Instrumented agent runs report prompt-cache health without additional configuration:
+
+| Attribute | Description |
+|-----------|-------------|
+| `pydantic_ai.cache.hit_ratio` | Fraction of input tokens read from the prompt cache, on model-request spans and on agent-run spans with cache reads. |
+| `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the response's provider and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
+| `pydantic_ai.cache.collapsed` | `true` when a sufficiently large established prefix falls below half its previous size. |
+| `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
+| `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl-expired`, `unknown`, or `unreported`. |
+
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `wasted_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
+
+| `collapse_reason` | Meaning | Emits the event |
+|-------------------|---------|-----------------|
+| `unexpected` | The retention window should still have been active, so the prefix moved. | Yes |
+| `ttl-expired` | The gap since the last request exceeded the provider's retention window. | No |
+| `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
+| `unreported` | The response reported no cache usage at all (see below). | No |
+
+A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its wasted tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
+
+Model switches never register as collapses: the established prefix is tracked per provider and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
+
+Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend the provider's documented retention window; when the provider has no documented retention, collapses stay `unknown` even if cache points carry TTLs. Request-level retention settings such as [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] are not yet reflected in the classification, so a collapse within an extended window may be reported as `ttl-expired` rather than `unexpected`.
+
 ### Emitted metrics
 
 In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:

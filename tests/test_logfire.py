@@ -1114,6 +1114,7 @@ async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire)
             'gen_ai.aggregated_usage.output_tokens': 5,
             'gen_ai.aggregated_usage.cache_read.input_tokens': 2,
             'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
+            'pydantic_ai.cache.hit_ratio': 0.2,
             'pydantic_ai.all_messages': [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                 {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello!'}]},
