@@ -437,6 +437,65 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage.output_tokens == 5
 
 
+@pytest.mark.parametrize('with_tool', [False, True])
+async def test_stream_forwards_model_settings(allow_model_requests: None, with_tool: bool):
+    """The mock captures request fields that VCR matching does not compare."""
+    stream = [text_chunk('hello'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=MistralModelSettings(
+            temperature=0.0,
+            top_p=0.9,
+            max_tokens=100,
+            timeout=2.5,
+            seed=42,
+            presence_penalty=0.3,
+            frequency_penalty=0.1,
+            stop_sequences=['STOP'],
+        ),
+    )
+
+    if with_tool:
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert {
+        'temperature': kwargs['temperature'],
+        'top_p': kwargs['top_p'],
+        'max_tokens': kwargs['max_tokens'],
+        'timeout_ms': kwargs['timeout_ms'],
+        'random_seed': kwargs['random_seed'],
+        'presence_penalty': kwargs['presence_penalty'],
+        'frequency_penalty': kwargs['frequency_penalty'],
+        'stop': kwargs['stop'],
+    } == snapshot(
+        {
+            'temperature': 0.0,
+            'top_p': 0.9,
+            'max_tokens': 100,
+            'timeout_ms': 2500,
+            'random_seed': 42,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.1,
+            'stop': ['STOP'],
+        }
+    )
+    if with_tool:
+        assert len(kwargs['tools']) == 1
+        assert kwargs['tool_choice'] == 'auto'
+    else:
+        assert isinstance(kwargs['tools'], MistralUnset)
+        assert kwargs['tool_choice'] is None
+
+
 async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
     stream = [
         MistralCompletionEvent(

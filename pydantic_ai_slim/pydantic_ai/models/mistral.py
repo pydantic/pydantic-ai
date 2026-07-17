@@ -75,6 +75,7 @@ try:
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
+        ResponseFormatTypedDict as MistralResponseFormatTypedDict,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
         Tool as MistralTool,
@@ -288,25 +289,8 @@ class MistralModel(Model[Mistral]):
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
 
-        if tools:
-            # Function Calling mode (with filtered tools)
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                n=1,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        elif model_request_parameters.output_tools:  # pragma: no cover
+        response_format: MistralResponseFormatTypedDict | None = None
+        if not tools and model_request_parameters.output_tools:  # pragma: no cover
             # this branch is dead code (output tool is being handled above)
             # leaving it in for the TODO (support NativeOutput properly)
             # TODO: Port to native "manual JSON" mode
@@ -314,32 +298,26 @@ class MistralModel(Model[Mistral]):
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
+            response_format = {'type': 'json_object'}
 
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                response_format={
-                    'type': 'json_object'
-                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
-                stream=True,
-                temperature=model_settings.get('temperature', UNSET),
-                top_p=model_settings.get('top_p', 1),
-                max_tokens=model_settings.get('max_tokens', UNSET),
-                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
-                presence_penalty=model_settings.get('presence_penalty'),
-                frequency_penalty=model_settings.get('frequency_penalty'),
-                stop=model_settings.get('stop_sequences', None),
-                http_headers={'User-Agent': get_user_agent()},
-            )
-
-        else:
-            # Stream Mode (no tools at all)
-            response = await self.client.chat.stream_async(
-                model=str(self._model_name),
-                messages=mistral_messages,
-                stream=True,
-                http_headers={'User-Agent': get_user_agent()},
-            )
+        response = await self.client.chat.stream_async(
+            model=str(self._model_name),
+            messages=mistral_messages,
+            n=1 if tools else UNSET,
+            tools=tools or UNSET,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            stream=True,
+            temperature=model_settings.get('temperature', UNSET),
+            top_p=model_settings.get('top_p', 1),
+            max_tokens=model_settings.get('max_tokens', UNSET),
+            timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            random_seed=model_settings.get('seed', UNSET),
+            presence_penalty=model_settings.get('presence_penalty'),
+            frequency_penalty=model_settings.get('frequency_penalty'),
+            stop=model_settings.get('stop_sequences', None),
+            http_headers={'User-Agent': get_user_agent()},
+        )
         assert response, 'An unexpected empty response from Mistral.'
         return response
 
