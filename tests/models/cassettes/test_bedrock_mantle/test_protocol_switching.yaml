@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '120'
+      - '171'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Reply with exactly CHAT.
+      - content: Remember the exact token violet-otter-73 for later. Reply with exactly ACK.
         role: user
       model: openai.gpt-oss-120b
       stream: false
@@ -30,7 +30,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '611'
+      - '645'
       content-type:
       - application/json
       vary:
@@ -41,20 +41,21 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: CHAT
-          reasoning: 'User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation,
-            no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".'
+          content: ACK
+          reasoning: 'The user wants the assistant to remember the exact token "violet-otter-73" for later, and reply with
+            exactly "ACK". Need to comply: we must reply with ACK exactly. Also need to remember token for later usage. In
+            this turn, we just reply ACK.'
           refusal: null
           role: assistant
-      created: 1784242286
-      id: chatcmpl-13776c43-8130-44ff-b334-5ad1a09ca684
+      created: 1784247620
+      id: chatcmpl-770acbfc-2eb9-44c7-8b4e-70ad784e06c0
       model: openai.gpt-oss-120b
       object: chat.completion
       service_tier: default
       usage:
-        completion_tokens: 54
-        prompt_tokens: 72
-        total_tokens: 126
+        completion_tokens: 69
+        prompt_tokens: 85
+        total_tokens: 154
     status:
       code: 200
       message: OK
@@ -67,7 +68,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '488'
+      - '614'
       content-type:
       - application/json
       host:
@@ -75,16 +76,16 @@ interactions:
     method: POST
     parsed_body:
       input:
-      - content: Reply with exactly CHAT.
+      - content: Remember the exact token violet-otter-73 for later. Reply with exactly ACK.
         role: user
       - content: |-
           <think>
-          User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation, no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".
+          The user wants the assistant to remember the exact token "violet-otter-73" for later, and reply with exactly "ACK". Need to comply: we must reply with ACK exactly. Also need to remember token for later usage. In this turn, we just reply ACK.
           </think>
         role: assistant
-      - content: CHAT
+      - content: ACK
         role: assistant
-      - content: Reply with exactly RESPONSES.
+      - content: What exact token did I ask you to remember? Reply with only the token.
         role: user
       model: openai.gpt-oss-120b
       stream: false
@@ -98,16 +99,97 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1229'
+      - '592'
       content-type:
       - application/json
       vary:
       - origin, access-control-request-method, access-control-request-headers
     parsed_body:
       background: false
-      created_at: 1784242288.0
+      created_at: 1784247624.0
+      error:
+        code: server_error
+        message: The request timed out before the model produced a response.
+      id: resp_3yykvdj7ctp4gsiw67hplwhjmedodzdziuf4ylmwwqxbqxghp3oa
+      incomplete_details: null
+      instructions: null
+      metadata: {}
+      model: openai.gpt-oss-120b
+      object: response
+      output: []
+      parallel_tool_calls: true
+      service_tier: default
+      status: failed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '755'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      input:
+      - content: Remember the exact token violet-otter-73 for later. Reply with exactly ACK.
+        role: user
+      - content: |-
+          <think>
+          The user wants the assistant to remember the exact token "violet-otter-73" for later, and reply with exactly "ACK". Need to comply: we must reply with ACK exactly. Also need to remember token for later usage. In this turn, we just reply ACK.
+          </think>
+        role: assistant
+      - content: ACK
+        role: assistant
+      - content: What exact token did I ask you to remember? Reply with only the token.
+        role: user
+      - content:
+        - text: |-
+            Validation feedback:
+            Please return text.
+
+            Fix the errors and try again.
+          type: input_text
+        role: user
+      model: openai.gpt-oss-120b
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1200'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      created_at: 1784247987.0
       error: null
-      id: resp_piupv6ipxos6dw5sosdqepzh5btpdkjneyr7rudesxqljctvctia
+      id: resp_6kx4suiuxvxspcv4emr2bbl4csrtui5q6oobfcjixby7uk7kucvq
       incomplete_details: null
       instructions: null
       metadata: {}
@@ -115,20 +197,18 @@ interactions:
       object: response
       output:
       - content:
-        - text: |-
-            User asks: "Reply with exactly RESPONSES." So answer should be the word RESPONSES exactly. No extra punctuation, just that.
-
-            We must output exactly "RESPONSES". Ensure no extra spaces, line breaks before or after? Probably just the word.
+        - text: 'User asks: "What exact token did I ask you to remember? Reply with only the token." They want the token "violet-otter-73".
+            Must respond with only that token, no extra text. So just output violet-otter-73.'
           type: reasoning_text
-        id: msg_9ba1921a079d988a
+        id: msg_b138a47643c156b9
         status: completed
         summary: []
         type: reasoning
       - content:
         - annotations: []
-          text: RESPONSES
+          text: violet-otter-73
           type: output_text
-        id: msg_87fc5baff7c80dda
+        id: msg_9d8fadaf8f24df22
         role: assistant
         status: completed
         type: message
@@ -145,13 +225,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 145
+        input_tokens: 200
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 67
+        output_tokens: 71
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 212
+        total_tokens: 271
     status:
       code: 200
       message: OK
@@ -164,7 +244,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '763'
+      - '1066'
       content-type:
       - application/json
       host:
@@ -174,28 +254,36 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Reply with exactly CHAT.
+        - text: Remember the exact token violet-otter-73 for later. Reply with exactly ACK.
           type: text
         role: user
       - content:
         - text: |-
             <thinking>
-            User says: "Reply with exactly CHAT." So must output exactly the word "CHAT". No extra punctuation, no extra whitespace? Probably exactly "CHAT". Ensure no extra spaces or newline? Probably just "CHAT".
+            The user wants the assistant to remember the exact token "violet-otter-73" for later, and reply with exactly "ACK". Need to comply: we must reply with ACK exactly. Also need to remember token for later usage. In this turn, we just reply ACK.
             </thinking>
           type: text
-        - text: CHAT
+        - text: ACK
           type: text
         role: assistant
       - content:
-        - text: Reply with exactly RESPONSES.
+        - text: What exact token did I ask you to remember? Reply with only the token.
           type: text
         role: user
       - content:
-        - text: RESPONSES
+        - text: |-
+            Validation feedback:
+            Please return text.
+
+            Fix the errors and try again.
+          type: text
+        role: user
+      - content:
+        - text: violet-otter-73
           type: text
         role: assistant
       - content:
-        - text: Reply with exactly MESSAGES.
+        - text: Repeat the exact token one more time. Reply with only the token.
           type: text
         role: user
       model: anthropic.claude-sonnet-5
@@ -210,16 +298,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '539'
+      - '546'
       content-type:
       - application/json
       vary:
       - origin, access-control-request-method, access-control-request-headers
     parsed_body:
       content:
-      - text: MESSAGES
+      - text: violet-otter-73
         type: text
-      id: msg_bdrk_yhrxk5tuj7kwsdvbg3di5eutqli4mp4ar6hxrfc7tne26h3vkuoq
+      id: msg_bdrk_eex4bcvnlwctupc4lz2zndj3ffsz3ho5olc2r3hllxb2xxi6sbwa
       model: claude-sonnet-5
       role: assistant
       stop_details: null
@@ -232,8 +320,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 158
-        output_tokens: 8
+        input_tokens: 213
+        output_tokens: 9
         output_tokens_details:
           thinking_tokens: 0
         service_tier: standard

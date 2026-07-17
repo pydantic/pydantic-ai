@@ -52,7 +52,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1787'
+      - '1788'
       content-type:
       - application/json
       vary:
@@ -61,11 +61,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1784149804
-      created_at: 1784149804
+      completed_at: 1784247614
+      created_at: 1784247614
       error: null
       frequency_penalty: 0.0
-      id: resp_s2gimkj74plbr3h7vvommzapauzp5nlymczxhn6zbf5pxdjdovtq
+      id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va
       incomplete_details: null
       instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
         that result, answer with both results. Never call both tools in one response.
@@ -78,7 +78,7 @@ interactions:
       output:
       - arguments: '{}'
         call_id: call_0
-        id: fc_79cad9dd85cd59b79cdaf1ed9a6bbe17
+        id: fc_ccdc17fdac4f5c7e863e8d8fd3812a13
         name: first_tool
         status: completed
         type: function_call
@@ -124,7 +124,7 @@ interactions:
       usage:
         input_tokens: 88
         input_tokens_details:
-          cache_write_tokens: 0
+          cache_write_tokens: 86
           cached_tokens: 0
         output_tokens: 14
         output_tokens_details:
@@ -143,7 +143,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '946'
+      - '1062'
       content-type:
       - application/json
       host:
@@ -156,11 +156,11 @@ interactions:
       - content: Follow the tool instructions.
         role: user
       - arguments: '{}'
-        call_id: call_0
-        id: fc_79cad9dd85cd59b79cdaf1ed9a6bbe17
+        call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
+        id: fc_ccdc17fdac4f5c7e863e8d8fd3812a13
         name: first_tool
         type: function_call
-      - call_id: call_0
+      - call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
         output: first result
         type: function_call_output
       instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
@@ -195,7 +195,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2694'
+      - '1790'
       content-type:
       - application/json
       vary:
@@ -204,11 +204,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1784149814
-      created_at: 1784149804
+      completed_at: 1784247615
+      created_at: 1784247615
       error: null
       frequency_penalty: 0.0
-      id: resp_dmmpvos3na6ohzevkctb24nbvbpmnpvwvjjaqxnlgpkpbctefzgq
+      id: resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva
       incomplete_details: null
       instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
         that result, answer with both results. Never call both tools in one response.
@@ -219,13 +219,9 @@ interactions:
       moderation: null
       object: response
       output:
-      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFePWdBeZxeTiWVOb91xONzMKO/yTEFB4Qxdrs1TdVsoztAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBNVBZZlBsVTRDWURkUWxTS0cvdmJVSTVqdWpJU3pjUjE5dU1zeDlkOHdNSms5RU5XaWRHM2hZQlB6aDMrQVphd0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcNQbP8Df4RJPJ608z/hDNAMHqJU+Des8NiVzbJVrKc+5ls0wRpnX+0wjWt1IwYJBPrQTSoQHOcWyCCdc/gO7I/vdMHZytR0UxYxopGuNb8kAxofUL2p3G0aLK/nwCAAAQAGe39/sSc+mmXObmgZ8yPOsWXZ4YXOCmmuIDbPSv5hVmv0inqUb/jQbvyQo7vkpUkf////8AAAABAAAAAAAAAAAAAAABAAAAeYnvOO0hGAWbQAlKjZaVltdLGKS3EesIabcuC8G5enjuke3PVoaaRvsKPxemPOl+BL07PJhXaGhyqhdlZ/3RI9XF1vVZatTAIrf8Hz8CB/34TET09wyucqPoBnupcI4hloGKShtYlXag4ii9JsD+eaDv5gX/OLDbuXXoP+t2tgHCU8uWkmdaSoDMAGcwZQIxAOU333aAgq1dkBYDg3TuXN8JplSr1Q/3Ijj/zSjbJkQmCPBjFLHjDNTnLkFTxfiIaAIwHBGUsJGvNRUrez5ytB+f7854PuaPDYmAyN0SyrGUDNWYhEbZgluZGRKp4QUNIgVL
-        id: rs_2db5cf7b9b885f8db4ae39b23a4d3415
-        summary: []
-        type: reasoning
       - arguments: '{}'
         call_id: call_0
-        id: fc_b38a5d9ae8d859dea5ee2ed59feea8a6
+        id: fc_a0cc01696625559fbb1e15fde9c518f5
         name: second_tool
         status: completed
         type: function_call
@@ -271,12 +267,12 @@ interactions:
       usage:
         input_tokens: 115
         input_tokens_details:
-          cache_write_tokens: 0
+          cache_write_tokens: 27
           cached_tokens: 0
-        output_tokens: 30
+        output_tokens: 14
         output_tokens_details:
-          reasoning_tokens: 14
-        total_tokens: 145
+          reasoning_tokens: 0
+        total_tokens: 129
       user: null
     status:
       code: 200
@@ -290,7 +286,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2067'
+      - '1395'
       content-type:
       - application/json
       host:
@@ -303,23 +299,19 @@ interactions:
       - content: Follow the tool instructions.
         role: user
       - arguments: '{}'
-        call_id: call_0
-        id: fc_79cad9dd85cd59b79cdaf1ed9a6bbe17
+        call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
+        id: fc_ccdc17fdac4f5c7e863e8d8fd3812a13
         name: first_tool
         type: function_call
-      - call_id: call_0
+      - call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
         output: first result
         type: function_call_output
-      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFePWdBeZxeTiWVOb91xONzMKO/yTEFB4Qxdrs1TdVsoztAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBNVBZZlBsVTRDWURkUWxTS0cvdmJVSTVqdWpJU3pjUjE5dU1zeDlkOHdNSms5RU5XaWRHM2hZQlB6aDMrQVphd0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcNQbP8Df4RJPJ608z/hDNAMHqJU+Des8NiVzbJVrKc+5ls0wRpnX+0wjWt1IwYJBPrQTSoQHOcWyCCdc/gO7I/vdMHZytR0UxYxopGuNb8kAxofUL2p3G0aLK/nwCAAAQAGe39/sSc+mmXObmgZ8yPOsWXZ4YXOCmmuIDbPSv5hVmv0inqUb/jQbvyQo7vkpUkf////8AAAABAAAAAAAAAAAAAAABAAAAeYnvOO0hGAWbQAlKjZaVltdLGKS3EesIabcuC8G5enjuke3PVoaaRvsKPxemPOl+BL07PJhXaGhyqhdlZ/3RI9XF1vVZatTAIrf8Hz8CB/34TET09wyucqPoBnupcI4hloGKShtYlXag4ii9JsD+eaDv5gX/OLDbuXXoP+t2tgHCU8uWkmdaSoDMAGcwZQIxAOU333aAgq1dkBYDg3TuXN8JplSr1Q/3Ijj/zSjbJkQmCPBjFLHjDNTnLkFTxfiIaAIwHBGUsJGvNRUrez5ytB+f7854PuaPDYmAyN0SyrGUDNWYhEbZgluZGRKp4QUNIgVL
-        id: rs_2db5cf7b9b885f8db4ae39b23a4d3415
-        summary: []
-        type: reasoning
       - arguments: '{}'
-        call_id: call_0
-        id: fc_b38a5d9ae8d859dea5ee2ed59feea8a6
+        call_id: resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0
+        id: fc_a0cc01696625559fbb1e15fde9c518f5
         name: second_tool
         type: function_call
-      - call_id: call_0
+      - call_id: resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0
         output: second result
         type: function_call_output
       instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
@@ -354,7 +346,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2810'
+      - '2814'
       content-type:
       - application/json
       vary:
@@ -363,11 +355,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1784149815
-      created_at: 1784149814
+      completed_at: 1784247616
+      created_at: 1784247615
       error: null
       frequency_penalty: 0.0
-      id: resp_76xhysh72reeb4f3omm4wqojginjag5s7tbk7lhijzoi55wruqxa
+      id: resp_m2q7figv7bk4ec5owiamz4wtafpld75shl3qo4mkcnrzfeghzetq
       incomplete_details: null
       instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
         that result, answer with both results. Never call both tools in one response.
@@ -378,8 +370,8 @@ interactions:
       moderation: null
       object: response
       output:
-      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFeHHqMbnuux1NvXf3QyJDqAL9DPO+SO55RHiRahhZm+54AF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBekxZcisrTS81LzhVRkgvM0hHYzJabUFGakhWN055cmNxS2VNaHErZnNtU2RlQlJNMU1MQUZhY1hIK2w4Q0JBSFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcG+ln9t9QMqhA21C1JGVUwInbe3v8O1PJNL0UhFrKc+5ls0wRpnX+0wjWt1KRbsrls4BrhPcLTV+Xxwt/yQL6R1Eada8rlMQPn8zGD5wyRw8G3mjhRQXgdRCMTkICAAAQAAq6aFvH4xYY/UKwuf9XSMfinWnBh20uMk2AJIQ1ycsYwjazU4MauTz2Fgu4Xal1zf////8AAAABAAAAAAAAAAAAAAABAAAAaBiOYC+jPeiv821FWMkKak0OyFmawNA+fzOkJg1aPVE1YOxj3zg1aDfV/N+KQjSFXAJmk/M0S0ebt87F6UNnowIt/QbXU6DYAXW1l7JeXR5KYWwK7bHk8c95JMrIuHc8wMxjEtDFasB8+fvnpp2hGRtc+RW0EfMpZQBnMGUCMGCL2pO3LGeA84K/LMq7ROlHj5UWr4hmGuutPiPJ+78AFRJtaZAYPGKSsqR4tQFRJwIxAMeX+wEuAzpXQbzTJM0PVFqQnBHikI2HKmii21cQvcm7si90lNl/EGZbB3omRT3wIA==
-        id: rs_df3071865f835a8fadc1b421ad01df62
+      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFeFspOZjfhyonYYYvokSeDiWRdtiF7tMmOnfCXjW88ClJAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBbUIrN2lYVVF2M3dGWHlnQjBadHQ1ZFcybC9IOG1QSlhMWGcxSlBJSTFQa2F3WmFoam4wbmxmSllaTmZzbVZ2K0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcT16IfhJ/4bHvLXefWzKM76Ez0S8jvg5Y/yoOJlrKc+5ls0wRpnX+0wjWt1J25TiVJEISIrMV9K1flwKrWUzZ3jVi0fb0eNdbbIBQr4pXPtPDUbL2UM5HnWXFSZUCAAAQAByT7J4X6JZJpZ7NWRVZdiw+X6lKN6X8PX8KdnSf+dpzOo7Cf6Cr1+tlNVxDIiFprv////8AAAABAAAAAAAAAAAAAAABAAAAbAgla6FQmwYOSNdODVNVvAIbD437ELsVfUeNGIeK7STyMyiZBX79UPCJ4P4R0wiPVNss2Xgj69QWiu9/tOZsXtFrEtk6vtDWnKBzKwnpeDNvsp0mxRcal2cWvCxWTcO9mgvSSMW88Re21lUJqpJ0k4lNlWuwN6VzjIldenYAZzBlAjBp6Y/NE/WzAqiRydMA1E8/t/XTtjpVt/d5k2WmsujBTPiYgxNZfNNPQRgLwv+fD8oCMQC3l0OjprB/ge5Yir3G0SJVHAT69SpPaZf0yzXCr1rIRAXYt5EJDi5EUkOrHSmA0bg=
+        id: rs_5204a68ecc8b5dd2a32bce236c06c18d
         summary: []
         type: reasoning
       - content:
@@ -390,7 +382,7 @@ interactions:
 
             Second tool result: `second result`
           type: output_text
-        id: msg_be166ed7da5b5a4abd5a31def8df4e58
+        id: msg_0d2ae1802b2b5d25b45dbe411f126a01
         phase: final_answer
         role: assistant
         status: completed
@@ -435,14 +427,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 158
+        input_tokens: 142
         input_tokens_details:
-          cache_write_tokens: 43
+          cache_write_tokens: 27
           cached_tokens: 0
-        output_tokens: 32
+        output_tokens: 33
         output_tokens_details:
-          reasoning_tokens: 10
-        total_tokens: 190
+          reasoning_tokens: 11
+        total_tokens: 175
       user: null
     status:
       code: 200
@@ -456,7 +448,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2950'
+      - '2050'
       content-type:
       - application/json
       host:
@@ -469,27 +461,23 @@ interactions:
       - content: Follow the tool instructions.
         role: user
       - arguments: '{}'
-        call_id: resp_s2gimkj74plbr3h7vvommzapauzp5nlymczxhn6zbf5pxdjdovtq:call_0
-        id: fc_79cad9dd85cd59b79cdaf1ed9a6bbe17
+        call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
+        id: fc_ccdc17fdac4f5c7e863e8d8fd3812a13
         name: first_tool
         type: function_call
-      - call_id: resp_s2gimkj74plbr3h7vvommzapauzp5nlymczxhn6zbf5pxdjdovtq:call_0
+      - call_id: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
         output: first result
         type: function_call_output
-      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFePWdBeZxeTiWVOb91xONzMKO/yTEFB4Qxdrs1TdVsoztAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBNVBZZlBsVTRDWURkUWxTS0cvdmJVSTVqdWpJU3pjUjE5dU1zeDlkOHdNSms5RU5XaWRHM2hZQlB6aDMrQVphd0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcNQbP8Df4RJPJ608z/hDNAMHqJU+Des8NiVzbJVrKc+5ls0wRpnX+0wjWt1IwYJBPrQTSoQHOcWyCCdc/gO7I/vdMHZytR0UxYxopGuNb8kAxofUL2p3G0aLK/nwCAAAQAGe39/sSc+mmXObmgZ8yPOsWXZ4YXOCmmuIDbPSv5hVmv0inqUb/jQbvyQo7vkpUkf////8AAAABAAAAAAAAAAAAAAABAAAAeYnvOO0hGAWbQAlKjZaVltdLGKS3EesIabcuC8G5enjuke3PVoaaRvsKPxemPOl+BL07PJhXaGhyqhdlZ/3RI9XF1vVZatTAIrf8Hz8CB/34TET09wyucqPoBnupcI4hloGKShtYlXag4ii9JsD+eaDv5gX/OLDbuXXoP+t2tgHCU8uWkmdaSoDMAGcwZQIxAOU333aAgq1dkBYDg3TuXN8JplSr1Q/3Ijj/zSjbJkQmCPBjFLHjDNTnLkFTxfiIaAIwHBGUsJGvNRUrez5ytB+f7854PuaPDYmAyN0SyrGUDNWYhEbZgluZGRKp4QUNIgVL
-        id: rs_2db5cf7b9b885f8db4ae39b23a4d3415
-        summary: []
-        type: reasoning
       - arguments: '{}'
-        call_id: resp_dmmpvos3na6ohzevkctb24nbvbpmnpvwvjjaqxnlgpkpbctefzgq:call_0
-        id: fc_b38a5d9ae8d859dea5ee2ed59feea8a6
+        call_id: resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0
+        id: fc_a0cc01696625559fbb1e15fde9c518f5
         name: second_tool
         type: function_call
-      - call_id: resp_dmmpvos3na6ohzevkctb24nbvbpmnpvwvjjaqxnlgpkpbctefzgq:call_0
+      - call_id: resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0
         output: second result
         type: function_call_output
-      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFeHHqMbnuux1NvXf3QyJDqAL9DPO+SO55RHiRahhZm+54AF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBekxZcisrTS81LzhVRkgvM0hHYzJabUFGakhWN055cmNxS2VNaHErZnNtU2RlQlJNMU1MQUZhY1hIK2w4Q0JBSFE9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcG+ln9t9QMqhA21C1JGVUwInbe3v8O1PJNL0UhFrKc+5ls0wRpnX+0wjWt1KRbsrls4BrhPcLTV+Xxwt/yQL6R1Eada8rlMQPn8zGD5wyRw8G3mjhRQXgdRCMTkICAAAQAAq6aFvH4xYY/UKwuf9XSMfinWnBh20uMk2AJIQ1ycsYwjazU4MauTz2Fgu4Xal1zf////8AAAABAAAAAAAAAAAAAAABAAAAaBiOYC+jPeiv821FWMkKak0OyFmawNA+fzOkJg1aPVE1YOxj3zg1aDfV/N+KQjSFXAJmk/M0S0ebt87F6UNnowIt/QbXU6DYAXW1l7JeXR5KYWwK7bHk8c95JMrIuHc8wMxjEtDFasB8+fvnpp2hGRtc+RW0EfMpZQBnMGUCMGCL2pO3LGeA84K/LMq7ROlHj5UWr4hmGuutPiPJ+78AFRJtaZAYPGKSsqR4tQFRJwIxAMeX+wEuAzpXQbzTJM0PVFqQnBHikI2HKmii21cQvcm7si90lNl/EGZbB3omRT3wIA==
-        id: rs_df3071865f835a8fadc1b421ad01df62
+      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFeFspOZjfhyonYYYvokSeDiWRdtiF7tMmOnfCXjW88ClJAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBbUIrN2lYVVF2M3dGWHlnQjBadHQ1ZFcybC9IOG1QSlhMWGcxSlBJSTFQa2F3WmFoam4wbmxmSllaTmZzbVZ2K0E9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcT16IfhJ/4bHvLXefWzKM76Ez0S8jvg5Y/yoOJlrKc+5ls0wRpnX+0wjWt1J25TiVJEISIrMV9K1flwKrWUzZ3jVi0fb0eNdbbIBQr4pXPtPDUbL2UM5HnWXFSZUCAAAQAByT7J4X6JZJpZ7NWRVZdiw+X6lKN6X8PX8KdnSf+dpzOo7Cf6Cr1+tlNVxDIiFprv////8AAAABAAAAAAAAAAAAAAABAAAAbAgla6FQmwYOSNdODVNVvAIbD437ELsVfUeNGIeK7STyMyiZBX79UPCJ4P4R0wiPVNss2Xgj69QWiu9/tOZsXtFrEtk6vtDWnKBzKwnpeDNvsp0mxRcal2cWvCxWTcO9mgvSSMW88Re21lUJqpJ0k4lNlWuwN6VzjIldenYAZzBlAjBp6Y/NE/WzAqiRydMA1E8/t/XTtjpVt/d5k2WmsujBTPiYgxNZfNNPQRgLwv+fD8oCMQC3l0OjprB/ge5Yir3G0SJVHAT69SpPaZf0yzXCr1rIRAXYt5EJDi5EUkOrHSmA0bg=
+        id: rs_5204a68ecc8b5dd2a32bce236c06c18d
         summary: []
         type: reasoning
       - content:
@@ -499,7 +487,7 @@ interactions:
 
             Second tool result: `second result`
           type: output_text
-        id: msg_be166ed7da5b5a4abd5a31def8df4e58
+        id: msg_0d2ae1802b2b5d25b45dbe411f126a01
         phase: final_answer
         role: assistant
         status: completed
@@ -518,7 +506,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1346'
+      - '1348'
       content-type:
       - application/json
       vary:
@@ -527,11 +515,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1784150571
-      created_at: 1784150571
+      completed_at: 1784247616
+      created_at: 1784247616
       error: null
       frequency_penalty: 0.0
-      id: resp_smo35xhofjxiz55phwcexun7vofgb5pe6lddhyxcdoaj3dr5lcba
+      id: resp_onlrzv4woqp3zpkmntcwbk6nit66thy2ma5m6a5kaivjlmr6eqkq
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -546,7 +534,7 @@ interactions:
           logprobs: []
           text: OK
           type: output_text
-        id: msg_4b94169d64415dca8a0f60a8f8222879
+        id: msg_0bad2fabe22c509dab22b0df35a13abf
         phase: final_answer
         role: assistant
         status: completed
@@ -575,14 +563,14 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 124
+        input_tokens: 109
         input_tokens_details:
-          cache_write_tokens: 9
+          cache_write_tokens: 107
           cached_tokens: 0
         output_tokens: 5
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 129
+        total_tokens: 114
       user: null
     status:
       code: 200

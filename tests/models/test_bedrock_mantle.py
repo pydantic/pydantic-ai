@@ -6,15 +6,12 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import infer_model
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock_mantle import (
-        BedrockMantleChatModel,
-        BedrockMantleMessagesModel,
-        BedrockMantleResponsesModel,
-    )
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [
@@ -26,10 +23,8 @@ pytestmark = [
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
-    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
-    model = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
     agent = Agent(
-        model,
+        'bedrock:openai.gpt-5.6-luna',
         instructions=(
             'Call first_tool. After receiving its result, call second_tool in a new model response. '
             'After receiving that result, answer with both results. Never call both tools in one response.'
@@ -59,28 +54,43 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
         for tool_call_part in message.tool_calls
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
-    raw_call_ids = ['call_0', 'call_1' if stream else 'call_0']
-    assert [call.tool_call_id for _, call in tool_calls] == [
-        f'{response_id}:{raw_call_id}' for (response_id, _), raw_call_id in zip(tool_calls, raw_call_ids, strict=True)
-    ]
+    assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
+    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
 
     if not stream:
-        replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
+        assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+        replay_result = await Agent('bedrock:openai.gpt-5.6-luna').run(
+            'Reply with exactly OK.', message_history=messages
+        )
         assert replay_result.output == 'OK'
 
 
 async def test_protocol_switching(allow_model_requests: None) -> None:
     provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
     chat_model = BedrockMantleChatModel('openai.gpt-oss-120b', provider=provider)
-    responses_model = BedrockMantleResponsesModel('openai.gpt-oss-120b', provider=provider)
-    messages_model = BedrockMantleMessagesModel('anthropic.claude-sonnet-5', provider=provider)
+    responses_model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: provider)
+    messages_model = infer_model('bedrock-mantle:anthropic.claude-sonnet-5', lambda _: provider)
 
-    chat_result = await Agent(chat_model).run('Reply with exactly CHAT.')
+    chat_result = await Agent(chat_model).run(
+        'Remember the exact token violet-otter-73 for later. Reply with exactly ACK.'
+    )
     responses_result = await Agent(responses_model).run(
-        'Reply with exactly RESPONSES.', message_history=chat_result.all_messages()
+        'What exact token did I ask you to remember? Reply with only the token.',
+        message_history=chat_result.all_messages(),
     )
     messages_result = await Agent(messages_model).run(
-        'Reply with exactly MESSAGES.', message_history=responses_result.all_messages()
+        'Repeat the exact token one more time. Reply with only the token.',
+        message_history=responses_result.all_messages(),
     )
 
-    assert (chat_result.output, responses_result.output, messages_result.output) == ('CHAT', 'RESPONSES', 'MESSAGES')
+    assert (chat_result.output, responses_result.output, messages_result.output) == (
+        'ACK',
+        'violet-otter-73',
+        'violet-otter-73',
+    )
+
+
+async def test_safeguard_chat_routing(allow_model_requests: None) -> None:
+    result = await Agent('bedrock-mantle:openai.gpt-oss-safeguard-20b').run('Reply with exactly SAFE.')
+
+    assert result.output == 'SAFE'

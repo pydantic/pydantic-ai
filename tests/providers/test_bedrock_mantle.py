@@ -123,13 +123,33 @@ def test_bedrock_mantle_infers_base_url_from_injected_clients(env: TestEnv, mock
         aws_region='us-east-1',
         base_url='https://anthropic.example.com/anthropic',
     )
+    standard_openai_client = AsyncBedrockOpenAI(
+        api_key='test-api-key',
+        aws_region='us-east-1',
+        base_url='https://standard-openai.example.com/v1',
+    )
+    invalid_openai_client = AsyncBedrockOpenAI(
+        api_key='test-api-key',
+        aws_region='us-east-1',
+        base_url='https://invalid-openai.example.com/unexpected-path',
+    )
 
     openai_provider = BedrockProvider(bedrock_client=bedrock_client, mantle_openai_client=openai_client)
     anthropic_provider = BedrockProvider(bedrock_client=bedrock_client, mantle_anthropic_client=anthropic_client)
+    standard_openai_provider = BedrockProvider(
+        bedrock_client=bedrock_client, mantle_openai_client=standard_openai_client
+    )
+    fallback_provider = BedrockProvider(
+        bedrock_client=bedrock_client,
+        mantle_openai_client=invalid_openai_client,
+        mantle_anthropic_client=anthropic_client,
+    )
     unconfigured_provider = BedrockProvider(bedrock_client=bedrock_client)
 
     assert openai_provider.mantle_base_url == 'https://openai.example.com'
     assert anthropic_provider.mantle_base_url == 'https://anthropic.example.com'
+    assert standard_openai_provider.mantle_base_url == 'https://standard-openai.example.com'
+    assert fallback_provider.mantle_base_url == 'https://anthropic.example.com'
     with pytest.raises(UserError, match='pass `mantle_base_url`'):
         unconfigured_provider.mantle_base_url
 
