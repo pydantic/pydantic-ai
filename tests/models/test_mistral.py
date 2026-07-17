@@ -496,6 +496,35 @@ async def test_stream_forwards_model_settings(allow_model_requests: None, with_t
         assert kwargs['tool_choice'] is None
 
 
+@pytest.mark.parametrize('with_tool', [False, True])
+async def test_stream_preserves_unset_model_settings(allow_model_requests: None, with_tool: bool):
+    """Consolidating request paths must not add defaults to no-tool requests."""
+    stream = [text_chunk('hello'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model)
+
+    if with_tool:
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if with_tool:
+        assert kwargs['top_p'] == 1
+        assert kwargs['n'] == 1
+    else:
+        assert kwargs['top_p'] is None
+        assert isinstance(kwargs['n'], MistralUnset)
+    assert isinstance(kwargs['temperature'], MistralUnset)
+    assert isinstance(kwargs['max_tokens'], MistralUnset)
+    assert isinstance(kwargs['random_seed'], MistralUnset)
+
+
 async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
     stream = [
         MistralCompletionEvent(

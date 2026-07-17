@@ -309,7 +309,7 @@ class MistralModel(Model[Mistral]):
             response_format=response_format,
             stream=True,
             temperature=model_settings.get('temperature', UNSET),
-            top_p=model_settings.get('top_p', 1),
+            top_p=model_settings.get('top_p', 1 if tools or model_request_parameters.output_tools else None),
             max_tokens=model_settings.get('max_tokens', UNSET),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
             random_seed=model_settings.get('seed', UNSET),
