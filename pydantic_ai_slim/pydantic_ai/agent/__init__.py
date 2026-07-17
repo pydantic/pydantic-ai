@@ -18,7 +18,7 @@ import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -144,6 +144,11 @@ class _ResolvedAgentRetries:
 
     tools: int
     output: int
+
+
+def _is_model(value: object) -> TypeIs[models.Model[Any]]:
+    """Narrow a value to a concrete model without losing its client type to `Unknown`."""
+    return isinstance(value, models.Model)
 
 
 def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
@@ -1470,10 +1475,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_selected_for_step: int | None
         capability_owns_current_model: bool
         if model_layers_unchanged:
-            model_selector = model_contribution if callable(model_contribution) else None
+            model_selector = (
+                model_contribution if callable(model_contribution) and not _is_model(model_contribution) else None
+            )
             model_selected_for_step = 1 if model_selector is not None else None
             capability_owns_current_model = model_contribution is not None
-        elif callable(run_model_contribution):
+        elif callable(run_model_contribution) and not _is_model(run_model_contribution):
             # The bootstrap model was only needed to construct RunContext for `for_run`.
             # The replacement selector makes the authoritative step-one choice in the graph.
             model_selector = run_model_contribution
@@ -1911,7 +1918,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_token = None
 
         if _utils.is_set(model):
-            model_capability = override_capability or self._root_capability
+            model_capability = override_capability or self._effective_root_capability()
             override_model = (
                 model if isinstance(model, str) and model_capability.has_resolve_model_id else models.infer_model(model)
             )
@@ -2093,10 +2100,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 selected_model = default_model
             else:
                 raise exceptions.UserError('`model` must either be set on the agent or supplied by a capability.')
-        elif default_model is not None:
-            selected_model = default_model
         else:
-            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+            assert default_model is not None
+            selected_model = default_model
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -2603,7 +2609,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ctx: models.ModelSelectionContext[AgentDepsT],
     ) -> models.Model:
         """Evaluate a static or dynamic model contribution and resolve its result."""
-        selection = contribution(ctx) if callable(contribution) else contribution
+        selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
         if inspect.isawaitable(selection):
             selection = await selection
         return await self._resolve_model_selection(selection, capability=capability, deps=ctx.deps)
@@ -2616,6 +2622,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Reject cross-run continuation when a selector cannot reconstruct the pinned model."""
         if (
             callable(contribution)
+            and not _is_model(contribution)
             and message_history
             and isinstance(message_history[-1], _messages.ModelResponse)
             and message_history[-1].state == 'suspended'
@@ -2626,33 +2633,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'that model explicitly to `run(model=...)` when resuming.'
             )
 
-    def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
-        """Create a model configured for this agent.
-
-        Args:
-            model: model to use for this run, required if `model` was not set when creating the agent.
-
-        Returns:
-            The model used
-        """
-        raw = self._pick_raw_model(model)
-        if isinstance(raw, str) and self._effective_root_capability().has_resolve_model_id:
-            raise exceptions.UserError(
-                'This model ID is resolved by a capability using run dependencies and cannot be resolved '
-                'synchronously outside a run. Pass a concrete `Model` instance explicitly.'
-            )
-        model_ = raw if isinstance(raw, models.Model) else models.infer_model(raw)
-        if model is None and self._override_model.get() is None:
-            self.model = model_
-        return model_
-
     def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
         """Resolve a configured or static capability model where run deps are unavailable."""
         capability = self._effective_root_capability()
         if model is not None or self._override_model.get() is not None:
-            return self._get_model(model)
+            selection = self._pick_raw_model(model)
+            return selection if _is_model(selection) else models.infer_model(selection)
         contribution = capability.get_model()
-        if callable(contribution):
+        if callable(contribution) and not _is_model(contribution):
             raise exceptions.UserError(
                 'The capability model is dynamic and can only be selected during a run with run dependencies. '
                 'Pass a concrete model explicitly.'
@@ -2663,7 +2651,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'The configured model ID is resolved by a capability using run dependencies. '
                 'Pass a concrete model explicitly.'
             )
-        return selection if isinstance(selection, models.Model) else models.infer_model(selection)
+        return selection if _is_model(selection) else models.infer_model(selection)
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
@@ -2876,13 +2864,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     capability = self._effective_root_capability()
                     capability_model = capability.get_model()
                     override_model = self._override_model.get()
-                    static_selection = (
-                        override_model.value
-                        if override_model is not None
-                        else capability_model
-                        if capability_model is not None and not callable(capability_model)
-                        else self.model
-                    )
+                    if override_model is not None:
+                        static_selection = override_model.value
+                    elif callable(capability_model) and not _is_model(capability_model):
+                        # Dynamic capability models are entered by the run that selects them.
+                        static_selection = None
+                    elif capability_model is not None:
+                        static_selection = capability_model
+                    else:
+                        static_selection = self.model
                     if static_selection is not None and not (
                         isinstance(static_selection, str) and capability.has_resolve_model_id
                     ):

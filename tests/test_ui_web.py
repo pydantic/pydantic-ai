@@ -177,20 +177,25 @@ def test_chat_app_configure_endpoint_empty():
 
 
 def test_chat_app_preserves_capability_resolved_model_id():
-    """Resolver-owned IDs are displayed without eagerly inferring them."""
+    """Custom resolver IDs stay unresolved while standard IDs retain inferred metadata."""
     agent = Agent(
         'tenant-model',
         capabilities=[ResolveModelId(lambda ctx, model_id: TestModel() if model_id == 'tenant-model' else None)],
     )
-    app = create_web_app(agent)
+    app = create_web_app(agent, models=['test'], native_tools=[WebSearchTool()])
 
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        assert response.json() == {
-            'models': [{'id': 'tenant-model', 'name': 'tenant-model', 'builtinTools': []}],
-            'builtinTools': [],
-        }
+        assert response.json() == snapshot(
+            {
+                'models': [
+                    {'id': 'tenant-model', 'name': 'tenant-model', 'builtinTools': []},
+                    {'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']},
+                ],
+                'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
+            }
+        )
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')

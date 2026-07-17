@@ -12,6 +12,7 @@ from starlette.routing import Route
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
@@ -128,13 +129,15 @@ def create_api_app(
     items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
     all_models.extend(items)
 
-    capability = agent._effective_root_capability()  # pyright: ignore[reportPrivateUsage]
     seen_model_ids: set[str] = set()
     for label, model_ref in all_models:
-        # A capability resolver may intentionally use an ID that the built-in inference
-        # machinery does not understand. Resolution needs run dependencies, so leave the
-        # reference untouched here and let Agent resolve it when the request is dispatched.
-        model = None if isinstance(model_ref, str) and capability.has_resolve_model_id else infer_model(model_ref)
+        try:
+            model = infer_model(model_ref)
+        except UserError:
+            # A capability resolver may intentionally use an ID that built-in inference does
+            # not understand. Resolution needs run dependencies, so leave custom references
+            # untouched here and let Agent resolve them when the request is dispatched.
+            model = None
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
         model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
         if model_id in seen_model_ids:

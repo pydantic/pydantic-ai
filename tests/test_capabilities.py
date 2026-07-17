@@ -8598,6 +8598,30 @@ class TestGetModelHook:
         result = await agent.run('hello')
         assert result.output == 'from-capability'
 
+    async def test_callable_model_instance_is_static(self):
+        """A callable `Model` instance is still a model, not a selector function."""
+        from unittest.mock import Mock
+
+        class CallableModel(FunctionModel):
+            __call__ = Mock(side_effect=AssertionError('model must not be called as a selector'))
+
+        selected = CallableModel(lambda messages, info: make_text_response('selected'))
+        assert (await Agent(None, capabilities=[_ModelCap(model=selected)]).run('hello')).output == 'selected'
+        selected.__call__.assert_not_called()
+
+    async def test_agent_context_with_dynamic_capability_model(self):
+        """The agent context leaves dynamic capability models to the runs that select them."""
+        selected_model = _text_model('from-capability')
+
+        @dataclass
+        class AdaptiveModel(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return lambda ctx: selected_model
+
+        agent = Agent(_text_model('from-constructor'), deps_type=NoneType, capabilities=[AdaptiveModel()])
+        async with agent:
+            assert (await agent.run('hello')).output == 'from-capability'
+
     async def test_override_model_beats_capability_model(self):
         """`agent.override(model=...)` wins over a capability-supplied model, per its docs."""
         agent = Agent(None, capabilities=[_ModelCap(model='test')])
@@ -8629,9 +8653,12 @@ class TestGetModelHook:
 
         second = FunctionModel(finish, settings={'max_tokens': 123})
         selected_steps: list[int] = []
+        selection_history_lengths: list[int] = []
 
         def select(ctx: ModelSelectionContext[int]) -> Model:
             selected_steps.append(ctx.run_step)
+            selection_history_lengths.append(len(ctx.messages))
+            ctx.messages.clear()  # The selection context must not expose mutable graph state.
             assert ctx.deps == 42
             return first if ctx.run_step == 1 else second
 
@@ -8649,20 +8676,27 @@ class TestGetModelHook:
         result = await agent.run('hello', deps=42)
         assert result.output == 'done'
         assert selected_steps == [1, 2]
+        assert selection_history_lengths == [0, 2]
 
     async def test_explicit_run_model_skips_selector(self):
-        def select(ctx: ModelSelectionContext[None]) -> Model:
-            raise AssertionError('selector should not run')
+        from unittest.mock import Mock
+
+        select = Mock(side_effect=AssertionError('selector should not run'))
 
         @dataclass
         class AdaptiveModel(AbstractCapability[None]):
             def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
                 return select
 
-        result = await Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()]).run(
+        capability = AdaptiveModel()
+        assert capability.get_model() is select
+        select.reset_mock()
+
+        result = await Agent(None, deps_type=NoneType, capabilities=[capability]).run(
             'hello', model=_text_model('explicit')
         )
         assert result.output == 'explicit'
+        select.assert_not_called()
 
     async def test_selected_model_id_is_resolved_with_deps(self):
         target = _text_model('resolved')
@@ -8888,11 +8922,12 @@ class TestGetModelHook:
         assert calls == ['user', 'registry']
 
     async def test_async_model_id_resolver_and_deferred_resolver(self):
+        from unittest.mock import AsyncMock
+
         calls: list[str] = []
         target = _text_model('resolved')
 
-        async def deferred(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
-            raise AssertionError('deferred model resolver must not run')
+        deferred = AsyncMock(side_effect=AssertionError('deferred model resolver must not run'))
 
         async def eager(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
             calls.append(model_id)
@@ -8904,6 +8939,7 @@ class TestGetModelHook:
         agent = Agent('alias', deps_type=NoneType, capabilities=[capability])
         assert (await agent.run('hello')).output == 'resolved'
         assert calls == ['alias']
+        deferred.assert_not_awaited()
         assert ResolveModelId.get_serialization_name() is None
 
     async def test_override_spec_model_uses_spec_model_id_resolver(self, monkeypatch: pytest.MonkeyPatch):
@@ -8925,6 +8961,10 @@ class TestGetModelHook:
 
         with agent.override(spec={'capabilities': ['SpecResolver']}, model='custom-id'):
             assert (await agent.run('hello')).output == 'resolved by spec'
+
+        with agent.override(spec={'capabilities': ['SpecResolver']}):
+            with agent.override(model='custom-id'):
+                assert (await agent.run('hello')).output == 'resolved by spec'
 
     async def test_wrapper_subclass_model_id_resolver_is_detected(self):
         target = _text_model('resolved by wrapper')
@@ -9093,28 +9133,24 @@ class TestGetModelHook:
         with pytest.raises(UserError, match='supplied by a capability'):
             await agent.system_prompt_parts()
 
-    def test_outside_run_model_resolution_contract(self):
+    def test_mcp_sampling_rejects_dynamic_capability_model(self):
         selected = _text_model('selected')
-        static_agent = Agent(None, capabilities=[_ModelCap(model=selected)])
-        assert static_agent._get_model_outside_run() is selected  # pyright: ignore[reportPrivateUsage]
-        assert static_agent._get_model_outside_run(selected) is selected  # pyright: ignore[reportPrivateUsage]
+        Agent(None, capabilities=[_ModelCap(model=selected)]).set_mcp_sampling_model()
 
         @dataclass
         class AdaptiveModel(AbstractCapability[None]):
             def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
                 return lambda ctx: selected
 
-        dynamic_agent = Agent(None, deps_type=NoneType, capabilities=[AdaptiveModel()])
-        with pytest.raises(UserError, match='dynamic and can only be selected during a run'):
-            dynamic_agent._get_model_outside_run()  # pyright: ignore[reportPrivateUsage]
+        agent = Agent(_text_model('constructor'), deps_type=NoneType, capabilities=[AdaptiveModel()])
+        with pytest.raises(UserError, match='requires run dependencies'):
+            agent.set_mcp_sampling_model()
 
         resolving_agent = Agent(
             'alias', capabilities=[ResolveModelId(lambda ctx, model_id: selected if model_id == 'alias' else None)]
         )
-        with pytest.raises(UserError, match='resolved by a capability using run dependencies'):
-            resolving_agent._get_model_outside_run()  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(UserError, match='cannot be resolved synchronously outside a run'):
-            resolving_agent._get_model('alias')  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(UserError, match='requires run dependencies'):
+            resolving_agent.set_mcp_sampling_model()
 
     async def test_wrapper_capability_delegates(self):
         """A `WrapperCapability` surfaces its wrapped leaf's model."""
@@ -9123,15 +9159,17 @@ class TestGetModelHook:
         result = await agent.run('hello')
         assert result.output == 'success (no tool calls)'
 
-    async def test_combined_capability_delegates(self):
-        """A `CombinedCapability` surfaces its leaves' models in order (first non-None wins)."""
+    async def test_combined_capability_uses_last_non_none_model(self):
+        """A `CombinedCapability` uses the last non-`None` model contribution."""
         agent = Agent(
             None,
-            capabilities=[CombinedCapability([_ModelCap(model=None), _ModelCap(model='test')])],
+            capabilities=[
+                CombinedCapability([_ModelCap(model=_text_model('first')), _ModelCap(model=_text_model('last'))])
+            ],
         )
 
         result = await agent.run('hello')
-        assert result.output == 'success (no tool calls)'
+        assert result.output == 'last'
 
     async def test_capability_returning_none_is_noop(self):
         """A capability whose `get_model()` returns None (the default) leaves the agent model in place."""

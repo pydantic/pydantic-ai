@@ -1954,7 +1954,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
-        messages=ctx.state.message_history,
+        # The current request has already been appended, but selection describes the model
+        # that will handle it. Expose the history available before this request step, matching
+        # bootstrap selection, and do not let selectors mutate graph state through the context.
+        messages=list(ctx.state.message_history[:-1]),
         usage=ctx.state.usage,
     )
     model = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
