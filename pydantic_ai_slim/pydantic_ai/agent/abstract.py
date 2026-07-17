@@ -133,12 +133,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (#6162).
+    the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.
     """
 
@@ -179,13 +179,18 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             return
 
         self._closed = True
-        # Cancel before closing the receive end: the run may be blocked pushing an event into the zero-buffer
-        # stream, and cancellation unblocks it and drives its own cleanup. If iteration was never started,
-        # `_task` is `None` and there's nothing to tear down.
+        # Cancel the run first so it tears down via its own cancellation, unblocking a run that's
+        # parked pushing an event into the zero-buffer stream. But if the run *absorbs* that
+        # cancellation (e.g. a durable step under Temporal's cooperative cancellation) it can resume
+        # and block again on `send`, so close the receive end before draining: the blocked `send` then
+        # fails with `BrokenResourceError` and the drain can complete instead of deadlocking. A run
+        # that unwound normally is unaffected. If iteration was never started, `_task` is `None`.
         if self._task is not None:
-            await _utils.cancel_and_drain(self._task)
+            self._task.cancel()
         if self._receive_stream is not None:
             await self._receive_stream.aclose()
+        if self._task is not None:
+            await _utils.cancel_and_drain(self._task)
 
     async def _ensure_started(self) -> None:
         if self._task is not None:
@@ -879,7 +884,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         async def stream_to_final(
                             stream: AgentStream,
-                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                        ) -> AsyncIterator[_messages.AgentStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -1065,12 +1070,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Run the agent with a user prompt in sync streaming mode.
 
         This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream],
-        running all of the agent's async work on a dedicated event loop thread.
+        running all of the agent's async work on the caller's event loop while keeping context-manager and
+        iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
-        context manager and should be used with a `with` block so the stream and event loop thread are
-        cleaned up when you're done.
+        context manager and should be used and closed on the thread where it was created. Use a `with` block
+        so the stream is cleaned up when you're done.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
@@ -1622,6 +1628,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             yield
 
     @staticmethod
+    @contextmanager
+    def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
+        """Use a custom async sleep function for agent-graph delays during the context.
+
+        By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
+        polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
+        DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
+        waste activity time.
+        """
+        with _agent_graph.set_agent_graph_sleep(sleep_func):
+            yield
+
+    @staticmethod
     def is_model_request_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.ModelRequestNode[T, S]]:
@@ -1676,6 +1695,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1685,6 +1705,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1708,6 +1729,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model=model,
             model_settings=model_settings,
             usage_limits=usage_limits,
         )
@@ -1719,6 +1741,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1728,6 +1751,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             message_history: History of the conversation so far.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            model: Optional model to use for the agent run.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -1742,6 +1766,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 deps=deps,
                 prog_name=prog_name,
                 message_history=message_history,
+                model=model,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
             )

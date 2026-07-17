@@ -223,7 +223,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
     end_strategy: EndStrategy
-    """The strategy for handling function tool calls the model requests alongside an output tool.
+    """The strategy for handling function tool calls the model requests alongside a result that ends the run.
+
+    That result usually comes from an output tool call, but with `NativeOutput`, `PromptedOutput`, or image
+    output it comes from the structured text or image the model returns in the same response. Plain,
+    unstructured text (`str` or `TextOutput`) is not treated as such a result: since the model isn't told
+    its text is final, `end_strategy` never skips tools on its account, even under `'early'`.
 
     Defaults to `'graceful'`. See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for the behavior of
     each strategy.
@@ -467,6 +472,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_tool_retries = resolved_retries.tools
         self._max_output_retries = resolved_retries.output
         self._tool_timeout = tool_timeout
+        if self._tool_timeout is not None and self._tool_timeout <= 0:
+            raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
 
@@ -1227,6 +1234,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             agent=self,
             model=model_used,
             usage=usage,
+            usage_limits=usage_limits,
             prompt=user_prompt,
             messages=state.message_history,
             tracer=tracer,
@@ -1433,7 +1441,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _ready_waiter = asyncio.create_task(_run_ready.wait())
             try:
                 await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-            except BaseException:
+            except BaseException as exc:
+                # Unblock `_do_run` before draining, mirroring the streaming handoff: if
+                # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
+                # cooperative cancellation) and returned, `_do_run` is parked on
+                # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
+                # instead of asserting on a not-yet-produced result, then set `_run_done` so
+                # it can exit and `cancel_and_drain`'s gather can complete (it discards the
+                # survivor's exception). Harmless no-op when `_wrap_task` really died
+                # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
+                _run_error = exc
+                _run_done.set()
                 await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
                 raise
             else:
@@ -2336,12 +2354,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         model_: models.Model
         if some_model := self._override_model.get():
-            # we don't want `override()` to cover up errors from the model not being defined, hence this check
-            if model is None and self.model is None:
-                raise exceptions.UserError(
-                    '`model` must either be set on the agent or included when calling it. '
-                    '(Even when `override(model=...)` is customizing the model that will actually be called)'
-                )
             model_ = some_model.value
         elif model is not None:
             model_ = models.infer_model(model)
@@ -2422,7 +2434,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already return
-        # one, or a second loader toolset then errors on the reserved `load_capability` name (cf. #5047).
+        # one, or a second loader toolset then errors on the reserved `load_capability` name
+        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047).
         if inject_deferred_loader and (
             any(capability.defer_loading is True for capability in capabilities.values())
             and not has_capability_type([run_capability], DeferredCapabilityLoader)
@@ -2576,7 +2589,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # wrapped around the output toolset specifically — so the hook only sees output
                 # tools, and the filtered/modified defs flow into `ToolManager.tools` and the model
                 # request parameters together. Override `ctx.max_retries` to the agent's output
-                # retry budget (matches `_build_output_run_context`'s contract — see #4745).
+                # retry budget (matches `_build_output_run_context`'s contract — see https://github.com/pydantic/pydantic-ai/issues/4745).
                 # `output_toolset.max_retries` is set to `max_output_retries` at agent construction.
                 output_cap = run_capability
                 effective_max_output_retries = (

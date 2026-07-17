@@ -20,7 +20,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -51,6 +51,25 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
         yield 'hello'
 
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
+
+
+async def test_history_processor_public_type(function_model: FunctionModel) -> None:
+    """`HistoryProcessor` is publicly importable so consumers can type their own processors."""
+
+    def drop_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(m, parts=[p for p in m.parts if not isinstance(p, SystemPromptPart)])
+            if isinstance(m, ModelRequest)
+            else m
+            for m in messages
+        ]
+
+    # The public type annotates a processor that is then handed to `ProcessHistory`.
+    processor: HistoryProcessor[None] = drop_system_prompts
+    agent = Agent(function_model, system_prompt='SYSTEM', capabilities=[ProcessHistory(processor)])
+
+    result = await agent.run('Hello')
+    assert result.output == 'Provider response'
 
 
 async def test_history_processor_no_op(function_model: FunctionModel, received_messages: list[ModelMessage]):

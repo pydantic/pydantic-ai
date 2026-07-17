@@ -130,6 +130,18 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
+        {
+            'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+            'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
+            'OPENAI_API_VERSION': '2024-12-01-preview',
+        },
+        'azure-responses:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'azure',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'google:gemini-1.5-flash',
         'gemini-1.5-flash',
@@ -170,7 +182,11 @@ TEST_CASES = [
         CohereModel,
     ),
     pytest.param(
-        {'AWS_DEFAULT_REGION': 'aws-default-region'},
+        {
+            'AWS_ACCESS_KEY_ID': 'test-access-key',
+            'AWS_DEFAULT_REGION': 'aws-default-region',
+            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+        },
         'bedrock:bedrock-claude-haiku-4-5',
         'bedrock-claude-haiku-4-5',
         'bedrock',

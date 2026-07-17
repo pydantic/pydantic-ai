@@ -527,7 +527,7 @@ class GoogleModel(Model[Client]):
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
-            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (https://github.com/pydantic/pydantic-ai/issues/5704);
             # don't copy that strip here.
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -1179,8 +1179,16 @@ class GoogleModel(Model[Client]):
             part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
         else:
             part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
-        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
-            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        if file.vendor_metadata:
+            # `media_resolution` is a per-Part field (not part of `video_metadata`) that applies to
+            # any file type; only per-part resolution supports `MEDIA_RESOLUTION_ULTRA_HIGH`
+            # (Gemini 3), see https://ai.google.dev/gemini-api/docs/media-resolution
+            vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
+            if 'media_resolution' in vendor_metadata:
+                part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            # The remaining keys map to `video_metadata`, which only applies to video parts.
+            if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
+                part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
         return part_dict
 
     async def _map_file_to_function_response_part(
@@ -1904,7 +1912,7 @@ def _metadata_as_usage(
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
-    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
     if existing_usage:
         details = {**existing_usage.details, **details}
