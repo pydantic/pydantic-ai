@@ -230,6 +230,48 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
+async def test_span_node_matches_json_attributes():
+    """Test that has_attributes matches dict/list values stored as JSON strings by OTel."""
+    from datetime import datetime, timezone
+
+    from pydantic_evals.otel.span_tree import SpanNode
+
+    node = SpanNode(
+        name='test',
+        trace_id=1,
+        span_id=1,
+        parent_span_id=None,
+        start_timestamp=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        end_timestamp=datetime(2020, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        attributes={
+            'str_attr': 'hello',
+            'dict_attr': '{"foo":1,"bar":true}',
+            'list_attr': '[1,2,3]',
+            'nested_dict': '{"a":{"b":2}}',
+            'not_json': 'plain text',
+        },
+    )
+
+    # Direct string match still works
+    assert node.matches(SpanQuery(has_attributes={'str_attr': 'hello'}))
+    assert not node.matches(SpanQuery(has_attributes={'str_attr': 'world'}))
+
+    # Dict attribute match: stored as JSON string, queried as dict
+    assert node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': True}}))
+    assert not node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': False}}))
+    assert not node.matches(SpanQuery(has_attributes={'dict_attr': {'wrong': 1}}))
+
+    # List attribute match: stored as JSON string, queried as list
+    assert node.matches(SpanQuery(has_attributes={'list_attr': [1, 2, 3]}))
+    assert not node.matches(SpanQuery(has_attributes={'list_attr': [1, 2, 4]}))
+
+    # Nested dict comparison
+    assert node.matches(SpanQuery(has_attributes={'nested_dict': {'a': {'b': 2}}}))
+
+    # Non-JSON string with dict expected: graceful fallback to False
+    assert not node.matches(SpanQuery(has_attributes={'not_json': {'key': 'val'}}))
+
+
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')

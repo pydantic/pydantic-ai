@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -252,6 +253,19 @@ class SpanNode:
 
         return self._matches_query(query)
 
+    def _attribute_matches(self, key: str, expected: Any) -> bool:
+        """Check if a span attribute matches an expected value, handling JSON-serialized dicts/lists."""
+        stored = self.attributes.get(key)
+        if stored == expected:
+            return True
+        # OTel stores dict/list values as JSON strings; deserialize for comparison
+        if isinstance(stored, str) and not isinstance(expected, str):
+            try:
+                return json.loads(stored) == expected
+            except (json.JSONDecodeError, TypeError):
+                return False
+        return False
+
     def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
         """Check if the span matches the query conditions."""
         # Logical combinations
@@ -278,7 +292,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            self._attribute_matches(key, value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
