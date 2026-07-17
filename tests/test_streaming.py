@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaita
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import timezone
+from datetime import datetime as _datetime, timezone
 from types import TracebackType
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -28,6 +28,9 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    DeferredToolRequests,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -64,7 +67,12 @@ from pydantic_ai._sync_stream import (
     _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.agent import AgentRun
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    HandleDeferredToolCalls,
+    WrapModelRequestHandler,
+)
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
@@ -72,7 +80,7 @@ from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
@@ -5087,8 +5095,67 @@ async def test_deferred_tool_iter():
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
+            DeferredToolRequestsEvent(
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
+            ),
         ]
     )
+
+
+async def test_deferred_tool_requests_and_results_events():
+    """`DeferredToolRequestsEvent` is emitted once per deferred batch; `DeferredToolResultsEvent` once when a handler resolves it."""
+
+    async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    events: list[Any] = []
+
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+
+    event_kinds = [e.event_kind for e in events]
+    # `FunctionToolCallEvent` fires first (validation), then `DeferredToolRequestsEvent` for the batch,
+    # then `DeferredToolResultsEvent` once the handler resolves it, then `FunctionToolResultEvent`
+    # as the approved call executes.
+    assert event_kinds == snapshot(
+        [
+            'function_tool_call',
+            'deferred_tool_requests',
+            'deferred_tool_results',
+            'function_tool_result',
+        ]
+    )
+
+    requests_event = next(e for e in events if e.event_kind == 'deferred_tool_requests')
+    assert isinstance(requests_event, DeferredToolRequestsEvent)
+    assert len(requests_event.requests.approvals) == 1
+    assert requests_event.requests.approvals[0].tool_name == 'my_tool'
+
+    results_event = next(e for e in events if e.event_kind == 'deferred_tool_results')
+    assert isinstance(results_event, DeferredToolResultsEvent)
+    assert len(results_event.results.approvals) == 1
 
 
 async def test_tool_raises_call_deferred_approval_required_iter():
@@ -5144,6 +5211,18 @@ async def test_tool_raises_call_deferred_approval_required_iter():
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
+            DeferredToolRequestsEvent(
+                requests=DeferredToolRequests(
+                    calls=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                    ],
+                    approvals=[
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        )
+                    ],
+                ),
             ),
         ]
     )
@@ -5406,7 +5485,7 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
 
     async def counting_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal pulled
-        while True:
+        while True:  # pragma: no cover - the test asserts this unbounded stream is never pulled
             pulled += 1
             yield 'hello'
 
@@ -5418,9 +5497,11 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
     with pytest.raises(asyncio.CancelledError):
         await agent.run('Hello', event_stream_handler=event_stream_handler)
 
-    # Only the single lookahead the run makes before invoking the handler; the post-handler
-    # drain was skipped (otherwise this unbounded stream would have been pulled forever).
-    assert pulled == 1
+    # The continuation composite opens each segment's `request_stream` lazily, only once the
+    # consumer starts iterating, so a handler that raises before consuming never pulls the model
+    # stream at all. The key guarantee is that the post-handler drain was skipped (otherwise this
+    # unbounded stream would have been pulled forever).
+    assert pulled == 0
 
 
 async def test_stream_tool_returning_user_content():
@@ -6130,6 +6211,116 @@ async def test_run_stream_cancel_after_complete():
         await result.cancel()
         assert result.cancelled
         assert result.response.state == 'complete'
+
+
+async def test_testmodel_stream_cancel_reports_interrupted():
+    """Cancelling a `TestModel` sub-stream mid-iteration simulates the transport tear-down and reports interrupted.
+
+    Driven directly against `model.request_stream` (not the continuation composite, which tears segments
+    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
+    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    """
+    model = TestModel(custom_output_text='hello world')
+    params = models.ModelRequestParameters()
+
+    async with model.request_stream([ModelRequest(parts=[UserPromptPart('go')])], None, params) as stream:
+        iterator = stream.__aiter__()
+        await iterator.__anext__()
+        await stream.cancel()
+        async for _ in iterator:  # the next pull raises the simulated `StreamClosed`, suppressed by the guard
+            pass
+
+    assert stream.get().state == 'interrupted'
+
+
+async def test_stream_cancel_with_natural_drain_reports_interrupted():
+    """A `cancel()` on a stream with no live connection still drains naturally but reports interrupted.
+
+    Mirrors a local model whose `close_stream()` has nothing to tear down: iteration reaches a natural
+    `StopAsyncIteration`, so the cancel-guard's else-branch runs but `_cancelled` keeps `_finished` unset,
+    and `get()` reports `'interrupted'` rather than `'complete'`.
+    """
+
+    @dataclass
+    class _NaturalDrainStream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for _ in range(2):
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                    yield event
+
+        async def close_stream(self) -> None:
+            pass  # no live connection to tear down
+
+        @property
+        def model_name(self) -> str:
+            return 'drain'
+
+        @property
+        def provider_name(self) -> str | None:
+            return 'drain'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _NaturalDrainStream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:  # drains to a natural completion while cancelled
+        pass
+
+    assert stream.get().state == 'interrupted'
+
+
+async def test_stream_cancel_outranks_incomplete_state_hint():
+    """A cancelled stream reports `'interrupted'` even when it stamped `state='incomplete'` mid-iteration.
+
+    OpenAI Responses stamps `state='incomplete'` on every `in_progress` event. That in-flight hint must
+    not outrank an explicit `cancel()` in `get()`, or a cancelled foreground stream would report
+    `'incomplete'` instead of `'interrupted'` — a regression of the cancellation-state feature that a VCR
+    test can't catch, since it hinges on `get()`'s internal state precedence rather than the request body.
+    """
+
+    @dataclass
+    class _InProgressStream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for _ in range(2):
+                self.state = 'incomplete'  # mirror OpenAI Responses stamping on each `in_progress` event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                    yield event
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'in-progress'
+
+        @property
+        def provider_name(self) -> str | None:
+            return 'in-progress'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _InProgressStream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
 
 
 async def test_completed_streamed_response_cancel_noop():

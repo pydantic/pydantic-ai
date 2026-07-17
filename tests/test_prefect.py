@@ -34,18 +34,20 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities import MCP, Capability, Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:
     from prefect import flow, task
+    from prefect.context import TaskRunContext
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -690,6 +692,39 @@ async def test_toolset_without_id():
     PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so a capability combined with a
+    local MCP server is swapped for its Prefect task wrapper under a stable id. An `MCP` with no
+    explicit `id` derives one from its URL.
+
+    This isn't a VCR test: it inspects the constructed toolset tree during local agent construction,
+    before any model or MCP request, so there's no network round-trip to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api'),
+        ],
+    )
+    prefect_agent = PrefectAgent(agent)
+
+    leaves: list[AbstractToolset[object]] = []
+    for toolset in prefect_agent.toolsets:
+        toolset.apply(leaves.append)
+    # The contributed MCP leaf carries the URL-derived id, so its `PrefectMCPToolset` wrapper is built
+    # under a stable id; the `billing` function toolset carries the capability id.
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
+
+
 async def test_prefect_agent():
     """Test that PrefectAgent properly wraps model and toolsets."""
     assert isinstance(complex_prefect_agent.model, PrefectModel)
@@ -886,6 +921,34 @@ async def test_prefect_agent_run_with_model(allow_model_requests: None) -> None:
         ),
     ):
         await simple_prefect_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_prefect_cancel_suspended_response_runs_in_task(allow_model_requests: None) -> None:
+    """`PrefectModel.cancel_suspended_response` must run inside a Prefect task, not inline in the flow.
+
+    The provider teardown that cancels a server-side suspended/background job is a raw HTTP call;
+    wrapping it as a task makes it durable and retried. We assert a `TaskRunContext` is active when
+    the wrapped model's cancel runs, proving it executed inside a task rather than inline.
+    """
+    ran_in_task: list[bool] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ran_in_task.append(TaskRunContext.get() is not None)
+
+    prefect_model = PrefectModel(
+        RecordingModel(),
+        task_config=TaskConfig(),
+        get_event_stream_handler=lambda: None,
+    )
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    @flow(name='test_cancel_suspended_response')
+    async def cancel_in_flow() -> None:
+        await prefect_model.cancel_suspended_response(response)
+
+    await cancel_in_flow()
+    assert ran_in_task == [True]
 
 
 async def test_prefect_agent_override_model() -> None:
@@ -1403,6 +1466,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'model_settings',  # hashed via the model request inputs, not RunContext
         'capability_loaded',  # transient per-hook flag; `None` during tool execution
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_event_stream_buffer',  # live per-run event buffer drained in workflow code, not a tool-execution input
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])

@@ -86,14 +86,14 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
-_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': None,
     'refusal': 'content_filter',
 }
 
@@ -275,7 +275,8 @@ LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
 # TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
-# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See PR #5849 for the same
+# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See
+# https://github.com/pydantic/pydantic-ai/pull/5849 for the same
 # bridge-then-drop pattern applied to `claude-fable-5`.
 AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
 """Possible Anthropic model names.
@@ -679,6 +680,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
 
+        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
+        # strict-forcing check below also applies when native mode is reached via the profile default
+        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
+        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self.profile.get('default_structured_output_mode', 'tool')
+        )
+
         if model_request_parameters.output_mode == 'native':
             assert model_request_parameters.output_object is not None
             if model_request_parameters.output_object.strict is False:
@@ -938,6 +947,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
                 return cid
             return container
+        # On pause_turn continuation, pass just the container ID string to reconnect.
+        # Re-passing BetaContainerParams triggers a prefill rejection on some models
+        # (e.g. Sonnet 4-6) even though plain string ID works fine.
+        if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
+            if messages[-1].provider_details:
+                return messages[-1].provider_details.get('container_id')
+            return None  # pragma: lax no cover
+
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -1117,6 +1134,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -1281,7 +1299,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
                 # Cross-provider files are dropped silently here, not raised via
-                # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
@@ -1423,7 +1441,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
-        # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+        # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
             file.file_id
             for tool in model_request_parameters.native_tools
@@ -1631,7 +1649,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     # Anthropic occasionally emits a `tool_search_tool_*` server tool use
                                     # in parallel with a client `tool_use` and ends the turn before
                                     # delivering the corresponding `tool_search_tool_*_tool_result` block
-                                    # (see anthropics/anthropic-sdk-python#1325). Direct API tolerates
+                                    # (see https://github.com/anthropics/anthropic-sdk-python/issues/1325). Direct API tolerates
                                     # the unpaired call on resend (the result arrives in the next turn),
                                     # but Bedrock 400s with `tool use ... was found without a corresponding
                                     # tool_search_tool_*_tool_result block`. Drop the orphaned call from the
@@ -2608,6 +2626,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                        self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
                     if event.delta.stop_details is not None:
                         self.provider_details = self.provider_details or {}
                         if event.delta.stop_details.explanation is not None:

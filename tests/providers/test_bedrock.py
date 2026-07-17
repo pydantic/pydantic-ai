@@ -38,6 +38,12 @@ if not imports_successful():
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 
 
+@pytest.fixture(autouse=True)
+def bedrock_credentials(env: TestEnv):
+    env.set('AWS_ACCESS_KEY_ID', 'test-access-key')
+    env.set('AWS_SECRET_ACCESS_KEY', 'test-secret-key')
+
+
 def test_bedrock_provider(env: TestEnv):
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     provider = BedrockProvider()

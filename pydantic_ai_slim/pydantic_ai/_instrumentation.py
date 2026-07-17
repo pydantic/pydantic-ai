@@ -4,12 +4,13 @@ import itertools
 import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
 
+from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -154,6 +156,16 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
+def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
+    """Map the OTel-spec model settings (`max_tokens`, `temperature`, ...) to `gen_ai.request.*` attributes."""
+    attributes: dict[str, AttributeValue] = {}
+    if model_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := model_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+    return attributes
+
+
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
     """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
 
@@ -241,24 +253,19 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
         **get_agent_run_baggage_attributes(),
-        'logfire.json_schema': to_json(
-            {
-                'type': 'object',
-                'properties': {'model_request_parameters': {'type': 'object'}},
-            }
-        ).decode(),
     }
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
         attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
-    if prepared_settings:
-        for key in MODEL_SETTING_ATTRIBUTES:
-            if isinstance(value := prepared_settings.get(key), float | int):
-                attributes[f'gen_ai.request.{key}'] = value
+    attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
     try:
@@ -329,6 +336,31 @@ def open_model_request_span(
     finally:
         if record_metrics:
             record_metrics()
+
+
+def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
+    """Snapshot the current OTel context so it can be re-attached in another task.
+
+    The streaming continuation composite opens each segment's `request_stream` lazily,
+    in the *consumer* task that iterates the stream, whereas the `chat` span is opened
+    by `wrap_model_request` in a separate task. Those tasks don't share an OTel context,
+    so without re-attaching, span updates driven by `get_current_span()` (e.g.
+    `FallbackModel` recording the resolved inner model) would land on the wrong span.
+
+    Returns a factory that yields a context manager re-attaching the captured context;
+    the composite enters it around each segment without depending on OpenTelemetry itself.
+    """
+    captured = otel_context.get_current()
+
+    @contextmanager
+    def attach_captured_context() -> Generator[None]:
+        token = otel_context.attach(captured)
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
+
+    return attach_captured_context
 
 
 def get_instructions(
