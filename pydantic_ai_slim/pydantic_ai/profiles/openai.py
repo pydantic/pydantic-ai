@@ -125,6 +125,17 @@ with no `reasoning.effort` set, and can be disabled exactly when it accepts `eff
 The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 
+_OPENAI_MODEL_PREFIXES = ('openai.', 'openai:', 'openai/', 'openai-chat:', 'gateway/openai:')
+"""Known OpenAI model-name prefixes used by OpenAI-compatible providers and Pydantic AI model specs."""
+
+
+def _strip_openai_model_prefix(model_name: str) -> str:
+    return next(
+        (model_name.removeprefix(prefix) for prefix in _OPENAI_MODEL_PREFIXES if model_name.startswith(prefix)),
+        model_name,
+    )
+
+
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
     return next(
         (support for prefix, support in _REASONING_SUPPORT_BY_PREFIX.items() if model_name.startswith(prefix)),
@@ -281,21 +292,25 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    reasoning = _reasoning_support(model_name)
+    profile_model_name = _strip_openai_model_prefix(model_name)
+    reasoning = _reasoning_support(profile_model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
     # (its responses label messages with `phase`, as recorded in the reasoning-mode cassette).
     # See https://developers.openai.com/api/docs/guides/prompt-guidance.
-    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
+    supports_phase = profile_model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
-    openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
+    openai_system_prompt_role = 'user' if profile_model_name.startswith('o1-mini') else None
 
     # Check if the model supports web search (only specific search-preview models)
-    supports_web_search = '-search-preview' in model_name
+    supports_web_search = '-search-preview' in profile_model_name
     supports_image_output = (
-        model_name.startswith('gpt-5') or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+        profile_model_name.startswith('gpt-5')
+        or 'o3' in profile_model_name
+        or '4.1' in profile_model_name
+        or '4o' in profile_model_name
     )
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on gpt-5.4 and later
@@ -303,7 +318,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # verified live). Like the other gates in this function, this enumerates known versions rather
     # than matching open-endedly, so a new family must be added here explicitly once confirmed;
     # until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
+    supports_tool_search = profile_model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,

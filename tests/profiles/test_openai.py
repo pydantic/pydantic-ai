@@ -110,6 +110,12 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+@pytest.mark.parametrize('prefix', ['openai.', 'openai:', 'openai/', 'openai-chat:', 'gateway/openai:'])
+@pytest.mark.parametrize('model', ['gpt-5.6-sol', 'gpt-oss-120b', 'o1-mini'])
+def test_openai_model_profile_strips_known_openai_prefixes(prefix: str, model: str):
+    assert openai_model_profile(f'{prefix}{model}') == openai_model_profile(model)
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 
