@@ -2658,7 +2658,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
 
 
 async def test_google_text_output_function(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -2688,11 +2688,21 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CrwEARFNMg9kt50r8JWztiQv5EbaHEi9upzlu0Rb1dqVBXKFsp6Vl2LqdQYneurc2UGzFWXwa+lnyMw9Cl4/yeC3Vx+h96Ds2DagCO401yYYBuMZ0yAPLoDyTpJXCkB7e2Gfx8RMTjIA96lx0SC9/npeB+mxnvOBWqwGJsvMKVIsXIE7JcjhCD265+56xbl5zST65buBk4shjbxwVxAFFiSLhKYE6kspbh9F9wOc4peoPdMHtXGquGaAGkaVRQIbTVy2MeCN/LVgWRKSFqWP8OAZ1MXCVloIIL9uhjjREmVTme1kaUESIUvYFlUIXZRSmXDOStZiv1fsIaHe+YV82sEMi6ij8V0lCnCWSBWNcocEe89I43W/2nZLE8lpcWFiHVGMdBTJvbtpeLgTUPTvwi17B60UbQZxYvkDAq5sNUCAvtYXcGOvwMHeilR6VdBOaauqpuVDE+PHEjY0hY6U7YEXy0Gez67Rd7wgr+7Dt3BQdwdBhVJH+CBbs3JjbG0fTrEHICBhQ7m2TqPaiBuTW8v36tkHZhVZjFaZItrvgCywX/Up2KzFsBRLyETXpMpQRlYwQvtH14Z/+HYUJufwiWgMDwe72wIvdyn7AprbOFyts6DFJwDzIjO+g5e+DSvlQht+3xbx54iRbk8kxhOrTGzrd4vGKjsJ+ocbANgzfAS5BEgVcwn8n+/YgbABE8QLlxEthVSzUM4pQLbtxOizw4w6usvjD2968ds0rif+oTwQejfI1yVzTY/lPeBYoe8='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=49, output_tokens=276, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
+                    input_tokens=49, output_tokens=148, details={'thoughts_tokens': 136, 'text_prompt_tokens': 49}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2716,11 +2726,19 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
+                parts=[
+                    TextPart(
+                        content='The largest city in Mexico is Mexico City.',
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CrcCARFNMg+cYyWgxFYmMB2VHuVlPCZtnPoBf+LOFe1Ri22ptyBE/KNHpIe0nSTPNDqxhDXzYjH00gV6doJGdEVtseQRvxvZk+wm/Eka3H8vjrld0LriwJ+fUHuUldLRn6EHJmU42p4Vg6VbBd4jIzSNt/EQfxjPVmWi/IptqozGjtXTdfx4EW87xiAS7Ukbng2Ng8w5itar3TqsSSjoJ4MsZ2G1JSXqZWN2ilGTdcESoKw0BUwbNQavfqKKKy+7Y5vouovKP/vA1At4NUHWm7PvsznfEcoxR8Oeq8B3QTmh9dTrCI0iorin2M0FDkb2M+1+UZQE7Sag2cfcyLdBUGIr366FjSUDb88bVzuQKCQqj8mz4ri66uAcAf0B0/QZck2gfbLypq4uCvoNyJaDMgLmXtdtXAuRcM4='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=159, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
+                    input_tokens=80, output_tokens=73, details={'thoughts_tokens': 64, 'text_prompt_tokens': 80}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2896,7 +2914,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
 
 
 async def test_google_prompted_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     class CityLocation(BaseModel):
         city: str
@@ -2927,11 +2945,21 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': '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'
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=144, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
+                    input_tokens=125, output_tokens=407, details={'thoughts_tokens': 395, 'text_prompt_tokens': 125}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2955,11 +2983,19 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                parts=[
+                    TextPart(
+                        content='{"city": "Mexico City", "country": "Mexico"}',
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CqsDARFNMg/vlepSvb2pG4k5KFwTBqi3T3VxwOU/qAmGbn4rDU3DyDB1fRjECcKxFJtP93ele31bUFtVQVvFgw7CUSPbBMsonje7tIee8Wy0vzT0AWMBXCnX4+/UM2Kj3XBIHjj27WpjHlZnXm90HEl1zMYGQSbYpk4UwPphrzNQyv1FS71rCE1Qh/mSlZrNMLVMkPuSLpqXuTIQRKphweAqOXMi16ce3u6uSeandXVetn0PQMHZjljvA4iq+aQkIB+/zk0Y0/jgl02QUal0I+7Ng4svSwfMwVR2ezfiQ0ipRrenZUWRoNVT3ODz4x1dsgg7LKdypmSlpeMSpwf5LjE7yroMXvdoRBzPn/7ARuDvEBys/cVp7KrGbkpCcREAY2NUT0NqhRTkxeEnTMwEjYqlMCvaNRtJfdAxHt1XPaVEt98zBDvJYDkwexd9QLOpgxXyspRFqe+TZeaeQnsN5svuwvMkX8AohgcDBvPhSzcRKoqZlGahC0TeZUEje8BDH3LijJfvMsBSv+43s/RfD8ahCfpmHM88bU4Jkr/XAtiSKN/mK+8+6Dc169LufwpfARFNMg8VSgf8nhj2AVuL8xOjXodbnZLXSkvpNzzLnCJB0FL7bXnZxw8j1YNL+t6Jq+xoXETqqqqzB68B/Bplgey3zu1Hz8HyCMFGw+EhERAGAVkhVCxMixO1eH2xRUY='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=166, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
+                    input_tokens=156, output_tokens=134, details={'thoughts_tokens': 121, 'text_prompt_tokens': 156}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
