@@ -794,7 +794,11 @@ async def test_text_plain_document_anthropic(
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
 async def test_non_pdf_document_url_mistral() -> None:
-    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text."""
+    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    tool-return `_map_messages` mapping (the trailing user message + text chunk), which no cassette would catch.
+    """
     from unittest.mock import AsyncMock, patch
 
     m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))

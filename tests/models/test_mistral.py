@@ -3130,7 +3130,11 @@ async def test_image_url_no_force_download() -> None:
 
 
 async def test_text_document_binary_content_mapping(text_document_content: BinaryContent) -> None:
-    """Test that text-like BinaryContent is inlined as MistralTextChunk."""
+    """Test that text-like BinaryContent is inlined as MistralTextChunk.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    `_map_messages` chunk shape; wire validity is proven by `test_text_document_as_binary_content_input`.
+    """
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     messages = [
@@ -3163,7 +3167,11 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
 
 
 async def test_text_document_url_mapping() -> None:
-    """Test that text-like DocumentUrl is downloaded and inlined as MistralTextChunk."""
+    """Test that text-like DocumentUrl is downloaded and inlined as MistralTextChunk.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    `_map_messages` download-and-inline shape; wire validity is proven by `test_text_document_url_input`.
+    """
     from unittest.mock import AsyncMock, patch
 
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
