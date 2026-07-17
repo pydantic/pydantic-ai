@@ -1140,6 +1140,7 @@ def test_plain_response_then_tuple():
                         content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        cause='no_output',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1150,7 +1151,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=8),
+                usage=RequestUsage(input_tokens=60, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -3665,9 +3666,7 @@ def test_empty_response():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -3676,7 +3675,7 @@ def test_empty_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=63, output_tokens=4),
+                usage=RequestUsage(input_tokens=55, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3723,6 +3722,7 @@ def test_empty_response_exceeds_max_retries():
                         content='Please return text or include your response in a tool call.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        cause='no_output',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -3731,7 +3731,7 @@ def test_empty_response_exceeds_max_retries():
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=71),
+                usage=RequestUsage(input_tokens=63),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -8468,6 +8468,7 @@ def test_empty_final_response():
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        cause='no_output',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -8476,7 +8477,7 @@ def test_empty_final_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='baz')],
-                usage=RequestUsage(input_tokens=69, output_tokens=11),
+                usage=RequestUsage(input_tokens=61, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -8712,6 +8713,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_name': 'foo_tool',
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
+                    'cause': 'error',
                     'part_kind': 'retry-prompt',
                 }
             ],
@@ -9995,9 +9997,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -10007,7 +10007,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=63, output_tokens=8),
+                usage=RequestUsage(input_tokens=55, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10058,9 +10058,7 @@ async def test_retry_message_no_tools():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -10069,7 +10067,7 @@ async def test_retry_message_no_tools():
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
-                usage=RequestUsage(input_tokens=63, output_tokens=3),
+                usage=RequestUsage(input_tokens=55, output_tokens=3),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10123,6 +10121,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                         content='Please include your response in a tool call.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        cause='no_output',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -10137,7 +10136,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=9),
+                usage=RequestUsage(input_tokens=60, output_tokens=9),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10248,6 +10247,7 @@ async def test_thinking_only_response_after_tool_call_retries():
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        cause='no_output',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -10256,7 +10256,7 @@ async def test_thinking_only_response_after_tool_call_retries():
             ),
             ModelResponse(
                 parts=[TextPart(content='Your progress is saved.')],
-                usage=RequestUsage(input_tokens=68, output_tokens=20),
+                usage=RequestUsage(input_tokens=60, output_tokens=20),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

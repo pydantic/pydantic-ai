@@ -2732,6 +2732,7 @@ def test_deferred_tool_results_serializable():
                     'tool_name': 'foo',
                     'tool_call_id': 'foo',
                     'timestamp': IsDatetime(),
+                    'cause': 'error',
                     'part_kind': 'retry-prompt',
                 },
                 'any': {'foo': 'bar'},

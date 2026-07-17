@@ -4173,7 +4173,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
         {'content': 'hello', 'role': 'user'},
         {
             'role': 'user',
-            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+            'content': 'Please return text.',
         },
     ]
 
@@ -4203,9 +4203,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsDatetime(),

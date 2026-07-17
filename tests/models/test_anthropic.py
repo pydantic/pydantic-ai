@@ -12189,9 +12189,7 @@ How can I help you today?\
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsDatetime(),

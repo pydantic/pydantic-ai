@@ -3457,9 +3457,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -5159,9 +5157,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        content='Please return text.', tool_call_id=IsStr(), timestamp=IsDatetime(), cause='no_output'
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
