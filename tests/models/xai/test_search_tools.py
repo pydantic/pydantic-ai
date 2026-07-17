@@ -43,6 +43,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.models.xai_proto_cassettes import XaiProtoCassetteClient
 
 
 pytestmark = [
@@ -866,8 +867,9 @@ async def test_xai_builtin_file_search_tool(
             wait_for_indexing=True,
             timeout=timedelta(seconds=180),
         )
-        # PROCESSED status doesn't guarantee the search index is fully propagated; give it a moment.
-        await asyncio.sleep(5)
+        if not isinstance(client, XaiProtoCassetteClient):  # pragma: no cover
+            # PROCESSED status doesn't guarantee the live search index is fully propagated; give it a moment.
+            await asyncio.sleep(5)
 
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(

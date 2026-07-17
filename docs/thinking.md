@@ -259,8 +259,8 @@ Two composable [model settings](agent.md#model-run-settings) give finer control:
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
-model = GroqModel('qwen/qwen3-32b')
-settings = GroqModelSettings(groq_reasoning_format='parsed', groq_reasoning_effort='default')
+model = GroqModel('openai/gpt-oss-120b')
+settings = GroqModelSettings(groq_reasoning_format='parsed', groq_reasoning_effort='medium')
 agent = Agent(model, model_settings=settings)
 ...
 ```

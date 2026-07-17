@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -155,6 +156,16 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
+def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
+    """Map the OTel-spec model settings (`max_tokens`, `temperature`, ...) to `gen_ai.request.*` attributes."""
+    attributes: dict[str, AttributeValue] = {}
+    if model_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := model_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+    return attributes
+
+
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
     """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
 
@@ -242,24 +253,19 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
         **get_agent_run_baggage_attributes(),
-        'logfire.json_schema': to_json(
-            {
-                'type': 'object',
-                'properties': {'model_request_parameters': {'type': 'object'}},
-            }
-        ).decode(),
     }
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
         attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
-    if prepared_settings:
-        for key in MODEL_SETTING_ATTRIBUTES:
-            if isinstance(value := prepared_settings.get(key), float | int):
-                attributes[f'gen_ai.request.{key}'] = value
+    attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
     try:

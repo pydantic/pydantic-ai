@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -52,7 +53,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import MCP, Capability, Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -207,10 +208,18 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
+    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
+    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
+    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
+    # restricts `Path.home()` access.
+    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
+    download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
 
@@ -1390,6 +1399,75 @@ async def test_toolset_without_id():
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so combining a capability with a
+    function toolset or MCP server can be used under Temporal instead of tripping the
+    'leaves need a unique id' error at construction.
+
+    This isn't a VCR test: it inspects the constructed toolset tree and registered Temporal activity
+    names during local agent construction, before any model or MCP request, so there's no network
+    round-trip to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api', id='docs'),
+        ],
+    )
+    # Previously raised `UserError` because the contributed leaf toolsets had `id=None`.
+    temporal_agent = TemporalAgent(agent)
+
+    # Each contributed leaf toolset is registered as activities named after the capability id, so the
+    # function toolset and the MCP server can be driven durably.
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__capability_agent__mcp_server__docs__get_tools' in activity_names
+
+
+async def test_deferred_capability_contributed_toolset_id_from_capability():
+    """A deferred capability (`defer_loading=True`) still stamps its `id` on the contributed leaf
+    toolset, so the derived id survives the deferred-loading wrapper and the toolset is registered as
+    durable activities. Deferred capabilities require an explicit `id`.
+
+    This isn't a VCR test: it inspects deferred toolset ids and registered Temporal activity names
+    during local agent construction, before any model or MCP request, so there's no network round-trip
+    to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='deferred_capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add], defer_loading=True),
+            MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
+        ],
+    )
+    temporal_agent = TemporalAgent(agent)
+
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__deferred_capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__deferred_capability_agent__mcp_server__docs__get_tools' in activity_names
 
 
 # --- DynamicToolset / @agent.toolset tests ---
@@ -3400,6 +3478,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))

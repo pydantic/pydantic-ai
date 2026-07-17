@@ -185,6 +185,9 @@ In addition to `@capability.tool` and `@capability.tool_plain`, you can pass exi
 
 For anything beyond instructions, function tools, toolsets, and descriptions — model settings, hooks, native tools, wrapper toolsets, or custom per-run logic — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. When subclassing, override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] if the catalog entry needs to vary by run.
 
+!!! note "Setting `id` for durable execution"
+    A toolset contributed by a capability — via `Capability(tools=[...])` or an [`MCP`](#mcp) server running locally — inherits its `id` from the capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id]. [Durable execution](durable_execution/overview.md) identifies each leaf toolset by its `id`, so pass `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')` when combining a capability with Temporal, DBOS, or Prefect. Temporal requires an `id` for every leaf toolset and DBOS for every MCP server — both raise at construction without one. (`MCP` also derives one from the server URL when no `id` is given.) A URL-derived `id` can collide when two different servers share a host and final path segment (`https://a.com/api` and `https://a.com/v2/api` both derive `a.com-api`); DBOS raises at construction and Temporal when the worker starts, so pass an explicit `id` to disambiguate them.
+
 ### Beyond instructions: tools, settings, hooks, native tools {#beyond-instructions}
 
 The [`Capability`][pydantic_ai.capabilities.Capability] example above deferred instructions and a function tool, but the same flag gates the whole bundle — what the model knows, what it can do, and how it does it (see [What you can defer](#what-you-can-defer)). The snippets below show the remaining pieces in turn: model settings, hooks, and native tools.
@@ -1439,7 +1442,7 @@ class StreamAuditor(AbstractCapability[Any]):
             yield event
 ```
 
-Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
+Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently. [Deferred tool calls](deferred-tools.md#observing-deferred-tool-calls-in-a-stream) additionally emit batch-level [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] / [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent].
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
