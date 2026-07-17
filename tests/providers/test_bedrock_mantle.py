@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
@@ -76,6 +77,13 @@ def test_bedrock_mantle_injected_client() -> None:
     assert provider.client is client
     assert provider.openai_client('openai-responses') is client
     assert provider.openai_client('responses') is client
+
+
+def test_bedrock_mantle_accepts_http_client() -> None:
+    http_client = httpx.AsyncClient()
+    provider = BedrockMantleProvider(http_client=http_client)
+
+    assert provider.client._client is http_client  # pyright: ignore[reportPrivateUsage]
 
 
 def test_bedrock_mantle_requires_region_or_base_url(env: TestEnv) -> None:
