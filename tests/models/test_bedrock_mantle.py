@@ -11,8 +11,7 @@ from pydantic_ai.models import infer_model
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 pytestmark = [
     pytest.mark.anyio,
@@ -21,10 +20,14 @@ pytestmark = [
 ]
 
 
+def _provider() -> BedrockMantleProvider:
+    return BedrockMantleProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+
+
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
-    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
-    model = infer_model('bedrock:openai.gpt-5.6-luna', lambda _: provider)
+    """Mantle GPT-5.6 resets Responses tool-call IDs per response; pydantic-ai must re-qualify them."""
+    model = infer_model('bedrock-mantle:openai.gpt-5.6-luna', lambda _: _provider())
     agent = Agent(
         model,
         instructions=(
@@ -60,39 +63,16 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
     assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
 
     if not stream:
+        # Non-streaming Mantle reuses the raw `call_0` id across separate responses; the qualified ids
+        # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
         assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
 
 
-async def test_protocol_switching(allow_model_requests: None) -> None:
-    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
-    chat_model = BedrockMantleChatModel('openai.gpt-oss-120b', provider=provider)
-    responses_model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: provider)
-    messages_model = infer_model('bedrock-mantle:anthropic.claude-sonnet-5', lambda _: provider)
-
-    chat_result = await Agent(chat_model).run(
-        'Remember the exact token violet-otter-73 for later. Reply with exactly ACK.'
-    )
-    responses_result = await Agent(responses_model).run(
-        'What exact token did I ask you to remember? Reply with only the token.',
-        message_history=chat_result.all_messages(),
-    )
-    messages_result = await Agent(messages_model).run(
-        'Repeat the exact token one more time. Reply with only the token.',
-        message_history=responses_result.all_messages(),
-    )
-
-    assert (chat_result.output, responses_result.output, messages_result.output) == (
-        'ACK',
-        'violet-otter-73',
-        'violet-otter-73',
-    )
-
-
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:
-    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
-    model = infer_model('bedrock-mantle:openai.gpt-oss-safeguard-20b', lambda _: provider)
+    """GPT-OSS Safeguard is served on the Chat Completions endpoint, not Responses."""
+    model = infer_model('bedrock-mantle:openai.gpt-oss-safeguard-20b', lambda _: _provider())
 
     result = await Agent(model).run('Reply with exactly SAFE.')
 

@@ -1,18 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import TracebackType
 from typing import Any, Literal, overload
-
-import httpx
-from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -28,26 +24,20 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
-    BedrockModelInterface,
-    bedrock_model_interface,
-    is_mantle_openai_responses_model,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
-from pydantic_ai.providers.anthropic import AsyncAnthropicClient
 
 try:
     import boto3
-    from anthropic import AsyncAnthropicBedrockMantle  # pyright: ignore[reportPrivateImportUsage]
     from botocore.client import BaseClient
     from botocore.config import Config
     from botocore.exceptions import NoRegionError
     from botocore.session import Session
     from botocore.tokens import FrozenAuthToken
-    from openai import AsyncBedrockOpenAI, AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
-        'Please install the Bedrock dependencies to use the Bedrock provider, '
+        'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
 
@@ -491,6 +481,26 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+_GPT_5_VERSION_RE = re.compile(r'gpt-5\.(\d+)')
+
+
+def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an OpenAI model used via Bedrock Converse."""
+    if (match := _GPT_5_VERSION_RE.match(model_name)) and int(match.group(1)) >= 4:
+        raise UserError(
+            f'Model {model_name!r} is not served by the Bedrock Converse API. '
+            "Use the `bedrock-mantle:` prefix to access it through Bedrock Mantle's OpenAI-compatible API."
+        )
+    # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
+    # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
+    # Converse rejects `reasoning_effort='none'` — mark always-on.
+    return BedrockModelProfile(
+        bedrock_thinking_variant='openai',
+        supports_thinking=True,
+        thinking_always_enabled=True,
+    )
+
+
 def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
     return merge_profile(profile, ModelProfile(supported_native_tools=frozenset()))
 
@@ -522,9 +532,6 @@ class BedrockProvider(Provider[BaseClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        if bedrock_model_interface(model_name, explicit_mantle=False) == 'mantle-openai-responses':
-            return BedrockProvider.mantle_model_profile(model_name, 'mantle-openai-responses')
-
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'anthropic': bedrock_anthropic_model_profile,
             'mistral': bedrock_mistral_model_profile,
@@ -532,12 +539,7 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            # Converse rejects `reasoning_effort='none'` — mark always-on.
-            'openai': lambda _mn: BedrockModelProfile(
-                bedrock_thinking_variant='openai',
-                supports_thinking=True,
-                thinking_always_enabled=True,
-            ),
+            'openai': bedrock_openai_model_profile,
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,
@@ -557,58 +559,8 @@ class BedrockProvider(Provider[BaseClient]):
 
         return None
 
-    @staticmethod
-    def mantle_model_profile(model_name: str, interface: BedrockModelInterface) -> ModelProfile:
-        """Resolve a model profile for one of Bedrock Mantle's protocol interfaces."""
-        provider, base_model_name = split_bedrock_model_id(model_name)
-        if interface in ('mantle-openai-responses', 'mantle-openai-chat'):
-            if provider != 'openai':
-                raise UserError(f'Model {model_name!r} is not an OpenAI model on Bedrock Mantle.')
-            if interface == 'mantle-openai-responses' and base_model_name.startswith('gpt-oss-safeguard'):
-                raise UserError(f'Model {model_name!r} does not support the Bedrock Mantle Responses API.')
-            from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-
-            response_scoped = interface == 'mantle-openai-responses' and base_model_name.startswith('gpt-5.6')
-            return merge_profile(
-                openai_model_profile(base_model_name),
-                OpenAIModelProfile(
-                    openai_responses_tool_call_ids_are_response_scoped=response_scoped,
-                    supported_native_tools=frozenset(),
-                ),
-            )
-        elif interface == 'mantle-anthropic-messages':
-            if provider != 'anthropic':
-                raise UserError(f'Model {model_name!r} is not an Anthropic model on Bedrock Mantle.')
-            from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-            from pydantic_ai.providers.anthropic import AnthropicProvider
-
-            return merge_profile(
-                AnthropicProvider.model_profile(model_name),
-                AnthropicModelProfile(
-                    supports_json_schema_output=False,
-                    supported_native_tools=frozenset(),
-                    anthropic_supports_dynamic_filtering=False,
-                ),
-            )
-        else:
-            raise UserError(f'Interface {interface!r} is not a Bedrock Mantle interface.')
-
     @overload
-    def __init__(
-        self,
-        *,
-        bedrock_client: BaseClient,
-        aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
-        region_name: str | None = None,
-        profile_name: str | None = None,
-        api_key: str | None = None,
-        mantle_base_url: str | None = None,
-        mantle_openai_client: AsyncBedrockOpenAI | None = None,
-        mantle_anthropic_client: AsyncAnthropicBedrockMantle | None = None,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None: ...
+    def __init__(self, *, bedrock_client: BaseClient) -> None: ...
 
     @overload
     def __init__(
@@ -620,10 +572,6 @@ class BedrockProvider(Provider[BaseClient]):
         profile_name: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
-        mantle_base_url: str | None = None,
-        mantle_openai_client: AsyncBedrockOpenAI | None = None,
-        mantle_anthropic_client: AsyncAnthropicBedrockMantle | None = None,
-        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     @overload
@@ -638,10 +586,6 @@ class BedrockProvider(Provider[BaseClient]):
         profile_name: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
-        mantle_base_url: str | None = None,
-        mantle_openai_client: AsyncBedrockOpenAI | None = None,
-        mantle_anthropic_client: AsyncAnthropicBedrockMantle | None = None,
-        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -657,16 +601,11 @@ class BedrockProvider(Provider[BaseClient]):
         api_key: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
-        mantle_base_url: str | None = None,
-        mantle_openai_client: AsyncBedrockOpenAI | None = None,
-        mantle_anthropic_client: AsyncAnthropicBedrockMantle | None = None,
-        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the Bedrock provider.
 
         Args:
-            bedrock_client: A boto3 client for Bedrock Runtime. If provided, Converse authentication and
-                endpoint arguments are ignored; Mantle client arguments are still used.
+            bedrock_client: A boto3 client for Bedrock Runtime. If provided, other arguments are ignored.
             aws_access_key_id: The AWS access key ID. If not set, the `AWS_ACCESS_KEY_ID` environment variable will be used if available.
             aws_secret_access_key: The AWS secret access key. If not set, the `AWS_SECRET_ACCESS_KEY` environment variable will be used if available.
             aws_session_token: The AWS session token. If not set, the `AWS_SESSION_TOKEN` environment variable will be used if available.
@@ -676,35 +615,7 @@ class BedrockProvider(Provider[BaseClient]):
             profile_name: The AWS profile name.
             aws_read_timeout: The read timeout for Bedrock client.
             aws_connect_timeout: The connect timeout for Bedrock client.
-            mantle_base_url: The Bedrock Mantle origin. Defaults to the regional
-                `https://bedrock-mantle.{region}.api.aws` origin.
-            mantle_openai_client: An existing Bedrock OpenAI client for Mantle's `/openai/v1` endpoint.
-            mantle_anthropic_client: An existing Anthropic client for Bedrock Mantle.
-            http_client: An existing HTTP client shared by clients created for Mantle interfaces.
         """
-        assert mantle_openai_client is None or http_client is None, (
-            'Cannot provide both `mantle_openai_client` and `http_client`'
-        )
-        assert mantle_anthropic_client is None or http_client is None, (
-            'Cannot provide both `mantle_anthropic_client` and `http_client`'
-        )
-        self._region_name = (
-            region_name
-            or os.getenv('AWS_DEFAULT_REGION')
-            or os.getenv('AWS_REGION')
-            or (bedrock_client.meta.region_name if bedrock_client is not None else None)
-        )
-        self._profile_name = profile_name
-        self._aws_access_key_id = aws_access_key_id
-        self._aws_secret_access_key = aws_secret_access_key
-        self._aws_session_token = aws_session_token
-        self._api_key = api_key or os.getenv('AWS_BEARER_TOKEN_BEDROCK')
-        self._mantle_base_url = mantle_base_url.rstrip('/') if mantle_base_url else None
-        self._mantle_http_client = http_client
-        self._mantle_openai_client = mantle_openai_client
-        self._mantle_openai_standard_client: AsyncBedrockOpenAI | None = None
-        self._mantle_anthropic_client = mantle_anthropic_client
-
         if bedrock_client is not None:
             self._client = bedrock_client
         else:
@@ -714,10 +625,11 @@ class BedrockProvider(Provider[BaseClient]):
                 'read_timeout': read_timeout,
                 'connect_timeout': connect_timeout,
             }
+            api_key = api_key or os.getenv('AWS_BEARER_TOKEN_BEDROCK')
             try:
-                if self._api_key is not None:
+                if api_key is not None:
                     session = boto3.Session(
-                        botocore_session=_BearerTokenSession(self._api_key),
+                        botocore_session=_BearerTokenSession(api_key),
                         region_name=region_name,
                         profile_name=profile_name,
                     )
@@ -738,124 +650,6 @@ class BedrockProvider(Provider[BaseClient]):
             except NoRegionError as exc:  # pragma: no cover
                 raise UserError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
 
-    @property
-    def mantle_base_url(self) -> str:
-        """The Bedrock Mantle origin shared by its protocol-specific endpoints."""
-        if self._mantle_base_url:
-            return self._mantle_base_url
-        if self._region_name:
-            return f'https://bedrock-mantle.{self._region_name}.api.aws'
-
-        for client, suffixes in (
-            (self._mantle_openai_client, ('/openai/v1', '/v1')),
-            (self._mantle_anthropic_client, ('/anthropic',)),
-        ):
-            if client is not None:
-                base_url = str(client.base_url).rstrip('/')
-                for suffix in suffixes:
-                    if base_url.endswith(suffix):
-                        return base_url.removesuffix(suffix)
-
-        raise UserError(
-            'Set the `AWS_DEFAULT_REGION` or `AWS_REGION` environment variable, pass `region_name`, '
-            'or pass `mantle_base_url` to use a Bedrock Mantle model.'
-        )
-
-    def mantle_openai_client(self, model_name: str) -> AsyncOpenAI:
-        """Get the OpenAI client configured for the named Mantle model's endpoint family."""
-        interface = bedrock_model_interface(model_name, explicit_mantle=True)
-        if interface not in ('mantle-openai-responses', 'mantle-openai-chat'):
-            raise UserError(f'Model {model_name!r} does not use a Bedrock Mantle OpenAI interface.')
-
-        if is_mantle_openai_responses_model(model_name):
-            if self._mantle_openai_client is None:
-                self._mantle_openai_client = self._create_mantle_openai_client(f'{self.mantle_base_url}/openai/v1')
-            return self._mantle_openai_client
-
-        if self._mantle_openai_standard_client is None:
-            base_url = f'{self.mantle_base_url}/v1'
-            if self._mantle_openai_client is not None:
-                self._mantle_openai_standard_client = self._mantle_openai_client.with_options(base_url=base_url)
-            else:
-                self._mantle_openai_standard_client = self._create_mantle_openai_client(base_url)
-        return self._mantle_openai_standard_client
-
-    def mantle_anthropic_client(self) -> AsyncAnthropicBedrockMantle:
-        """Get the Anthropic Messages client configured for Bedrock Mantle."""
-        if self._mantle_anthropic_client is None:
-            self._mantle_anthropic_client = AsyncAnthropicBedrockMantle(
-                api_key=self._api_key,
-                aws_access_key=self._aws_access_key_id,
-                aws_secret_key=self._aws_secret_access_key,
-                aws_session_token=self._aws_session_token,
-                aws_region=self._region_name,
-                aws_profile=self._profile_name,
-                base_url=f'{self.mantle_base_url}/anthropic',
-                http_client=self._get_mantle_http_client(),
-            )
-        return self._mantle_anthropic_client
-
-    @overload
-    def mantle_provider(
-        self,
-        interface: Literal['mantle-openai-responses', 'mantle-openai-chat'],
-        model_name: str,
-    ) -> Provider[AsyncOpenAI]: ...
-
-    @overload
-    def mantle_provider(
-        self,
-        interface: Literal['mantle-anthropic-messages'],
-        model_name: str,
-    ) -> Provider[AsyncAnthropicClient]: ...
-
-    def mantle_provider(
-        self,
-        interface: Literal[
-            'mantle-openai-responses',
-            'mantle-openai-chat',
-            'mantle-anthropic-messages',
-        ],
-        model_name: str,
-    ) -> Provider[AsyncOpenAI] | Provider[AsyncAnthropicClient]:
-        """Select a typed Mantle interface backed by this provider's clients and lifecycle."""
-        if interface == 'mantle-openai-responses':
-            self.mantle_model_profile(model_name, interface)
-            return _BedrockMantleResponsesProvider(self, model_name)
-        elif interface == 'mantle-openai-chat':
-            return _BedrockMantleChatProvider(self, model_name)
-        else:
-            return _BedrockMantleMessagesProvider(self)
-
-    def _create_mantle_openai_client(self, base_url: str) -> AsyncBedrockOpenAI:
-        return AsyncBedrockOpenAI(
-            api_key=self._api_key,
-            aws_access_key_id=self._aws_access_key_id,
-            aws_secret_access_key=self._aws_secret_access_key,
-            aws_session_token=self._aws_session_token,
-            aws_region=self._region_name,
-            aws_profile=self._profile_name,
-            base_url=base_url,
-            http_client=self._get_mantle_http_client(),
-        )
-
-    def _get_mantle_http_client(self) -> httpx.AsyncClient:
-        if self._mantle_http_client is None:
-            self._mantle_http_client = create_async_http_client()
-            self._own_http_client = self._mantle_http_client
-            self._http_client_factory = create_async_http_client
-        return self._mantle_http_client
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._mantle_http_client = http_client
-        for client in (
-            self._mantle_openai_client,
-            self._mantle_openai_standard_client,
-            self._mantle_anthropic_client,
-        ):
-            if client is not None:
-                client._client = http_client  # pyright: ignore[reportPrivateUsage]
-
 
 class _BearerTokenSession(Session):
     def __init__(self, token: str):
@@ -867,74 +661,3 @@ class _BearerTokenSession(Session):
 
     def get_credentials(self) -> None:  # type: ignore[reportIncompatibleMethodOverride]
         return None
-
-
-class _BedrockMantleProviderView:
-    def __init__(self, provider: BedrockProvider) -> None:
-        self._provider = provider
-
-    @property
-    def name(self) -> str:
-        return 'bedrock-mantle'
-
-    async def __aenter__(self) -> Self:
-        await self._provider.__aenter__()
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        return await self._provider.__aexit__(exc_type, exc_val, exc_tb)
-
-
-class _BedrockMantleResponsesProvider(_BedrockMantleProviderView, Provider[AsyncOpenAI]):
-    def __init__(self, provider: BedrockProvider, model_name: str) -> None:
-        super().__init__(provider)
-        self._model_name = model_name
-
-    @property
-    def base_url(self) -> str:
-        return str(self.client.base_url)
-
-    @property
-    def client(self) -> AsyncOpenAI:
-        return self._provider.mantle_openai_client(self._model_name)
-
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile:
-        return BedrockProvider.mantle_model_profile(model_name, 'mantle-openai-responses')
-
-
-class _BedrockMantleChatProvider(_BedrockMantleProviderView, Provider[AsyncOpenAI]):
-    def __init__(self, provider: BedrockProvider, model_name: str) -> None:
-        super().__init__(provider)
-        self._model_name = model_name
-
-    @property
-    def base_url(self) -> str:
-        return str(self.client.base_url)
-
-    @property
-    def client(self) -> AsyncOpenAI:
-        return self._provider.mantle_openai_client(self._model_name)
-
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile:
-        return BedrockProvider.mantle_model_profile(model_name, 'mantle-openai-chat')
-
-
-class _BedrockMantleMessagesProvider(_BedrockMantleProviderView, Provider[AsyncAnthropicClient]):
-    @property
-    def base_url(self) -> str:
-        return str(self.client.base_url)
-
-    @property
-    def client(self) -> AsyncAnthropicClient:
-        return self._provider.mantle_anthropic_client()
-
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile:
-        return BedrockProvider.mantle_model_profile(model_name, 'mantle-anthropic-messages')

@@ -14,15 +14,9 @@ can share them.
 from __future__ import annotations as _annotations
 
 import re
-from typing import Literal
-
-from pydantic_ai.exceptions import UserError
 
 __all__ = (
     'BEDROCK_GEO_PREFIXES',
-    'BedrockModelInterface',
-    'bedrock_model_interface',
-    'is_mantle_openai_responses_model',
     'remove_bedrock_geo_prefix',
     'split_bedrock_model_id',
 )
@@ -31,14 +25,6 @@ __all__ = (
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
 
 _VERSION_SUFFIX_RE = re.compile(r'(.+)-v\d+(?::\d+)?$')
-_GPT_5_VERSION_RE = re.compile(r'gpt-5\.(\d+)')
-
-BedrockModelInterface = Literal[
-    'converse',
-    'mantle-openai-responses',
-    'mantle-openai-chat',
-    'mantle-anthropic-messages',
-]
 
 
 def remove_bedrock_geo_prefix(model_name: str) -> str:
@@ -73,38 +59,3 @@ def split_bedrock_model_id(model_id: str) -> tuple[str | None, str]:
     if version_match := _VERSION_SUFFIX_RE.match(name):
         name = version_match.group(1)
     return provider, name
-
-
-def is_mantle_openai_responses_model(model_id: str) -> bool:
-    """Whether an OpenAI model uses Mantle's `/openai/v1` Responses endpoint."""
-    provider, model_name = split_bedrock_model_id(model_id)
-    version_match = _GPT_5_VERSION_RE.match(model_name)
-    return provider == 'openai' and version_match is not None and int(version_match.group(1)) >= 4
-
-
-def bedrock_model_interface(model_id: str, *, explicit_mantle: bool) -> BedrockModelInterface:
-    """Choose the Bedrock interface for a model ID.
-
-    The regular `bedrock:` route remains on Converse except for OpenAI GPT-5.4+
-    models, which Bedrock only serves through Mantle's Responses endpoint.
-    `bedrock-mantle:` selects among Mantle's protocol-specific endpoints.
-    """
-    provider, model_name = split_bedrock_model_id(model_id)
-
-    if provider == 'openai' and is_mantle_openai_responses_model(model_id):
-        return 'mantle-openai-responses'
-    if not explicit_mantle:
-        return 'converse'
-    if provider == 'anthropic':
-        return 'mantle-anthropic-messages'
-    if provider == 'openai':
-        if model_name.startswith('gpt-oss-safeguard'):
-            return 'mantle-openai-chat'
-        if model_name.startswith('gpt-oss'):
-            return 'mantle-openai-responses'
-        return 'mantle-openai-chat'
-
-    raise UserError(
-        f'Model {model_id!r} is not supported by Bedrock Mantle. '
-        'Use the `bedrock:` prefix to access it through the Converse API.'
-    )

@@ -1032,16 +1032,6 @@ def infer_model_profile(model: str) -> ModelProfile:
     if provider is None:
         return DEFAULT_PROFILE
 
-    if provider == 'bedrock-mantle':
-        from ..providers._bedrock_model_names import bedrock_model_interface
-        from ..providers.bedrock import BedrockProvider
-
-        try:
-            interface = bedrock_model_interface(model_name, explicit_mantle=True)
-            return BedrockProvider.mantle_model_profile(model_name, interface)
-        except (ValueError, UserError):
-            return DEFAULT_PROFILE
-
     try:
         provider_class = infer_provider_class(provider)
     except ValueError:
@@ -1083,24 +1073,18 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    if provider_name in ('bedrock', 'bedrock-mantle'):
-        from ..providers._bedrock_model_names import bedrock_model_interface
-        from ..providers.bedrock import BedrockProvider
-        from .bedrock_mantle import (
-            BedrockMantleChatModel,
-            BedrockMantleMessagesModel,
-            BedrockMantleResponsesModel,
-        )
+    if provider_name == 'bedrock-mantle':
+        from ..providers.bedrock_mantle import BedrockMantleProvider
+        from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
 
-        if not isinstance(provider, BedrockProvider):
-            raise UserError('Bedrock models require a `BedrockProvider`.')
-        interface = bedrock_model_interface(model_name, explicit_mantle=provider_name == 'bedrock-mantle')
-        if interface == 'mantle-openai-responses':
-            return BedrockMantleResponsesModel(model_name, provider=provider)
-        elif interface == 'mantle-openai-chat':
+        if not isinstance(provider, BedrockMantleProvider):
+            raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
+        # The profile carries the endpoint family (`BedrockMantleProvider.model_profile` raises for
+        # non-OpenAI models), so routing reads it rather than re-deriving the interface here.
+        profile = BedrockMantleProvider.model_profile(model_name)
+        if profile is not None and profile.get('bedrock_mantle_interface') == 'chat':
             return BedrockMantleChatModel(model_name, provider=provider)
-        elif interface == 'mantle-anthropic-messages':
-            return BedrockMantleMessagesModel(model_name, provider=provider)
+        return BedrockMantleResponsesModel(model_name, provider=provider)
 
     # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.

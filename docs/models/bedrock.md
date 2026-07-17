@@ -48,45 +48,40 @@ agent = Agent(model)
 
 ## Amazon Bedrock Mantle
 
-[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) exposes OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Pydantic AI uses the same [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] and AWS credentials for both Mantle and the Bedrock Runtime Converse API.
-
-For OpenAI GPT-5.4 and later models, the regular `bedrock:` shorthand automatically uses Mantle's Responses endpoint because those models are not served through Converse:
+[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) serves OpenAI models (GPT-5.x and GPT-OSS) through an OpenAI-compatible API, separate from the Bedrock Runtime Converse API used by the `bedrock:` prefix. Use the `bedrock-mantle:` prefix to access it:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:openai.gpt-5.6-luna')
+agent = Agent('bedrock-mantle:openai.gpt-5.6-luna')
 ```
 
-Other `bedrock:` model names continue to use Converse. Use `bedrock-mantle:` to select Mantle explicitly. The model family determines the protocol and endpoint:
+The [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] authenticates with the same AWS credentials as the Bedrock Runtime provider — a bearer token via `AWS_BEARER_TOKEN_BEDROCK`, or AWS access keys / profile via SigV4 — and derives its endpoint from `region_name` (or the `AWS_DEFAULT_REGION` / `AWS_REGION` environment variables). It requires the `bedrock-mantle` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[bedrock-mantle]"
+```
+
+The model name determines the endpoint family:
 
 | Model name | Interface |
 |---|---|
-| `bedrock:openai.gpt-5.4...`, `gpt-5.5...`, or `gpt-5.6...` | OpenAI Responses at `/openai/v1` |
-| `bedrock:<other model>` | Bedrock Runtime Converse |
 | `bedrock-mantle:openai.gpt-5.4...`, `gpt-5.5...`, or `gpt-5.6...` | OpenAI Responses at `/openai/v1` |
 | `bedrock-mantle:openai.gpt-oss-*` | OpenAI Responses at `/v1` |
 | `bedrock-mantle:openai.gpt-oss-safeguard-*` | OpenAI Chat Completions at `/v1` |
-| `bedrock-mantle:anthropic.*` | Anthropic Messages at `/anthropic/v1/messages` |
 
-GPT-OSS models support both Responses and Chat Completions. The shorthand uses Responses; construct [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] when Chat Completions is required:
+The `bedrock:` prefix stays on the Converse API; requesting a GPT-5.4+ model through it raises an error pointing you to `bedrock-mantle:`, since those models are not served by Converse.
+
+To use a custom Mantle origin (for example a proxy), pass a complete `base_url` to [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider]; that endpoint is then used for every model:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel
-
-model = BedrockMantleChatModel('openai.gpt-oss-120b')
-agent = Agent(model)
-```
-
-To use a custom Mantle origin, pass `mantle_base_url` to [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider]. Pydantic AI adds the protocol-specific path:
-
-```python {test="skip"}
 from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
-from pydantic_ai.providers.bedrock import BedrockProvider
+from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
-provider = BedrockProvider(mantle_base_url='https://bedrock-mantle.us-east-1.api.aws')
-model = BedrockMantleResponsesModel('openai.gpt-oss-120b', provider=provider)
+provider = BedrockMantleProvider(base_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1')
+model = BedrockMantleResponsesModel('openai.gpt-5.6-luna', provider=provider)
+agent = Agent(model)
 ```
 
 ## Customizing Bedrock Runtime API
