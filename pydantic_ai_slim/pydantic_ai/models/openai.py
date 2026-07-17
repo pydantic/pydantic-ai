@@ -2162,8 +2162,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         item.arguments,
                         tool_call_id=_response_tool_call_id(
                             item.call_id,
-                            response.id,
-                            self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False),
+                            response.id
+                            if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
+                            else None,
                         ),
                         id=item.id,
                         provider_name=self.system,
@@ -3796,8 +3797,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             args=chunk.item.arguments,
                             tool_call_id=_response_tool_call_id(
                                 chunk.item.call_id,
-                                self.provider_response_id,
-                                self._tool_call_ids_are_response_scoped,
+                                self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
                             ),
                             id=chunk.item.id,
                             provider_name=self.provider_name,
@@ -4574,11 +4574,13 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         return combined_id, None
 
 
-def _response_tool_call_id(tool_call_id: str, response_id: str | None, response_scoped: bool) -> str:
-    if not response_scoped:
-        return tool_call_id
-    assert response_id is not None
-    return f'{response_id}:{tool_call_id}'
+def _response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
+    """Qualify a Responses tool-call ID with its response ID, or return it unchanged.
+
+    `response_id` is the provider response ID when the model's tool-call IDs are response-scoped (so the
+    ID must be made history-wide unique), or `None` to leave the call ID as-is.
+    """
+    return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id
 
 
 def _map_code_interpreter_tool_call(
