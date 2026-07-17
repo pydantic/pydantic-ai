@@ -182,7 +182,11 @@ TEST_CASES = [
         CohereModel,
     ),
     pytest.param(
-        {'AWS_DEFAULT_REGION': 'aws-default-region'},
+        {
+            'AWS_ACCESS_KEY_ID': 'test-access-key',
+            'AWS_DEFAULT_REGION': 'aws-default-region',
+            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+        },
         'bedrock:bedrock-claude-haiku-4-5',
         'bedrock-claude-haiku-4-5',
         'bedrock',

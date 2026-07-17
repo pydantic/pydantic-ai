@@ -417,6 +417,24 @@ Agent.instrument_all(instrumentation_settings)
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
 
+### Excluding model request parameters
+
+By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
+
+```python {title="excluding_model_request_parameters.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
+
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
