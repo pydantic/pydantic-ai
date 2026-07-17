@@ -447,7 +447,7 @@ async def test_stream_forwards_model_settings(allow_model_requests: None, with_t
         model,
         model_settings=MistralModelSettings(
             temperature=0.0,
-            top_p=0.9,
+            top_p=1.0,
             max_tokens=100,
             timeout=2.5,
             seed=42,
@@ -479,7 +479,7 @@ async def test_stream_forwards_model_settings(allow_model_requests: None, with_t
     } == snapshot(
         {
             'temperature': 0.0,
-            'top_p': 0.9,
+            'top_p': 1.0,
             'max_tokens': 100,
             'timeout_ms': 2500,
             'random_seed': 42,
