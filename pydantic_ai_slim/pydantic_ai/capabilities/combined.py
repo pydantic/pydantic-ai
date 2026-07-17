@@ -35,6 +35,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
+    from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
@@ -74,6 +75,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
+        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+            return self
+        return replace(self, capabilities=new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))

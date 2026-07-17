@@ -446,14 +446,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             self._model = models.infer_model(model)
 
-        # Validate the statically-provided capabilities eagerly so misconfiguration (a deferred
-        # capability without an `id`, or duplicate ids) fails fast here in `Agent(...)` instead of
-        # on the first run. Capabilities supplied per-run or resolved by `for_run` (e.g. capability
-        # functions) can only be checked at run time, in `_build_run_capabilities`.
-        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        self._root_capability.apply(static_capabilities.append)
-        _validate_capability_ids(static_capabilities)
-
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -465,7 +457,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -480,11 +471,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
-
-        self._cap_native_tools = list(self._root_capability.get_native_tools())
-        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
-
-        self._cap_model_settings = self._root_capability.get_model_settings()
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
@@ -505,10 +491,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not isinstance(toolset, AbstractToolset)
         ]
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
-
-        # Capability-contributed toolsets (stored separately for per-run re-extraction)
-        cap_toolset = self._root_capability.get_toolset()
-        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
         self._event_stream_handler = None
@@ -546,6 +528,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         self._entered_count = 0
         self._exit_stack = None
+
+        # Initialize capability-contributed fields before binding so `for_agent` can safely
+        # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
+        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
+        self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
+
+        self._root_capability = self._root_capability.for_agent(self)
+
+        # Validate the bound tree so a replacement returned by `for_agent` is subject to the
+        # same eager ID checks as the capability originally passed to the constructor.
+        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._root_capability.apply(static_capabilities.append)
+        _validate_capability_ids(static_capabilities)
+
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
+        self._cap_model_settings = self._root_capability.get_model_settings()
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
 
     @overload
     @classmethod

@@ -112,6 +112,8 @@ Keep custom capabilities focused. If the user only needs one tool or one hook, d
 
 For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
 
+Use `for_agent(agent)` for construction-time binding when a capability needs the agent's model, name, or toolsets. Return a bound copy instead of mutating the original so one capability instance can safely be attached to multiple agents. The returned copy supplies all subsequent `get_*` contributions and hooks. `CombinedCapability` and `WrapperCapability` bind their children automatically. Per-run capabilities and values returned by `for_run()` do not receive `for_agent()`.
+
 ## Select a Model Dynamically
 
 Implement `get_model()` when reusable policy should choose the model. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, messages, and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation.

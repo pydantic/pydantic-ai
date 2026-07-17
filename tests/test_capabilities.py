@@ -24,6 +24,7 @@ from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -21387,6 +21388,95 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     # Falls through to bubble-up since no handler resolved anything
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
+
+
+# --- Agent-bound capabilities ---
+
+
+@dataclass
+class _AgentBoundCapability(AbstractCapability[Any]):
+    bound_name: str | None = None
+    for_agent_calls: int = 0
+
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> _AgentBoundCapability:
+        return replace(self, bound_name=agent.name, for_agent_calls=self.for_agent_calls + 1)
+
+    def get_instructions(self) -> str:
+        return f'Bound to {self.bound_name}.'
+
+
+async def test_for_agent_returns_bound_copy() -> None:
+    capability = _AgentBoundCapability()
+
+    first = Agent(TestModel(), name='first', capabilities=[capability])
+    second = Agent(TestModel(), name='second', capabilities=[capability])
+
+    first_bound = next(cap for cap in first.root_capability.capabilities if isinstance(cap, _AgentBoundCapability))
+    second_bound = next(cap for cap in second.root_capability.capabilities if isinstance(cap, _AgentBoundCapability))
+    assert capability.bound_name is None
+    assert first_bound is not capability
+    assert second_bound is not capability
+    assert first_bound.bound_name == 'first'
+    assert second_bound.bound_name == 'second'
+    assert first_bound.for_agent_calls == second_bound.for_agent_calls == 1
+
+    result = await first.run('hello')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to first.'
+
+
+def test_wrapper_for_agent_replaces_wrapped_capability() -> None:
+    capability = _AgentBoundCapability()
+    wrapper = WrapperCapability(capability)
+
+    agent = Agent(TestModel(), name='wrapped', capabilities=[wrapper])
+
+    bound_wrapper = next(cap for cap in agent.root_capability.capabilities if isinstance(cap, WrapperCapability))
+    assert bound_wrapper is not wrapper
+    assert cast(_AgentBoundCapability, bound_wrapper.wrapped).bound_name == 'wrapped'
+
+
+def test_wrapper_for_agent_preserves_identity_without_replacement() -> None:
+    wrapper = WrapperCapability(AbstractCapability())
+    agent = Agent(TestModel())
+
+    assert wrapper.for_agent(agent) is wrapper
+
+
+async def test_for_agent_composes_with_model_selection_and_resolution() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundModelCapability(AbstractCapability[Any]):
+        model_id: str | None = None
+
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> BoundModelCapability:
+            return replace(self, model_id=f'bound:{agent.name}')
+
+        def get_model(self) -> str | None:
+            return self.model_id
+
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            assert ctx.agent.name == 'selector'
+            return selected_model if model_id == self.model_id else None
+
+    agent = Agent(name='selector', capabilities=[BoundModelCapability()])
+    result = await agent.run('hello')
+    assert result.output == 'selected'
+
+
+async def test_for_agent_does_not_bind_per_run_capabilities() -> None:
+    capability = _AgentBoundCapability()
+    agent = Agent(TestModel())
+
+    await agent.run('hello', capabilities=[capability])
+
+    assert capability.for_agent_calls == 0
 
 
 # --- Dynamic capabilities ---

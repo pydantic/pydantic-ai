@@ -1230,6 +1230,39 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `\| None` | Static or per-step [model](models/overview.md) selection |
 | [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `\| None` | Resolve a selected model ID using the agent and run dependencies |
 
+### Binding to an agent
+
+Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] when a reusable capability needs to inspect the agent it is attached to. The hook runs once during [`Agent`][pydantic_ai.Agent] construction, after the agent's own model, name, and toolsets are available and before capability contributions are extracted:
+
+```python {title="agent_bound_capability.py"}
+from dataclasses import dataclass, replace
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class AgentIdentity(AbstractCapability[Any]):
+    agent_name: str | None = None
+
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> 'AgentIdentity':
+        return replace(self, agent_name=agent.name)
+
+    def get_instructions(self) -> str:
+        return f'You are the {self.agent_name} agent.'
+
+
+identity = AgentIdentity()
+support = Agent('openai:gpt-5.2', name='support', capabilities=[identity])
+sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
+```
+
+Return a new bound copy rather than mutating the original when the same capability may be attached to multiple agents. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] propagate binding to their children, and the bound copy participates in all configuration hooks, including `get_model()` and `resolve_model_id()`.
+
+This is a construction-time hook. Capabilities passed directly to `run()` and capabilities created by [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] are not passed through `for_agent()` because there is no new agent being constructed.
+
 ### Hooking into the lifecycle
 
 Capabilities can hook into five lifecycle points, each with up to four variants:
@@ -1599,7 +1632,7 @@ The built-in [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] is an example
 
 ### Per-run state isolation
 
-By default, a capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
+After construction-time [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] binding, the resulting capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
 
 ```python {title="per_run_state.py"}
 from dataclasses import dataclass
