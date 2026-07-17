@@ -1208,8 +1208,12 @@ async def test_streamed_interruption_no_context_detach_error(caplog: pytest.LogC
     """
 
     async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        for i in range(50):
+        # Unbounded on purpose: the run is interrupted mid-stream by the output-token limit, so a
+        # bounded loop's completion branch would never be taken (a partial-branch coverage miss).
+        i = 0
+        while True:
             yield f'word{i} '
+            i += 1
 
     agent = Agent(FunctionModel(stream_function=stream_function))
     with caplog.at_level(logging.ERROR, logger='opentelemetry.context'):
