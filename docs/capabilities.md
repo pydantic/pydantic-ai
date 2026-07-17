@@ -1246,6 +1246,8 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 Override [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] when model selection is one part of a larger custom capability. Return a [`Model`][pydantic_ai.models.Model], a model ID string, or a sync/async callable taking [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext]. This example chooses a model from dependencies on every request step:
 
 ```python {title="custom_model_selection.py"}
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 
