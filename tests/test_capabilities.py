@@ -21437,7 +21437,7 @@ def test_wrapper_for_agent_replaces_wrapped_capability() -> None:
 
 
 def test_wrapper_for_agent_preserves_identity_without_replacement() -> None:
-    wrapper = WrapperCapability(AbstractCapability())
+    wrapper = WrapperCapability[Any](AbstractCapability[Any]())
     agent = Agent(TestModel())
 
     assert wrapper.for_agent(agent) is wrapper
