@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ProcessHistory,
+    RaiseContentFilterError,
     ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
@@ -132,6 +133,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'RaiseContentFilterError': RaiseContentFilterError,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
@@ -1590,6 +1592,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ImageGeneration',
                     'type': 'object',
                 },
+                'spec_RaiseContentFilterError': {
+                    'additionalProperties': False,
+                    'properties': {'RaiseContentFilterError': {'$ref': '#/$defs/spec_params_RaiseContentFilterError'}},
+                    'required': ['RaiseContentFilterError'],
+                    'title': 'spec_RaiseContentFilterError',
+                    'type': 'object',
+                },
                 'spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
@@ -1756,6 +1765,16 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
                 },
+                'spec_params_RaiseContentFilterError': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_RaiseContentFilterError',
+                    'type': 'object',
+                },
                 'spec_params_MCP': {
                     'additionalProperties': False,
                     'properties': {
@@ -1796,6 +1815,8 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'RaiseContentFilterError', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -2010,6 +2031,8 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'RaiseContentFilterError', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
