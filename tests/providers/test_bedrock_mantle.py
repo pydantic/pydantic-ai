@@ -170,12 +170,15 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
         BedrockMantleChatModel('openai.gpt-5.6-luna')
 
 
-def test_bedrock_converse_rejects_gpt5() -> None:
-    # GPT-5.4+ is not served by the Converse API; the profile points users at `bedrock-mantle:`.
-    with pytest.raises(UserError, match='bedrock-mantle'):
-        BedrockProvider.model_profile('openai.gpt-5.6-luna')
-    # GPT-OSS remains available on Converse.
+def test_bedrock_converse_rejects_proprietary_openai() -> None:
+    # Proprietary GPT models are not served by the Converse API; the profile points users at
+    # `bedrock-mantle:`. This is family-based (not GPT-OSS), so it survives future GPT generations.
+    for model_name in ('openai.gpt-5.6-luna', 'openai.gpt-6', 'openai.gpt-8-turbo'):
+        with pytest.raises(UserError, match='bedrock-mantle'):
+            BedrockProvider.model_profile(model_name)
+    # The open-weight GPT-OSS family remains available on Converse.
     assert BedrockProvider.model_profile('openai.gpt-oss-120b') is not None
+    assert BedrockProvider.model_profile('openai.gpt-oss-safeguard-20b') is not None
 
 
 def test_gateway_bedrock_remains_on_converse() -> None:

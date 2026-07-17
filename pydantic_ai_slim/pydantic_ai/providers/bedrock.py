@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, overload
@@ -481,12 +480,12 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-_GPT_5_VERSION_RE = re.compile(r'gpt-5\.(\d+)')
-
-
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    if (match := _GPT_5_VERSION_RE.match(model_name)) and int(match.group(1)) >= 4:
+    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
+    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only, so anything that isn't GPT-OSS is
+    # steered to `bedrock-mantle:` rather than failing later with an opaque Converse error.
+    if not model_name.startswith('gpt-oss'):
         raise UserError(
             f'Model {model_name!r} is not served by the Bedrock Converse API. '
             "Use the `bedrock-mantle:` prefix to access it through Bedrock Mantle's OpenAI-compatible API."
