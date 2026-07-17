@@ -13,6 +13,13 @@ from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
+_FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
+"""`details` keys whose names collide with the first-class `gen_ai.usage.{input,output}_tokens`
+attributes. They must never be emitted under `gen_ai.usage.details.*` too: doing so reports the same
+conceptual quantity under two attributes that consumers like Langfuse then sum, double-counting tokens
+and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
+billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
+
 
 @dataclass(repr=False, kw_only=True)
 class UsageBase:
@@ -88,6 +95,11 @@ class UsageBase:
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
+                # Never emit a `details` entry whose name collides with a first-class token attribute: the
+                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                    continue
                 # Skipping check for value since spec implies all detail values are relevant
                 if value:
                     result[prefix + key] = value
@@ -99,7 +111,7 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(dataclasses.asdict(self).values())
+        return any(self.details.values()) or any(getattr(self, f.name) for f in fields(self) if f.name != 'details')
 
 
 @dataclass(repr=False, kw_only=True)
@@ -234,8 +246,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.cache_read_tokens += incr_usage.cache_read_tokens
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
-    slf.output_tokens += incr_usage.output_tokens
     slf.output_audio_tokens += incr_usage.output_audio_tokens
+    slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation

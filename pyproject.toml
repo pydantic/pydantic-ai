@@ -13,13 +13,15 @@ bump = true
 [project]
 name = "pydantic-ai"
 dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
+description = "AI Agent Framework, the Pydantic way"
 authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-    { name = "David Montague", email = "david@pydantic.dev" },
-    { name = "Alex Hall", email = "alex@pydantic.dev" },
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David Sanchez", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
 ]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -105,10 +107,6 @@ members = [
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
 constraint-dependencies = [
-    # Temporary ceiling: aiohttp 3.14.0 removed the internal `aiohttp.streams.AsyncStreamReaderMixin`
-    # that vcrpy (<=8.1.1) subclasses, breaking test collection under `--resolution lowest-direct`.
-    # Dev/CI-only (not in published metadata). Remove once vcrpy ships a fix (vcrpy#995 / pydantic-ai#5751).
-    "aiohttp<3.14",
     "ray>=2.55.0",
     "authlib>=1.6.7",
     # Security-driven floors for purely transitive deps. Each line lifts the
@@ -116,7 +114,7 @@ constraint-dependencies = [
     # have to wait for upstream packages to bump.
     "urllib3>=2.7.0",
     "idna>=3.15",
-    "cryptography>=46.0.7",
+    "cryptography>=48.0.1",
     "lxml>=6.1.0",
     "mako>=1.3.12",
     "pillow>=12.2.0",
@@ -125,11 +123,18 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",
     "pygments>=2.20.0",
     "xgrammar>=0.1.32",
-    # TODO: Remove or loosen once vcrpy includes https://github.com/kevin1024/vcrpy/pull/996.
-    "aiohttp<3.14",
     "langchain-core>=1.3.3",
     "langchain-text-splitters>=1.1.2",
-    "langsmith>=0.8.0",
+    "langsmith>=0.8.18",
+    "joserfc>=1.6.7",
+    "pydantic-settings>=2.14.2",
+    "vcrpy>=8.2.1",
+    "starlette>=1.3.1",
+    "aiohttp>=3.14.1",
+    "python-multipart>=0.0.31",
+    "pyjwt>=2.13.0",
+    "torch>=2.12.1",
+    "transformers>=5.5.0",
 ]
 
 [dependency-groups]
@@ -156,7 +161,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.62",
+    "genai-prices>=0.0.69",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
@@ -212,6 +217,7 @@ extend-select = [
     "Q",
     "RUF100",
     "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF043", # https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern/
     "C90",
     "UP",
     "I",
@@ -323,6 +329,10 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
+    # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
+    # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.
+    "ignore:The `local_dir_use_symlinks` argument is deprecated and ignored:UserWarning",
     # fastmcp v3 does standard OTel distributed tracing (inject on client, extract on server).
     # logfire's default config wraps the global propagator to warn on extract via warnings.warn(),
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
@@ -347,9 +357,6 @@ include = [
 omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
-    # TODO(Marcelo): Enable prefect coverage again.
-    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
-    "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials

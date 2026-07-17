@@ -173,7 +173,10 @@ class ToolManager(Generic[AgentDepsT]):
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
         if self.ctx.retries.get(name, 0) == max_retries:
-            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
+            raise UnexpectedModelBehavior(
+                f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
+                'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
+            ) from error
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
@@ -616,11 +619,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         # Output validators see the *global* output-retry budget (`max_output_retries`), so the same
         # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
-        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
+        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-https://github.com/pydantic/pydantic-ai/issues/4687 override) on
         # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
         # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
         # `max_output_retries`, the validator's `ctx.last_attempt` can fire before the run actually
-        # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
+        # terminates. Tracked in https://github.com/pydantic/pydantic-ai/issues/5238 — revisiting cleanly needs broader thought about
         # `ctx.retry`/`ctx.retries[name]` semantics and is intentionally out of scope here.
         assert toolset.max_retries is not None
         validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=toolset.max_retries)

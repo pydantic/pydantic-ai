@@ -24,9 +24,15 @@ MoonshotAIModelName = Literal[
     'moonshot-v1-8k-vision-preview',
     'moonshot-v1-32k-vision-preview',
     'moonshot-v1-128k-vision-preview',
+    'moonshot-v1-auto',
     'kimi-latest',
     'kimi-thinking-preview',
     'kimi-k2-0711-preview',
+    'kimi-k2.5',
+    'kimi-k2.6',
+    'kimi-k2.7-code',
+    'kimi-k2.7-code-highspeed',
+    'kimi-k3',
 ]
 
 
@@ -50,6 +56,14 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = moonshotai_model_profile(model_name)
 
+        # `api.moonshot.ai` rejects `reasoning_effort='none'` (it accepts minimal/low/medium/high),
+        # and reasoning can't be turned off through the unified `thinking` setting (the native off
+        # switch is a `thinking={'type': 'disabled'}` body object we don't send). Mark reasoning as
+        # always-enabled so `thinking=False` omits `reasoning_effort` rather than sending the rejected
+        # `'none'`. This is set here, not in `moonshotai_model_profile`, because that profile is also
+        # routed through OpenRouter/Heroku, whose gateways don't share this endpoint quirk.
+        is_reasoning = bool(profile and profile.get('supports_thinking'))
+
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
         # Also, MoonshotAI does not support strict tool definitions
@@ -63,6 +77,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
+                thinking_always_enabled=is_reasoning,
             ),
         )
 

@@ -519,9 +519,8 @@ class _OpenRouterCostDetails:
     """OpenRouter specific cost details."""
 
     upstream_inference_cost: float | None = None
-
-    # TODO rework fields, tests/models/cassettes/test_openrouter/test_openrouter_google_nested_schema.yaml
-    # shows an `upstream_inference_completions_cost` field as well
+    upstream_inference_prompt_cost: float | None = None
+    upstream_inference_completions_cost: float | None = None
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
@@ -569,14 +568,14 @@ class _OpenRouterChatCompletion(_ChatCompletion):
 
 
 class _OpenRouterErrorResponse(BaseModel, extra='allow'):
-    """OpenRouter error response with null standard fields (see #3994)."""
+    """OpenRouter error response with null standard fields (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     error: _OpenRouterError
     model: str | None = None
 
 
 class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
-    """Completion nested in the `provider` field where provider name may be null (see #3994)."""
+    """Completion nested in the `provider` field where provider name may be null (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     provider: str = 'unknown'
     created: int = 0
@@ -588,7 +587,7 @@ class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
 
 
 class _OpenRouterNestedProviderResponse(BaseModel, extra='allow'):
-    """OpenRouter response where the real completion is nested in `provider` (see #3994)."""
+    """OpenRouter response where the real completion is nested in `provider` (see https://github.com/pydantic/pydantic-ai/issues/3994)."""
 
     provider: _OpenRouterNestedCompletion
 
@@ -608,6 +607,8 @@ def _map_openrouter_provider_details(
 
         if cost_details := usage.cost_details:
             provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
+            provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
+            provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
 
         if (is_byok := usage.is_byok) is not None:
             provider_details['is_byok'] = is_byok
@@ -968,7 +969,7 @@ class OpenRouterModel(OpenAIChatModel):
         try:
             validated = _OpenRouterChatCompletion.model_validate(response_dict)
         except ValidationError as exc:
-            # OpenRouter intermittently returns responses with null standard fields (#3994).
+            # OpenRouter intermittently returns responses with null standard fields (https://github.com/pydantic/pydantic-ai/issues/3994).
             # Try known quirky response shapes before giving up.
             try:
                 error_response = _OpenRouterErrorResponse.model_validate(response_dict)

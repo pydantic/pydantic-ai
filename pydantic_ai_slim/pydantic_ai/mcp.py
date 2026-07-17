@@ -1202,6 +1202,24 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
                 raise
+            except _utils.BaseExceptionGroup as eg:
+                # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
+                # error can surface wrapped in an `ExceptionGroup` rather than as a bare
+                # `ToolError`/`McpError`. This has been observed in production (an empty-bodied tool
+                # error racing with the session's GET-stream teardown), though the exact frame it
+                # unwinds from is not pinned down — so this is a best-effort guard: when the group
+                # contains only tool/protocol errors, treat it like the bare case above; otherwise
+                # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
+                if self.tool_error_behavior != 'retry':
+                    raise
+                matched, rest = eg.split((ToolError, mcp_exceptions.McpError))
+                if matched is None or rest is not None:
+                    raise
+                # `matched` holds only tool/protocol errors; descend through any nesting to a leaf.
+                error: BaseException = matched
+                while isinstance(error, _utils.BaseExceptionGroup):
+                    error = error.exceptions[0]
+                raise exceptions.ModelRetry(message=str(error)) from eg
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).

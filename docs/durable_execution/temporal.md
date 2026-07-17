@@ -70,7 +70,19 @@ Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.tempora
 
 At the time of wrapping, the agent's [model](../models/overview.md) and [toolsets](../toolsets.md) (including function tools registered on the agent and MCP servers) are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 
-Here is a simple but complete example of wrapping an agent for durable execution, creating a Temporal workflow with durable execution logic, connecting to a Temporal server, and running the workflow from non-durable code. All it requires is a Temporal server to be [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally):
+Here is a simple but complete example of wrapping an agent for durable execution, creating a Temporal workflow with durable execution logic, connecting to a Temporal server, and running the workflow from non-durable code. All it requires is to install Pydantic AI with the `temporal` optional group:
+
+```bash
+pip/uv-add pydantic-ai[temporal]
+```
+
+Or if you're using the slim package, you can install it with the `temporal` optional group:
+
+```bash
+pip/uv-add pydantic-ai-slim[temporal]
+```
+
+You'll also need a Temporal server to be [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally):
 
 ```sh
 brew install temporal
@@ -94,7 +106,7 @@ from pydantic_ai.durable_exec.temporal import (
 agent = Agent(
     'openai:gpt-5.2',
     instructions="You're an expert in geography.",
-    name='geography',  # (10)!
+    name='geography',  # (9)!
 )
 
 temporal_agent = TemporalAgent(agent)  # (1)!
@@ -160,6 +172,8 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 When `TemporalAgent` dynamically creates activities for the wrapped agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
 For dynamic toolsets created with the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, the `id` parameter must be set explicitly. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
+
+[Capabilities](../capabilities.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
 Other than that, any agent and toolset will just work!
 
@@ -262,6 +276,10 @@ class MultiModelWorkflow:
             result = await temporal_agent.run(prompt, model='openai:gpt-5-mini')
         return result.output
 ```
+
+### Toolsets at Runtime
+
+Additional toolsets can be passed per run via [`TemporalAgent.run(toolsets=...)`][pydantic_ai.durable_exec.temporal.TemporalAgent.run], but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their activities can be registered with the worker before the workflow runs; passing them at runtime raises a `UserError`.
 
 ## Activity Configuration
 

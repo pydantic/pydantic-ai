@@ -43,6 +43,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
+    from tests.models.xai_proto_cassettes import XaiProtoCassetteClient
 
 
 pytestmark = [
@@ -179,11 +180,16 @@ def test_x_search_tool_validation():
     with pytest.raises(ValueError, match='Cannot specify both allowed_x_handles and excluded_x_handles'):
         XSearchTool(allowed_x_handles=['foo'], excluded_x_handles=['bar'])
 
-    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 10 handles'):
-        XSearchTool(allowed_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 21)]
+    assert XSearchTool(allowed_x_handles=handles).allowed_x_handles == handles
+    assert XSearchTool(excluded_x_handles=handles).excluded_x_handles == handles
 
-    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 10 handles'):
-        XSearchTool(excluded_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 22)]
+    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 20 handles'):
+        XSearchTool(allowed_x_handles=handles)
+
+    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 20 handles'):
+        XSearchTool(excluded_x_handles=handles)
 
     tool = XSearchTool(allowed_x_handles=['handle1', 'handle2'])
     assert tool.allowed_x_handles == ['handle1', 'handle2']
@@ -861,8 +867,9 @@ async def test_xai_builtin_file_search_tool(
             wait_for_indexing=True,
             timeout=timedelta(seconds=180),
         )
-        # PROCESSED status doesn't guarantee the search index is fully propagated; give it a moment.
-        await asyncio.sleep(5)
+        if not isinstance(client, XaiProtoCassetteClient):  # pragma: no cover
+            # PROCESSED status doesn't guarantee the live search index is fully propagated; give it a moment.
+            await asyncio.sleep(5)
 
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(

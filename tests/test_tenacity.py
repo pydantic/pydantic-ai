@@ -626,9 +626,9 @@ class TestIntegration:
         request = httpx.Request('GET', 'https://example.com')
 
         # Time the request to ensure retry-after wait was respected
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
         result = await transport.handle_async_request(request)
-        end_time = asyncio.get_event_loop().time()
+        end_time = asyncio.get_running_loop().time()
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
@@ -678,7 +678,7 @@ class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(429)
-            self.send_header('Retry-After', '1')
+            self.send_header('Retry-After', '0')
             self.end_headers()
             self.wfile.write(b'Rate limited')
 
@@ -702,7 +702,7 @@ class TestConnectionPool:
 
         retry_strategy = RetryConfig(
             stop=stop_after_attempt(5),
-            wait=wait_retry_after(max_wait=5, fallback_strategy=wait_fixed(2)),
+            wait=wait_retry_after(max_wait=0, fallback_strategy=wait_fixed(0)),
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             reraise=True,
         )

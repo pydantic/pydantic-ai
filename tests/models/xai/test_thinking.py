@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
+from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
@@ -54,6 +55,22 @@ async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provid
     assert '4' in result.output
 
 
+async def test_xai_grok_45_thinking(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end smoke test that Grok 4.5 reasons by default (always-on).
+
+    Grok 4.5 rejects `reasoning_effort='none'`, so reasoning can't be disabled; the thinking ->
+    reasoning_effort mapping is asserted at the wire level by `test_xai_grok_45_unified_thinking_reasoning_effort`.
+    This confirms a real cassette-backed call succeeds and returns a thinking part.
+    """
+    m = XaiModel('grok-4.5', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': True})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    assert any(isinstance(p, ThinkingPart) for p in response.parts)
+
+
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
@@ -73,6 +90,39 @@ async def test_xai_grok_43_unified_thinking_reasoning_effort(
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    if expected_reasoning_effort is None:
+        assert 'reasoning_effort' not in kwargs
+    else:
+        assert kwargs['reasoning_effort'] == expected_reasoning_effort
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'expected_reasoning_effort'),
+    [
+        # Grok 4.5 rejects `'none'`, so `thinking=False` maps to nothing: reasoning_effort is omitted
+        # and the always-on model silently ignores the disable request.
+        (False, None),
+        # `True` has no `'none'` to omit to, so it falls back to `'medium'`.
+        (True, 'medium'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_grok_45_unified_thinking_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str | None
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.5', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
 
     result = await agent.run('Hello')

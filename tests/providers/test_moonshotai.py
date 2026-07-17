@@ -67,3 +67,28 @@ def test_moonshotai_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
     assert model.profile.get('openai_supports_tool_choice_required', True) is False
     assert model.profile.get('supports_json_object_output', False) is True
+
+
+def test_moonshotai_model_profile_thinking():
+    # Unit (not VCR): these pin the profile flags resolved from the model id at model-build time, which
+    # the cassette doesn't exercise — it records the wire round-trip, not the resolved profile, and our
+    # matchers aren't body-sensitive, so a regression flipping a model's reasoning flags could still
+    # replay an existing recording green. A direct profile assertion is what catches it.
+    provider = MoonshotAIProvider(api_key='api-key')
+
+    # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
+    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
+        profile = provider.model_profile(reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        assert profile.get('thinking_always_enabled') is True
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
+        assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+
+    # Instruct/base models don't reason, so thinking stays off.
+    for non_reasoning_model in ('moonshot-v1-8k', 'moonshot-v1-auto', 'kimi-k2-0711-preview', 'kimi-latest'):
+        profile = provider.model_profile(non_reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'

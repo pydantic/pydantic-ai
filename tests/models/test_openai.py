@@ -61,7 +61,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -586,6 +586,37 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
+    """`run_stream_sync` must stream and complete against a real, recorded streaming model.
+
+    End-to-end coverage for the task-stable implementation (#3716, refs #3714, #5975): the whole run,
+    including a tool call so the agent graph crosses node boundaries, keeps each async lifecycle in one
+    task, and text streams incrementally before `get_output()` returns the final result. This path can't
+    be exercised with `TestModel` or a mock client because they have no real async stream, so it's a VCR test.
+
+    Note: the previous task-unstable implementation pumped the stream via repeated
+    `loop.run_until_complete(anext(...))` calls, each in a different asyncio task. That could raise
+    `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in`, but the
+    straddle is timing-dependent and does not reliably reproduce against a fixed cassette (or even a
+    live model); the OTel dangling-span symptom of the same root cause is covered by
+    `tests/test_logfire.py::test_run_stream_sync`.
+    """
+    model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_capital(country: str) -> str:
+        return 'London'
+
+    with agent.run_stream_sync('What is the capital of the UK? Use the tool, then answer.') as result:
+        chunks = [c for c in result.stream_text(debounce_by=None)]
+        output = result.get_output()
+
+    assert chunks
+    assert chunks[-1] == output
+    assert output == snapshot('The capital of the UK is London.')
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -1837,7 +1868,7 @@ async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1857,7 +1888,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
@@ -4119,8 +4150,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) intentionally retries empty responses by emitting an
-    empty `ModelRequest` as well, relying on the model adapter to omit both from the API payload.
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    that tells the model which kinds of output are valid, while relying on the model adapter to omit
+    the empty response from the API payload.
     """
     responses = [
         completion_message(ChatCompletionMessage(content=None, role='assistant')),
@@ -4133,8 +4165,17 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'hello back'
 
+    # The empty response is omitted from the payload (no `content=None` assistant message that would
+    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
-    assert second_call_messages == [{'content': 'hello', 'role': 'user'}]
+    assert not any(message['role'] == 'assistant' for message in second_call_messages)
+    assert second_call_messages == [
+        {'content': 'hello', 'role': 'user'},
+        {
+            'role': 'user',
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+        },
+    ]
 
     assert result.all_messages() == snapshot(
         [
@@ -4159,7 +4200,18 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='hello back')],
                 model_name='gpt-4o-123',
@@ -4179,6 +4231,41 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     )
 
 
+@pytest.mark.parametrize('send_mode', ['field', 'auto'])
+async def test_thinking_only_response_skipped_in_history(
+    allow_model_requests: None, send_mode: Literal['field', 'auto']
+):
+    """A thinking-only response has no Chat Completions-valid assistant payload.
+
+    Custom reasoning fields like `reasoning_content` do not satisfy Chat Completions'
+    requirement that assistant messages have `content` unless `tool_calls` is populated.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage.model_construct(
+                content=None, reasoning_content='Let me think about this...', role='assistant'
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'deepseek-reasoner',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=send_mode,
+        ),
+    )
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assistant_messages = [message for message in second_call_messages if message.get('role') == 'assistant']
+    assert assistant_messages == []
+
+
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
@@ -4190,8 +4277,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
@@ -4206,8 +4292,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
-    response_message = messages[1]
-    assert isinstance(response_message, ModelResponse)
+    response_message = message(messages, ModelResponse, index=1)
     assert response_message.finish_reason == 'stop'
 
 
@@ -4861,10 +4946,10 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 },
                 'provider_response_id': None,
                 'finish_reason': 'content_filter',
+                'state': 'complete',
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
-                'state': 'complete',
             }
         ]
     )

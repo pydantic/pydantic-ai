@@ -14,7 +14,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', name='approval_agent', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -39,6 +39,8 @@ Two key rules:
 - `DeferredToolRequests` must be in the output type
 - for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True`
 
+Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`).
+
 ## Make an Agent Resilient with Retries
 
 Raise `ModelRetry` from inside the tool when the model should correct and try again.
@@ -46,7 +48,7 @@ Raise `ModelRetry` from inside the tool when the model should correct and try ag
 ```python
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=dict[str, int])
+agent = Agent('openai:gpt-5.2', name='retry_agent', deps_type=dict[str, int])
 
 
 @agent.tool(retries=2)
@@ -66,7 +68,7 @@ Use `args_validator=` when arguments are structurally valid but still need busin
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=int, output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', name='validation_agent', deps_type=int, output_type=[str, DeferredToolRequests])
 
 
 def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
@@ -93,7 +95,7 @@ Example with `ToolReturn`:
 ```python
 from pydantic_ai import Agent, BinaryContent, ToolReturn
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='tool_return_agent')
 
 
 @agent.tool_plain
@@ -117,6 +119,10 @@ Three strategies (set on the agent, e.g. `Agent(..., end_strategy='exhaustive')`
 
 Retry-wins (under `'graceful'` / `'exhaustive'`): if a function tool raises `ModelRetry` (or its args fail validation) in the same response as a successful output, the output result is suppressed so the model addresses the retry next round. Does not apply under `'early'`, nor when streaming (`run_stream` commits the first matching output immediately, behaving like `'early'`).
 
+Native/prompted/image output (`output_type` uses `NativeOutput`, `PromptedOutput`, or image output): the final result comes from the text/image the model returns, not an output tool. Because the model is asked to produce that output directly it usually returns it alone, but some models occasionally return it *and* a function tool call in one response. Under `'early'` a valid output ends the run and the co-emitted function tools are skipped (output that fails validation falls through to the tools); under `'graceful'` / `'exhaustive'` the function tools run and (outside streaming) the run continues. Only applies to *function* tools — a co-emitted output-tool or deferred call takes precedence and the output/image does not preempt it.
+
+Plain text output (`output_type=str` / `TextOutput`, incl. a `str` fallback) is treated differently: the model isn't told its text is the final result, so text alongside a tool call is usually preamble, not an answer. Plain text never preempts a co-emitted function tool — the tool runs under `'early'` exactly as under `'graceful'`. (Streaming still commits the first text as it streams, regardless of `end_strategy`.)
+
 To run a whole run's tools serially, use `with agent.parallel_tool_call_execution_mode('sequential'):` or set `parallel_tool_calls=False` on model settings.
 
 See [Parallel Output Tool Calls](https://ai.pydantic.dev/output/#parallel-output-tool-calls) and [tools-advanced docs](https://ai.pydantic.dev/tools-advanced/#parallel-tool-calls-concurrency).
@@ -134,7 +140,7 @@ Use tool-level deferred loading when the agent has many tools and the model shou
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='tool_search_agent')
 
 
 @agent.tool_plain(defer_loading=True)

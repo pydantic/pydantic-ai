@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import itertools
-import json
+import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -12,12 +12,15 @@ from genai_prices.types import PriceCalculation
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
+from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
+    TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
 )
 
 from .. import _otel_messages
@@ -153,6 +156,21 @@ class InstrumentationSettings:
             unit='{USD}',
             description='Monetary cost',
         )
+        time_to_first_chunk_histogram_kwargs = dict(
+            name='gen_ai.client.operation.time_to_first_chunk',
+            unit='s',
+            description='Time from issuing a streaming request to the first chunk being surfaced to the consumer',
+        )
+        try:
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore
+            )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
@@ -189,10 +207,10 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
-            'gen_ai.output.messages': json.dumps([output_message]),
+            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {
@@ -202,14 +220,16 @@ class InstrumentationSettings:
                         'model_request_parameters': {'type': 'object'},
                     },
                 }
-            ),
+            ).decode(),
         }
         span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+                'gen_ai.system_instructions': safe_to_json(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                ).decode(),
             }
         return {}
 
@@ -218,6 +238,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
+        time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
@@ -227,6 +248,8 @@ class InstrumentationSettings:
         if price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
+        if time_to_first_chunk is not None:
+            self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
 @dataclass(init=False)
@@ -282,6 +305,10 @@ class InstrumentedModel(WrapperModel):
         )
         with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
+            # Stamp the request-issue instant before the wrapped model opens the stream, so the
+            # `time_to_first_chunk` delta spans from when we issue the request to when the first
+            # chunk is surfaced to the consumer.
+            request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
                     prepared_rc.messages,
@@ -292,4 +319,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    finish(
+                        response_stream.get(),
+                        time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
+                    )

@@ -130,6 +130,18 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
+        {
+            'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+            'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
+            'OPENAI_API_VERSION': '2024-12-01-preview',
+        },
+        'azure-responses:gpt-3.5-turbo',
+        'gpt-3.5-turbo',
+        'azure',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'GEMINI_API_KEY': 'gemini-api-key'},
         'google:gemini-1.5-flash',
         'gemini-1.5-flash',
@@ -170,7 +182,11 @@ TEST_CASES = [
         CohereModel,
     ),
     pytest.param(
-        {'AWS_DEFAULT_REGION': 'aws-default-region'},
+        {
+            'AWS_ACCESS_KEY_ID': 'test-access-key',
+            'AWS_DEFAULT_REGION': 'aws-default-region',
+            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+        },
         'bedrock:bedrock-claude-haiku-4-5',
         'bedrock-claude-haiku-4-5',
         'bedrock',
@@ -285,7 +301,9 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
         pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
         pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
-        pytest.param('together:model-without-slash', True, id='together-no-slash'),
+        # Together (OpenAI-compatible) returns the OpenAI default profile for a slashless name
+        # rather than crashing — like `nebius` above — so it's not `DEFAULT_PROFILE`.
+        pytest.param('together:model-without-slash', False, id='together-no-slash'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):

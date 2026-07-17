@@ -611,7 +611,9 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    """
+    Exceeded the output_tokens_limit of 10 (output_tokens=32). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -649,7 +651,9 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> The next request would exceed the request_limit of 3
+    """
+    The next request would exceed the request_limit of 3. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
@@ -675,17 +679,21 @@ try:
     agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
 except UsageLimitExceeded as e:
     print(e)
-    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+    """
+    The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits
+    """
 ```
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
+Tools and [capabilities](capabilities.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
-This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
+This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`, `top_k`,
 `timeout`, and more.
 
 There are three ways to apply these settings, with a clear precedence order:
@@ -1225,7 +1233,10 @@ with capture_run_messages() as messages:  # (2)!
         result = agent.run_sync('Please get me the volume of a box with size 6.')
     except UnexpectedModelBehavior as e:
         print('An error occurred:', e)
-        #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
+        """
+        An error occurred:
+        Tool 'calc_volume' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries
+        """
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')
         print('messages:', messages)
@@ -1297,7 +1308,7 @@ _(This example is complete, it can be run "as is")_
 
 When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
 
-For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. Half-finished tool call parts are not turned into synthetic tool results; only completed tool returns are captured.
+For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 
@@ -1352,6 +1363,8 @@ assert any(
 
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+
+    `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
 
 ## Agent Specs
 

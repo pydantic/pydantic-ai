@@ -885,6 +885,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -975,6 +976,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -996,6 +998,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1489,6 +1492,36 @@ async def test_wrapper_toolsets_delegate_instructions():
     assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
     assert await prepared_toolset.get_instructions(ctx) == base_instructions
+
+
+async def test_renamed_toolset_name_collision():
+    """Renaming a tool onto a name another tool already occupies must raise, not silently drop one.
+
+    This is the same conflict `FunctionToolset.get_tools` already raises on; `RenamedToolset` was the
+    lone wrapper that overwrote silently. It's a config-time guard with no model involved, so there is
+    no VCR test to write here.
+    """
+
+    def a(x: int) -> int:  # pragma: no cover
+        return x
+
+    def b(x: int) -> int:  # pragma: no cover
+        return x
+
+    toolset = FunctionToolset(tools=[Tool(a), Tool(b)])
+    ctx = build_run_context(None)
+
+    # Renaming `a` to `b`: the unchanged `b` then lands on the taken name.
+    with pytest.raises(UserError, match=re.escape("Tool name conflicts with previously renamed tool: 'b'.")):
+        await toolset.renamed({'b': 'a'}).get_tools(ctx)
+
+    # Renaming `b` to `a`: the renamed tool lands on the existing `a`.
+    with pytest.raises(UserError, match=re.escape("Renaming tool 'b' to 'a' conflicts with existing tool.")):
+        await toolset.renamed({'a': 'b'}).get_tools(ctx)
+
+    # A genuine swap is not a collision and must preserve both tools.
+    swapped = await toolset.renamed({'b': 'a', 'a': 'b'}).get_tools(ctx)
+    assert sorted(swapped.keys()) == ['a', 'b']
 
 
 async def test_combined_toolset_instructions():

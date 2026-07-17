@@ -7,14 +7,13 @@ from typing import Literal, overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
     from google.genai.client import Client
-    from google.genai.types import HttpOptions
+    from google.genai.types import HttpOptions, HttpRetryOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -52,6 +51,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
         *,
         http_client: httpx.AsyncClient | None,
         base_url: str | None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> HttpOptions:
         """Build `HttpOptions` and record ownership of the httpx client if we created it.
 
@@ -72,6 +72,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
             headers={'User-Agent': get_user_agent()},
             httpx_async_client=http_client,
             timeout=timeout_ms,
+            retry_options=retry_options,
         )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
@@ -90,7 +91,12 @@ class GoogleProvider(BaseGoogleProvider):
 
     @overload
     def __init__(
-        self, *, api_key: str, http_client: httpx.AsyncClient | None = None, base_url: str | None = None
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+        base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     @overload
@@ -103,6 +109,7 @@ class GoogleProvider(BaseGoogleProvider):
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None:
         """Create a new Google provider for the Gemini API.
 
@@ -112,6 +119,8 @@ class GoogleProvider(BaseGoogleProvider):
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
+            retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
+                See `google.genai.types.HttpRetryOptions` for available fields.
         """
         if client is not None:
             self._client = client
@@ -120,11 +129,11 @@ class GoogleProvider(BaseGoogleProvider):
         # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
         api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
         if api_key is None:
-            raise UserError(
+            raise missing_api_key_error(
                 'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                 ' to use the Gemini API.'
             )
-        http_options = self._build_http_options(http_client=http_client, base_url=base_url)
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
 
