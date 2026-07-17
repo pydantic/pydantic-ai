@@ -651,6 +651,11 @@ agent = Agent(
 )
 ```
 
+The resolver may be synchronous or asynchronous. Its full callable signature is
+`(ModelResolutionContext[Deps], str) -> Model | None | Awaitable[Model | None]`.
+The convenience capability adapts both forms to the asynchronous
+[`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] hook.
+
 Resolvers form a chain in capability order: the first non-`None` result wins, and Pydantic AI falls back to normal model inference if every resolver returns `None`. See [Resolving model IDs](#resolving-model-ids) to implement the hook in a custom capability and understand when each resolver tree is used.
 
 ### Provider-adaptive tools
@@ -1329,6 +1334,8 @@ agent = Agent('user:openai:gpt-5.6-sol', deps_type=Deps, capabilities=[UserModel
 
 The constructor ID remains a string through [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent], so a bound capability can install a resolver without default inference first constructing a provider with different configuration or credentials.
 
+Resolution results are cached by model ID and resolver tree for the duration of one run. If a per-step selector returns the same string again, Pydantic AI reuses the same model, provider, and client rather than invoking the resolver again. To deliberately resolve differently on a later step, select a different ID or return a [`Model`][pydantic_ai.models.Model] instance directly from the selector.
+
 ### Model selection lifecycle and limitations
 
 Bootstrap resolution uses the capability tree after `for_agent()` binding but before `for_run()`, because resolving the first model is what makes a full [`RunContext`][pydantic_ai.tools.RunContext] possible. If `for_run()` returns a replacement capability, strings selected for step one or later steps use that replacement's resolver chain. When `for_run()` leaves the capability unchanged, the already-resolved bootstrap model is reused for step one.
@@ -1381,6 +1388,8 @@ identity = AgentIdentity()
 support = Agent('openai:gpt-5.2', name='support', capabilities=[identity])
 sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
 ```
+
+`for_agent()` is synchronous because it binds configuration during agent construction, before run dependencies or a lifecycle context exist. Keep it free of I/O; asynchronous run-specific setup belongs in [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run].
 
 Return a new bound copy rather than mutating the original when the same capability may be attached to multiple agents. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] propagate binding to their children, and the bound copy participates in all configuration hooks, including `get_model()` and `resolve_model_id()`.
 
