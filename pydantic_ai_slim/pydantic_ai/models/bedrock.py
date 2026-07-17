@@ -565,6 +565,15 @@ class BedrockConverseModel(Model[BaseClient]):
                 raise UserError(
                     f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
+
+        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
+        # strict-forcing check below also applies when native mode is reached via the profile default
+        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
+        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self.profile.get('default_structured_output_mode', 'tool')
+        )
+
         if (
             self.profile.get('supports_json_schema_output', False)
             and model_request_parameters.output_mode == 'native'
@@ -1214,7 +1223,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # `toolResult` block with other content: Anthropic rejects documents and video next to it, while
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
-        # merging. See #6081 and `bedrock_tool_result_colocatable_content`.
+        # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:

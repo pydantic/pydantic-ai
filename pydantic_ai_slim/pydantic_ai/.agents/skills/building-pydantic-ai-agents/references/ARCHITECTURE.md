@@ -198,6 +198,7 @@ Need deterministic, fast tests?
 |---|---|:---:|
 | `Thinking` | Model thinking/reasoning at configurable effort | Yes |
 | `Hooks` | Decorator-based lifecycle hook registration | No |
+| `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
 | `WebSearch` | Web search — native when supported, local fallback | Yes |
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
 | `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
