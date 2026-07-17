@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -173,6 +174,23 @@ def test_chat_app_configure_endpoint_empty():
         assert response.json() == snapshot(
             {'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': []}], 'builtinTools': []}
         )
+
+
+def test_chat_app_preserves_capability_resolved_model_id():
+    """Resolver-owned IDs are displayed without eagerly inferring them."""
+    agent = Agent(
+        'tenant-model',
+        capabilities=[ResolveModelId(lambda ctx, model_id: TestModel() if model_id == 'tenant-model' else None)],
+    )
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        assert response.json() == {
+            'models': [{'id': 'tenant-model', 'name': 'tenant-model', 'builtinTools': []}],
+            'builtinTools': [],
+        }
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')

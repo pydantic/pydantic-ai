@@ -26,7 +26,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -318,15 +318,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request_index: int | None
 
     model: models.Model
-    model_selector: (
-        Callable[
-            [models.ModelSelectionContext[DepsT]],
-            models.Model | models.KnownModelName | str | Awaitable[models.Model | models.KnownModelName | str],
-        ]
-        | None
-    )
+    model_selector: ModelSelector[DepsT] | None
     model_selected_for_step: int | None
-    resolve_model_id: Callable[[models.KnownModelName | str], Awaitable[models.Model]]
+    evaluate_model_selector: Callable[
+        [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[models.Model]
+    ]
     enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
@@ -1961,10 +1957,7 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         messages=ctx.state.message_history,
         usage=ctx.state.usage,
     )
-    selected = selector(selection_ctx)
-    if inspect.isawaitable(selected):
-        selected = await selected
-    model = await ctx.deps.resolve_model_id(selected) if isinstance(selected, str) else selected
+    model = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)
     ctx.deps.model = model
     ctx.deps.model_selected_for_step = ctx.state.run_step

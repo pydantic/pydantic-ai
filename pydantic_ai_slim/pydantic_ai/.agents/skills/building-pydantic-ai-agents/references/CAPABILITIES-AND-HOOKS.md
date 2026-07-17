@@ -114,11 +114,13 @@ For every capability, consider whether `defer_loading=True` would improve the sy
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, previous model, step number, messages, and accumulated usage.
+Implement `get_model()` when reusable policy should choose the model. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, previous model, step number, messages, and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 
-Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance.
+Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance. Resolution uses the first non-`None` result in capability order; model selection uses the last non-`None` contribution.
+
+Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 
 ## Defer Capability Loading
 

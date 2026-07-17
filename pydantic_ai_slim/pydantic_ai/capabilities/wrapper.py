@@ -119,11 +119,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     async def resolve_model_id(
         self,
-        model_id: KnownModelName | str,
-        *,
         ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
     ) -> Model | None:
-        return await self.wrapped.resolve_model_id(model_id, ctx=ctx)
+        return await self.wrapped.resolve_model_id(ctx, model_id=model_id)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()

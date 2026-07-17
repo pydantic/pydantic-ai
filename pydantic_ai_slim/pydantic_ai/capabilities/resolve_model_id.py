@@ -21,8 +21,8 @@ ModelIdResolver = (
 class ResolveModelId(AbstractCapability[AgentDepsT]):
     """Resolve model IDs with a user-provided sync or async callable.
 
-    The callable receives a [`ModelResolutionContext`][pydantic_ai.models.ModelResolutionContext]
-    followed by the selected model ID. Return `None` to let an earlier capability or the
+    The callable receives a [`ModelResolutionContext`][pydantic_ai.ModelResolutionContext]
+    followed by the selected model ID. Return `None` to let a later capability or the
     default [`infer_model`][pydantic_ai.models.infer_model] behavior handle the ID.
     """
 
@@ -30,9 +30,9 @@ class ResolveModelId(AbstractCapability[AgentDepsT]):
 
     async def resolve_model_id(
         self,
-        model_id: KnownModelName | str,
-        *,
         ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
     ) -> Model | None:
         if is_async_callable(self.resolver):
             resolver = cast(Callable[[ModelResolutionContext[Any], str], Awaitable[Model | None]], self.resolver)

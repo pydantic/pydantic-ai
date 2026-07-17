@@ -1190,7 +1190,7 @@ Return a [`Model`][pydantic_ai.models.Model] instance, a model name string, or a
 ```python
 from dataclasses import dataclass
 
-from pydantic_ai.models import ModelSelectionContext
+from pydantic_ai import ModelSelectionContext
 
 
 @dataclass
@@ -1202,15 +1202,21 @@ def select_model(ctx: ModelSelectionContext[MyDeps]) -> str:
     return 'openai:gpt-5.2' if ctx.deps.use_frontier_model else 'openai:gpt-5-mini'
 ```
 
-The context has a separate type from [`RunContext`][pydantic_ai.tools.RunContext] because a full run context requires the model that is currently being selected. Later capability contributions override earlier ones, matching other capability configuration layers.
+The context has a separate type from [`RunContext`][pydantic_ai.tools.RunContext] because a full run context requires the model that is currently being selected. Later capability contributions override earlier ones, matching other capability configuration layers. The synchronous `get_model()` method is a cheap configuration hook; perform I/O in the returned async selector, where run dependencies are available.
+
+A static model or model ID is selected and resolved once per run. A callable is evaluated once for every new logical model request step; provider-side continuation polling within the same step remains pinned to the selected model. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] returns the same capability, the bootstrap selection is reused on step one. If it returns a replacement with a different selector, that selector is evaluated for step one.
 
 A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
 
 `run()`/`iter()` argument › run `spec=` model › capability `get_model()` › agent constructor.
 
-An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely. Continuation polling within a request step remains pinned to the selected model rather than invoking the selector again.
+An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely.
 
-Model ID strings are passed through [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] before the default model inference. Use [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] to provide a sync or async resolver with access to the agent and run dependencies. This keeps model selection (which model to use) separate from model ID resolution (how to construct it).
+Model ID strings are passed through [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] before the default model inference. Use [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] to provide a sync or async resolver with access to the agent and run dependencies. Resolvers form a chain: the first non-`None` result in capability order wins, so a general registry resolver can be placed last as a backstop. This keeps model selection (which model to use) separate from model ID resolution (how to construct it).
+
+Model selection and resolution are eager hooks, so deferred capabilities do not contribute them. Run-spec capabilities are known during bootstrap and can supply the first model. A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc], or another capability whose model is only introduced by `for_run()`, requires an existing bootstrap model because `for_run()` receives a full `RunContext`; it may replace that model starting with step one, but cannot bootstrap a model-less agent.
+
+Dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a selector.
 
 ### Configuration methods reference
 

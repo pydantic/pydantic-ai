@@ -319,13 +319,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     async def resolve_model_id(
         self,
-        model_id: KnownModelName | str,
-        *,
         ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
     ) -> Model | None:
         """Resolve a model ID, or return `None` to defer.
 
-        Later capabilities are tried first. When every capability returns `None`, the ID
+        Capabilities are tried in user-supplied order. When every capability returns `None`, the ID
         is passed to [`infer_model`][pydantic_ai.models.infer_model]. The context provides
         the agent and actual run dependencies, so resolution can configure tenant-specific
         providers or look up models in a registry.

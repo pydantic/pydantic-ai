@@ -152,16 +152,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def has_resolve_model_id(self) -> bool:
-        return any(capability.has_resolve_model_id for capability in self.capabilities)
+        return any(
+            capability.defer_loading is not True and capability.has_resolve_model_id for capability in self.capabilities
+        )
 
     async def resolve_model_id(
         self,
-        model_id: KnownModelName | str,
-        *,
         ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
     ) -> Model | None:
-        for capability in reversed(self.capabilities):
-            if (model := await capability.resolve_model_id(model_id, ctx=ctx)) is not None:
+        for capability in self.capabilities:
+            if capability.defer_loading is True:
+                continue
+            if (model := await capability.resolve_model_id(ctx, model_id=model_id)) is not None:
                 return model
         return None
 
