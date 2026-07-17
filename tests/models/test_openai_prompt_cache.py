@@ -4,20 +4,22 @@ Covers the `openai_prompt_cache_options` setting, `CachePoint` to `prompt_cache_
 mapping, capability gating per API flavor and provider (OpenAI, OpenRouter, Azure), and
 cache-write usage mapping.
 
-These adapter-level tests intentionally use mocked SDK clients rather than VCR recordings:
-they pin exact SDK request kwargs, provider-specific omission of unsupported fields, and
-pre-request guards where no request may be sent at all. Recordings cannot reliably assert
-omitted kwargs or a request that is never made, and cassette matchers are not always
-sensitive to the request body. Real OpenAI and OpenRouter recordings of the accept path
-would still be valuable additions.
+Most adapter-level tests here intentionally use mocked SDK clients rather than VCR
+recordings: they pin exact SDK request kwargs, provider-specific omission of unsupported
+fields, and pre-request guards where no request may be sent at all. Recordings cannot
+reliably assert omitted kwargs or a request that is never made, and cassette matchers are
+not always sensitive to the request body. The `_e2e` tests at the end record the accept
+path against the real APIs.
 """
 
 from __future__ import annotations as _annotations
 
+import json
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
@@ -800,3 +802,107 @@ async def test_openai_responses_stream_maps_cache_write_usage(allow_model_reques
         output_tokens=300,
         details={'reasoning_tokens': 10},
     )
+
+
+# ===== Recorded accept-path tests =====
+
+# The cacheable prefix must exceed OpenAI's minimum cacheable prompt length (1024 tokens).
+_STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n'.join(
+    f'Entry {i:04d}: shelf {i % 23}, aisle {i % 7}, volume {i}, catalogued under subject heading {i % 11}.'
+    for i in range(160)
+)
+
+
+def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
+    body = cast('Any', cassette.requests)[index].body  # pyright: ignore[reportUnknownMemberType]
+    if isinstance(body, dict):
+        return cast('dict[str, Any]', body)
+    return cast('dict[str, Any]', json.loads(body))
+
+
+def _assert_cache_usage(first: RunUsage, second: RunUsage) -> None:
+    """The first request writes the prefix (or reads a cache left by a recent recording run
+    within the TTL); the identical second request must read it back."""
+    assert first.cache_write_tokens > 0 or first.cache_read_tokens > 0
+    assert second.cache_read_tokens > 0
+
+
+@pytest.mark.vcr
+async def test_openai_chat_prompt_cache_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Real OpenAI Chat accepts the cache fields and reports cache write and read usage.
+
+    If the second request misses the cache when recording, re-record: writes usually
+    propagate within seconds but are not instantaneous.
+    """
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(
+        openai_prompt_cache_key='pydantic-ai-prompt-cache-e2e-chat',
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+    )
+    agent = Agent(model, model_settings=settings)
+    prompt = [_STABLE_PREFIX, CachePoint(), 'Reply with exactly: OK']
+
+    first = await agent.run(prompt)
+    second = await agent.run(prompt)
+
+    assert isinstance(first.output, str)
+    assert isinstance(second.output, str)
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+        assert body['prompt_cache_key'] == 'pydantic-ai-prompt-cache-e2e-chat'
+        assert body['messages'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+async def test_openai_responses_prompt_cache_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Real OpenAI Responses accepts the cache fields and reports cache write and read usage."""
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_key='pydantic-ai-prompt-cache-e2e-responses',
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+    )
+    agent = Agent(model, model_settings=settings)
+    prompt = [_STABLE_PREFIX, CachePoint(), 'Reply with exactly: OK']
+
+    first = await agent.run(prompt)
+    second = await agent.run(prompt)
+
+    assert isinstance(first.output, str)
+    assert isinstance(second.output, str)
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+        assert body['prompt_cache_key'] == 'pydantic-ai-prompt-cache-e2e-responses'
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+async def test_openrouter_responses_prompt_cache_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+):
+    """OpenRouter's Responses API accepts the OpenAI cache protocol for GPT-5.6.
+
+    The downstream provider is pinned to OpenAI: OpenRouter also offers Azure routes for
+    GPT-5.6, where the explicit-cache fields are not documented.
+    """
+    model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(api_key=openrouter_api_key))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+        extra_body={'provider': {'only': ['openai']}},
+    )
+    agent = Agent(model, model_settings=settings)
+    prompt = [_STABLE_PREFIX, CachePoint(), 'Reply with exactly: OK']
+
+    first = await agent.run(prompt)
+    second = await agent.run(prompt)
+
+    assert isinstance(first.output, str)
+    assert isinstance(second.output, str)
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_cache_usage(first.usage, second.usage)
