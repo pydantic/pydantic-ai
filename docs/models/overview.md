@@ -196,8 +196,9 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
-raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
-failure (like a truncated response or a failed native tool call).
+raises a fallback-eligible exception (like a 4xx/5xx API error). You can also opt into fallback
+based on response content, such as an unexpected finish reason or a failed native tool call, by
+passing a response handler to `fallback_on`.
 
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
 so you don't need to configure anything for the most common use case.
@@ -377,7 +378,7 @@ Handler type is auto-detected by inspecting type hints on the first parameter. I
 A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
 
 ```python {title="fallback_on_finish_reason.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelAPIError
 from pydantic_ai.messages import FinishReason, ModelResponse
 from pydantic_ai.models.fallback import FallbackModel
 
@@ -392,7 +393,7 @@ def bad_finish_reason(response: ModelResponse) -> bool:
 fallback_model = FallbackModel(
     'openai:gpt-5.2',
     'anthropic:claude-sonnet-4-5',
-    fallback_on=bad_finish_reason,
+    fallback_on=[ModelAPIError, bad_finish_reason],
 )
 
 agent = Agent(fallback_model)
@@ -402,16 +403,19 @@ print(result.output)
 ```
 
 !!! warning "Solo response handlers replace default exception fallback"
-    When you pass a single response handler as `fallback_on` (as above), it **replaces** the default `(ModelAPIError,)` exception fallback entirely. This means API errors (4xx/5xx) will propagate as exceptions instead of triggering fallback to the next model.
+    When you pass a single response handler as `fallback_on`, it **replaces** the default `(ModelAPIError,)` exception fallback entirely. This means API errors (4xx/5xx) will propagate as exceptions instead of triggering fallback to the next model.
 
-    To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
+    To keep exception-based fallback alongside a response handler, pass them together as a list, as shown above and in the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
-    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
-    catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors. To also raise on `content_filter` responses that still carry
-    partial or refusal text, add the [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+    Pydantic AI handles some finish reasons later in the [agent loop](../agent.md): empty responses with
+    `'length'` may raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] or
+    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall], and empty responses with
+    `'content_filter'` raise [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError].
+    That later handling happens after `FallbackModel` has selected a response, so it does **not** by itself
+    try the next model. Use a response handler when fallback should be based on `response.finish_reason`.
+    To also raise on `content_filter` responses that still carry partial or refusal text, add the
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
 
 #### Native Tool Failure Example
 
