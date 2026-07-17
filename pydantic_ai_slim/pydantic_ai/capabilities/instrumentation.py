@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
+from pydantic import ValidationError
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
@@ -22,7 +23,7 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -34,6 +35,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
+    WrapToolValidateHandler,
 )
 
 if TYPE_CHECKING:
@@ -407,6 +409,32 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
             handle_tool_control_flow=True,
         )
+
+    # ------------------------------------------------------------------
+    # wrap_tool_validate - tool validation span (failures only)
+    # ------------------------------------------------------------------
+
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: WrapToolValidateHandler,
+    ) -> ValidatedToolArgs:
+        try:
+            return await handler(args)
+        except (ValidationError, ModelRetry) as exc:
+            async def raise_validation_error(error: ValidationError | ModelRetry = exc) -> None:
+                raise error
+
+            return await self._run_tool_span(
+                span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
+                attributes=self._tool_span_attributes(call),
+                action=raise_validation_error,
+                serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            )
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)

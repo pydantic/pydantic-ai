@@ -3391,6 +3391,47 @@ def test_deferral_model_retry_still_errors_v5(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_arg_validation_failure_records_tool_span(capfire: CaptureLogfire) -> None:
+    def call_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        response_count = sum(isinstance(message, ModelResponse) for message in messages)
+        if response_count == 0:
+            return ModelResponse(
+                parts=[ToolCallPart('double', {'x': 'not an int'}, tool_call_id='invalid-tool-call')]
+            )
+        if response_count == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2}, tool_call_id='valid-tool-call')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        FunctionModel(call_model),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> str:
+        return str(x * 2)
+
+    result = agent.run_sync('run the tool')
+
+    assert result.output == 'done'
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    tool_spans = {
+        span['attributes']['gen_ai.tool.call.id']: span for span in spans if span['name'] == 'execute_tool double'
+    }
+
+    assert tool_spans.keys() == {'invalid-tool-call', 'valid-tool-call'}
+
+    invalid_attrs = tool_spans['invalid-tool-call']['attributes']
+    assert invalid_attrs['gen_ai.tool.call.arguments'] == {'x': 'not an int'}
+    assert invalid_attrs.get('logfire.level_num') == 17
+    assert any(event['name'] == 'exception' for event in tool_spans['invalid-tool-call']['events'])
+
+    valid_attrs = tool_spans['valid-tool-call']['attributes']
+    assert valid_attrs['gen_ai.tool.call.arguments'] == {'x': 2}
+    assert 'logfire.level_num' not in valid_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_deferral_unexpected_exception_still_errors_v5(capfire: CaptureLogfire) -> None:
     """Test that unexpected exceptions on v5 still record the span as an error.
 
