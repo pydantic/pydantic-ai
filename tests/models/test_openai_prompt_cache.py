@@ -815,8 +815,6 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
 
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
     body = cast('Any', cassette.requests)[index].body  # pyright: ignore[reportUnknownMemberType]
-    if isinstance(body, dict):
-        return cast('dict[str, Any]', body)
     return cast('dict[str, Any]', json.loads(body))
 
 
