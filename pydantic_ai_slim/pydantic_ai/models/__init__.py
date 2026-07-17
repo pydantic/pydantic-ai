@@ -1074,15 +1074,14 @@ def infer_model(  # noqa: C901
         model_kind = normalize_gateway_provider(model_kind)
 
     if provider_name == 'bedrock-mantle':
-        from ..providers.bedrock_mantle import BedrockMantleProvider
+        from ..providers.bedrock_mantle import BedrockMantleProvider, bedrock_mantle_model_profile
         from .bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
 
         if not isinstance(provider, BedrockMantleProvider):
             raise UserError('Bedrock Mantle models require a `BedrockMantleProvider`.')
-        # The profile carries the endpoint family (`BedrockMantleProvider.model_profile` raises for
-        # non-OpenAI models), so routing reads it rather than re-deriving the interface here.
-        profile = BedrockMantleProvider.model_profile(model_name)
-        if profile is not None and profile.get('bedrock_mantle_interface') == 'chat':
+        # The profile carries the endpoint family (and raises for non-OpenAI models), so routing reads
+        # it rather than re-deriving the interface here.
+        if bedrock_mantle_model_profile(model_name).get('bedrock_mantle_interface') == 'chat':
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 

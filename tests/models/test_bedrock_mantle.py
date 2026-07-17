@@ -70,6 +70,15 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
         assert replay_result.output == 'OK'
 
 
+async def test_gpt_oss_responses(allow_model_requests: None) -> None:
+    """GPT-OSS is served on the Responses API at `/v1/responses` (not GPT-5.x's `/openai/v1`)."""
+    model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: _provider())
+
+    result = await Agent(model).run('Reply with exactly OSS.')
+
+    assert result.output == 'OSS'
+
+
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:
     """GPT-OSS Safeguard is served on the Chat Completions endpoint, not Responses."""
     model = infer_model('bedrock-mantle:openai.gpt-oss-safeguard-20b', lambda _: _provider())
