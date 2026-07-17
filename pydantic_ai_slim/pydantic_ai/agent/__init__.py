@@ -398,7 +398,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
-                which checks for the necessary environment variables. Set this to `false`
+                which checks for the necessary environment variables. Set this to `True`
                 to defer the evaluation until the first run. Useful if you want to
                 [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
@@ -437,23 +437,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
-        model_id = model if isinstance(model, str) else None
-        model_inference_error: exceptions.UserError | None = None
-        if (
-            model is None
-            or defer_model_check
-            or (isinstance(model, str) and self._root_capability.has_resolve_model_id)
-        ):
-            self._model = model
-        else:
-            try:
-                self._model = models.infer_model(model)
-            except exceptions.UserError as e:
-                if not isinstance(model, str):
-                    raise
-                # `for_agent()` may return a capability that resolves this ID once the agent is bound.
-                self._model = model
-                model_inference_error = e
+        # Keep the constructor value untouched while capabilities bind. A capability may interpret
+        # model IDs itself, so eagerly inferring a string here could construct the wrong provider
+        # (and perform its authentication/configuration side effects) before `for_agent()` can add
+        # the appropriate resolver.
+        self._model = model
 
         self.model_settings = model_settings
 
@@ -548,12 +536,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
         self._root_capability = self._root_capability.for_agent(self)
-
-        if model_id is not None and self._root_capability.has_resolve_model_id:
-            # Binding may introduce a resolver after eager inference gave `for_agent()` a concrete model.
-            self._model = model_id
-        elif model_inference_error is not None:
-            raise model_inference_error
+        if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
+            self._model = models.infer_model(model)
 
         # Validate the bound tree so a replacement returned by `for_agent` is subject to the
         # same eager ID checks as the capability originally passed to the constructor.
@@ -1173,6 +1157,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
+        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:

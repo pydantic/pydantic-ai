@@ -259,12 +259,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use with an agent.
 
-        Called once during agent construction, after the agent's own configuration is
-        available and before capability contributions are extracted. Override this to
-        inspect the agent and return an agent-bound copy. The default returns `self`.
+        Called after the agent's own configuration is available and before capability
+        contributions are extracted. Constructor capabilities are bound once during agent
+        construction; static run capabilities are bound once per run. Override this to inspect
+        the agent and return an agent-bound copy. The default returns `self`.
 
-        Capabilities supplied to a run, or produced by [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run],
-        are not passed through this hook.
+        A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] result is also bound before
+        its own [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] hook. A specialized
+        run-bound value returned by an ordinary capability's `for_run()` is not bound again.
         """
         return self
 

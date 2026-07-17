@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ReinjectSystemPrompt,
     ResolveModelId,
+    SelectModel,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -8570,6 +8571,25 @@ class TestGetModelHook:
                 ),
             ]
         )
+
+    async def test_select_model_uses_first_step_dependencies(self):
+        """The convenience capability's bootstrap selector needs live deps, which a provider cassette cannot prove."""
+        small = _text_model('small')
+        frontier = _text_model('frontier')
+        seen_steps: list[int] = []
+
+        def select(ctx: ModelSelectionContext[bool]) -> Model:
+            seen_steps.append(ctx.run_step)
+            assert ctx.model is None
+            assert ctx.messages == []
+            return frontier if ctx.deps else small
+
+        agent = Agent(None, deps_type=bool, capabilities=[SelectModel(select)])
+
+        assert SelectModel.get_serialization_name() is None
+        assert (await agent.run('hello', deps=False)).output == 'small'
+        assert (await agent.run('hello', deps=True)).output == 'frontier'
+        assert seen_steps == [1, 1]
 
     async def test_model_less_agent_without_capability_model_raises(self):
         """With no model anywhere (capability returns None), the usual missing-model error is raised."""
@@ -21549,7 +21569,7 @@ async def test_for_agent_can_introduce_resolution_for_known_model_id() -> None:
     @dataclass
     class BindingCapability(AbstractCapability[Any]):
         def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
-            assert isinstance(agent.model, TestModel)
+            assert agent.model == 'test'
             return BoundResolver()
 
     agent = Agent('test', capabilities=[BindingCapability()])
@@ -21562,13 +21582,43 @@ def test_for_agent_without_resolver_preserves_unknown_model_error() -> None:
         Agent('custom-model', capabilities=[_AgentBoundCapability()])
 
 
-async def test_for_agent_does_not_bind_per_run_capabilities() -> None:
+async def test_for_agent_binds_per_run_capabilities() -> None:
     capability = _AgentBoundCapability()
-    agent = Agent(TestModel())
+    agent = Agent(TestModel(), name='runner')
 
-    await agent.run('hello', capabilities=[capability])
+    result = await agent.run('hello', capabilities=[capability])
 
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to runner.'
     assert capability.for_agent_calls == 0
+
+
+async def test_per_run_binding_can_supply_bootstrap_model_and_resolver() -> None:
+    """Run binding precedes bootstrap selection and resolution, an ordering contract cassettes cannot isolate."""
+    selected_model = TestModel(custom_output_text='run-bound')
+
+    @dataclass
+    class BoundRunModel(AbstractCapability[Any]):
+        def get_model(self) -> str:
+            return 'run-bound-id'
+
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'run-bound-id' else None
+
+    @dataclass
+    class BindAtRun(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            return BoundRunModel()
+
+    agent = Agent(None)
+    result = await agent.run('hello', capabilities=[BindAtRun()])
+
+    assert result.output == 'run-bound'
 
 
 # --- Dynamic capabilities ---
@@ -21606,6 +21656,34 @@ async def test_dynamic_capability_factory_called_with_run_context() -> None:
     await agent.run('hi', deps='admin')
     await agent.run('hi', deps='guest')
     assert seen == ['admin', 'guest']
+
+
+async def test_dynamic_capability_factory_result_is_bound_to_agent() -> None:
+    """A factory's standalone result is agent-bound before its run binding; a cassette cannot observe hook order."""
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return _AgentBoundCapability()
+
+    agent = Agent(TestModel(), name='dynamic', capabilities=[factory])
+    result = await agent.run('hi')
+
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to dynamic.'
+
+
+async def test_for_run_result_is_not_bound_again() -> None:
+    """A specialized run-bound result skips agent binding; a provider cassette cannot observe that distinction."""
+
+    @dataclass
+    class BuildsRunCapability(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return _AgentBoundCapability()
+
+    agent = Agent(TestModel(), name='static', capabilities=[BuildsRunCapability()])
+    result = await agent.run('hi')
+
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Bound to None.'
 
 
 async def test_dynamic_capability_async_factory() -> None:
