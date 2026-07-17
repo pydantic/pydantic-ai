@@ -21476,6 +21476,7 @@ def test_wrapper_for_agent_replaces_wrapped_capability() -> None:
 
 
 def test_wrapper_for_agent_preserves_identity_without_replacement() -> None:
+    """Identity preservation is an internal binding contract that a request cassette cannot observe."""
     wrapper = WrapperCapability[Any](AbstractCapability[Any]())
     agent = Agent(TestModel())
 

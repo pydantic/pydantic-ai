@@ -1263,7 +1263,7 @@ Return a new bound copy rather than mutating the original when the same capabili
 
 For a recognized constructor model ID, `for_agent()` sees the eagerly inferred [`Model`][pydantic_ai.models.Model]. If the bound copy introduces `resolve_model_id()`, the original ID is retained instead and passed to that resolver during run setup. This lets binding inspect ordinary concrete models while still allowing the returned capability to customize model construction.
 
-This is a construction-time hook. Capabilities passed directly to `run()` and capabilities created by [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] are not passed through `for_agent()` because there is no new agent being constructed.
+This is a construction-time hook. Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] and capabilities created by [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] are not passed through `for_agent()` because there is no new agent being constructed.
 
 ### Hooking into the lifecycle
 
