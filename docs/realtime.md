@@ -286,6 +286,33 @@ Authentication comes from the `provider` argument, mirroring
 Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
 [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance for a custom key or client.
 
+### Amazon Nova Sonic configuration
+
+[`BedrockRealtimeModel`][pydantic_ai.realtime.bedrock.BedrockRealtimeModel] uses Bedrock's HTTP/2
+bidirectional stream with Nova 2 Sonic by default. Install the dedicated dependency group with
+`pip install "pydantic-ai-slim[realtime-bedrock]"`; it is separate from the boto3-based `bedrock`
+group.
+The experimental SDK currently requires Python 3.12 or newer.
+
+```python {test="skip"}
+from pydantic_ai.realtime.bedrock import BedrockRealtimeModel, BedrockRealtimeModelSettings
+
+settings = BedrockRealtimeModelSettings(
+    voice='matthew',
+    max_tokens=1024,
+    temperature=0.7,
+    top_p=0.9,
+    bedrock_endpointing_sensitivity='HIGH',
+)
+model = BedrockRealtimeModel('amazon.nova-2-sonic-v1:0', settings=settings)
+```
+
+Nova expects mono 16-bit LPCM input at 16 kHz and returns mono 16-bit LPCM at 24 kHz. It supports
+text/transcript history seeding and concurrent asynchronous tool calls. The current SDK integration
+uses standard AWS SigV4 environment credentials. Nova always produces audio, so `output_modality`
+is not configurable; interruption is automatic and the API has no client cancel or output-truncate
+event.
+
 ### xAI Grok Voice configuration
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] keeps a minimal surface, reusing the

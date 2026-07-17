@@ -104,6 +104,7 @@ cli = [
 ]
 # Realtime (bidirectional speech-to-speech streaming sessions)
 realtime = ["websockets>=14.0"]
+realtime-bedrock = ["aws-sdk-bedrock-runtime==0.4.0; python_version >= '3.12'"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`.

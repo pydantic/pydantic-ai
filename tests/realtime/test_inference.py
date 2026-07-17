@@ -19,8 +19,9 @@ def test_infer_realtime_models(env: TestEnv) -> None:
         infer_realtime_model('google:gemini-2.5-flash-native-audio-latest').model_name
         == 'gemini-2.5-flash-native-audio-latest'
     )
+    assert infer_realtime_model('bedrock:amazon.nova-2-sonic-v1:0').model_name == 'amazon.nova-2-sonic-v1:0'
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `xai`, and `google`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `xai`, `google`, and `bedrock`'):
         infer_realtime_model('anthropic:voice')

@@ -76,6 +76,8 @@ KnownRealtimeModelName = TypeAliasType(
         'xai:grok-voice-latest',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
+        'bedrock:amazon.nova-2-sonic-v1:0',
+        'bedrock:amazon.nova-sonic-v1:0',
     ],
 )
 """Known realtime model identifiers, surfaced for autocomplete."""
@@ -98,8 +100,12 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         from .google import GoogleRealtimeModel
 
         return GoogleRealtimeModel(model_name)
+    if provider == 'bedrock':
+        from .bedrock import BedrockRealtimeModel
+
+        return BedrockRealtimeModel(model_name)
     raise UserError(
-        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `xai`, and `google`.'
+        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `xai`, `google`, and `bedrock`.'
     )
 
 
