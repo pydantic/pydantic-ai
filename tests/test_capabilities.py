@@ -8502,7 +8502,7 @@ from-spec\
             await agent.run('hello', spec={'end_strategy': 'exhaustive'})
 
     async def test_spec_tool_retry_override(self):
-        """A run-time spec can override the tool-retry budget, additive over the agent default."""
+        """A run-time spec's tool-retry budget replaces the agent default (3 here, not the agent's 1)."""
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

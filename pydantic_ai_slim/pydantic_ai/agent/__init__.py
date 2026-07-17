@@ -147,21 +147,15 @@ def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _Res
     return _ResolvedAgentRetries(tools=retries.get('tools', default), output=retries.get('output', default))
 
 
-def _normalize_agent_retry_overrides(
-    retries: int | AgentRetries | None,
-    *,
-    int_means: Literal['both', 'output'] = 'both',
-) -> AgentRetries:
+def _normalize_agent_retry_overrides(retries: int | AgentRetries | None) -> AgentRetries:
     """Normalize retry input without filling missing keys.
 
-    This is used while merging layered configuration. At run/override time, `int_means='output'`
-    treats `retries=N` as an output-budget override only.
+    Used while merging layered configuration. A bare `int` sets both the `tools` and `output`
+    budgets — the same shorthand at every call site (construction, run, override, spec).
     """
     if retries is None:
         return {}
     if isinstance(retries, int):
-        if int_means == 'output':
-            return {'output': retries}
         return {'tools': retries, 'output': retries}
     return retries.copy()
 
@@ -1049,10 +1043,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
-            retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
-                output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
-                tool-retry budget (e.g. `retries={'tools': 3}`). See
+            retries: Override the agent-level retry budgets for this run. Pass an `int` to override both
+                the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict to
+                override just one (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1065,9 +1058,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # At run time an `int` is treated as the output budget; a `retries={'tools': ...}` dict
-        # overrides the tool-retry budget for this run (riding `ToolManager.default_max_retries`).
-        retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
+        # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
+        # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
+        retry_overrides = _normalize_agent_retry_overrides(retries)
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
@@ -1684,7 +1677,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
-        retry_overrides = _retry_overrides_from_spec(validated_spec, int_means='output')
+        retry_overrides = _retry_overrides_from_spec(validated_spec)
 
         # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
         # triggering pydantic deprecation warnings on deprecated spec fields.
@@ -1748,20 +1741,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
-                override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control, including the tool-retry budget (e.g. `retries={'tools': 3}`).
+                override both the tool-retry and output budgets, or an [`AgentRetries`][pydantic_ai.AgentRetries]
+                dict to override just one (e.g. `retries={'tools': 3}`).
                 When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
-        # An `int` means "override output only"; a `retries={'tools': ...}` dict overrides the
-        # tool-retry budget (and `{'output': ...}` the output budget).
+        # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
+        # dict overrides only the named budget, so an unset budget still falls through to the run
+        # kwarg, spec, or agent default.
         override_output_retries: int | _utils.Unset
         override_tool_retries: int | _utils.Unset
         if _utils.is_set(retries):
-            retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
+            retry_overrides = _normalize_agent_retry_overrides(retries)
             override_output_retries = retry_overrides.get('output', _utils.UNSET)
             override_tool_retries = retry_overrides.get('tools', _utils.UNSET)
         else:
@@ -2779,18 +2773,9 @@ def _merge_retries_with_spec(
     return merged
 
 
-def _retry_overrides_from_spec(spec: AgentSpec, *, int_means: Literal['both', 'output'] = 'both') -> AgentRetries:
-    """Return retry fields explicitly configured on an `AgentSpec`.
-
-    `int_means` mirrors `_normalize_agent_retry_overrides`: `'both'` at construction time
-    (`from_spec`), `'output'` at run/override time so a bare `int` in a run-time spec overrides
-    only the output budget, matching the `retries=` kwarg.
-    """
-    return (
-        _normalize_agent_retry_overrides(spec.retries, int_means=int_means)
-        if 'retries' in spec.model_fields_set
-        else {}
-    )
+def _retry_overrides_from_spec(spec: AgentSpec) -> AgentRetries:
+    """Return retry fields explicitly configured on an `AgentSpec`."""
+    return _normalize_agent_retry_overrides(spec.retries) if 'retries' in spec.model_fields_set else {}
 
 
 _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (

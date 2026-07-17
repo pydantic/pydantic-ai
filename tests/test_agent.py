@@ -12891,21 +12891,28 @@ TOOL_RETRY_BUDGET_CASES = [
         run={'retries': {'tools': 10}},
         expected_budget=1,
     ),
+    # A bare `int` overrides both budgets at every run-time call site (kwarg, spec, override),
+    # matching construction-time `Agent(retries=N)` — so it lifts the tool budget too.
     ToolRetryBudgetCase(
-        id='int-run-arg-leaves-tool-budget-at-agent-default',
+        id='int-run-arg-overrides-tool-budget',
         init={'retries': {'tools': 2}},
         override=None,
         run={'retries': 9},
-        expected_budget=2,
+        expected_budget=9,
     ),
-    # A bare `int` in a run-time spec overrides only the output budget, like the `retries=` kwarg,
-    # so the tool budget stays at the agent default (not `int_means='both'` as at construction).
     ToolRetryBudgetCase(
-        id='int-spec-leaves-tool-budget-at-agent-default',
+        id='int-spec-overrides-tool-budget',
         init={'retries': {'tools': 2}},
         override=None,
         run={'spec': {'retries': 9}},
-        expected_budget=2,
+        expected_budget=9,
+    ),
+    ToolRetryBudgetCase(
+        id='int-override-overrides-tool-budget',
+        init={'retries': {'tools': 2}},
+        override={'retries': 9},
+        run={},
+        expected_budget=9,
     ),
     # A `0` budget must survive resolution as "no retries", not be dropped as falsy and fall back to
     # the agent default (the zero-as-falsy footgun): once via the run arg, once via `override()`.
@@ -12930,8 +12937,8 @@ TOOL_RETRY_BUDGET_CASES = [
 def test_tool_retry_budget_resolution(case: ToolRetryBudgetCase):
     """Effective tool-retry budget = override > run arg > spec > agent default.
 
-    A bare `int` at run/override time targets the output budget only, leaving the tool budget at
-    the agent default (the `int-run-arg-*` case).
+    A bare `int` at run/override/spec time overrides both budgets, so it lifts the tool budget too
+    (the `int-*-overrides-tool-budget` cases).
     """
     call_count = 0
 
