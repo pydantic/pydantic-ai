@@ -53,6 +53,7 @@ nav:
           - third-party-tools.md
       - Advanced Features:
           - input.md
+          - prompt-caching.md
           - thinking.md
           - retries.md
       - MCP:

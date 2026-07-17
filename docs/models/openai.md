@@ -122,6 +122,24 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
+## Prompt Caching
+
+OpenAI applies [prompt caching](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) automatically to prompts of at least 1,024 tokens — no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. See [Prompt Caching](../prompt-caching.md#enabling-prompt-caching) for the cross-provider contract and how to monitor cache efficiency.
+
+How long a cached prefix survives depends on the [retention policy](https://platform.openai.com/docs/guides/prompt-caching#prompt-cache-retention) in effect: `in_memory` clears it after 5–10 minutes of inactivity, while `24h` keeps it for up to a day. For models before GPT-5.6, the default follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it — and [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+settings = OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+GPT-5.6 and later ignore the retention policy and keep a cached prefix eligible for reuse for at least 30 minutes instead.
+
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
