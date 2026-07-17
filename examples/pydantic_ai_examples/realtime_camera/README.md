@@ -24,6 +24,10 @@ allows camera + microphone. Talk, and hold something up to the camera.
 Overrides: `CAMERA_REALTIME_MODEL` (default `gemini-2.5-flash-native-audio-latest`; try
 `gemini-3.1-flash-live-preview`), `CAMERA_REALTIME_VOICE` (default `Puck`).
 
+The app is instrumented with [Logfire](https://ai.pydantic.dev/logfire/): if a `LOGFIRE_TOKEN` is
+set (e.g. in the same `.env`), the realtime session, model turns, and tool calls show up as traces;
+without a token nothing is sent and the app works as normal.
+
 ### Watch mode — make the assistant react to the camera
 
 By default the model only replies when you speak; a camera frame is passive context, so the model

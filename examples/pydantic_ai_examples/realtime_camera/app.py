@@ -34,6 +34,9 @@ only) so the model stays silent when nothing changed instead of replying to ever
 The newer `all_video` value keeps *all* video but only audio during speech — but it isn't accepted on
 Vertex's `v1beta1` API yet, so it's not the default.
 
+The app is instrumented with Logfire: set `LOGFIRE_TOKEN` (e.g. in the same `.env`) to see the
+realtime session, model turns, and tool calls as traces; without a token nothing is sent.
+
 Web search (the `WebSearch` capability — Grounding with Google Search) is **on by default** so the
 assistant can answer with current facts and cite its sources as chips in the UI; set
 `CAMERA_WEB_SEARCH=false` to disable (or if your model/region doesn't support grounding).
@@ -60,6 +63,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import anyio
+import logfire
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -85,6 +89,11 @@ from pydantic_ai.realtime.google import (
 )
 
 load_dotenv()
+
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured.
+# Configure after `load_dotenv()` so a `LOGFIRE_TOKEN` in `.env` is picked up.
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
 
 # Use Vertex AI (ADC) instead of a Gemini API key when `GOOGLE_GENAI_USE_VERTEXAI` is truthy — handy
 # where org policy disallows API keys. Needs `gcloud auth application-default login` + project/location.
@@ -178,6 +187,7 @@ agent = Agent(
     capabilities=[WebSearch()] if WEB_SEARCH else [],
 )
 app = FastAPI()
+logfire.instrument_fastapi(app)
 
 DRAW_INSTRUCTIONS = (
     'You turn a photo of a hand-drawn sketch — a diagram, system design, flow chart, or wireframe — '
