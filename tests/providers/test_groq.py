@@ -167,7 +167,7 @@ def test_groq_provider_model_profile_reasoning_flags():
     """
     provider = GroqProvider(groq_client=AsyncGroq(api_key='api-key'))
 
-    # qwen3 (current): reasons, and can truly disable via `reasoning_effort='none'`.
+    # qwen3: reasons, and can truly disable via `reasoning_effort='none'`.
     qwen3_profile = provider.model_profile('qwen/qwen3-32b')
     assert qwen3_profile is not None
     assert qwen3_profile.get('supports_thinking', False) is True

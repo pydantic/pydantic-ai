@@ -52,7 +52,7 @@ def groq_model_profile(model_name: str) -> ModelProfile:
         model_name.startswith(p)
         for p in (
             'openai/gpt-oss',  # graded reasoning_effort (low/medium/high), always-on
-            'qwen/qwen3',  # current: qwen/qwen3-32b
+            'qwen/qwen3',  # reasoning_effort 'none'/'default' (true disable)
             'qwen-qwq',  # legacy (deprecated)
             'deepseek-r1',  # legacy (deprecated)
             'llama-4-maverick',  # legacy (deprecated)
