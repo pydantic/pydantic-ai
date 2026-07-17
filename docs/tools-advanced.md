@@ -156,15 +156,27 @@ Please note that validation of the tool arguments will not be performed, and thi
 Some providers support a *strict* mode for tool calls that constrains the model so its tool-call arguments always conform to the tool's JSON schema. Rather than letting the model generate arguments freely and validating them after the fact, the provider restricts generation so that out-of-schema arguments aren't produced in the first place. This is controlled by the `strict` flag, available on every tool registration mechanism ([`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`FunctionToolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function], etc.) and on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]:
 
 ```python
+from pydantic import BaseModel
+
 from pydantic_ai import Agent
+
+
+class Reservation(BaseModel):
+    restaurant: str
+    party_size: int
+    outdoor_seating: bool
+    dietary_notes: list[str]
+
 
 agent = Agent('openai:gpt-5')
 
 
 @agent.tool_plain(strict=True)
-def get_weather(city: str) -> str:
-    return f'The weather in {city} is sunny.'
+def book_table(reservation: Reservation) -> str:
+    return f'Booked a table for {reservation.party_size} at {reservation.restaurant}.'
 ```
+
+Strict mode earns its keep on structured arguments like this: without it the model might emit `party_size` as a string, omit `outdoor_seating`, or invent an extra property — strict generation rules those out up front rather than relying on a validation retry.
 
 Because strict mode guarantees the arguments match the schema exactly, not every schema can be represented under it: some providers require every property to be listed in `required` and objects to set `additionalProperties: false`. A schema that can't be represented this way may be transformed lossily or have the flag ignored for that tool — which is why `strict=True` is best read as a request to *force* strict mode wherever the provider can honor it.
 
