@@ -68,24 +68,32 @@ def test_magistral_models(model_name: str):
     assert profile.get('thinking_always_enabled') is True
 
 
-@pytest.mark.parametrize(
-    'model_name',
-    [
-        'mistral-large-latest',
-        'codestral-latest',
-        'mistral-moderation-latest',
-        'devstral-medium-latest',
-        'voxtral-small-latest',
-        # older snapshots that predate adjustable reasoning
-        'mistral-small-2506',
-        'mistral-medium-2505',
-        'mistral-medium-2508',
-        # exact-match must not over-match adjacent names
-        'mistral-small-2603-preview',
-        'mistral-medium-3-50',
-    ],
-)
+_NON_REASONING_MODELS = [
+    'mistral-large-latest',
+    'codestral-latest',
+    'mistral-moderation-latest',
+    'devstral-medium-latest',
+    'voxtral-small-latest',
+    # older snapshots that predate adjustable reasoning
+    'mistral-small-2506',
+    'mistral-medium-2505',
+    'mistral-medium-2508',
+    # exact-match must not over-match adjacent names
+    'mistral-small-2603-preview',
+    'mistral-medium-3-50',
+]
+
+
+@pytest.mark.parametrize('model_name', _NON_REASONING_MODELS)
 def test_non_thinking_models(model_name: str):
     """Models without adjustable reasoning get no profile, so `thinking` is stripped upstream."""
     profile = mistral_model_profile(model_name)
     assert profile is None
+
+
+@pytest.mark.parametrize('model_name', _NON_REASONING_MODELS)
+def test_non_thinking_models_native_provider(model_name: str):
+    """The native provider must not advertise thinking for these ids either, so accidental
+    widening of the adjustable allowlist gets caught."""
+    profile = MistralProvider.model_profile(model_name)
+    assert not profile.get('supports_thinking')
