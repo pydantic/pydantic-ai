@@ -14,7 +14,7 @@ This is covered in depth, with the per-provider execution modes, under [Tool Sea
 !!! note "Deferring saves context — it is not dynamic registration"
     With either strategy, every tool the model can ever reach must be **declared in the request up front**. Deferring keeps unused definitions out of the model's context (and, natively, out of the cached prefix); it does not let you register a brand-new, never-declared tool mid-conversation. Introducing a genuinely new tool changes the tools array, which invalidates the cache from that point on.
 
-For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](harness/code-mode.md) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
+For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 
 ### Seeing it in a trace
 
