@@ -112,7 +112,7 @@ Keep custom capabilities focused. If the user only needs one tool or one hook, d
 
 For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
 
-Use `for_agent(agent)` for construction-time binding when a capability needs the agent's model, name, or toolsets. Return a bound copy instead of mutating the original so one capability instance can safely be attached to multiple agents. The returned copy supplies all subsequent `get_*` contributions and hooks. `CombinedCapability` and `WrapperCapability` bind their children automatically. Per-run capabilities and values returned by `for_run()` do not receive `for_agent()`.
+Use `for_agent(agent)` for construction-time binding when a capability needs the agent's model, name, or toolsets. Return a bound copy instead of mutating the original so one capability instance can safely be attached to multiple agents. The returned copy supplies all subsequent `get_*` contributions and hooks. For recognized constructor model IDs, binding sees the eagerly inferred model; if the returned copy introduces `resolve_model_id()`, the original ID is retained for run-time resolution. `CombinedCapability` and `WrapperCapability` bind their children automatically. Per-run capabilities and values returned by `for_run()` do not receive `for_agent()`.
 
 ## Select a Model Dynamically
 

@@ -9135,7 +9135,38 @@ class TestGetModelHook:
         agent = Agent(None, capabilities=[_ModelCap(model=selected)])
         async with agent:
             assert selected.entered == 1
+            assert (await agent.run('hello')).output == 'selected'
+            assert (selected.entered, selected.exited) == (1, 0)
         assert selected.exited == 1
+
+    async def test_static_capability_model_id_reuses_agent_context_model(self, monkeypatch: pytest.MonkeyPatch):
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        inferred_models: list[LifecycleModel] = []
+
+        def infer_model(model_id: str) -> Model:
+            assert model_id == 'custom-model'
+            model = LifecycleModel(lambda messages, info: make_text_response('selected'))
+            inferred_models.append(model)
+            return model
+
+        monkeypatch.setattr('pydantic_ai.models.infer_model', infer_model)
+        agent = Agent(None, capabilities=[_ModelCap(model='custom-model')])
+
+        async with agent:
+            assert (await agent.run('hello')).output == 'selected'
+            assert len(inferred_models) == 1
+            assert (inferred_models[0].entered, inferred_models[0].exited) == (1, 0)
+        assert inferred_models[0].exited == 1
 
     async def test_system_prompt_parts_requires_a_model(self):
         agent = Agent(None)
@@ -21476,6 +21507,58 @@ async def test_for_agent_composes_with_model_selection_and_resolution() -> None:
     agent = Agent(name='selector', capabilities=[BoundModelCapability()])
     result = await agent.run('hello')
     assert result.output == 'selected'
+
+
+async def test_for_agent_can_introduce_model_id_resolution() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundResolver(AbstractCapability[Any]):
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'custom-model' else None
+
+    @dataclass
+    class BindingCapability(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            assert agent.model == 'custom-model'
+            return BoundResolver()
+
+    agent = Agent('custom-model', capabilities=[BindingCapability()])
+    assert (await agent.run('hello')).output == 'selected'
+
+
+async def test_for_agent_can_introduce_resolution_for_known_model_id() -> None:
+    selected_model = TestModel(custom_output_text='selected')
+
+    @dataclass
+    class BoundResolver(AbstractCapability[Any]):
+        async def resolve_model_id(
+            self,
+            ctx: ModelResolutionContext[Any],
+            *,
+            model_id: KnownModelName | str,
+        ) -> Model | None:
+            return selected_model if model_id == 'test' else None
+
+    @dataclass
+    class BindingCapability(AbstractCapability[Any]):
+        def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+            assert isinstance(agent.model, TestModel)
+            return BoundResolver()
+
+    agent = Agent('test', capabilities=[BindingCapability()])
+    assert agent.model == 'test'
+    assert (await agent.run('hello')).output == 'selected'
+
+
+def test_for_agent_without_resolver_preserves_unknown_model_error() -> None:
+    with pytest.raises(UserError, match='Unknown model: custom-model'):
+        Agent('custom-model', capabilities=[_AgentBoundCapability()])
 
 
 async def test_for_agent_does_not_bind_per_run_capabilities() -> None:

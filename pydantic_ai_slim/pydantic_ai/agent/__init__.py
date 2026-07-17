@@ -437,6 +437,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
+        model_id = model if isinstance(model, str) else None
+        model_inference_error: exceptions.UserError | None = None
         if (
             model is None
             or defer_model_check
@@ -444,7 +446,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ):
             self._model = model
         else:
-            self._model = models.infer_model(model)
+            try:
+                self._model = models.infer_model(model)
+            except exceptions.UserError as e:
+                if not isinstance(model, str):
+                    raise
+                # `for_agent()` may return a capability that resolves this ID once the agent is bound.
+                self._model = model
+                model_inference_error = e
 
         self.model_settings = model_settings
 
@@ -528,6 +537,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         self._entered_count = 0
         self._exit_stack = None
+        self._entered_model_ids: set[int] = set()
+        self._entered_models_by_selection: dict[tuple[int, str], models.Model] = {}
 
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
@@ -537,6 +548,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
         self._root_capability = self._root_capability.for_agent(self)
+
+        if model_id is not None and self._root_capability.has_resolve_model_id:
+            # Binding may introduce a resolver after eager inference gave `for_agent()` a concrete model.
+            self._model = model_id
+        elif model_inference_error is not None:
+            raise model_inference_error
 
         # Validate the bound tree so a replacement returned by `for_agent` is subject to the
         # same eager ID checks as the capability originally passed to the constructor.
@@ -1514,7 +1531,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return await self._evaluate_model_contribution(selector, capability=run_capability, ctx=selection_ctx)
 
         model_stack: AsyncExitStack | None = None
-        entered_model_ids: set[int] = set()
+        entered_model_ids = self._entered_model_ids.copy()
 
         async def enter_model(selected_model: models.Model) -> None:
             model_identity = id(selected_model)
@@ -2602,6 +2619,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Resolve a concrete model selection through the capability chain."""
         if not isinstance(selection, str):
             return selection
+        if entered_model := self._entered_models_by_selection.get((id(capability), selection)):
+            return entered_model
         resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
         resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
         return resolved if resolved is not None else models.infer_model(selection)
@@ -2881,8 +2900,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     if static_selection is not None and not (
                         isinstance(static_selection, str) and capability.has_resolve_model_id
                     ):
-                        model = self._get_model_outside_run()
+                        model = (
+                            static_selection if _is_model(static_selection) else models.infer_model(static_selection)
+                        )
                         await exit_stack.enter_async_context(model)
+                        self._entered_model_ids.add(id(model))
+                        if isinstance(static_selection, str):
+                            self._entered_models_by_selection[id(capability), static_selection] = model
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
@@ -2892,8 +2916,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+                try:
+                    await self._exit_stack.aclose()
+                finally:
+                    self._exit_stack = None
+                    self._entered_model_ids.clear()
+                    self._entered_models_by_selection.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
