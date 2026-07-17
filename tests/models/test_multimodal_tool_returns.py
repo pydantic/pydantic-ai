@@ -176,10 +176,10 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('mistral', 'image'): 'as_user_content',
     ('mistral', 'document'): 'as_user_content',
     ('mistral', 'audio'): ExpectError(
-        match=r'(?:AudioUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
     ('mistral', 'video'): ExpectError(
-        match=r'(?:VideoUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
+        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
     ),
 }
 

@@ -14,9 +14,9 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import (
-    format_inlined_text_file,
+    format_inlined_text_file as _format_inlined_text_file,
     generate_tool_call_id as _generate_tool_call_id,
-    is_text_like_media_type,
+    is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
 )
@@ -662,10 +662,10 @@ class MistralModel(Model[Mistral]):
                         image_url.detail = metadata.get('detail', 'auto')
                     content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if is_text_like_media_type(item.media_type):
+                    if _is_text_like_media_type(item.media_type):
                         content.append(
                             MistralTextChunk(
-                                text=format_inlined_text_file(
+                                text=_format_inlined_text_file(
                                     item.data.decode('utf-8'),
                                     media_type=item.media_type,
                                     identifier=item.identifier,
@@ -681,14 +681,14 @@ class MistralModel(Model[Mistral]):
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
                         raise NotImplementedError(
-                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                            'BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts'
                         )
                 elif isinstance(item, DocumentUrl):
-                    if is_text_like_media_type(item.media_type):
+                    if _is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
                             MistralTextChunk(
-                                text=format_inlined_text_file(
+                                text=_format_inlined_text_file(
                                     downloaded_text['data'],
                                     media_type=item.media_type,
                                     identifier=item.identifier,
@@ -704,7 +704,9 @@ class MistralModel(Model[Mistral]):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                        raise NotImplementedError(
+                            'DocumentUrl other than text-like or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):

@@ -2759,6 +2759,38 @@ async def test_txt_url_input(allow_model_requests: None):
     assert not any(isinstance(chunk, MistralDocumentURLChunk) for chunk in messages[0].content)
 
 
+@pytest.mark.vcr()
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, text_document_content: BinaryContent, mistral_api_key: str
+):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', text_document_content])
+    assert result.output == snapshot("""\
+The document you provided is a **dummy text file** with no meaningful content. It simply contains the text:
+
+**"Dummy TXT file"**
+
+This appears to be a placeholder or test file with no substantive information. If this was part of a larger dataset or system, it might be used for testing file handling, encoding, or transmission.\
+""")
+
+
+@pytest.mark.vcr()
+async def test_text_document_url_input(
+    allow_model_requests: None, mistral_api_key: str, disable_ssrf_protection_for_vcr: None
+):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
+
+    result = await agent.run(['What is the main content on this document, in one sentence?', document_url])
+    assert result.output == snapshot(
+        'This document lists the graphical (non-control) characters defined by the **ISO 8859-1 (1987) character encoding standard**, including their hexadecimal codes and descriptions.'
+    )
+
+
 async def test_audio_as_binary_content_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
@@ -2768,7 +2800,8 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
     base64_content = b'//uQZ'
 
     with pytest.raises(
-        NotImplementedError, match='BinaryContent other than image or PDF is not supported in Mistral user prompts'
+        NotImplementedError,
+        match='BinaryContent other than text-like, image, or PDF is not supported in Mistral user prompts',
     ):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
