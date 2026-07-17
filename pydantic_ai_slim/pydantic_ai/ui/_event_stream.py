@@ -12,6 +12,9 @@ from pydantic_ai import _utils
 from ..messages import (
     AgentStreamEvent,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
+    EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -270,10 +273,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
         - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
         - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
+        - [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] -> `handle_enqueued_messages`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
+        - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
+        - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] -> `handle_deferred_tool_results`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -292,6 +298,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FinalResultEvent():
                 async for e in self.handle_final_result(event):
                     yield e
+            case EnqueuedMessagesEvent():
+                async for e in self.handle_enqueued_messages(event):
+                    yield e
             case FunctionToolCallEvent():
                 async for e in self.handle_function_tool_call(event):
                     yield e
@@ -303,6 +312,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case OutputToolResultEvent():
                 async for e in self.handle_output_tool_result(event):
+                    yield e
+            case DeferredToolRequestsEvent():
+                async for e in self.handle_deferred_tool_requests(event):
+                    yield e
+            case DeferredToolResultsEvent():
+                async for e in self.handle_deferred_tool_results(event):
                     yield e
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
@@ -616,6 +631,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return
         yield  # Make this an async generator
 
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[EventT]:
+        """Handle an `EnqueuedMessagesEvent` (messages enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] delivered into the run).
+
+        By default no protocol events are emitted. Override this to surface the delivered
+        messages to the frontend.
+
+        Args:
+            event: The enqueued messages event.
+        """
+        return
+        yield  # Make this an async generator
+
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[EventT]:
         """Handle a `FunctionToolCallEvent`.
 
@@ -650,6 +677,33 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The output tool result event.
         """
         return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[EventT]:
+        """Handle a `DeferredToolRequestsEvent` (a batch of tool calls awaiting approval or external execution).
+
+        By default no protocol events are emitted: a run that ends on deferred calls surfaces them
+        via its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead.
+        Override this to notify the frontend mid-stream, e.g. when a
+        [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
+        resolves the calls without ending the run.
+
+        Args:
+            event: The deferred tool requests event.
+        """
+        return
+        yield  # Make this an async generator
+
+    async def handle_deferred_tool_results(self, event: DeferredToolResultsEvent) -> AsyncIterator[EventT]:
+        """Handle a `DeferredToolResultsEvent` (deferred tool calls resolved by a handler during the run).
+
+        By default no protocol events are emitted; the resolved calls execute and emit their own
+        [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]s.
+
+        Args:
+            event: The deferred tool results event.
+        """
+        return
         yield  # Make this an async generator
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:

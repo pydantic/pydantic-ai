@@ -39,6 +39,13 @@ class _RequestParams:
     model_id: str | None = None
 
 
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _CancelParams:
+    response: ModelResponse
+    model_id: str | None = None
+
+
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
 
 
@@ -125,9 +132,22 @@ class TemporalModel(WrapperModel):
             request_stream_activity
         )
 
+        async def cancel_suspended_response_activity(params: _CancelParams) -> None:
+            # Resolve the model that produced the response (mirrors `request_activity`'s use of
+            # `model_id`) so a multi-model registry cancels on the right client. The teardown is a
+            # raw HTTP call to the provider, so it must run in an activity rather than the workflow
+            # sandbox. No `deps`/`run_context` is needed: cancellation targets an already-produced
+            # response by `model_id`, and the provider-factory inference path isn't reachable here.
+            model_for_request = self._resolve_model_id(params.model_id)
+            await model_for_request.cancel_suspended_response(params.response)
+
+        self.cancel_suspended_response_activity = activity.defn(
+            name=f'{activity_name_prefix}__model_cancel_suspended_response'
+        )(cancel_suspended_response_activity)
+
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.request_activity, self.request_stream_activity]
+        return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
 
     async def request(
         self,
@@ -211,6 +231,22 @@ class TemporalModel(WrapperModel):
             **activity_config,
         )
         yield CompletedStreamedResponse(model_request_parameters, response)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        if not workflow.in_workflow():
+            return await super().cancel_suspended_response(response)
+
+        model_id = self._current_model_id()
+        model_name = model_id or self.model_id
+        activity_config: ActivityConfig = {
+            'summary': f'cancel suspended response: {model_name}',
+            **self.activity_config,
+        }
+        await workflow.execute_activity(
+            activity=self.cancel_suspended_response_activity,
+            args=[_CancelParams(response=response, model_id=model_id)],
+            **activity_config,
+        )
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:

@@ -115,9 +115,13 @@ FinishReason: TypeAlias = Literal[
     'tool_call',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
 
-ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+Mostly normalized to OpenTelemetry semantic convention values.
+Whether the agent should automatically continue is determined by `ModelResponse.state`, not by this field.
+"""
+
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', 'interrupted']
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
@@ -125,8 +129,13 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
+- `'suspended'`: the model paused mid-turn and expects a continuation request.
+  Used by Anthropic `pause_turn` and OpenAI background mode. Pydantic AI issues these continuations
+  transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
+  completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
+  history is never left in this state.
 - `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
   finished generating.
 """
 
@@ -221,7 +230,7 @@ class FileUrl(ABC):
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -536,7 +545,7 @@ class BinaryContent:
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -793,7 +802,7 @@ class UploadedFile:
     The expected shape of this dictionary depends on the provider:
 
     Supported by:
-    - `GoogleModel`: used as `video_metadata` for video files
+    - `GoogleModel`: used as `video_metadata` for video files, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
@@ -1260,12 +1269,16 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
     - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
+      cancelled stream or a crash mid-execution); synthesized during message-history repair. Unlike
+      `'failed'`, `'interrupted'` is not mapped to any provider native-error channel — the result's
+      content string carries the interruption wording.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -1349,9 +1362,9 @@ class BaseToolReturnPart:
             elif isinstance(item, str):
                 result.append(item)
             elif mode == 'str':
-                result.append(tool_return_ta.dump_json(item).decode())
+                result.append(tool_return_ta.dump_json(item, by_alias=True).decode())
             else:
-                result.append(tool_return_ta.dump_python(item, mode='json'))
+                result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
 
     def model_response_str(self) -> str:
@@ -1364,7 +1377,7 @@ class BaseToolReturnPart:
             return ''
         if isinstance(value, str):
             return value
-        return tool_return_ta.dump_json(value).decode()
+        return tool_return_ta.dump_json(value, by_alias=True).decode()
 
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
@@ -1375,7 +1388,7 @@ class BaseToolReturnPart:
         value, _ = self._unwrap_data()
         if value is None:
             return {}
-        json_content = tool_return_ta.dump_python(value, mode='json')
+        json_content = tool_return_ta.dump_python(value, mode='json', by_alias=True)
         if _utils.is_str_dict(json_content):
             return json_content
         else:
@@ -2290,7 +2303,17 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
+    """The state of this response, indicating whether it is final or requires further action.
+
+    - `'complete'` — The response is done. This is the default.
+    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'suspended'` — The model paused mid-turn and expects a continuation request.
+      The agent graph will automatically send a continuation request.
+      Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+      or return background/async responses (e.g. OpenAI background mode).
+    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    """
 
     @property
     def text(self) -> str | None:
@@ -3328,6 +3351,28 @@ ModelResponseStreamEvent = Annotated[
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
+@dataclass(repr=False, kw_only=True)
+class EnqueuedMessagesEvent:
+    """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
+
+    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
+    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    `conversation_id` stamped). A history processor that replaces history with new message objects
+    does not affect the event, but in-place mutation of a delivered message will be visible through it.
+    """
+
+    enqueue_id: str
+    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced these messages."""
+
+    messages: tuple[ModelMessage, ...]
+    """The messages delivered into the run's message history."""
+
+    event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class ToolCallEvent:
     """Base class for events emitted when a tool call is about to be invoked.
@@ -3414,11 +3459,77 @@ class OutputToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+# Deferred tool types live in `_deferred.py` to break the circular import
+# chain (tools → _function_schema → _run_context → messages).  Same late-import
+# pattern as `_tool_search` above.
+from ._deferred import (  # noqa: E402
+    DeferredToolRequests as DeferredToolRequests,
+    DeferredToolResults as DeferredToolResults,
+)
+
+
+@dataclass(repr=False)
+class DeferredToolRequestsEvent:
+    """An event indicating that tool calls require approval or external execution before the run can continue.
+
+    Each deferred call also emits its own [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent];
+    this event additionally carries the batched [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]
+    so stream consumers can tell which calls are paused waiting for interaction, e.g. to notify a frontend.
+
+    It is emitted before any [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+    handler runs. If no handler resolves all of the requests, the run ends with the pending requests as its
+    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    requests: DeferredToolRequests
+    """The batch of tool calls that require external execution or approval."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_requests'] = 'deferred_tool_requests'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DeferredToolResultsEvent:
+    """An event indicating that deferred tool calls were resolved by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.
+
+    The resolved calls are then executed through the regular tool-execution pipeline, emitting a
+    [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] for each result.
+
+    This event is not emitted when results are instead provided to a new run via `deferred_tool_results`,
+    as in that case the caller already knows them.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    results: DeferredToolResults
+    """The results for the deferred tool calls, keyed by tool call ID."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_results'] = 'deferred_tool_results'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 HandleResponseEvent = Annotated[
-    FunctionToolCallEvent | FunctionToolResultEvent | OutputToolCallEvent | OutputToolResultEvent,
+    FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
+    | DeferredToolRequestsEvent
+    | DeferredToolResultsEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
-"""An event in the agent stream: model response stream events and response-handling events."""
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+]
+"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""

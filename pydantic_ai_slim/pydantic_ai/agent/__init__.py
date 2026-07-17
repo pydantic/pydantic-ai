@@ -1288,7 +1288,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already
         # return one, mirroring the `has_capability_type` guard used for instrumentation above.
         # Without it, a `for_run` result that already carries a loader would get double-wrapped
-        # (cf. #5047) — a second loader toolset then errors on the reserved `load_capability` name.
+        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047) — a second loader toolset then errors on the reserved `load_capability` name.
         if any(
             capability.defer_loading is True for capability in capabilities_dict.values()
         ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
@@ -1517,7 +1517,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # instead of asserting on a not-yet-produced result, then set `_run_done` so
                 # it can exit and `cancel_and_drain`'s gather can complete (it discards the
                 # survivor's exception). Harmless no-op when `_wrap_task` really died
-                # cancelled — it's already unwinding. See #6422.
+                # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
                 _run_error = exc
                 _run_done.set()
                 await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
@@ -2547,7 +2547,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # wrapped around the output toolset specifically — so the hook only sees output
                 # tools, and the filtered/modified defs flow into `ToolManager.tools` and the model
                 # request parameters together. Override `ctx.max_retries` to the agent's output
-                # retry budget (matches `_build_output_run_context`'s contract — see #4745).
+                # retry budget (matches `_build_output_run_context`'s contract — see https://github.com/pydantic/pydantic-ai/issues/4745).
                 # `output_toolset.max_retries` is set to `max_output_retries` at agent construction.
                 output_cap = run_capability
                 effective_max_output_retries = (
