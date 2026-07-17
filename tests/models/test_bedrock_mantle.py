@@ -23,8 +23,10 @@ pytestmark = [
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) -> None:
+    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+    model = infer_model('bedrock:openai.gpt-5.6-luna', lambda _: provider)
     agent = Agent(
-        'bedrock:openai.gpt-5.6-luna',
+        model,
         instructions=(
             'Call first_tool. After receiving its result, call second_tool in a new model response. '
             'After receiving that result, answer with both results. Never call both tools in one response.'
@@ -59,9 +61,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
 
     if not stream:
         assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
-        replay_result = await Agent('bedrock:openai.gpt-5.6-luna').run(
-            'Reply with exactly OK.', message_history=messages
-        )
+        replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
 
 
@@ -91,6 +91,9 @@ async def test_protocol_switching(allow_model_requests: None) -> None:
 
 
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:
-    result = await Agent('bedrock-mantle:openai.gpt-oss-safeguard-20b').run('Reply with exactly SAFE.')
+    provider = BedrockProvider(region_name='us-east-1', api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'))
+    model = infer_model('bedrock-mantle:openai.gpt-oss-safeguard-20b', lambda _: provider)
+
+    result = await Agent(model).run('Reply with exactly SAFE.')
 
     assert result.output == 'SAFE'
