@@ -407,10 +407,15 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
-    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
-    catches by default), and empty responses are retried. A response handler is useful for custom
-    checks beyond these built-in behaviors.
+    Pydantic AI handles some finish reasons automatically in the [agent loop](../agent.md): **empty** or
+    thinking-only responses with a `'length'` or `'content_filter'` finish reason raise
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] or
+    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] respectively, and empty responses
+    are retried. These exceptions are raised *after* `model.request()` returns, so `FallbackModel` does
+    **not** catch them by default (the default `fallback_on` is
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]). Non-empty responses with these finish
+    reasons are accepted as normal output. To fall back on such responses, use a
+    [response handler](#finish-reason-example) that inspects `finish_reason`.
 
 #### Native Tool Failure Example
 
