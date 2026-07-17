@@ -15,6 +15,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -196,6 +197,14 @@ def test_chat_app_preserves_capability_resolved_model_id():
                 'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
             }
         )
+
+
+def test_chat_app_rejects_unknown_model_without_capability_resolver():
+    """Unknown model errors are not hidden when no capability can resolve the ID."""
+    agent = Agent('test')
+
+    with pytest.raises(UserError, match='Unknown model'):
+        create_web_app(agent, models=['tenant-model'])
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')

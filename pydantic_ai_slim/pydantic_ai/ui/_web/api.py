@@ -137,7 +137,10 @@ def create_api_app(
             # A capability resolver may intentionally use an ID that built-in inference does
             # not understand. Resolution needs run dependencies, so leave custom references
             # untouched here and let Agent resolve them when the request is dispatched.
-            model = None
+            if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
+                model = None
+            else:
+                raise
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
         model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
         if model_id in seen_model_ids:

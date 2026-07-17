@@ -323,7 +323,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
-        """Return a static model or a sync/async callable that selects one per request step."""
+        """Return a static model, a per-step model selector, or `None` to make no selection.
+
+        A selector receives
+        [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] and may be
+        synchronous or asynchronous. Static selections are resolved once per run; selectors
+        are evaluated before each new logical model request step. When several capabilities
+        contribute a model, the last non-`None` selection wins. This differs from
+        [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
+        where the first resolver to return a model wins.
+
+        See [Selecting a model](../../capabilities.md#selecting-a-model) for precedence,
+        bootstrap, and deferred-capability semantics.
+        """
         return None
 
     @property

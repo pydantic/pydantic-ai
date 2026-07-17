@@ -8804,10 +8804,24 @@ class TestGetModelHook:
     async def test_replaced_for_run_selector_reselects_first_step(self):
         selections: list[str] = []
 
+        class LifecycleModel(FunctionModel):
+            entered = 0
+            exited = 0
+
+            async def __aenter__(self):
+                self.entered += 1
+                return self
+
+            async def __aexit__(self, *args: Any):
+                self.exited += 1
+
+        bootstrap_model = LifecycleModel(lambda messages, info: make_text_response('bootstrap'))
+        replacement_model = LifecycleModel(lambda messages, info: make_text_response('replacement'))
+
         def selector(name: str) -> Callable[[ModelSelectionContext[None]], Model]:
             def select(ctx: ModelSelectionContext[None]) -> Model:
                 selections.append(name)
-                return _text_model(name)
+                return bootstrap_model if name == 'bootstrap' else replacement_model
 
             return select
 
@@ -8827,6 +8841,8 @@ class TestGetModelHook:
         agent = Agent(None, deps_type=NoneType, capabilities=[Bootstrap()])
         assert (await agent.run('hello')).output == 'replacement'
         assert selections == ['bootstrap', 'replacement']
+        assert (bootstrap_model.entered, bootstrap_model.exited) == (1, 1)
+        assert (replacement_model.entered, replacement_model.exited) == (1, 1)
 
     async def test_replaced_for_run_static_model_is_authoritative(self):
         @dataclass

@@ -1190,7 +1190,8 @@ Return a [`Model`][pydantic_ai.models.Model] instance, a model name string, or a
 ```python
 from dataclasses import dataclass
 
-from pydantic_ai import ModelSelectionContext
+from pydantic_ai import Agent, ModelSelectionContext
+from pydantic_ai.capabilities import SelectModel
 
 
 @dataclass
@@ -1200,6 +1201,9 @@ class MyDeps:
 
 def select_model(ctx: ModelSelectionContext[MyDeps]) -> str:
     return 'openai:gpt-5.2' if ctx.deps.use_frontier_model else 'openai:gpt-5-mini'
+
+
+agent = Agent(None, deps_type=MyDeps, capabilities=[SelectModel(select_model)])
 ```
 
 The context has a separate type from [`RunContext`][pydantic_ai.tools.RunContext] because a full run context requires the model that is currently being selected. Later capability contributions override earlier ones, matching other capability configuration layers. The synchronous `get_model()` method is a cheap configuration hook; perform I/O in the returned async selector, where run dependencies are available.

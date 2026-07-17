@@ -1489,10 +1489,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capability_owns_current_model = model_contribution is not None
         elif callable(run_model_contribution) and not _is_model(run_model_contribution):
             # The bootstrap model was only needed to construct RunContext for `for_run`.
-            # The replacement selector makes the authoritative step-one choice in the graph.
+            # The replacement selector makes the authoritative step-one choice in the graph,
+            # but the discarded bootstrap model still needs its lifecycle managed.
             model_selector = run_model_contribution
             model_selected_for_step = None
-            capability_owns_current_model = False
+            capability_owns_current_model = True
         elif run_model_contribution is not None:
             model_used = await self._resolve_model_selection(
                 run_model_contribution, capability=run_capability, deps=deps
