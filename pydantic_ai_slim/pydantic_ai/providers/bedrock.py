@@ -564,6 +564,8 @@ class BedrockProvider(Provider[BaseClient]):
         if interface in ('mantle-openai-responses', 'mantle-openai-chat'):
             if provider != 'openai':
                 raise UserError(f'Model {model_name!r} is not an OpenAI model on Bedrock Mantle.')
+            if interface == 'mantle-openai-responses' and base_model_name.startswith('gpt-oss-safeguard'):
+                raise UserError(f'Model {model_name!r} does not support the Bedrock Mantle Responses API.')
             from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 
             response_scoped = interface == 'mantle-openai-responses' and base_model_name.startswith('gpt-5.6')
@@ -818,6 +820,7 @@ class BedrockProvider(Provider[BaseClient]):
     ) -> Provider[AsyncOpenAI] | Provider[AsyncAnthropicClient]:
         """Select a typed Mantle interface backed by this provider's clients and lifecycle."""
         if interface == 'mantle-openai-responses':
+            self.mantle_model_profile(model_name, interface)
             return _BedrockMantleResponsesProvider(self, model_name)
         elif interface == 'mantle-openai-chat':
             return _BedrockMantleChatProvider(self, model_name)

@@ -34,6 +34,8 @@ with try_import() as imports_successful:
 
 pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
 
+# These tests inspect local provider configuration and routing without making HTTP requests, so VCR cannot cover them.
+
 
 @pytest.fixture(autouse=True)
 def bedrock_credentials(env: TestEnv) -> None:
@@ -151,7 +153,7 @@ def test_bedrock_mantle_infers_base_url_from_injected_clients(env: TestEnv, mock
     assert standard_openai_provider.mantle_base_url == 'https://standard-openai.example.com'
     assert fallback_provider.mantle_base_url == 'https://anthropic.example.com'
     with pytest.raises(UserError, match='pass `mantle_base_url`'):
-        unconfigured_provider.mantle_base_url
+        _ = unconfigured_provider.mantle_base_url
 
 
 async def test_bedrock_mantle_provider_reopens_http_client() -> None:
@@ -204,6 +206,8 @@ def test_bedrock_mantle_provider_rejects_wrong_interfaces() -> None:
         provider.mantle_model_profile('anthropic.claude-sonnet-5', 'mantle-openai-responses')
     with pytest.raises(UserError, match='is not an Anthropic model'):
         provider.mantle_model_profile('openai.gpt-oss-120b', 'mantle-anthropic-messages')
+    with pytest.raises(UserError, match='does not support the Bedrock Mantle Responses API'):
+        BedrockMantleResponsesModel('openai.gpt-oss-safeguard-20b', provider=provider)
     with pytest.raises(UserError, match='is not a Bedrock Mantle interface'):
         provider.mantle_model_profile('openai.gpt-oss-120b', 'converse')
 
