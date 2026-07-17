@@ -103,9 +103,9 @@ cli = [
     "pyyaml>=6.0.2",
 ]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
-# Uvicorn server stack). The `mcp` SDK is also a direct runtime dependency. For an in-process
-# FastMCP server, install the full `fastmcp` package directly alongside `[mcp]`.
-mcp = ["fastmcp-slim[client]>=3.3.0", "mcp>=1.28.1,<2.0"]
+# Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
+# install the full `fastmcp` package directly alongside `[mcp]`.
+mcp = ["fastmcp-slim[client]>=3.3.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
