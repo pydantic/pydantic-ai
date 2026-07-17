@@ -37,24 +37,20 @@ class BedrockMantleModelProfile(OpenAIModelProfile, total=False):
     """Which Mantle endpoint family serves this model, selecting the model class and base URL."""
 
 
-def _mantle_interface(model_name: str) -> BedrockMantleInterface:
-    provider, name = split_bedrock_model_id(model_name)
+def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
+    """Resolve the profile for an OpenAI model served through Bedrock Mantle."""
+    provider, base_model_name = split_bedrock_model_id(model_name)
     if provider != 'openai':
         raise UserError(
             f'Model {model_name!r} is not an OpenAI model on Bedrock Mantle. '
             'Bedrock Mantle currently serves OpenAI models through the `bedrock-mantle:` prefix.'
         )
-    if name.startswith('gpt-oss-safeguard'):
-        return 'chat'
-    if name.startswith('gpt-oss'):
-        return 'responses'
-    return 'openai-responses'
-
-
-def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
-    """Resolve the profile for an OpenAI model served through Bedrock Mantle."""
-    interface = _mantle_interface(model_name)
-    _, base_model_name = split_bedrock_model_id(model_name)
+    if base_model_name.startswith('gpt-oss-safeguard'):
+        interface: BedrockMantleInterface = 'chat'
+    elif base_model_name.startswith('gpt-oss'):
+        interface = 'responses'
+    else:
+        interface = 'openai-responses'
     # Mantle GPT-5.6 resets Responses tool-call IDs across separate responses; qualify them with the
     # response ID at ingestion so pydantic-ai keeps its history-wide-unique invariant. See #6536.
     response_scoped = interface == 'openai-responses' and base_model_name.startswith('gpt-5.6')
@@ -63,6 +59,10 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         BedrockMantleModelProfile(
             bedrock_mantle_interface=interface,
             openai_responses_tool_call_ids_are_response_scoped=response_scoped,
+            # Bedrock Mantle does not serve image output for these models, unlike the direct OpenAI API
+            # the base profile is resolved from (per the AWS model cards). Without this override the
+            # image-output guard is bypassed and the request fails with an opaque provider error.
+            supports_image_output=False,
             supported_native_tools=frozenset(),
         ),
     )
@@ -87,7 +87,7 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         return bedrock_mantle_model_profile(model_name)
 
-    def openai_client(self, interface: BedrockMantleInterface) -> AsyncOpenAI:
+    def _openai_client(self, interface: BedrockMantleInterface) -> AsyncOpenAI:
         """Return the OpenAI client for a Mantle endpoint family.
 
         GPT-5.x models are served on `/openai/v1`; GPT-OSS models on `/v1`. When the provider was

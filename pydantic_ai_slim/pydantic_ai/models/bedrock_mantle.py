@@ -1,19 +1,20 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from openai import AsyncOpenAI
-
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.openai import (
+from ..exceptions import UserError
+from ..profiles import ModelProfileSpec
+from ..providers.bedrock_mantle import BedrockMantleProvider
+from .openai import (
     OpenAIChatModel,
     OpenAIChatModelSettings,
     OpenAIResponsesModel,
     OpenAIResponsesModelSettings,
 )
-from pydantic_ai.profiles import ModelProfileSpec
-from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 LatestBedrockMantleModelNames = Literal[
     'openai.gpt-5.4',
@@ -73,7 +74,7 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Chat Completions API; '
                 'construct it with `BedrockMantleChatModel` instead.'
             )
-        self._mantle_client = provider.openai_client(
+        self._mantle_client = provider._openai_client(  # pyright: ignore[reportPrivateUsage]
             'openai-responses' if interface == 'openai-responses' else 'responses'
         )
 
@@ -113,7 +114,7 @@ class BedrockMantleChatModel(OpenAIChatModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Responses API; '
                 'construct it with `BedrockMantleResponsesModel` instead.'
             )
-        self._mantle_client = provider.openai_client('chat')
+        self._mantle_client = provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
 
     @property
     def client(self) -> AsyncOpenAI:

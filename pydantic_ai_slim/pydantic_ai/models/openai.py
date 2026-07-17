@@ -2299,6 +2299,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             background = True
             initial_state = 'suspended'
 
+        tool_call_ids_are_response_scoped = self.profile.get(
+            'openai_responses_tool_call_ids_are_response_scoped', False
+        )
         streamed_response = OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
@@ -2307,13 +2310,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
-            _tool_call_ids_are_response_scoped=self.profile.get(
-                'openai_responses_tool_call_ids_are_response_scoped', False
-            ),
+            _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
         )
-        streamed_response.provider_response_id = (
-            first_chunk.response.id if isinstance(first_chunk, responses.ResponseCreatedEvent) else expected_response_id
-        )
+        if tool_call_ids_are_response_scoped:
+            # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
+            # ID must be known before iteration. This is only needed (and only set eagerly) for the
+            # providers that opt in; other Responses streams keep resolving it during iteration.
+            streamed_response.provider_response_id = (
+                first_chunk.response.id
+                if isinstance(first_chunk, responses.ResponseCreatedEvent)
+                else expected_response_id
+            )
         streamed_response.state = initial_state
         if background:
             # Stamp the background marker up front so the retry-delay gate (and `cancel_suspended_response`)

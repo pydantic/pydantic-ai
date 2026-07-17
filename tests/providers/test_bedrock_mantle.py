@@ -48,9 +48,9 @@ def test_bedrock_mantle_uses_bedrock_mantle_provider() -> None:
 def test_bedrock_mantle_endpoint_families() -> None:
     provider = BedrockMantleProvider()
 
-    openai_responses = provider.openai_client('openai-responses')
-    responses = provider.openai_client('responses')
-    chat = provider.openai_client('chat')
+    openai_responses = provider._openai_client('openai-responses')  # pyright: ignore[reportPrivateUsage]
+    responses = provider._openai_client('responses')  # pyright: ignore[reportPrivateUsage]
+    chat = provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
 
     assert isinstance(openai_responses, AsyncBedrockOpenAI)
     assert str(openai_responses.base_url) == 'https://bedrock-mantle.us-east-1.api.aws/openai/v1/'
@@ -65,9 +65,9 @@ def test_bedrock_mantle_custom_base_url() -> None:
     # An explicit `base_url` is used for every interface (no per-model endpoint routing).
     provider = BedrockMantleProvider(base_url='https://example.com/bedrock/v1')
 
-    assert str(provider.openai_client('openai-responses').base_url) == 'https://example.com/bedrock/v1/'
-    assert str(provider.openai_client('responses').base_url) == 'https://example.com/bedrock/v1/'
-    assert provider.openai_client('openai-responses') is provider.openai_client('chat')
+    assert str(provider._openai_client('openai-responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
+    assert str(provider._openai_client('responses').base_url) == 'https://example.com/bedrock/v1/'  # pyright: ignore[reportPrivateUsage]
+    assert provider._openai_client('openai-responses') is provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
 
 
 def test_bedrock_mantle_injected_client() -> None:
@@ -75,8 +75,8 @@ def test_bedrock_mantle_injected_client() -> None:
     provider = BedrockMantleProvider(openai_client=client)
 
     assert provider.client is client
-    assert provider.openai_client('openai-responses') is client
-    assert provider.openai_client('responses') is client
+    assert provider._openai_client('openai-responses') is client  # pyright: ignore[reportPrivateUsage]
+    assert provider._openai_client('responses') is client  # pyright: ignore[reportPrivateUsage]
 
 
 def test_bedrock_mantle_accepts_http_client() -> None:
@@ -194,7 +194,7 @@ def test_bedrock_mantle_profiles() -> None:
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_image_output': True,
+            'supports_image_output': False,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': False,
