@@ -99,7 +99,7 @@ Every completed conversation records these metrics automatically:
 - `conversation_target_turn_duration_seconds_avg`;
 - `conversation_target_turn_duration_seconds_max`.
 
-The standard `cost` metric still represents all instrumented model calls in the task. Target and simulator calls have separate role spans, but costs are not split into report metrics: generic callbacks do not have a common cost contract. Role-specific cost aggregation can be added later without changing the conversation protocol.
+The standard `cost` metric represents all instrumented model calls in the task. Target and simulator calls have separate role spans, but costs are not split into report metrics because generic callbacks do not have a common cost contract.
 
 ## Transform prompts without changing the trajectory
 

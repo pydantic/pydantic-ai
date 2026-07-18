@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Literal
 
 import logfire
 from pydantic import BaseModel, Field
@@ -297,7 +297,13 @@ def build_dataset(
     """Build shared cases, adding only evaluators supported by the implementation."""
     # Patch evaluation works for both the Agent and regex target because it only
     # depends on their shared typed output.
-    evaluators: list[Evaluator[Any, Any, Any]] = [TriagePatchEvaluator()]
+    evaluators: list[
+        Evaluator[
+            TriageScenario,
+            ConversationResult[str, TriageReply],
+            TriageExpected,
+        ]
+    ] = [TriagePatchEvaluator()]
     if include_tool_evaluators:
         # Tool calls are an implementation-specific capability. Standard span
         # evaluators compose with the target spans emitted by ConversationTask, so
