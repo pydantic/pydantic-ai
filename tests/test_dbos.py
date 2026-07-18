@@ -88,7 +88,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
-from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, Toolset
+from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -2165,6 +2165,22 @@ async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:
         return by_key.output, by_instance.output
 
     assert await run_agent() == ('alt-response', 'alt-response')
+
+
+async def test_dbos_durability_per_step_model_selector_uses_selected_model(dbos: DBOS) -> None:
+    """A per-step selector's model identity, rather than the run-level model ID, crosses the step boundary."""
+    durability = DBOSDurability(models={'primary': _durability_fn_model, 'alt': _dbos_alt_model})
+    agent = Agent(
+        'primary',
+        name='durability_per_step_model_selector',
+        capabilities=[SelectModel(lambda ctx: _dbos_alt_model), durability],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_agent() == 'alt-response'
 
 
 async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:

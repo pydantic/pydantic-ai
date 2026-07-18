@@ -20,7 +20,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset
 
+from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
 from ._utils import unwrap_model
 
 
@@ -43,12 +45,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     engine_name: ClassVar[str]
     """Human-readable engine name used in error messages (e.g. `'Temporal'`)."""
 
+    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]]
+
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None:
+        self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
@@ -61,8 +66,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] returns a new bound
         copy and leaves the user's original capability reference pristine, so use this to retrieve
         the instance the agent actually runs with — e.g. the `TemporalDurability` whose activities
-        are registered with the worker. Walks the agent's capability chain and returns the first
-        match, or `None`.
+        are registered with the worker. Walks the agent's capability chain and returns the single
+        match or `None`, raising a `UserError` if multiple instances are attached.
         """
         found: list[Self] = []
 
@@ -71,7 +76,38 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 found.append(cap)
 
         agent.root_capability.apply(visitor)
+        if len(found) > 1:
+            raise UserError(f'Multiple {cls.__name__} capabilities are attached to this agent; attach at most one.')
         return found[0] if found else None
+
+    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Reject executing toolsets added per-run inside a durable workflow or flow.
+
+        Construction-time toolsets are registered with the durable engine when the
+        capability is bound. Executing runtime additions would bypass that registration
+        and could re-execute on recovery, while non-executing toolsets can pass through.
+        Outside a durable context the capability remains transparent.
+        """
+        if not self._in_durable_context():
+            return
+
+        construction_leaves: set[int] = set()
+        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+            for agent_toolset in self._agent.toolsets:
+                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
+
+        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
+
+        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
+            if id(leaf) not in construction_leaves:
+                runtime_leaves.append(leaf)
+
+        toolset.apply(collect)
+        reject_unsupported_runtime_toolsets(
+            runtime_leaves,
+            unsupported_kinds=self._unsupported_runtime_toolset_kinds,
+            engine=self.engine_name,
+        )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -168,13 +204,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """The cross-boundary identifier for this request's model.
 
         Prefer the original model-id string the run's model was resolved from
-        (`ModelRequestContext._model_id`) when the request still targets the run's
-        model: it survives aliases that the resolved model's own `model_id` doesn't
-        (the worker-side chain re-resolves the same string the caller wrote). A model
-        swapped in by an outer capability's `before_model_request` invalidates the
-        provenance, so it falls back to `_find_model_id`.
+        ([`ModelRequestContext.model_id`][pydantic_ai.models.ModelRequestContext.model_id]) when the
+        request still targets the run's model: it survives aliases that the resolved model's own
+        `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote). A
+        model swapped in by an outer capability's `before_model_request` invalidates the provenance,
+        so it falls back to `_find_model_id`.
         """
-        provenance = request_context._model_id  # pyright: ignore[reportPrivateUsage]
+        provenance = request_context.model_id
         if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
             return provenance
         return self._find_model_id(request_context.model)

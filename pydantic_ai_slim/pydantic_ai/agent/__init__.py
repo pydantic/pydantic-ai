@@ -1188,7 +1188,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
 
         # The string the run's model was selected from, if any — carried through to
-        # `ModelRequestContext._model_id` so durable-execution capabilities can round-trip
+        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
         # the original selection token (e.g. an alias only a `resolve_model_id` capability
         # can resolve) across the activity/step/task boundary. Only meaningful when the run
         # has a default model; a capability-selected model isn't round-tripped this way.

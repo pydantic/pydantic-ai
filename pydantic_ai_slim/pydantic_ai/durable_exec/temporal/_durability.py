@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -28,7 +28,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapRunHandler,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
+from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -170,6 +170,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """
 
     engine_name = 'Temporal'
+    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
+        {'function', 'mcp', 'dynamic'}
+    )
 
     name: str
     """Unique agent name used as a prefix for Temporal activity names."""
@@ -278,7 +281,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # These are populated by for_agent()
         self.name = ''
-        self._agent: AbstractAgent[Any, Any] | None = None
         self._temporal_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
         self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
@@ -337,6 +339,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         run_context_type = self.run_context_type
         activities: list[Callable[..., Any]] = []
 
+        def register_activity(fn: Callable[..., Any], *, name: str) -> Callable[..., Any]:
+            # Temporal's Pydantic payload converter deserializes `deps` by introspecting the activity's
+            # annotation, and the concrete deps type is only known once the capability is bound to an agent.
+            # Set it here so serialization uses the real type instead of the placeholder the closure declares.
+            fn.__annotations__['deps'] = deps_type | None
+            return activity.defn(name=name)(fn)
+
         # --- Model request activities ---
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
@@ -352,11 +361,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.model_request_parameters,
                     )
 
-        request_activity.__annotations__['deps'] = deps_type | None
-        self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
+        self.request_activity = register_activity(request_activity, name=f'{activity_name_prefix}__model_request')
         activities.append(self.request_activity)
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> StreamedActivityResult:
+        async def request_stream_activity(params: _RequestParams, deps: Any) -> StreamedActivityResult:
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -376,28 +384,26 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         )
                 return StreamedActivityResult(response=streamed_response.get(), events=events)
 
-        request_stream_activity.__annotations__['deps'] = deps_type | None
-        self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
-            request_stream_activity
+        self.request_stream_activity = register_activity(
+            request_stream_activity, name=f'{activity_name_prefix}__model_request_stream'
         )
         activities.append(self.request_stream_activity)
 
         if self._event_stream_handler is not None:
             handler = self._event_stream_handler
 
-            async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
+            async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
                 run_context = deserialize_run_context(
                     run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                 )
                 await handler(run_context, self._single_event_stream(params.event))
 
-            event_stream_handler_activity.__annotations__['deps'] = deps_type | None
-            self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
-                event_stream_handler_activity
+            self.event_stream_handler_activity = register_activity(
+                event_stream_handler_activity, name=f'{activity_name_prefix}__event_stream_handler'
             )
             activities.append(self.event_stream_handler_activity)
 
-        async def cancel_suspended_response_activity(params: _CancelParams, deps: AgentDepsT) -> None:
+        async def cancel_suspended_response_activity(params: _CancelParams, deps: Any) -> None:
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -405,10 +411,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             with set_current_run_context(run_context):
                 await model.cancel_suspended_response(params.response)
 
-        cancel_suspended_response_activity.__annotations__['deps'] = deps_type | None
-        self.cancel_suspended_response_activity = activity.defn(
-            name=f'{activity_name_prefix}__model_cancel_suspended_response'
-        )(cancel_suspended_response_activity)
+        self.cancel_suspended_response_activity = register_activity(
+            cancel_suspended_response_activity,
+            name=f'{activity_name_prefix}__model_cancel_suspended_response',
+        )
         activities.append(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
@@ -667,36 +673,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return ts
 
         return toolset.visit_and_replace(swap)
-
-    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Reject executing toolsets added per-run inside a workflow.
-
-        The run toolset assembled by the agent contains both construction-time toolsets
-        (whose activities `for_agent` registered with the worker) and any extras passed
-        via `run(toolsets=...)`. Executing extras would run un-wrapped inside the workflow
-        — no activity, non-deterministic on replay — so they're rejected explicitly, like
-        the deprecated `TemporalAgent` does. Non-executing toolsets like `ExternalToolset`
-        pass through. Only applies inside a workflow; outside one the capability is
-        transparent and any toolset is fine.
-        """
-        if not workflow.in_workflow():
-            return
-
-        construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
-            for agent_toolset in self._agent.toolsets:
-                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
-
-        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
-
-        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
-
-        toolset.apply(collect)
-        reject_unsupported_runtime_toolsets(
-            runtime_leaves, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
-        )
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='innermost')

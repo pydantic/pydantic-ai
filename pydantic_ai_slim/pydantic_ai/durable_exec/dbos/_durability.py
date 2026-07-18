@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from dbos import DBOS
 
@@ -17,7 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapRunHandler,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
+from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -59,6 +59,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """
 
     engine_name = 'DBOS'
+    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
 
     name: str
     """Unique agent name used as a prefix for DBOS step names."""
@@ -103,7 +104,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler)
         self.name = ''
-        self._agent: AbstractAgent[Any, Any] | None = None
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
@@ -206,38 +206,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # don't re-run when the workflow recovers.
         assert self._event_stream_handler_step is not None
         await self._event_stream_handler_step(event, ctx)
-
-    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Reject executing toolsets added per-run inside a workflow.
-
-        The run toolset assembled by the agent contains construction-time toolsets (whose
-        MCP I/O `for_agent` wrapped as steps) plus any per-run extras — `run(toolsets=...)`,
-        or toolsets contributed by per-run capabilities/specs. An executing extra would run
-        un-checkpointed inside the workflow and re-execute on recovery, so it's rejected
-        explicitly, like the deprecated `DBOSAgent` does. DBOS runs function tools inline,
-        so `FunctionToolset` is allowed at runtime, as are non-executing toolsets like
-        `ExternalToolset`. Checked here in run setup so every entry point inside a
-        user workflow is covered; only applies inside a workflow — outside one the
-        capability is transparent and any toolset is fine.
-        """
-        if DBOS.workflow_id is None or DBOS.step_id is not None:
-            return
-
-        construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
-            for agent_toolset in self._agent.toolsets:
-                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
-
-        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
-
-        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
-
-        toolset.apply(collect)
-        reject_unsupported_runtime_toolsets(
-            runtime_leaves, unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS'
-        )
 
     def _dbosify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap MCP leaf toolsets as DBOS steps."""

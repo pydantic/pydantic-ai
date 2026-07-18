@@ -5236,6 +5236,20 @@ def test_durability_rejects_default_model_key():
         )
 
 
+def test_durability_from_agent_rejects_duplicates():
+    agent = Agent(
+        _durability_fn_model,
+        name='duplicate_durability',
+        capabilities=[TemporalDurability(), TemporalDurability()],
+    )
+
+    with pytest.raises(
+        UserError,
+        match=r'Multiple TemporalDurability capabilities are attached to this agent; attach at most one\.',
+    ):
+        TemporalDurability.from_agent(agent)
+
+
 def test_durability_rejects_construction_inside_workflow(monkeypatch: pytest.MonkeyPatch):
     """`TemporalDurability.for_agent` rejects construction inside a workflow.
 
@@ -5492,7 +5506,7 @@ async def test_durability_resolve_model_id_uses_models_registry():
     agent = Agent(primary, name='resolve_registry_test', capabilities=[durability])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    resolution_ctx = ModelResolutionContext(agent=agent, deps=None)
+    resolution_ctx = ModelResolutionContext[Any](agent=agent, deps=None)
 
     # String matches a registered model → returns that exact instance.
     assert await bound.resolve_model_id(resolution_ctx, model_id='alt') is alt

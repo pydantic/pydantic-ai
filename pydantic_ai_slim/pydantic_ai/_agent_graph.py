@@ -381,7 +381,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
 
-    Stamped onto `ModelRequestContext._model_id` so durable-execution capabilities can
+    Stamped onto `ModelRequestContext.model_id` so durable-execution capabilities can
     round-trip the original selection token across the activity/step/task boundary.
     """
 
@@ -1083,7 +1083,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        wrap_request_context._model_id = ctx.deps.model_id  # pyright: ignore[reportPrivateUsage]
+        wrap_request_context.model_id = None if ctx.deps.model_selector is not None else ctx.deps.model_id
         # Signal to hooks that the agent loop expects a real event stream.
         wrap_request_context.streaming = True
         wrap_task = asyncio.create_task(
@@ -1267,7 +1267,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        request_context._model_id = ctx.deps.model_id  # pyright: ignore[reportPrivateUsage]
+        request_context.model_id = None if ctx.deps.model_selector is not None else ctx.deps.model_id
         try:
             try:
                 model_response = await ctx.deps.root_capability.wrap_model_request(

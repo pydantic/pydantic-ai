@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -17,7 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
+from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -58,6 +58,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """
 
     engine_name = 'Prefect'
+    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset(
+        {'function', 'mcp', 'dynamic'}
+    )
 
     name: str
     """Unique agent name used as a prefix for Prefect task names."""
@@ -103,7 +106,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler)
         self.name = ''
-        self._agent: AbstractAgent[Any, Any] | None = None
 
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
@@ -200,37 +202,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             await handler(ctx, self._single_event_stream(stream_event))
 
         await event_stream_handler_task(event)
-
-    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Reject executing toolsets added per-run inside a flow.
-
-        The run toolset assembled by the agent contains construction-time toolsets (whose
-        function tools and MCP I/O `for_agent` wrapped as tasks) plus any per-run extras —
-        `run(toolsets=...)`, or toolsets contributed by per-run capabilities/specs. An
-        executing extra would run un-tasked inside the flow and re-execute on retries, so
-        it's rejected explicitly, like the deprecated `PrefectAgent` does. Non-executing
-        toolsets like `ExternalToolset` are allowed. Checked here in run setup so every
-        entry point inside a user flow is covered; only applies inside a flow — outside
-        one the capability is transparent and any toolset is fine.
-        """
-        if FlowRunContext.get() is None:
-            return
-
-        construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
-            for agent_toolset in self._agent.toolsets:
-                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
-
-        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
-
-        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
-
-        toolset.apply(collect)
-        reject_unsupported_runtime_toolsets(
-            runtime_leaves, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
-        )
 
     def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""
