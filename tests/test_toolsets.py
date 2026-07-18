@@ -797,6 +797,60 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_tool_manager_retry_count_survives_interleaved_successful_step():
+    """Retry counts carry over when a failed tool is skipped in an intervening step."""
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    retry_values: list[int] = []
+
+    @toolset.tool
+    def failing_tool(ctx: RunContext[Any], x: int) -> int:
+        """A tool that always fails."""
+        retry_values.append(ctx.retry)
+        raise ModelRetry('This tool always fails')
+
+    @toolset.tool_plain
+    def other_tool(x: int) -> int:
+        """A tool that works."""
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    result = await step_1_tool_manager.handle_call(ToolCallPart(tool_name='other_tool', args={'x': 3}))
+    assert result == 6
+
+    step_2_context = build_run_context(TestDeps(), run_step=2)
+    step_2_tool_manager = await step_1_tool_manager.for_run_step(step_2_context)
+    assert step_2_tool_manager.ctx is not None
+    assert step_2_tool_manager.ctx.retries == {'failing_tool': 1}
+
+    with pytest.raises(ToolRetryError):
+        await step_2_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    step_3_context = build_run_context(TestDeps(), run_step=3)
+    step_3_tool_manager = await step_2_tool_manager.for_run_step(step_3_context)
+    assert step_3_tool_manager.ctx is not None
+    assert step_3_tool_manager.ctx.retries == {'failing_tool': 2}
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'failing_tool' exceeded max retries count of 2"):
+        await step_3_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    assert retry_values == [0, 1, 2]
+
+
 async def test_handle_call_wrap_validation_errors_false():
     """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
 

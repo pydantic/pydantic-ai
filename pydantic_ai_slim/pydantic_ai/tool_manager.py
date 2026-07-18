@@ -88,6 +88,8 @@ class ToolManager(Generic[AgentDepsT]):
     by (`tool_def.name`)."""
     failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
+    succeeded_tools: set[str] = field(default_factory=set[str])
+    """Names of tools that succeeded in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
 
@@ -115,9 +117,16 @@ class ToolManager(Generic[AgentDepsT]):
                 return self
 
             retries = {
-                failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
-                for failed_tool_name in self.failed_tools
+                tool_name: count
+                for tool_name, count in self.ctx.retries.items()
+                if tool_name not in self.succeeded_tools
             }
+            retries.update(
+                {
+                    failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
+                    for failed_tool_name in self.failed_tools
+                }
+            )
             ctx = replace(ctx, retries=retries)
 
         toolset = await self.toolset.for_run_step(ctx)
@@ -666,6 +675,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise
 
+        self.succeeded_tools.add(name)
         return result
 
     async def handle_output_tool_call(
@@ -731,8 +741,10 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except SkipToolExecution as e:
             usage.tool_calls += 1
+            self.succeeded_tools.add(validated.call.tool_name)
             return e.result
 
+        self.succeeded_tools.add(validated.call.tool_name)
         return tool_result
 
     async def _raw_execute(
