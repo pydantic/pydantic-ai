@@ -747,8 +747,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for index, part in enumerate(native_tool_parts):
             events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))
-        if content.turn_complete:
-            events.append(TurnCompleteEvent(interrupted=False))
+        # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
+        # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
+        # finalizes the response's usage on `TurnCompleteEvent`, so the usage must be accounted first
+        # (matching OpenAI's codec, which emits usage before the turn boundary).
         return events
 
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeCodecEvent]:
@@ -766,6 +768,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.usage_metadata is not None:
             events.append(SessionUsageEvent(usage=_map_usage(message.usage_metadata)))
+        # Emit the turn boundary last — after this message's usage — so the session folds the turn's
+        # tokens into the finalized `ModelResponse` / `chat` span before `TurnCompleteEvent` closes it.
+        if message.server_content is not None and message.server_content.turn_complete:
+            events.append(TurnCompleteEvent(interrupted=False))
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

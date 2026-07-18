@@ -138,6 +138,12 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(final_part, SpeechPart)
     assert final_part.transcript is not None and 'fog' in final_part.transcript.lower()
 
+    # Gemini packs `turnComplete` and `usageMetadata` into the same message; the codec emits the usage
+    # before the turn boundary so the session folds it into this final `ModelResponse` instead of
+    # dropping it after the response was already finalized. (Regression test for usage attribution.)
+    assert final.usage.total_tokens > 0
+    assert session.usage.total_tokens == final.usage.total_tokens
+
 
 async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""

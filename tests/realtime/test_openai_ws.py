@@ -136,6 +136,13 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(final_part, TextPart)
     assert 'fog' in final_part.content.lower()
 
+    # Usage from BOTH provider responses is accounted for. The intermediate function-call-only
+    # response's `response.done` maps to no turn event (the turn isn't over), but its tokens are
+    # still counted — the connection emits a `SessionUsageEvent` for every `response.done`, so a
+    # tool-calling turn reports two usage updates, not just the final text response's.
+    assert session.usage.requests == 2
+    assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
+
 
 async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
