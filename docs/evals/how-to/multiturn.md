@@ -27,9 +27,9 @@ class SimulatorDecision(BaseModel):
     done: bool
 
 
-target_agent = Agent('openai:gpt-5.2')
+target_agent = Agent('openai:gpt-4.1-mini')
 simulator_agent = Agent(
-    'openai:gpt-5.2',
+    'openai:gpt-4.1-mini',
     deps_type=Scenario,
     output_type=SimulatorDecision,
     instructions=lambda ctx: f'Act as the user. Your goal is: {ctx.deps.goal}',

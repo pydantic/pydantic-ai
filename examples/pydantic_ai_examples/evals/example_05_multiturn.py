@@ -36,7 +36,7 @@ class SimulatorDecision(BaseModel):
 
 
 def build_target_agent(
-    model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> Agent[None, str]:
     return Agent(
         model,
@@ -49,7 +49,7 @@ def build_target_agent(
 
 
 def build_simulator_agent(
-    model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> Agent[ConversationScenario, SimulatorDecision]:
     def simulator_instructions(ctx: RunContext[ConversationScenario]) -> str:
         return (
@@ -68,8 +68,8 @@ def build_simulator_agent(
 
 def build_conversation_task(
     *,
-    target_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
-    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    target_model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
+    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> ConversationTask[ConversationScenario, str, str]:
     """Build the reusable task; message histories are managed by `from_agents`."""
     return ConversationTask.from_agents(
@@ -92,7 +92,7 @@ def build_dataset(
                     'and politely refuses non-animal questions.'
                 ),
                 include_input=True,
-                model='openai:gpt-5.2',
+                model='openai:gpt-4.1-mini',
             )
         ]
         if include_llm_judge

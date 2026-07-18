@@ -134,7 +134,7 @@ def classify_urgency(description: str) -> Urgency:
 
 
 def build_target_agent(
-    model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> Agent[None, TriageReply]:
     """Build the implementation for which tool usage is meaningful."""
     agent = Agent(
@@ -152,7 +152,7 @@ def build_target_agent(
 
 
 def build_simulator_agent(
-    model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> Agent[TriageScenario, SimulatorDecision]:
     def simulator_instructions(ctx: RunContext[TriageScenario]) -> str:
         return (
@@ -198,8 +198,8 @@ def simulator_prompt(
 
 def build_agent_conversation_task(
     *,
-    target_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
-    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    target_model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
+    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> ConversationTask[TriageScenario, str, TriageReply]:
     """Use the convenience adapter when both participants are Pydantic AI Agents."""
     return ConversationTask.from_agents(
@@ -215,7 +215,7 @@ def build_agent_conversation_task(
 
 def build_regex_conversation_task(
     *,
-    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2',
+    simulator_model: models.Model | models.KnownModelName | str = 'openai:gpt-4.1-mini',
 ) -> ConversationTask[TriageScenario, str, TriageReply]:
     """Compose the generic primitive with a non-Agent target.
 
