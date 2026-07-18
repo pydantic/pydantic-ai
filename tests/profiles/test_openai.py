@@ -110,6 +110,28 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+@pytest.mark.parametrize(
+    'prefixed,bare',
+    [
+        ('openai.gpt-5.6-sol', 'gpt-5.6-sol'),
+        ('openai.gpt-5.4', 'gpt-5.4'),
+        ('openai.gpt-4o', 'gpt-4o'),
+        ('openai.o3', 'o3'),
+    ],
+)
+def test_openai_model_profile_strips_vendor_namespace(prefixed: str, bare: str):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/6517.
+
+    Multi-vendor endpoints (e.g. Bedrock Mantle) prefix model IDs with a vendor
+    namespace like ``"openai."``. The profile must resolve the same capabilities
+    as the bare name, otherwise ``phase``/``tool_search``/``image_output`` flip
+    off and ``"openai."`` collides with the o-series reasoning prefix.
+    """
+    prefixed_profile = dict(openai_model_profile(prefixed))
+    bare_profile = dict(openai_model_profile(bare))
+    assert prefixed_profile == bare_profile
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

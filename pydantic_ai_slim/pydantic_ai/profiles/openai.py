@@ -281,6 +281,16 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    # Multi-vendor endpoints such as Bedrock Mantle prefix OpenAI model IDs with
+    # a vendor namespace (e.g. ``"openai.gpt-5.6-sol"``) so they can serve models
+    # from multiple providers behind one endpoint. Strip the namespace before the
+    # capability checks below, otherwise the ``startswith`` gates misfire: a
+    # prefixed ``"gpt-5.6-sol"`` loses ``phase``/``tool_search``/``image_output``
+    # support, and worse, ``"openai."`` itself starts with ``"o"`` and collides
+    # with the o-series reasoning prefix.
+    if model_name.startswith('openai.'):
+        model_name = model_name[len('openai.') :]
+
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
