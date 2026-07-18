@@ -110,6 +110,30 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+@pytest.mark.parametrize(
+    ('prefixed', 'bare'),
+    [
+        ('openai.gpt-5.6-sol', 'gpt-5.6-sol'),
+        ('openai.gpt-5.4', 'gpt-5.4'),
+        ('openai.gpt-4o', 'gpt-4o'),
+        ('openai.gpt-5', 'gpt-5'),
+    ],
+    ids=lambda v: v,
+)
+def test_openai_model_profile_strips_vendor_prefix(prefixed: str, bare: str):
+    """A vendor-prefixed model id (e.g. Bedrock Mantle's `openai.` prefix) must
+    resolve to the same capability profile as the bare model name.
+
+    Regression test for #6517: without stripping, `openai.gpt-5.6-sol` missed
+    the `gpt-5.6` prefix (false negatives on phase/tool_search/image_output)
+    and collided with the `'o'` reasoning check (false positive on
+    `openai_supports_reasoning` for non-reasoning models like `gpt-oss-120b`).
+    """
+    prefixed_profile = openai_model_profile(prefixed)
+    bare_profile = openai_model_profile(bare)
+    assert dict(prefixed_profile) == dict(bare_profile)
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

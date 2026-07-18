@@ -281,6 +281,14 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    # Bedrock Mantle (and other multi-vendor gateways) prefix OpenAI model IDs
+    # with `openai.` so they can disambiguate from other vendors served behind
+    # the same endpoint. Strip that prefix before matching capability prefixes,
+    # otherwise `gpt-5.6-sol` capabilities are silently mis-detected when the
+    # caller passes the prefixed form. See pydantic/pydantic-ai#6517.
+    if model_name.startswith('openai.'):
+        model_name = model_name.removeprefix('openai.')
+
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
