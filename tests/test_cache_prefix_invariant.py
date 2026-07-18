@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from .cassette_utils import (
     canonical_prefix_blocks,
     check_cache_prefix_stability,
     classify_prefix_pair,
+    is_new_user_turn,
     iter_cassette_prefix_violations,
 )
 from .conftest import fail_cache_prefix_violations
@@ -165,6 +167,65 @@ def test_classify_prefix_pair_non_object_message_blocks() -> None:
     a = [('messages', '"one"'), ('messages', '"two"')]
     b = [('messages', '"one"'), ('messages', '"different"')]
     assert classify_prefix_pair(a, b) == ('messages-divergent', 1)
+
+
+def _openai_chat_blocks(*, tools: bool, messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Cache-ordered blocks for an `openai-chat` request, mirroring `canonical_prefix_blocks`."""
+    blocks: list[tuple[str, str]] = []
+    if tools:
+        blocks.append(('tools', json.dumps({'function': {'name': 'get_weather'}})))
+    blocks.extend(('messages', json.dumps(message)) for message in messages)
+    return blocks
+
+
+def test_classify_prefix_pair_toolset_dropped_at_new_turn_is_boundary() -> None:
+    """A tool-using run followed by a tool-free run that appends a new user turn is a run boundary.
+
+    This is the shape a tool-using `generator` agent followed by a tool-free `probe` agent produces
+    in one cassette: the toolset drops to nothing, but a genuine new user turn marks a new run, so it
+    must not be reported as a moved prefix.
+    """
+    turn = [
+        {'role': 'user', 'content': 'What is the weather in Paris?'},
+        {'role': 'assistant', 'tool_calls': [{'id': 'c1'}]},
+        {'role': 'tool', 'tool_call_id': 'c1', 'content': 'sunny'},
+    ]
+    a = _openai_chat_blocks(tools=True, messages=turn)
+    b = _openai_chat_blocks(
+        tools=False,
+        messages=[*turn, {'role': 'assistant', 'content': 'It is sunny.'}, {'role': 'user', 'content': 'Reply OK'}],
+    )
+    assert classify_prefix_pair(a, b) == ('different-conversation', -1)
+
+
+def test_classify_prefix_pair_toolset_dropped_mid_run_is_flagged() -> None:
+    """Clearing the toolset mid-run (no new user turn) stays a violation, not a benign boundary.
+
+    A tool-search or deferred-loading bug that wrongly drops every tool between two requests of the
+    same run appends only assistant/tool-result messages, so it must still surface as `tools-divergent`.
+    """
+    turn = [
+        {'role': 'user', 'content': 'What is the weather in Paris?'},
+        {'role': 'assistant', 'tool_calls': [{'id': 'c1'}]},
+        {'role': 'tool', 'tool_call_id': 'c1', 'content': 'sunny'},
+    ]
+    a = _openai_chat_blocks(tools=True, messages=turn)
+    b = _openai_chat_blocks(
+        tools=False,
+        messages=[*turn, {'role': 'assistant', 'tool_calls': [{'id': 'c2'}]}, {'role': 'tool', 'tool_call_id': 'c2'}],
+    )
+    assert classify_prefix_pair(a, b) == ('tools-divergent', 0)
+
+
+def test_is_new_user_turn_ignores_tool_results() -> None:
+    """Tool/function results ride on user-role messages for several providers; they aren't new turns."""
+    assert is_new_user_turn(json.dumps({'role': 'user', 'content': 'Reply OK'})) is True
+    assert is_new_user_turn(json.dumps({'role': 'assistant', 'content': 'done'})) is False
+    assert is_new_user_turn(json.dumps({'role': 'user', 'content': [{'type': 'tool_result', 'content': 'x'}]})) is False
+    assert is_new_user_turn(json.dumps({'role': 'user', 'content': [{'toolResult': {}}]})) is False
+    assert is_new_user_turn(json.dumps({'role': 'user', 'parts': [{'functionResponse': {}}]})) is False
+    assert is_new_user_turn('not-json') is False
+    assert is_new_user_turn('["a", "bare", "list"]') is False
 
 
 def test_iter_cassette_prefix_violations_skips_malformed_cassettes(tmp_path: Path) -> None:

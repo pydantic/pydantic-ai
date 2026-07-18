@@ -120,6 +120,38 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
     return None
 
 
+def is_new_user_turn(block: str) -> bool:
+    """True when a `messages` block is a fresh user prompt rather than a tool/function result.
+
+    A new user turn beyond the previous request's history marks a new conversation turn or run (a
+    fresh `agent.run()`), where a legitimately different toolset -- including none -- is expected.
+    Within a single run the agent loop only appends assistant and tool-result messages, never a new
+    user prompt, so a genuine user turn is the reliable boundary signal. Tool and function results are
+    carried on user-role messages by several providers (Anthropic/Bedrock `tool_result`/`toolResult`
+    content, Google `functionResponse` parts, OpenAI Responses `function_call_output`); those are part
+    of the same turn, so they are not counted as a new one.
+    """
+    try:
+        message = json.loads(block)
+    except Exception:
+        return False
+    if not is_str_dict(message) or message.get('role') != 'user':
+        return False
+    content = message.get('content')
+    parts = content if _is_list(content) else message.get('parts')
+    if _is_list(parts):
+        return not any(
+            is_str_dict(part)
+            and (
+                part.get('type') in ('tool_result', 'function_call_output')
+                or 'toolResult' in part
+                or 'functionResponse' in part
+            )
+            for part in parts
+        )
+    return True
+
+
 def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[str, int]:
     """Classify how the cache-ordered blocks change between consecutive requests."""
     if a == b:
@@ -152,6 +184,21 @@ def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[st
     b_identity = conversation_identity(b)
     if a_identity is not None and b_identity is not None and a_identity != b_identity:
         return 'different-conversation', divergent_index
+
+    # A request that drops the entire toolset as a new user turn begins is a new conversation turn or
+    # run (a fresh agent reusing an earlier run's history, e.g. a tool-using generator followed by a
+    # tool-free probe), not a moved prefix. This is only a boundary when a genuine new user turn is
+    # appended: within a single run the toolset is constant and only assistant/tool-result messages
+    # are appended, so a tools-drop *without* a new user turn -- a tool-search or deferred-loading bug
+    # wrongly clearing the tools mid-run -- still falls through to `tools-divergent` and is flagged.
+    if level == 'tools' and not any(block_level == 'tools' for block_level, _ in b):
+        a_messages = [block for block_level, block in a if block_level == 'messages']
+        b_messages = [block for block_level, block in b if block_level == 'messages']
+        if b_messages[: len(a_messages)] == a_messages and any(
+            is_new_user_turn(block) for block in b_messages[len(a_messages) :]
+        ):
+            return 'different-conversation', -1
+
     return f'{level}-divergent', divergent_index
 
 
