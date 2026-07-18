@@ -95,12 +95,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Build the model registry on a bound copy from the agent's default model and `models=` extras.
 
-        Called from `for_agent`. The agent's default is registered as `'default'` (that key is
-        reserved). A string default is resolved here — via a `models=` entry registered under
-        the raw string (the user explicitly mapped it to an instance, so it *is* the default),
-        the registry, or `infer_model` — and the raw string is additionally registered as a
-        registry alias so run-time resolution of the default yields the same instance (and
-        requests take the `model_id=None` fast path across the durable boundary).
+        Called from `for_agent`. A concrete default — a `Model` instance, or a string the user
+        explicitly mapped to one via `models=` (so it *is* the default) — is registered as
+        `'default'` (that key is reserved), and a `models=` string is also kept under its raw
+        string so run-time resolution of the default yields the same instance.
+
+        A plain string default is deliberately *not* resolved here: constructing it eagerly could
+        build the wrong provider — with authentication/configuration side effects — before a
+        sibling [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] gets to reinterpret it.
+        Instead no `'default'` is registered; every request for the default carries the raw string
+        and re-resolves through the capability chain (or `infer_model`) on the worker.
         """
         if agent.model is None:
             raise UserError(
@@ -109,20 +113,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         default_model: Model | None
         if isinstance(agent.model, str):
-            # The agent's default stayed a string because a capability owns string
-            # resolution (this capability itself, at minimum — see `Agent.__init__`).
-            # Resolve it here the same way runtime strings are resolved, so a concrete
-            # default model can be registered.
-            if agent.model in self._extra_models:
-                default_model = self._extra_models[agent.model]
-            else:
-                try:
-                    default_model = infer_model(agent.model)
-                except (UserError, ValueError):
-                    # An alias only a deps-aware capability (e.g. `ResolveModelId`) can
-                    # resolve. No concrete default can be registered; every request for
-                    # the default carries the raw string and re-resolves on the worker.
-                    default_model = None
+            # Only a `models=` mapping resolves the string to a concrete default here; any other
+            # string defers to run-time resolution (a sibling `ResolveModelId`, this capability's
+            # registry, or `infer_model`) so it's built worker-side with the run's deps.
+            default_model = self._extra_models.get(agent.model)
         else:
             default_model = agent.model
 
@@ -131,8 +125,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if model_id == 'default':
                 raise UserError("Model ID 'default' is reserved for the agent's primary model.")
             self._models_by_id[model_id] = model_instance
-        if isinstance(agent.model, str) and default_model is not None and agent.model not in self._models_by_id:
-            self._models_by_id[agent.model] = default_model
 
     async def resolve_model_id(
         self,

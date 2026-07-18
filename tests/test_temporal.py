@@ -5521,6 +5521,25 @@ async def test_durability_default_string_registered_in_models_becomes_default():
     assert bound._find_model_id(custom) is None  # identity-matches 'default'  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_durability_default_string_not_in_models_defers_to_resolution_chain():
+    """A plain string default isn't resolved at bind time — it defers to run-time resolution.
+
+    Building the default eagerly here could construct the wrong provider — with its
+    authentication/configuration side effects — before a sibling `ResolveModelId` gets to
+    reinterpret the string, so no `'default'` is registered and the raw string re-resolves
+    through the capability chain (or `infer_model`) on the worker.
+    """
+    durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+    agent = Agent('test', name='default_defers_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # No concrete default was built at bind time, so the registry is empty and resolving the
+    # default string defers (`None`) to the chain / `infer_model` rather than a pre-built instance.
+    assert bound._models_by_id == {}  # pyright: ignore[reportPrivateUsage]
+    assert await bound.resolve_model_id(ModelResolutionContext(agent=agent, deps=None), model_id='test') is None
+
+
 # --- Deps-aware model resolution via the `ResolveModelId` capability ---
 
 
