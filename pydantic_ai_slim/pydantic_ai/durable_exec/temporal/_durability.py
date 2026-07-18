@@ -283,23 +283,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._temporal_activities: list[Callable[..., Any]] = []
         self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
 
-    @classmethod
-    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> TemporalDurability[Any] | None:
-        """Return the bound `TemporalDurability` on an agent, walking its capability chain.
-
-        Use this to retrieve the instance whose `temporal_activities` are registered
-        with Temporal, since `for_agent` returns a new bound copy and leaves the
-        user's original capability ref pristine.
-        """
-        found: list[TemporalDurability[Any]] = []
-
-        def visitor(cap: Any) -> None:
-            if isinstance(cap, cls):
-                found.append(cap)
-
-        agent.root_capability.apply(visitor)
-        return found[0] if found else None
-
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> TemporalDurability[AgentDepsT]:
         """Bind to the agent: discover model, name, toolsets and register Temporal activities.
 

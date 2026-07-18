@@ -116,18 +116,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         self._request_stream_task: Any = None
         self._cancel_suspended_response_task: Any = None
 
-    @classmethod
-    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> PrefectDurability[Any] | None:
-        """Return the bound `PrefectDurability` on an agent, walking its capability chain."""
-        found: list[PrefectDurability[Any]] = []
-
-        def visitor(cap: Any) -> None:
-            if isinstance(cap, cls):
-                found.append(cap)
-
-        agent.root_capability.apply(visitor)
-        return found[0] if found else None
-
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> PrefectDurability[AgentDepsT]:
         """Bind to the agent: discover model, name, toolsets and register Prefect tasks.
 

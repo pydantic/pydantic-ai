@@ -4,6 +4,8 @@ from abc import abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import Any, ClassVar
 
+from typing_extensions import Self
+
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
@@ -51,6 +53,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
+
+    @classmethod
+    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> Self | None:
+        """Return the bound instance of this durability capability on an agent, if any.
+
+        [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] returns a new bound
+        copy and leaves the user's original capability reference pristine, so use this to retrieve
+        the instance the agent actually runs with — e.g. the `TemporalDurability` whose activities
+        are registered with the worker. Walks the agent's capability chain and returns the first
+        match, or `None`.
+        """
+        found: list[Self] = []
+
+        def visitor(cap: Any) -> None:
+            if isinstance(cap, cls):
+                found.append(cap)
+
+        agent.root_capability.apply(visitor)
+        return found[0] if found else None
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

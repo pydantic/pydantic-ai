@@ -115,18 +115,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._cancel_suspended_response_step: Any = None
         self._event_stream_handler_step: Any = None
 
-    @classmethod
-    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> DBOSDurability[Any] | None:
-        """Return the bound `DBOSDurability` on an agent, walking its capability chain."""
-        found: list[DBOSDurability[Any]] = []
-
-        def visitor(cap: Any) -> None:
-            if isinstance(cap, cls):
-                found.append(cap)
-
-        agent.root_capability.apply(visitor)
-        return found[0] if found else None
-
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> DBOSDurability[AgentDepsT]:
         """Bind to the agent: discover model, name, toolsets and register DBOS steps.
 
