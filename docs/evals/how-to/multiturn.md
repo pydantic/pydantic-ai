@@ -194,4 +194,4 @@ conversation = ConversationTask(
 
 This lets the same [`Dataset`][pydantic_evals.dataset.Dataset] and output evaluators compare different implementations. Evaluators that assert implementation-specific behavior, such as Agent tool calls, should only be attached to implementations that provide that capability.
 
-Complete runnable examples are available in `pydantic_ai_examples.evals.example_05_multiturn` and `pydantic_ai_examples.evals.example_06_multiturn_veterinary`.
+Complete runnable scripts are available in `examples/pydantic_ai_examples/evals/example_05_multiturn.py` and `examples/pydantic_ai_examples/evals/example_06_multiturn_veterinary.py`.

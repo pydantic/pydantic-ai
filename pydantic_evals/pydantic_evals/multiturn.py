@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from time import perf_counter
-from typing import Any, Generic, Literal, TypeAlias
+from typing import Any, Generic, Literal
 
 from typing_extensions import TypeVar
 
@@ -23,12 +23,7 @@ InputsT = TypeVar('InputsT', default=Any)
 UserMessageT = TypeVar('UserMessageT', default=Any)
 TargetOutputT = TypeVar('TargetOutputT', default=Any)
 SimulatorOutputT = TypeVar('SimulatorOutputT')
-
-_TargetSession: TypeAlias = Callable[[UserMessageT], TargetOutputT | Awaitable[TargetOutputT]]
-_SimulatorSession: TypeAlias = Callable[
-    [Sequence['ConversationTurn[UserMessageT, TargetOutputT]']],
-    UserMessageT | None | Awaitable[UserMessageT | None],
-]
+_T = TypeVar('_T')
 
 
 @dataclass(frozen=True)
@@ -79,8 +74,17 @@ class ConversationTask(Generic[InputsT, UserMessageT, TargetOutputT]):
         self,
         *,
         first_message: Callable[[InputsT], UserMessageT | Awaitable[UserMessageT]],
-        target_factory: Callable[[InputsT], _TargetSession[UserMessageT, TargetOutputT]],
-        simulator_factory: Callable[[InputsT], _SimulatorSession[UserMessageT, TargetOutputT]],
+        target_factory: Callable[
+            [InputsT],
+            Callable[[UserMessageT], TargetOutputT | Awaitable[TargetOutputT]],
+        ],
+        simulator_factory: Callable[
+            [InputsT],
+            Callable[
+                [Sequence[ConversationTurn[UserMessageT, TargetOutputT]]],
+                UserMessageT | None | Awaitable[UserMessageT | None],
+            ],
+        ],
         max_turns: int | Callable[[InputsT], int] = 6,
     ) -> None:
         """Create a conversation task.
@@ -174,7 +178,9 @@ class ConversationTask(Generic[InputsT, UserMessageT, TargetOutputT]):
             `Dataset.evaluate`.
         """
 
-        def build_target(inputs: InputsT) -> _TargetSession[str, TargetOutputT]:
+        def build_target(
+            inputs: InputsT,
+        ) -> Callable[[str], TargetOutputT | Awaitable[TargetOutputT]]:
             message_history: list[ModelMessage] = []
             turn_index = 0
 
@@ -190,7 +196,12 @@ class ConversationTask(Generic[InputsT, UserMessageT, TargetOutputT]):
 
             return run_target
 
-        def build_simulator(inputs: InputsT) -> _SimulatorSession[str, TargetOutputT]:
+        def build_simulator(
+            inputs: InputsT,
+        ) -> Callable[
+            [Sequence[ConversationTurn[str, TargetOutputT]]],
+            str | None | Awaitable[str | None],
+        ]:
             message_history: list[ModelMessage] = []
 
             async def run_simulator(
@@ -216,7 +227,7 @@ class ConversationTask(Generic[InputsT, UserMessageT, TargetOutputT]):
         )
 
 
-async def _resolve(value: TargetOutputT | Awaitable[TargetOutputT]) -> TargetOutputT:
+async def _resolve(value: _T | Awaitable[_T]) -> _T:
     if inspect.isawaitable(value):
         return await value
     return value
