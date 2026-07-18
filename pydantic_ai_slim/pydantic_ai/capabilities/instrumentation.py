@@ -10,7 +10,7 @@ from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
 from pydantic import ValidationError
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -284,7 +284,7 @@ class Instrumentation(AbstractCapability[Any]):
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
 
-    def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
+    def _tool_span_attributes(self, call: ToolCallPart, *, allow_invalid_args: bool = False) -> dict[str, Any]:
         """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
 
         Both spans use `gen_ai.operation.name='execute_tool'` and the same `gen_ai.tool.*`
@@ -293,11 +293,19 @@ class Instrumentation(AbstractCapability[Any]):
         """
         names = self._instrumentation_names
         include_content = self.settings.include_content
+        content_attributes: dict[str, Any] = {}
+        if include_content:
+            try:
+                content_attributes[names.tool_arguments_attr] = call.args_as_json_str()
+            except PydanticSerializationError:
+                if not allow_invalid_args:
+                    raise
+
         return {
             'gen_ai.operation.name': 'execute_tool',
             'gen_ai.tool.name': call.tool_name,
             'gen_ai.tool.call.id': call.tool_call_id,
-            **({names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
+            **content_attributes,
             **get_agent_run_baggage_attributes(),
             'logfire.msg': f'running tool: {call.tool_name}',
             'logfire.json_schema': to_json(
@@ -327,6 +335,7 @@ class Instrumentation(AbstractCapability[Any]):
         action: Callable[[], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
         handle_tool_control_flow: bool = False,
+        record_exception_details: bool = True,
     ) -> Any:
         """Open a `gen_ai`-flavoured tool/output span around `action`.
 
@@ -351,11 +360,23 @@ class Instrumentation(AbstractCapability[Any]):
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
+            def record_exception(exc: BaseException) -> None:
+                if record_exception_details:
+                    span.record_exception(exc, escaped=True)
+                else:
+                    span.add_event(
+                        'exception',
+                        {
+                            'exception.type': f'{type(exc).__module__}.{type(exc).__qualname__}',
+                            'exception.escaped': True,
+                        },
+                    )
+
             try:
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
-                    span.record_exception(exc, escaped=True)
+                    record_exception(exc)
                     span.set_status(StatusCode.ERROR)
                     raise
                 # Deferrals are control flow, not errors: capture the deferral name (and
@@ -369,7 +390,7 @@ class Instrumentation(AbstractCapability[Any]):
                         metadata_str = repr(exc.metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
-                    span.record_exception(exc, escaped=True)
+                    record_exception(exc)
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
@@ -377,11 +398,11 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
-                span.record_exception(e, escaped=True)
+                record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e, escaped=True)
+                record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
 
@@ -431,9 +452,10 @@ class Instrumentation(AbstractCapability[Any]):
 
             return await self._run_tool_span(
                 span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-                attributes=self._tool_span_attributes(call),
+                attributes=self._tool_span_attributes(call, allow_invalid_args=True),
                 action=raise_validation_error,
                 serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+                record_exception_details=self.settings.include_content,
             )
 
     # ------------------------------------------------------------------

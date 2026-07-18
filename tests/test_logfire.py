@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsList
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._utils import get_traceparent
+from pydantic_ai._utils import get_traceparent, run_until_complete
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -19,7 +19,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import DeferredToolRequests, RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -3391,7 +3391,13 @@ def test_deferral_model_retry_still_errors_v5(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_tool_arg_validation_failure_records_tool_span(capfire: CaptureLogfire) -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+def test_tool_arg_validation_failure_records_tool_span(capfire: CaptureLogfire, include_content: bool) -> None:
+    """This uses an internal `FunctionModel` and span exporter to assert instrumentation details.
+
+    A VCR cassette would only replay provider responses; it could not verify the generated tool span events.
+    """
+
     def call_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         response_count = sum(isinstance(message, ModelResponse) for message in messages)
         if response_count == 0:
@@ -3404,7 +3410,7 @@ def test_tool_arg_validation_failure_records_tool_span(capfire: CaptureLogfire) 
 
     agent = Agent(
         FunctionModel(call_model),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5, include_content=include_content))],
     )
 
     @agent.tool_plain
@@ -3415,20 +3421,74 @@ def test_tool_arg_validation_failure_records_tool_span(capfire: CaptureLogfire) 
 
     assert result.output == 'done'
     spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
-    tool_spans = {
-        span['attributes']['gen_ai.tool.call.id']: span for span in spans if span['name'] == 'execute_tool double'
-    }
+    tool_spans = [span for span in spans if span['name'] == 'execute_tool double']
+    assert len(tool_spans) == 2
+    tool_spans_by_call_id = {span['attributes']['gen_ai.tool.call.id']: span for span in tool_spans}
 
-    assert tool_spans.keys() == {'invalid-tool-call', 'valid-tool-call'}
+    assert tool_spans_by_call_id.keys() == {'invalid-tool-call', 'valid-tool-call'}
 
-    invalid_attrs = tool_spans['invalid-tool-call']['attributes']
-    assert invalid_attrs['gen_ai.tool.call.arguments'] == {'x': 'not an int'}
+    invalid_span = tool_spans_by_call_id['invalid-tool-call']
+    invalid_attrs = invalid_span['attributes']
+    if include_content:
+        assert invalid_attrs['gen_ai.tool.call.arguments'] == {'x': 'not an int'}
+    else:
+        assert 'gen_ai.tool.call.arguments' not in invalid_attrs
     assert invalid_attrs.get('logfire.level_num') == 17
-    assert any(event['name'] == 'exception' for event in tool_spans['invalid-tool-call']['events'])
+    exception_event = next(event for event in invalid_span['events'] if event['name'] == 'exception')
+    exception_attrs = exception_event['attributes']
+    assert exception_attrs['exception.type'].endswith('ValidationError')
+    if include_content:
+        assert 'not an int' in exception_attrs['exception.message']
+    else:
+        assert 'exception.message' not in exception_attrs
 
-    valid_attrs = tool_spans['valid-tool-call']['attributes']
-    assert valid_attrs['gen_ai.tool.call.arguments'] == {'x': 2}
+    valid_attrs = tool_spans_by_call_id['valid-tool-call']['attributes']
+    if include_content:
+        assert valid_attrs['gen_ai.tool.call.arguments'] == {'x': 2}
+    else:
+        assert 'gen_ai.tool.call.arguments' not in valid_attrs
     assert 'logfire.level_num' not in valid_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_arg_validation_span_skips_unserializable_args(capfire: CaptureLogfire) -> None:
+    """This calls the capability hook directly to pin instrumentation safety.
+
+    A provider VCR cassette cannot contain arbitrary Python objects, and `FunctionModel` usage estimation serializes
+    response args before validation hooks run.
+    """
+
+    invalid_input = object()
+
+    class Args(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError) as exc_info:
+        Args(x=invalid_input)
+    validation_error = exc_info.value
+
+    async def handler(_args: str | dict[str, Any]) -> Any:
+        raise validation_error
+
+    instrumentation = Instrumentation(settings=InstrumentationSettings(version=5))
+    with pytest.raises(ValueError):
+        run_until_complete(
+            instrumentation.wrap_tool_validate(
+                cast(RunContext[Any], object()),
+                call=ToolCallPart('double', {'x': invalid_input}, tool_call_id='invalid-tool-call'),
+                tool_def=ToolDefinition(name='double'),
+                args={'x': invalid_input},
+                handler=handler,
+            )
+        )
+
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    tool_spans = [span for span in spans if span['name'] == 'execute_tool double']
+    assert len(tool_spans) == 1
+    invalid_attrs = tool_spans[0]['attributes']
+    assert invalid_attrs['gen_ai.tool.call.id'] == 'invalid-tool-call'
+    assert 'gen_ai.tool.call.arguments' not in invalid_attrs
+    assert any(event['name'] == 'exception' for event in tool_spans[0]['events'])
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
