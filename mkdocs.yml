@@ -91,6 +91,7 @@ nav:
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
           - Case Lifecycle Hooks: evals/how-to/lifecycle.md
+          - Multi-Turn Evaluation: evals/how-to/multiturn.md
       - Examples:
           - Simple Validation: evals/examples/simple-validation.md
 
@@ -196,6 +197,7 @@ nav:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
           - api/pydantic_evals/lifecycle.md
+          - api/pydantic_evals/multiturn.md
           - api/pydantic_evals/online.md
           - api/pydantic_evals/online_capability.md
           - api/pydantic_evals/reporting.md
