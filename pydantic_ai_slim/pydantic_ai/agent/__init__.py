@@ -2962,9 +2962,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         This mirrors [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]
         for the parameters that map to a long-lived, bidirectional session. Parameters that are
-        specific to the request-response graph — `output_type`, `conversation_id` (as history),
-        `retries`, `event_stream_handler`, `deferred_tool_results` — do not apply; structured output
-        should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the realtime docs). Of the
+        specific to the request-response graph — `output_type`, `retries`, `event_stream_handler`,
+        `deferred_tool_results` — do not apply; structured output should be delegated to a normal
+        [`Agent`][pydantic_ai.Agent] (see the realtime docs). Of the
         `capabilities` lifecycle, only the **tool** hooks (`prepare_tools`,
         `before`/`after`/`wrap` `tool_validate`, and `before`/`after`/`wrap`/`on_error` `tool_execute`)
         run, since the session validates and executes tools but has no model-request/graph/output
@@ -3002,8 +3002,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
                 exposed as `session.usage`. A fresh one is used when omitted.
             usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Token and
-                tool-call limits are enforced as usage accrues; on breach the session emits a
-                non-recoverable [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] and ends.
+                tool-call limits are enforced as usage accrues; a breach raises
+                [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's
+                event iterator, matching how `run` / `iter` surface a usage limit.
             metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
                 available to tools and capabilities.
             conversation_id: Optional conversation id, set on the run context and the telemetry span

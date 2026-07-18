@@ -1,7 +1,7 @@
 # `pydantic_ai.realtime`
 
-Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, and any other
-provider that streams audio in and out over a persistent connection).
+Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, Gemini Live, xAI
+Grok Voice, and any other provider that streams audio in and out over a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -17,7 +17,7 @@ graph LR
     App -- "send(): RealtimeSessionInput" --> S[RealtimeSession]
     S -- "send(): RealtimeInput" --> C[RealtimeConnection]
     M[RealtimeModel] -- "connect()" --> C
-    C -- "RealtimeEvent" --> S
+    C -- "RealtimeCodecEvent" --> S
     S -- "RealtimeEvent" --> App
 ```
 
@@ -71,7 +71,9 @@ vocabulary yielded by a connection:
 [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent],
 [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent],
 [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent],
-and [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent].
+[`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent],
+[`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent],
+and [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent].
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from

@@ -1,8 +1,9 @@
 """Realtime camera + voice assistant — talk to a Gemini Live model and show it your camera.
 
 The browser streams microphone audio (PCM16, 16kHz) and ~1 fps JPEG camera frames into a Gemini
-Live session and plays the model's audio back. Pure conversation — no tools, no supervisor — just
-"talk and show": point your camera at something and ask about it.
+Live session and plays the model's audio back: point your camera at something and ask about it.
+The assistant can also ground answers with web search and redraw a hand-drawn sketch into a clean
+diagram (see the tool and capability notes below).
 
 Requires `GOOGLE_API_KEY` (Gemini Live access) — or, where org policy disallows API keys, set
 `GOOGLE_GENAI_USE_VERTEXAI=true` (+ `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` and
@@ -330,7 +331,9 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
                 {'url': item.get('uri'), 'title': item.get('title')}
                 for source in sources
                 if isinstance(source, dict)
-                and isinstance((item := cast('dict[str, object]', source)).get('uri'), str)
+                and isinstance(
+                    (item := cast('dict[str, object]', source)).get('uri'), str
+                )
             ],
         }
     if isinstance(event, TurnCompleteEvent):

@@ -21,6 +21,14 @@ loop for you.
     The [voice assistant example](examples/realtime-voice.md) is a complete, runnable script —
     microphone in, speakers out, one tool. Come back here for the *why*.
 
+!!! note "Connecting a browser or other frontend"
+    A session runs on *your* server, not in the browser: audio flows **browser ⟷ your app server
+    ⟷ provider**. Your frontend streams microphone audio to your server (e.g. over a WebSocket),
+    which feeds it into the session with [`session.send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio]
+    and streams the session's audio events back out. The [camera example](examples/realtime-camera.md)
+    is a full browser-to-server demo (mic, speaker, and live video frames over a WebSocket). Direct
+    browser-to-provider transport (WebRTC) is [not yet supported](#not-yet-supported).
+
 ## Installation
 
 The OpenAI provider ([`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]) uses
@@ -404,7 +412,9 @@ Send an image as conversation context (for example a video frame) with
 response — the model picks it up on the next turn (via VAD or `create_response`).
 
 ```python {test="skip" lint="skip"}
-await session.send(jpeg_bytes, mime_type='image/jpeg')
+from pydantic_ai import BinaryContent
+
+await session.send(BinaryContent(data=jpeg_bytes, media_type='image/jpeg'))
 ```
 
 **Live vision (Gemini).** For a "show the camera and ask about it" experience, stream frames
@@ -594,11 +604,11 @@ latest resumption handle the server issued:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.realtime import ReconnectPolicy
-from pydantic_ai.realtime.google import GoogleRealtimeModel
+from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
 
 model = GoogleRealtimeModel(
     'gemini-2.5-flash-native-audio-latest',
-    google_enable_session_resumption=True,
+    settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
     reconnect=ReconnectPolicy(max_attempts=5),
 )
 ```
@@ -736,8 +746,9 @@ Some capabilities are intentionally out of scope:
 
 A provider implements two ABCs: [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel]
 (opens a connection) and [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]
-(sends [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] and yields
-[`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]). The OpenAI provider in
-[`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference implementation; the same
-shape applies to Gemini Live, Amazon Nova Sonic, and others. Inputs a provider doesn't support
-(e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.
+(sends [`RealtimeInput`][pydantic_ai.realtime.RealtimeInput] and yields the low-level
+[`RealtimeCodecEvent`][pydantic_ai.realtime.RealtimeCodecEvent] vocabulary, which the session
+translates into user-facing [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent]s). The OpenAI
+provider in [`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] is a reference
+implementation; the same shape applies to Gemini Live, xAI Grok Voice, and others. Inputs a provider
+doesn't support (e.g. `ImageInput`, or the manual turn-taking verbs) should raise `NotImplementedError`.
