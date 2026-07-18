@@ -27,6 +27,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
+    AgentModel,
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
@@ -75,15 +76,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
-    @property
-    def has_resolve_model_id(self) -> bool:
-        return any(c.has_resolve_model_id for c in self.capabilities)
-
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [c.for_agent(agent) for c in self.capabilities]
-        if all(new is old for new, old in zip(new_caps, self.capabilities)):  # pragma: no branch
+        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=list(new_caps))
+        return replace(self, capabilities=new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
@@ -153,6 +150,32 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         return resolve
 
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        model: AgentModel[AgentDepsT] | None = None
+        for capability in self.capabilities:
+            if capability.defer_loading is not True and (capability_model := capability.get_model()) is not None:
+                model = capability_model
+        return model
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return any(
+            capability.defer_loading is not True and capability.has_resolve_model_id for capability in self.capabilities
+        )
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        for capability in self.capabilities:
+            if capability.defer_loading is True:
+                continue
+            if (model := await capability.resolve_model_id(ctx, model_id=model_id)) is not None:
+                return model
+        return None
+
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []
         for capability in self.capabilities:
@@ -211,22 +234,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
-
-    async def resolve_model_id(
-        self,
-        model_id: KnownModelName | str,
-        ctx: ModelResolutionContext[AgentDepsT],
-    ) -> Model | None:
-        # First-non-None wins, in user-supplied order: the first capability in the
-        # `capabilities=[...]` list gets first crack at a string and any later
-        # capability only fires if every capability before it returned None.
-        # Per-request *wrapping* of a resolved Model is a separate concern handled
-        # by `before_model_request`, so each-layer-wraps semantics aren't needed.
-        for capability in self.capabilities:
-            result = await capability.resolve_model_id(model_id, ctx)
-            if result is not None:
-                return result
-        return None
 
     # --- Tool preparation hooks ---
 

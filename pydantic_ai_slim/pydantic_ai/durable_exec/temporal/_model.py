@@ -293,7 +293,7 @@ class TemporalModel(WrapperModel):
         if isinstance(model, Model):
             return model
 
-        # For strings and None, use _get_model_id + _resolve_model
+        # For strings and None, use _get_model_id + _resolve_model_id
         model_id = self._get_model_id(model)
         return self._resolve_model_id(model_id)
 

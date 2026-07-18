@@ -122,6 +122,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         dbosagent_name = self._name
 
+        seen_mcp_ids: set[str] = set()
+
         def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             # Replace `MCPToolset` with its DBOS-wrapped variant.
             try:
@@ -137,6 +139,18 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
                             "The ID will be used to identify the MCP server's steps within the workflow."
                         )
+                    # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
+                    # sharing one id would silently collide (the second server would return the first's
+                    # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
+                    # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
+                    if toolset.id in seen_mcp_ids:
+                        raise UserError(
+                            f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+                            f'but more than one leaf toolset uses the id {toolset.id!r}. '
+                            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+                            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+                        )
+                    seen_mcp_ids.add(toolset.id)
                     return DBOSMCPToolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,

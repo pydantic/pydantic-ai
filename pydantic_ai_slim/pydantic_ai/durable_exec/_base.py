@@ -136,8 +136,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     async def resolve_model_id(
         self,
-        model_id: KnownModelName | str,
         ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
     ) -> Model | None:
         """Map a model-name string to its `models=` registry instance, or `None` to defer.
 
@@ -196,7 +197,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
 
-        Mirrors the workflow-side resolution in `Agent._resolve_model`: run the agent's
+        Mirrors the workflow-side resolution in `Agent._resolve_model_selection`: run the agent's
         full `resolve_model_id` capability chain — deps-aware user capabilities like
         `ResolveModelId` get first crack, and this capability's registry resolution
         acts as the durable backstop — so a model whose provider depends on the run's
@@ -210,7 +211,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
-            resolved = await root_capability.resolve_model_id(model_id, resolution_ctx)
+            resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)
             if resolved is not None:
                 return resolved
         try:

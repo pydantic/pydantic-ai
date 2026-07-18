@@ -62,6 +62,8 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.capabilities import (
+    MCP,
+    Capability,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -115,6 +117,7 @@ try:
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -1473,6 +1476,75 @@ async def test_toolset_without_id():
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so combining a capability with a
+    function toolset or MCP server can be used under Temporal instead of tripping the
+    'leaves need a unique id' error at construction.
+
+    This isn't a VCR test: it inspects the constructed toolset tree and registered Temporal activity
+    names during local agent construction, before any model or MCP request, so there's no network
+    round-trip to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api', id='docs'),
+        ],
+    )
+    # Previously raised `UserError` because the contributed leaf toolsets had `id=None`.
+    temporal_agent = TemporalAgent(agent)
+
+    # Each contributed leaf toolset is registered as activities named after the capability id, so the
+    # function toolset and the MCP server can be driven durably.
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__capability_agent__mcp_server__docs__get_tools' in activity_names
+
+
+async def test_deferred_capability_contributed_toolset_id_from_capability():
+    """A deferred capability (`defer_loading=True`) still stamps its `id` on the contributed leaf
+    toolset, so the derived id survives the deferred-loading wrapper and the toolset is registered as
+    durable activities. Deferred capabilities require an explicit `id`.
+
+    This isn't a VCR test: it inspects deferred toolset ids and registered Temporal activity names
+    during local agent construction, before any model or MCP request, so there's no network round-trip
+    to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='deferred_capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add], defer_loading=True),
+            MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
+        ],
+    )
+    temporal_agent = TemporalAgent(agent)
+
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__deferred_capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__deferred_capability_agent__mcp_server__docs__get_tools' in activity_names
 
 
 # --- DynamicToolset / @agent.toolset tests ---
@@ -3484,6 +3556,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4520,6 +4593,18 @@ def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> No
     assert result['data_converter'] is pydantic_data_converter
 
 
+def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
+    runner = SandboxedWorkflowRunner()
+    config: dict[str, Any] = {'workflow_runner': runner}
+
+    result = PydanticAIPlugin().configure_worker(config)  # type: ignore[arg-type]
+
+    assert 'workflow_runner' in result
+    configured_runner = result['workflow_runner']
+    assert isinstance(configured_runner, SandboxedWorkflowRunner)
+    assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
+
+
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
     """When converter already uses PydanticPayloadConverter, return it unchanged."""
     plugin = PydanticAIPlugin()
@@ -5410,12 +5495,12 @@ async def test_durability_resolve_model_id_uses_models_registry():
     resolution_ctx = ModelResolutionContext(agent=agent, deps=None)
 
     # String matches a registered model → returns that exact instance.
-    assert await bound.resolve_model_id('alt', resolution_ctx) is alt
+    assert await bound.resolve_model_id(resolution_ctx, model_id='alt') is alt
 
     # String not in registry → defer (None) so the default `infer_model` flow — or a
     # user's `ResolveModelId` capability — handles it, and so an exception raised by a
     # user resolver is never masked by this capability's backstop.
-    assert await bound.resolve_model_id('test', resolution_ctx) is None
+    assert await bound.resolve_model_id(resolution_ctx, model_id='test') is None
 
 
 async def test_durability_default_string_registered_in_models_becomes_default():
@@ -5432,7 +5517,7 @@ async def test_durability_default_string_registered_in_models_becomes_default():
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
 
-    assert await bound.resolve_model_id('test', ModelResolutionContext(agent=agent, deps=None)) is custom
+    assert await bound.resolve_model_id(ModelResolutionContext(agent=agent, deps=None), model_id='test') is custom
     assert bound._find_model_id(custom) is None  # identity-matches 'default'  # pyright: ignore[reportPrivateUsage]
 
 

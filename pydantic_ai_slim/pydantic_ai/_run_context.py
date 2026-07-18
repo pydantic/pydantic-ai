@@ -125,6 +125,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
     to add messages rather than mutating it directly.
     """
 
+    _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's shared event buffer (the same list held by `GraphAgentState`). Framework code appends
+    events to it via [`_emit_event`][pydantic_ai._run_context.RunContext._emit_event]; the agent graph
+    drains it into the agent event stream so consumers (`event_stream_handler`, `agent.run_stream_events`,
+    `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent.
+    A public API for emitting custom events is intentionally not exposed yet.
+    """
+
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -193,6 +203,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
+        """Append an event to the run's event buffer for the agent graph to drain into the event stream.
+
+        Private framework plumbing — not public API. Only valid during an agent run, where the buffer
+        is set (`_event_stream_buffer is not None`).
+        """
+        assert self._event_stream_buffer is not None, 'events are only emitted during an agent run, which has a buffer'
+        self._event_stream_buffer.append(event)
 
     @property
     def available_capability_ids(self) -> set[str]:
@@ -267,7 +286,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Safe to call from anywhere a `RunContext` is available — async tools,
@@ -293,6 +312,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     or a redirect if the agent would otherwise end).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
+        Returns:
+            The `enqueue_id` of the queued message, echoed on the
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
+            delivered, or `None` when there was nothing to enqueue (an empty call).
+
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
                 synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
@@ -305,8 +329,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             )
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self.pending_messages.append(pending)
+        return pending.enqueue_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
