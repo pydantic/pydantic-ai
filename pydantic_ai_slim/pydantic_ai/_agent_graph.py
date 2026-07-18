@@ -26,7 +26,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -341,6 +341,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request_index: int | None
 
     model: models.Model
+    model_selector: ModelSelector[DepsT] | None
+    model_selected_for_step: int | None
+    evaluate_model_selector: Callable[
+        [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[models.Model]
+    ]
+    enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
@@ -1211,6 +1217,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        await _select_model(ctx)
+
         _refresh_loaded_capability_ids(ctx)
 
         _refresh_discovered_tool_names(ctx)
@@ -1959,6 +1967,30 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
+
+
+async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    selector = ctx.deps.model_selector
+    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+        return
+
+    agent = ctx.deps.agent
+    assert agent is not None
+    selection_ctx = models.ModelSelectionContext(
+        agent=agent,
+        deps=ctx.deps.user_deps,
+        model=ctx.deps.model,
+        run_step=ctx.state.run_step,
+        # The current request has already been appended, but selection describes the model
+        # that will handle it. Expose the history available before this request step, matching
+        # bootstrap selection, and do not let selectors mutate graph state through the context.
+        messages=list(ctx.state.message_history[:-1]),
+        usage=ctx.state.usage,
+    )
+    model = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
+    await ctx.deps.enter_model(model)
+    ctx.deps.model = model
+    ctx.deps.model_selected_for_step = ctx.state.run_step
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

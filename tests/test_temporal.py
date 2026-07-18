@@ -96,6 +96,7 @@ try:
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -4577,6 +4578,18 @@ def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> No
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is pydantic_data_converter
+
+
+def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
+    runner = SandboxedWorkflowRunner()
+    config: dict[str, Any] = {'workflow_runner': runner}
+
+    result = PydanticAIPlugin().configure_worker(config)  # type: ignore[arg-type]
+
+    assert 'workflow_runner' in result
+    configured_runner = result['workflow_runner']
+    assert isinstance(configured_runner, SandboxedWorkflowRunner)
+    assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:

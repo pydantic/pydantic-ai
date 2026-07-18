@@ -74,6 +74,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'pydantic_ai',
             'pydantic',
             'pydantic_core',
+            'pydantic_monty',
             'logfire',
             'rich',
             'httpx',

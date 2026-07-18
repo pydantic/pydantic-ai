@@ -23,7 +23,7 @@ import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -57,7 +57,10 @@ from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
     AbstractCapability,
     AgentCapability,
+    AgentModel,
     CombinedCapability,
+    ModelSelection,
+    ModelSelector,
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
@@ -150,6 +153,11 @@ class _ResolvedAgentRetries:
 
     tools: int
     output: int
+
+
+def _is_model(value: object) -> TypeIs[models.Model[Any]]:
+    """Narrow a value to a concrete model without losing its client type to `Unknown`."""
+    return isinstance(value, models.Model)
 
 
 def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
@@ -399,7 +407,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
-                which checks for the necessary environment variables. Set this to `false`
+                which checks for the necessary environment variables. Set this to `True`
                 to defer the evaluation until the first run. Useful if you want to
                 [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
@@ -428,11 +436,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
-        if model is None or defer_model_check:
-            self._model = model
-        else:
-            self._model = models.infer_model(model)
-
         self._name = name
         self._description = description
         self.end_strategy = end_strategy
@@ -443,13 +446,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
-        # Validate the statically-provided capabilities eagerly so misconfiguration (a deferred
-        # capability without an `id`, or duplicate ids) fails fast here in `Agent(...)` instead of
-        # on the first run. Capabilities supplied per-run or resolved by `for_run` (e.g. capability
-        # functions) can only be checked at run time, in `_build_run_capabilities`.
-        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        self._root_capability.apply(static_capabilities.append)
-        _validate_capability_ids(static_capabilities)
+        # Keep the constructor value untouched while capabilities bind. A capability may interpret
+        # model IDs itself, so eagerly inferring a string here could construct the wrong provider
+        # (and perform its authentication/configuration side effects) before `for_agent()` can add
+        # the appropriate resolver.
+        self._model = model
 
         self.model_settings = model_settings
 
@@ -462,7 +463,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -477,11 +477,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             raise exceptions.UserError(f'tool_timeout must be > 0, got {self._tool_timeout}')
 
         self._validation_context = validation_context
-
-        self._cap_native_tools = list(self._root_capability.get_native_tools())
-        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
-
-        self._cap_model_settings = self._root_capability.get_model_settings()
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
@@ -503,10 +498,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ]
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
-        # Capability-contributed toolsets (stored separately for per-run re-extraction)
-        cap_toolset = self._root_capability.get_toolset()
-        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
-
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
         self._event_stream_handler = None
 
@@ -514,7 +505,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
-        self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
+        self._override_model: ContextVar[_utils.Option[models.Model | models.KnownModelName | str]] = ContextVar(
+            '_override_model', default=None
+        )
         self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
             '_override_toolsets', default=None
         )
@@ -541,6 +534,33 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         self._entered_count = 0
         self._exit_stack = None
+        self._entered_model_ids: set[int] = set()
+        self._entered_models_by_selection: dict[tuple[int, str], models.Model] = {}
+
+        # Initialize capability-contributed fields before binding so `for_agent` can safely
+        # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
+        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
+        self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
+
+        self._root_capability = self._root_capability.for_agent(self)
+        if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
+            self._model = models.infer_model(model)
+
+        # Validate the bound tree so a replacement returned by `for_agent` is subject to the
+        # same eager ID checks as the capability originally passed to the constructor.
+        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._root_capability.apply(static_capabilities.append)
+        _validate_capability_ids(static_capabilities)
+
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
+        self._cap_model_settings = self._root_capability.get_model_settings()
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
 
     @overload
     @classmethod
@@ -1082,8 +1102,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'budget) here, and `Agent(retries=...)` for tool retries.'
             )
 
+        # Resolve the root capability (override > agent default) up front: it's needed both for the
+        # capability-supplied model fallback below and for run-time capability assembly further down.
+        override_cap = self._override_root_capability.get()
+        base_capability = self._effective_root_capability()
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
+
         effective_output_retries = retry_overrides.get('output')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
@@ -1130,10 +1156,63 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
 
-        model_used = self._get_model(model)
-        del model
-
         deps = self._get_deps(deps)
+        usage = usage or _usage.RunUsage()
+
+        # Run/spec capabilities that already exist before `for_run()` can participate in
+        # bootstrap model selection and ID resolution. A capability function may only
+        # contribute after a bootstrap model exists because its contract requires RunContext.
+        extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        if resolved is not None and resolved.capability is not None:
+            extra_capabilities.append(resolved.capability)
+        extra_capabilities.extend(wrap_capability_funcs(capabilities))
+        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
+        model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        bootstrap_capability: AbstractCapability[AgentDepsT]
+        if len(model_layers) > 1:
+            bootstrap_capability = CombinedCapability(model_layers)
+        else:
+            bootstrap_capability = model_layers[0]
+        resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
+
+        # Explicit run/spec/override models are authoritative. Otherwise the capability model
+        # contribution selects the initial model needed to construct RunContext and resolve
+        # `for_run()`; dynamic contributions are evaluated again for later request steps.
+        model_is_explicit = model is not None or self._override_model.get() is not None
+        model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
+        self._check_dynamic_model_resume(model_contribution, message_history)
+
+        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        default_model = (
+            await self._resolve_model_selection(
+                self._pick_raw_model(model),
+                capability=bootstrap_capability,
+                deps=deps,
+                resolved_models=resolved_models_by_selection,
+            )
+            if has_default_model
+            else None
+        )
+        if model_contribution is not None:
+            selection_ctx = models.ModelSelectionContext(
+                agent=self,
+                deps=deps,
+                model=default_model,
+                run_step=1,
+                messages=list(message_history) if message_history else [],
+                usage=usage,
+            )
+            model_used = await self._evaluate_model_contribution(
+                model_contribution,
+                capability=bootstrap_capability,
+                ctx=selection_ctx,
+                resolved_models=resolved_models_by_selection,
+            )
+        elif default_model is not None:
+            model_used = default_model
+        else:
+            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+        del model
         output_schema = self._prepare_output_schema(output_type)
 
         output_type_ = output_type or self.output_type
@@ -1170,7 +1249,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
-        usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
@@ -1259,16 +1337,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
 
-        # Determine root capability: override > agent default
-        override_cap = self._override_root_capability.get()
-        base_capability = override_cap.value if override_cap is not None else self._root_capability
-
-        # Merge spec and run-time capabilities additively with the base capability
-        extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        if resolved is not None and resolved.capability is not None:
-            extra_capabilities.append(resolved.capability)
-        extra_capabilities.extend(wrap_capability_funcs(capabilities))
-
         # Resolve the capability layers and extract their per-run contributions. Shared with
         # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
         # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
@@ -1290,14 +1358,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_model_settings = resolved_caps.model_settings
         cap_toolsets = resolved_caps.toolsets
 
+        # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
+        # per-step model-selection block below keys off this. The model layers are the tail of the
+        # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
+        resolved_layers = resolved_caps.resolved_layers
+        model_layer_start = len(resolved_layers) - len(model_layers)
+        model_layers_unchanged = all(
+            resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
+        )
+
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+            # A capability can select a different model per step, so the base is the step's live
+            # `run_context.model` settings, not a captured initial model. A graph run always uses a
+            # request-response `Model` here; realtime has its own settings path and never reaches this.
+            # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
+            # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
+            step_model = run_context.model
             return _layer_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
-                base=model_used.settings,
+                base=step_model.settings if isinstance(step_model, models.Model) else None,
             )
 
         # Build toolset with per-run capability contributions
@@ -1341,6 +1424,65 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
+        run_model_contribution = None if model_is_explicit else run_capability.get_model()
+        self._check_dynamic_model_resume(run_model_contribution, message_history)
+        model_selector: ModelSelector[AgentDepsT] | None
+        model_selected_for_step: int | None
+        capability_owns_current_model: bool
+        if model_layers_unchanged:
+            model_selector = (
+                model_contribution if callable(model_contribution) and not _is_model(model_contribution) else None
+            )
+            model_selected_for_step = 1 if model_selector is not None else None
+            capability_owns_current_model = model_contribution is not None
+        elif callable(run_model_contribution) and not _is_model(run_model_contribution):
+            # The bootstrap model was only needed to construct RunContext for `for_run`.
+            # The replacement selector makes the authoritative step-one choice in the graph,
+            # but the discarded bootstrap model still needs its lifecycle managed.
+            model_selector = run_model_contribution
+            model_selected_for_step = None
+            capability_owns_current_model = True
+        elif run_model_contribution is not None:
+            model_used = await self._resolve_model_selection(
+                run_model_contribution,
+                capability=run_capability,
+                deps=deps,
+                resolved_models=resolved_models_by_selection,
+            )
+            model_selector = None
+            model_selected_for_step = None
+            capability_owns_current_model = True
+        elif default_model is not None:
+            model_used = default_model
+            model_selector = None
+            model_selected_for_step = None
+            capability_owns_current_model = False
+        else:
+            raise exceptions.UserError(
+                'A capability removed the bootstrap model in `for_run()` but the agent has no default model.'
+            )
+
+        async def evaluate_model_selector(
+            selector: ModelSelector[AgentDepsT], selection_ctx: models.ModelSelectionContext[AgentDepsT]
+        ) -> models.Model:
+            return await self._evaluate_model_contribution(
+                selector,
+                capability=run_capability,
+                ctx=selection_ctx,
+                resolved_models=resolved_models_by_selection,
+            )
+
+        model_stack: AsyncExitStack | None = None
+        entered_model_ids = self._entered_model_ids.copy()
+
+        async def enter_model(selected_model: models.Model) -> None:
+            model_identity = id(selected_model)
+            if model_identity in entered_model_ids:
+                return
+            assert model_stack is not None
+            await model_stack.enter_async_context(selected_model)
+            entered_model_ids.add(model_identity)
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1349,6 +1491,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resumed_request=None,
             resumed_request_index=None,
             model=model_used,
+            model_selector=model_selector,
+            model_selected_for_step=model_selected_for_step,
+            evaluate_model_selector=evaluate_model_selector,
+            enter_model=enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -1380,9 +1526,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         agent_name = self.name or 'agent'
 
         async with AsyncExitStack() as stack:
+            model_stack = stack
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
             )
+            if capability_owns_current_model:
+                await enter_model(model_used)
             graph_run = await stack.enter_async_context(
                 graph.iter(
                     inputs=user_prompt_node,
@@ -1697,6 +1846,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         resolved = self._resolve_spec(spec)
 
+        # A spec capability replaces the agent's root capability for the duration of the
+        # override. Build it before resolving an overridden model so custom model IDs can
+        # be preserved for that capability's async, deps-aware resolver.
+        if resolved is not None and resolved.capability is not None:
+            override_caps = list(resolved.capability.capabilities)
+            _inject_auto_capabilities(override_caps)
+            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
+                self
+            )
+        else:
+            override_capability = None
+
         # Apply spec values as defaults where explicit params are not set
         if resolved is not None:
             if not _utils.is_set(name) and resolved.name is not None:
@@ -1723,7 +1884,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_token = None
 
         if _utils.is_set(model):
-            model_token = self._override_model.set(_utils.Some(models.infer_model(model)))
+            model_capability = override_capability or self._effective_root_capability()
+            override_model = (
+                model if isinstance(model, str) and model_capability.has_resolve_model_id else models.infer_model(model)
+            )
+            model_token = self._override_model.set(_utils.Some(override_model))
         else:
             model_token = None
 
@@ -1766,10 +1931,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Set capability from spec, replacing the agent's existing root capability.
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
-        if resolved is not None and resolved.capability is not None:
-            override_caps = list(resolved.capability.capabilities)
-            _inject_auto_capabilities(override_caps)
-            override_capability = CombinedCapability(override_caps)
+        if override_capability is not None:
             cap_token = self._override_root_capability.set(_utils.Some(override_capability))
         else:
             cap_token = None
@@ -1876,13 +2038,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         See [`AbstractAgent.system_prompt_parts`][pydantic_ai.agent.AbstractAgent.system_prompt_parts].
         """
+        deps = self._get_deps(deps)
+        usage = usage or _usage.RunUsage()
+        messages = list(message_history or [])
+        capability = self._effective_root_capability()
+        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        default_model = (
+            await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
+            if has_default_model
+            else None
+        )
+        if model is None and self._override_model.get() is None:
+            contribution = capability.get_model()
+            if contribution is not None:
+                selection_ctx = models.ModelSelectionContext(
+                    agent=self,
+                    deps=deps,
+                    model=default_model,
+                    run_step=1,
+                    messages=messages,
+                    usage=usage,
+                )
+                selected_model = await self._evaluate_model_contribution(
+                    contribution, capability=capability, ctx=selection_ctx
+                )
+            elif default_model is not None:
+                selected_model = default_model
+            else:
+                raise exceptions.UserError('`model` must either be set on the agent or supplied by a capability.')
+        else:
+            assert default_model is not None
+            selected_model = default_model
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
-            model=self._get_model(model),
-            usage=usage or _usage.RunUsage(),
+            model=selected_model,
+            usage=usage,
             prompt=prompt,
-            messages=list(message_history or []),
+            messages=messages,
             model_settings=model_settings,
             run_step=1,
         )
@@ -2344,27 +2537,101 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return toolset_decorator if func is None else toolset_decorator(func)
 
-    def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
-        """Create a model configured for this agent.
-
-        Args:
-            model: model to use for this run, required if `model` was not set when creating the agent.
-
-        Returns:
-            The model used
-        """
-        model_: models.Model
+    def _pick_raw_model(
+        self, model: models.Model | models.KnownModelName | str | None
+    ) -> models.Model | models.KnownModelName | str:
         if some_model := self._override_model.get():
-            model_ = some_model.value
-        elif model is not None:
-            model_ = models.infer_model(model)
-        elif self.model is not None:
-            # noinspection PyTypeChecker
-            model_ = self.model = models.infer_model(self.model)
-        else:
-            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+            return some_model.value
+        if model is not None:
+            return model
+        if self.model is not None:
+            return self.model
+        raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
 
-        return model_
+    def _effective_root_capability(self) -> CombinedCapability[AgentDepsT]:
+        """Return the override capability when present, otherwise the configured root."""
+        override = self._override_root_capability.get()
+        return override.value if override is not None else self._root_capability
+
+    async def _resolve_model_selection(
+        self,
+        selection: ModelSelection,
+        *,
+        capability: AbstractCapability[AgentDepsT],
+        deps: AgentDepsT,
+        resolved_models: dict[tuple[int, str], models.Model] | None = None,
+    ) -> models.Model:
+        """Resolve a concrete model selection through the capability chain."""
+        if not isinstance(selection, str):
+            return selection
+        cache_key = (id(capability), selection)
+        if resolved_models is not None and (resolved_model := resolved_models.get(cache_key)) is not None:
+            return resolved_model
+        if entered_model := self._entered_models_by_selection.get(cache_key):
+            if resolved_models is not None:
+                resolved_models[cache_key] = entered_model
+            return entered_model
+        resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
+        resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
+        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if resolved_models is not None:
+            resolved_models[cache_key] = resolved_model
+        return resolved_model
+
+    async def _evaluate_model_contribution(
+        self,
+        contribution: AgentModel[AgentDepsT],
+        *,
+        capability: AbstractCapability[AgentDepsT],
+        ctx: models.ModelSelectionContext[AgentDepsT],
+        resolved_models: dict[tuple[int, str], models.Model] | None = None,
+    ) -> models.Model:
+        """Evaluate a static or dynamic model contribution and resolve its result."""
+        selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
+        if inspect.isawaitable(selection):
+            selection = await selection
+        return await self._resolve_model_selection(
+            selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
+        )
+
+    @staticmethod
+    def _check_dynamic_model_resume(
+        contribution: AgentModel[AgentDepsT] | None,
+        message_history: Sequence[_messages.ModelMessage] | None,
+    ) -> None:
+        """Reject cross-run continuation when a selector cannot reconstruct the pinned model."""
+        if (
+            callable(contribution)
+            and not _is_model(contribution)
+            and message_history
+            and isinstance(message_history[-1], _messages.ModelResponse)
+            and message_history[-1].state == 'suspended'
+        ):
+            raise exceptions.UserError(
+                'Cannot resume a suspended response with a dynamic capability model: the model '
+                'that created the provider-side job cannot be reconstructed unambiguously. Pass '
+                'that model explicitly to `run(model=...)` when resuming.'
+            )
+
+    def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
+        """Resolve a configured or static capability model where run deps are unavailable."""
+        capability = self._effective_root_capability()
+        if model is not None or self._override_model.get() is not None:
+            selection = self._pick_raw_model(model)
+            return selection if _is_model(selection) else models.infer_model(selection)
+        contribution = capability.get_model()
+        if callable(contribution) and not _is_model(contribution):
+            raise exceptions.UserError(
+                'The capability model is dynamic and can only be selected during a run with run dependencies. '
+                'Pass a concrete model explicitly.'
+            )
+        selection = contribution if contribution is not None else self._pick_raw_model(None)
+        if isinstance(selection, str) and capability.has_resolve_model_id:
+            raise exceptions.UserError(
+                'The configured model ID is resolved by a capability using run dependencies. '
+                'Pass a concrete model explicitly.'
+            )
+        return selection if _is_model(selection) else models.infer_model(selection)
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
@@ -2493,6 +2760,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             native_tools=native_tools,
             model_settings=model_settings,
             toolsets=toolsets,
+            resolved_layers=resolved_layers,
         )
 
     def _get_instructions(
@@ -2931,9 +3199,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     toolset = self._get_toolset()
                     await exit_stack.enter_async_context(toolset)
 
-                    if self.model is not None:
-                        model = self._get_model(None)
+                    capability = self._effective_root_capability()
+                    capability_model = capability.get_model()
+                    override_model = self._override_model.get()
+                    if override_model is not None:
+                        static_selection = override_model.value
+                    elif callable(capability_model) and not _is_model(capability_model):
+                        # Dynamic capability models are entered by the run that selects them.
+                        static_selection = None
+                    elif capability_model is not None:
+                        static_selection = capability_model
+                    else:
+                        static_selection = self.model
+                    if static_selection is not None and not (
+                        isinstance(static_selection, str) and capability.has_resolve_model_id
+                    ):
+                        model = (
+                            static_selection if _is_model(static_selection) else models.infer_model(static_selection)
+                        )
                         await exit_stack.enter_async_context(model)
+                        self._entered_model_ids.add(id(model))
+                        if isinstance(static_selection, str):
+                            self._entered_models_by_selection[id(capability), static_selection] = model
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
@@ -2943,8 +3230,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+                try:
+                    await self._exit_stack.aclose()
+                finally:
+                    self._exit_stack = None
+                    self._entered_model_ids.clear()
+                    self._entered_models_by_selection.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
@@ -2952,8 +3243,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         If no sampling model is provided, the agent's model will be used.
         """
         try:
-            sampling_model = models.infer_model(model) if model else self._get_model(None)
+            sampling_model = models.infer_model(model) if model else self._get_model_outside_run()
         except exceptions.UserError as e:
+            capability = self._effective_root_capability()
+            if model is None and (callable(capability.get_model()) or capability.has_resolve_model_id):
+                raise exceptions.UserError(
+                    'The capability model requires run dependencies and cannot be used for MCP sampling setup. '
+                    'Pass a concrete model explicitly.'
+                ) from e
             raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
 
         from ..mcp import MCPToolset
@@ -3152,6 +3449,10 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
     native_tools: list[AgentNativeTool[AgentDepsT]]
     model_settings: AgentModelSettings[AgentDepsT] | None
     toolsets: list[AgentToolset[AgentDepsT]] | None
+    resolved_layers: list[AbstractCapability[AgentDepsT]]
+    """Each run layer after `for_run`, in order (instrumentation first when injected). The graph run
+    compares the model-layer slice against its pre-resolution `model_layers` to detect whether any
+    capability changed the model contribution during resolution (`model_layers_unchanged`)."""
 
 
 def _layer_model_settings(

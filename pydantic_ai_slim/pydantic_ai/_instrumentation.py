@@ -370,11 +370,19 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
 
     @contextmanager
     def attach_captured_context() -> Generator[None]:
-        token = otel_context.attach(captured)
+        # Restore the previous context by re-`attach`ing it rather than `detach`ing the token: this CM is
+        # held across the `yield` in `_ContinuationStreamedResponse._get_event_iterator`, so when a streamed
+        # run is interrupted mid-segment the async generator is finalized (`GeneratorExit`) in a different
+        # contextvars `Context`, where `otel_context.detach(token)` -> `ContextVar.reset` raises
+        # `ValueError: ... created in a different Context`. OTel swallows it but logs a noisy
+        # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
+        # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
+        previous = otel_context.get_current()
+        otel_context.attach(captured)
         try:
             yield
         finally:
-            otel_context.detach(token)
+            otel_context.attach(previous)
 
     return attach_captured_context
 

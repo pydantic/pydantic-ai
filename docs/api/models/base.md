@@ -7,6 +7,8 @@
         - known_model_names
         - ModelRequestParameters
         - AbstractModel
+        - ModelResolutionContext
+        - ModelSelectionContext
         - Model
         - AbstractToolDefinition
         - StreamedResponse

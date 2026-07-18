@@ -8,6 +8,7 @@ Capabilities can provide any combination of:
 * **Lifecycle hooks** — intercept and modify model requests, tool calls, and the overall run
 * **Instructions** — static or dynamic [instruction](agent.md#instructions) additions
 * **Model settings** — static or per-step [model settings](agent.md#model-run-settings)
+* **Models** — static or adaptive model selection and application-specific model ID resolution
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
@@ -465,7 +466,7 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
     - **[Hooks](hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.
     - **[Message history](message-history.md)** — loaded state round-trips through history, so persisted conversations resume in the same state (see [Resumable across runs](#resumable-across-runs)).
 
-## Native capabilities
+## Built-in capabilities {#native-capabilities}
 
 Pydantic AI ships with several capabilities that cover common needs:
 
@@ -474,6 +475,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire tracing — see [Debugging and Monitoring](logfire.md) | Yes |
+| [`SelectModel`][pydantic_ai.capabilities.SelectModel] | Selects a static or per-step [model](#selectmodel) with a callable | — |
+| [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] | Resolves custom [model IDs](#resolvemodelid) with a callable | — |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native by default, optional [local fallback](common-tools.md#duckduckgo-search-tool) via `local='duckduckgo'` | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native by default, optional [local fallback](common-tools.md#web-fetch-tool) via `local=True` | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native by default, optional subagent fallback via `fallback_model` | Yes |
@@ -580,6 +583,84 @@ authors that need to surface an event to the model mid-run without rebuilding th
 cached system prompt. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run).
 
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
+
+### SelectModel
+
+[`SelectModel`][pydantic_ai.capabilities.SelectModel] is the concise way to choose a model from run dependencies, message history, usage, or the current step. The selector is first evaluated during run setup, so the agent does not need a constructor model:
+
+```python {title="adaptive_model.py"}
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, ModelSelectionContext
+from pydantic_ai.capabilities import SelectModel
+
+
+@dataclass
+class Deps:
+    """Dependencies that influence model selection."""
+
+    task_complexity: Literal['standard', 'complex']
+
+
+def select_model(ctx: ModelSelectionContext[Deps]) -> str:
+    """Use the larger model for complex tasks."""
+    return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+
+
+agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])
+```
+
+`SelectModel` always receives a callable, which is evaluated before each new logical model request step. The callable may be synchronous or asynchronous. When it returns the same model ID on multiple steps, the resolved model/provider instance is reused for the rest of that run. Provider-side continuation polling within the same step remains pinned to the selected model. See [Selecting the model](#selecting-the-model) to implement the hook in a custom capability and for precedence and lifecycle details.
+
+### ResolveModelId
+
+[`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] turns application-specific model IDs into [`Model`][pydantic_ai.models.Model] instances. The resolver can use run dependencies to look up tenant-specific providers, credentials, or model registries:
+
+```python {title="resolve_model_id.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelResolutionContext
+from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.models import Model, infer_model
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+@dataclass
+class Deps:
+    """Per-user provider credentials."""
+
+    openai_api_key: str
+
+
+def resolve_model(ctx: ModelResolutionContext[Deps], model_id: str) -> Model | None:
+    """Resolve IDs in the `user:` namespace with the current user's credentials."""
+    if not model_id.startswith('user:'):
+        return None
+
+    def provider_factory(provider_name: str) -> Provider[Any]:
+        if provider_name == 'openai':
+            return OpenAIProvider(api_key=ctx.deps.openai_api_key)
+        return infer_provider(provider_name)
+
+    return infer_model(model_id.removeprefix('user:'), provider_factory)
+
+
+agent = Agent(
+    'user:openai:gpt-5.6-sol',
+    deps_type=Deps,
+    capabilities=[ResolveModelId(resolve_model)],
+)
+```
+
+The resolver may be synchronous or asynchronous. Its full callable signature is
+`(ModelResolutionContext[Deps], str) -> Model | None | Awaitable[Model | None]`.
+The convenience capability adapts both forms to the asynchronous
+[`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] hook.
+
+Resolvers form a chain in capability order: the first non-`None` result wins, and Pydantic AI falls back to normal model inference if every resolver returns `None`. See [Resolving model IDs](#resolving-model-ids) to implement the hook in a custom capability and understand when each resolver tree is used.
 
 ### Provider-adaptive tools
 
@@ -1197,6 +1278,111 @@ print(result.output)
 
 The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.model_settings` contains the merged result of all layers resolved before this capability (model defaults and agent-level settings).
 
+### Selecting the model
+
+Override [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] when model selection is one part of a larger custom capability. Return a [`Model`][pydantic_ai.models.Model], a model ID string, or a sync/async callable taking [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext]. This example chooses a model from dependencies on every request step:
+
+```python {title="custom_model_selection.py"}
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, ModelSelectionContext
+from pydantic_ai.capabilities import AbstractCapability, ModelSelector
+
+
+@dataclass
+class Deps:
+    """Dependencies that influence model selection."""
+
+    task_complexity: Literal['standard', 'complex']
+
+
+class AdaptiveModel(AbstractCapability[Deps]):
+    """Select a model for each request step."""
+
+    def get_model(self) -> ModelSelector[Deps]:
+        return self.select_model
+
+    def select_model(self, ctx: ModelSelectionContext[Deps]) -> str:
+        return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+
+
+agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
+```
+
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+
+A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
+
+A capability's model slots in below a call-site `run(model=...)` argument and a run-level `spec=` model, and above the agent constructor's model. From highest to lowest priority:
+
+`run()`/`iter()` argument › run `spec=` model › capability `get_model()` › agent constructor.
+
+An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins over all of these. An explicit model skips capability selection entirely.
+
+Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
+
+Fallback is complementary to selection: return a configured [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] when request failures should be retried on another model.
+
+### Resolving model IDs
+
+Override [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] when an application-specific string needs custom provider construction, credentials, or registry lookup. Unlike model selection, resolution is first-wins: capabilities are tried in order, and normal [`infer_model()`][pydantic_ai.models.infer_model] behavior is used only if every resolver returns `None`.
+
+```python {title="custom_model_id_resolution.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelResolutionContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+@dataclass
+class Deps:
+    """Per-user provider credentials."""
+
+    openai_api_key: str
+
+
+class UserModelResolver(AbstractCapability[Deps]):
+    """Resolve user-scoped model IDs with per-user credentials."""
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[Deps],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        if not model_id.startswith('user:'):
+            return None
+
+        def provider_factory(provider_name: str) -> Provider[Any]:
+            if provider_name == 'openai':
+                return OpenAIProvider(api_key=ctx.deps.openai_api_key)
+            return infer_provider(provider_name)
+
+        return infer_model(model_id.removeprefix('user:'), provider_factory)
+
+
+agent = Agent('user:openai:gpt-5.6-sol', deps_type=Deps, capabilities=[UserModelResolver()])
+```
+
+The constructor ID remains a string through [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent], so a bound capability can install a resolver without default inference first constructing a provider with different configuration or credentials.
+
+Resolution results are cached by model ID and resolver tree for the duration of one run. If a per-step selector returns the same string again, Pydantic AI reuses the same model, provider, and client rather than invoking the resolver again. To deliberately resolve differently on a later step, select a different ID or return a [`Model`][pydantic_ai.models.Model] instance directly from the selector.
+
+### Model selection lifecycle and limitations
+
+Bootstrap resolution uses the capability tree after `for_agent()` binding but before `for_run()`, because resolving the first model is what makes a full [`RunContext`][pydantic_ai.tools.RunContext] possible. If `for_run()` returns a replacement capability, strings selected for step one or later steps use that replacement's resolver chain. When `for_run()` leaves the capability unchanged, the already-resolved bootstrap model is reused for step one.
+
+Model selection and resolution are eager hooks, so deferred capabilities do not contribute them, even after they are loaded. Run-spec capabilities are known during bootstrap and can supply the first model. A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc], or another capability whose model is only introduced by `for_run()`, requires an existing bootstrap model because `for_run()` receives a full `RunContext`; it may replace that model starting with step one, but cannot bootstrap a model-less agent. If selecting a new model after loading a deferred capability would be useful for your application, please open an issue describing the desired step and continuation semantics.
+
+Dynamic selection is not currently supported by durable execution capabilities. Durable runs need model IDs registered before execution and must recreate the same selected model during replay or cross-run resumption. Pass an explicit registered model for durable execution. Resuming a suspended provider request in a separate ordinary run likewise requires an explicit model when the previous model came from a selector.
+
 ### Configuration methods reference
 
 | Method | Return type | Purpose |
@@ -1206,6 +1392,68 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | [Instructions](agent.md#instructions) (static strings, [template strings](agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | [Model settings](agent.md#model-run-settings) dict, or a callable for per-step settings |
+| [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `\| None` | Static or per-step [model selection](#selecting-the-model) |
+| [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `\| None` | [Resolve a selected model ID](#resolving-model-ids) using the agent and run dependencies |
+
+### Binding to an agent
+
+Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] when a reusable capability needs to inspect the agent it is attached to. The hook runs once during [`Agent`][pydantic_ai.Agent] construction, after the agent's own model, name, and toolsets are available and before capability contributions are extracted:
+
+```python {title="agent_bound_capability.py"}
+from dataclasses import dataclass, replace
+from typing import Any
+
+from typing_extensions import Self
+
+from pydantic_ai import Agent
+from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class AgentIdentity(AbstractCapability[Any]):
+    """Add the bound agent's name to its instructions."""
+
+    agent_name: str | None = None
+
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> Self:
+        return replace(self, agent_name=agent.name)
+
+    def get_instructions(self) -> str:
+        return f'You are the {self.agent_name} agent.'
+
+
+identity = AgentIdentity()
+support = Agent('openai:gpt-5.2', name='support', capabilities=[identity])
+sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
+```
+
+`for_agent()` is synchronous because it binds configuration during agent construction, before run dependencies or a lifecycle context exist. Keep it free of I/O; asynchronous run-specific setup belongs in [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run].
+
+Return a new bound copy rather than mutating the original when the same capability may be attached to multiple agents. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] propagate binding to their children, and the bound copy participates in all configuration hooks, including `get_model()` and `resolve_model_id()`.
+
+The parameter is typed as [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] so reusable capabilities depend only on the portable agent interface and remain compatible with custom agent implementations. Runs through a [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] are delegated to its wrapped agent, so Pydantic AI's built-in wrappers do not rebind the capability to the outer wrapper.
+
+`for_agent()` sees the constructor model exactly as the caller supplied it. In particular, a model ID remains a string while binding runs, so a bound capability can introduce `resolve_model_id()` without the default inference first constructing a provider with the wrong configuration or credentials. If the bound capability tree has no resolver and `defer_model_check=False`, normal model inference happens after binding.
+
+Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] or through a run spec are bound once for that run before bootstrap model selection. A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] is itself bound before the run; because its returned value is normally an independently reusable capability, that value is also bound before its own `for_run()` is called. In contrast, a specialized run-bound capability returned by an ordinary capability's [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] is not passed through `for_agent()` again.
+
+### Capability lifecycle
+
+Binding hooks establish which capability participates in a run; lifecycle hooks then intercept the work it performs. The high-level order is:
+
+`for_agent()` → bootstrap model selection and resolution → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
+
+| Phase | Capability work | What is available |
+|---|---|---|
+| Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
+| Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts; no complete `RunContext` yet |
+| Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
+| Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
+| Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The fully prepared request and the live run state appropriate to each hook |
+| Run completion | `after_run`, `on_run_error`, and `wrap_run` completion | Final result or error, accumulated messages, and usage |
+
+If `for_run()` returns the original capability, the bootstrap model selection is reused for step one. A replacement capability can select a different model for step one. Continuation polling within one logical step remains pinned to that step's selected model.
 
 ### Hooking into the lifecycle
 
@@ -1576,7 +1824,7 @@ The built-in [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] is an example
 
 ### Per-run state isolation
 
-By default, a capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
+After construction-time [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] binding, the resulting capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
 
 ```python {title="per_run_state.py"}
 from dataclasses import dataclass
