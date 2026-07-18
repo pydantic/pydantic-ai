@@ -27,7 +27,7 @@ from .. import _deferred_capabilities, _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
-from .._run_context import RunContext, RunContextAgentDepsT
+from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
@@ -219,23 +219,6 @@ class ModelRequestContext:
     hook can tell them apart. Read-only from hooks: reassigning it doesn't change how
     the loop consumes the response.
     """
-
-
-@dataclass(frozen=True, kw_only=True)
-class ModelResolutionContext(Generic[RunContextAgentDepsT]):
-    """Context passed to [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] hooks.
-
-    Model resolution happens at run setup, before a [`RunContext`][pydantic_ai.tools.RunContext]
-    exists (the run context carries the resolved model, so it can't be an input to resolving it).
-    This deliberately narrow context carries what *is* available at that point; new fields can be
-    added without breaking existing hook implementations.
-    """
-
-    agent: AbstractAgent[RunContextAgentDepsT, Any]
-    """The agent whose model is being resolved."""
-
-    deps: RunContextAgentDepsT
-    """The run's dependencies, as passed to `run()`/`iter()` (or the agent's default)."""
 
 
 @dataclass(frozen=True, kw_only=True)
