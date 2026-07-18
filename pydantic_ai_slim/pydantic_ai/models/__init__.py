@@ -44,6 +44,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -1049,6 +1050,7 @@ class CompletedStreamedResponse(StreamedResponse):
         assert isinstance(model_request_parameters, ModelRequestParameters)
         super().__init__(model_request_parameters)
         self.response = response
+        self.state = response.state
         self._events = events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1056,19 +1058,20 @@ class CompletedStreamedResponse(StreamedResponse):
             return super().__aiter__()
         # Buffered events were already produced by the live stream's `__aiter__`,
         # which means they include `PartEndEvent`s. Yield them directly so the
-        # parent `__aiter__` doesn't re-inject PartEnds (which would lookup parts
-        # in our empty `_parts_manager` and crash). The manager is deliberately left
-        # empty: it isn't consulted on this path (`get()` returns the complete
-        # response, and the parent `__aiter__` that reads the manager is bypassed),
-        # and replaying only part of each event's effect into it would leave it
-        # subtly out of sync with the replayed events.
+        # parent `__aiter__` doesn't re-inject PartEnds.
         if self._event_iterator is None:
             self._event_iterator = self._iter_buffered(self._events)
         return self._event_iterator
 
     async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
         for event in events:
+            if isinstance(event, PartStartEvent):
+                self._parts_manager.handle_part(vendor_part_id=event.index, part=event.part)
+            elif isinstance(event, PartDeltaEvent):
+                part = self._parts_manager.get_parts()[event.index]
+                self._parts_manager.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
             yield event
+        self._finished = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # Only reached when `events` is a bool — `__aiter__` short-circuits the
@@ -1092,6 +1095,12 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
+        if isinstance(self._events, list):
+            return replace(
+                self.response,
+                parts=self._parts_manager.get_parts(),
+                state=super().get().state,
+            )
         return self.response
 
     @property

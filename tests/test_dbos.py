@@ -60,7 +60,7 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSModel
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSModel, StepConfig
     from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
@@ -2372,6 +2372,57 @@ async def test_dbos_durability_process_event_stream_fires_workflow_side(dbos: DB
         if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
     ]
     assert delta_events == ['ed ', 'response']
+
+
+async def test_dbos_durability_buffers_caller_streams(dbos: DBOS) -> None:
+    agent = Agent(
+        TestModel(custom_output_text='hello world'),
+        name='durability_buffered_streams',
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_streams() -> tuple[list[str], str, list[str]]:
+        async with agent.run_stream('Hello') as stream:
+            chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
+            output = await stream.get_output()
+
+        async with agent.run_stream_events('Hello') as event_stream:
+            events = [event async for event in event_stream]
+        deltas = [
+            event.delta.content_delta
+            for event in events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        ]
+        return chunks, output, deltas
+
+    assert await run_durable_streams() == (['hello ', 'hello world'], 'hello world', ['hello ', 'world'])
+
+
+def test_dbos_durability_event_stream_handler_step_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    registered_steps: list[tuple[str, dict[str, object]]] = []
+
+    def step(*, name: str, **config: object):
+        registered_steps.append((name, config))
+
+        def decorator(function: Any) -> Any:
+            return function
+
+        return decorator
+
+    monkeypatch.setattr(DBOS, 'step', step)
+    config = StepConfig(retries_allowed=True, max_attempts=3)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    Agent(
+        TestModel(),
+        name='event_handler_config',
+        capabilities=[DBOSDurability(event_stream_handler=handler, event_stream_handler_step_config=config)],
+    )
+    assert ('event_handler_config__event_stream_handler', config) in registered_steps
 
 
 async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:

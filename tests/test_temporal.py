@@ -5324,6 +5324,26 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
     ]
 
 
+def test_durability_event_stream_handler_activity_config_keeps_non_retryable_errors() -> None:
+    durability = TemporalDurability(
+        activity_config=ActivityConfig(summary='base'),
+        event_stream_handler_activity_config=ActivityConfig(
+            summary='handle stream event',
+            retry_policy=RetryPolicy(non_retryable_error_types=['HandlerError']),
+        ),
+    )
+    config = durability._event_stream_handler_activity_config  # pyright: ignore[reportPrivateUsage]
+    assert config.get('summary') == 'handle stream event'
+    retry_policy = config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'HandlerError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+    ]
+
+
 def test_durability_shared_instance_across_agents():
     """Same TemporalDurability instance can be reused across multiple agents.
 
@@ -6073,6 +6093,47 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert not any(model_events_in_activity)
 
     assert text_chunks == ['ed ', 'response']
+
+
+_buffered_stream_agent = Agent(
+    TestModel(custom_output_text='hello world'),
+    name='durability_buffered_streams',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class BufferedStreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self) -> tuple[list[str], str, list[str]]:
+        async with _buffered_stream_agent.run_stream('Hello') as stream:
+            chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
+            output = await stream.get_output()
+
+        async with _buffered_stream_agent.run_stream_events('Hello') as event_stream:
+            events = [event async for event in event_stream]
+        deltas = [
+            event.delta.content_delta
+            for event in events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        ]
+        return chunks, output, deltas
+
+
+async def test_temporal_durability_buffers_caller_streams(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BufferedStreamDurableAgentWorkflow],
+        plugins=[AgentPlugin(_buffered_stream_agent)],
+    ):
+        result = await client.execute_workflow(
+            BufferedStreamDurableAgentWorkflow.run,
+            id=BufferedStreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result == (['hello ', 'hello world'], 'hello world', ['hello ', 'world'])
 
 
 # ==========================================

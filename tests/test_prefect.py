@@ -2081,6 +2081,52 @@ async def test_prefect_durability_process_event_stream_fires_flow_side() -> None
     assert delta_events == ['ed ', 'response']
 
 
+async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_distinct() -> None:
+    live_events: list[AgentStreamEvent] = []
+    buffered_events: list[AgentStreamEvent] = []
+
+    async def live_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            assert TaskRunContext.get() is not None
+            live_events.append(event)
+
+    async def buffered_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            assert TaskRunContext.get() is None
+            buffered_events.append(event)
+
+    agent = Agent(
+        TestModel(custom_output_text='hello world'),
+        name='durability_buffered_streams',
+        capabilities=[ProcessEventStream(buffered_handler), PrefectDurability(event_stream_handler=live_handler)],
+    )
+
+    @flow
+    async def run_durable_streams() -> tuple[list[str], str, list[str], int, int]:
+        async with agent.run_stream('Hello') as stream:
+            chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
+            output = await stream.get_output()
+        live_handler_calls = sum(isinstance(event, PartStartEvent) for event in live_events)
+        buffered_handler_calls = sum(isinstance(event, PartStartEvent) for event in buffered_events)
+
+        async with agent.run_stream_events('Hello') as event_stream:
+            events = [event async for event in event_stream]
+        deltas = [
+            event.delta.content_delta
+            for event in events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        ]
+        return chunks, output, deltas, live_handler_calls, buffered_handler_calls
+
+    assert await run_durable_streams() == (
+        ['hello ', 'hello world'],
+        'hello world',
+        ['hello ', 'world'],
+        1,
+        1,
+    )
+
+
 async def test_prefect_durability_event_stream_handler() -> None:
     events_in_boundary: list[tuple[AgentStreamEvent, bool]] = []
 

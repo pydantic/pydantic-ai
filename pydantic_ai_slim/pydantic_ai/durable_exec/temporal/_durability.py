@@ -188,6 +188,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
+        event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     ):
@@ -220,6 +221,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 Defaults to a 60-second `start_to_close_timeout`.
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
+            event_stream_handler_activity_config: Activity config merged on top of the base for
+                event stream handler activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
@@ -263,6 +266,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # base policy and drop the non-retryable entries.
         self._model_activity_config['retry_policy'] = _with_non_retryable_errors(
             self._model_activity_config.get('retry_policy')
+        )
+        self._event_stream_handler_activity_config: ActivityConfig = {
+            **activity_config,
+            **(event_stream_handler_activity_config or {}),
+        }
+        self._event_stream_handler_activity_config['retry_policy'] = _with_non_retryable_errors(
+            self._event_stream_handler_activity_config.get('retry_policy')
         )
         self._toolset_activity_config = toolset_activity_config or {}
 
@@ -503,7 +513,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
+        config: ActivityConfig = {
+            'summary': f'handle event: {event.event_kind}',
+            **self._event_stream_handler_activity_config,
+        }
         await workflow.execute_activity(
             activity=self.event_stream_handler_activity,
             args=[

@@ -69,6 +69,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_step_config: StepConfig | None = None,
+        event_stream_handler_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
         parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
     ):
@@ -94,6 +95,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 live inside model-request steps, and each tool event is handled in its own
                 event-handler step.
             model_step_config: DBOS step config for model request steps.
+            event_stream_handler_step_config: DBOS step config for event stream handler steps.
             mcp_step_config: DBOS step config for MCP server steps.
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
@@ -103,6 +105,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._model_step_config = model_step_config or {}
+        self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._dbos_toolsets_by_id: dict[str, WrapperToolset[Any]] = {}
@@ -193,7 +196,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         if bound._event_stream_handler is not None:
             handler = bound._event_stream_handler
 
-            @DBOS.step(name=f'{bound.name}__event_stream_handler', **bound._model_step_config)
+            @DBOS.step(name=f'{bound.name}__event_stream_handler', **bound._event_stream_handler_step_config)
             async def event_stream_handler_step(
                 event: _messages.AgentStreamEvent, run_context: RunContext[Any]
             ) -> None:
