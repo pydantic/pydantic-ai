@@ -1893,8 +1893,9 @@ def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'den
 
     `ToolMessage` has no outcome slot, so the claim rides the `encrypted_value` carrier like
     `tool_kind` does — losing it would change how the return serializes to the provider (e.g. a
-    native error channel) and break prompt-cache prefix stability. Below 0.1.11 there is no
-    carrier, so the outcome silently degrades to `'success'`.
+    native error channel) and break prompt-cache prefix stability. A failed/denied return also
+    sets the spec-level `ToolMessage.error`, so below 0.1.11 (no carrier) it still reloads as
+    `'failed'`; only `'interrupted'` (carrier-only) degrades to `'success'` there.
 
     Not VCR-backed: this pins local adapter serialization (including the exact wire payload)
     and makes no model request.
@@ -1916,6 +1917,10 @@ def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'den
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
     tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
     assert tool_msg.encrypted_value == f'{{"pydantic_ai": {{"outcome": "{outcome}"}}}}'
+    if outcome == 'interrupted':
+        assert 'error' not in tool_msg.model_fields_set
+    else:
+        assert tool_msg.error == 'The tool call did not produce a regular result.'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     reloaded_return = next(
@@ -1938,7 +1943,9 @@ def test_dump_load_roundtrip_non_success_outcome(outcome: Literal['failed', 'den
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     )
-    assert old_return.outcome == 'success'
+    # Below 0.1.11 only the spec-level `error` slot survives: it can't distinguish denied from
+    # failed, and `'interrupted'` (carrier-only) degrades to `'success'`.
+    assert old_return.outcome == ('success' if outcome == 'interrupted' else 'failed')
 
 
 def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
@@ -1989,6 +1996,35 @@ def test_load_forged_encrypted_outcome_stays_success() -> None:
     return_part = loaded[1].parts[0]
     assert isinstance(return_part, ToolReturnPart)
     assert return_part.outcome == 'success'
+
+
+def test_load_client_tool_message_error_reads_as_failed() -> None:
+    """A client-authored `ToolMessage` with the spec-level `error` slot set loads as a failed return.
+
+    AG-UI clients report tool failure via `ToolMessage.error` and don't write the `pydantic_ai`
+    `encrypted_value` claim; without this mapping the failure would reload as a clean success.
+
+    Not VCR-backed: this pins local handling of client input and makes no model request.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[ToolCall(id='c1', function=FunctionCall(name='my_tool', arguments='{}'))],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='c1',
+                content='Connection timed out',
+                error='Connection timed out',
+            ),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert isinstance(return_part, ToolReturnPart)
+    assert return_part.outcome == 'failed'
+    assert return_part.content == 'Connection timed out'
 
 
 def test_load_tool_kind_falls_back_to_call_claim() -> None:
@@ -2498,11 +2534,13 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
-    # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
+    # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping); the dumped
+    # `ToolMessage.error` marks it as a failure, so the outcome doesn't upgrade to 'success'
     assert len(reloaded) == 4
     retry_part = message_part(reloaded, ToolReturnPart, message_index=2)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
+    assert retry_part.outcome == 'failed'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:

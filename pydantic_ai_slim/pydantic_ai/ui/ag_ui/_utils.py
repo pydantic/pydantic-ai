@@ -181,6 +181,25 @@ def tool_kind_encrypted_value_kwargs(
     return {'encrypted_value': value} if value is not None else {}
 
 
+class _ToolErrorKwargs(TypedDict, total=False):
+    """`error` kwarg for a `ToolMessage`, absent when the return is not an error."""
+
+    error: str
+
+
+def tool_return_error_kwargs(
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'], error: str
+) -> _ToolErrorKwargs:
+    """`ToolMessage` kwargs setting the spec-level `error` slot for a failed/denied return, or empty.
+
+    `error` is the AG-UI spec's carrier for tool failure, so clients that don't read the
+    `pydantic_ai` `encrypted_value` claim (and versions below 0.1.11, which don't have it) still
+    see the error state. An `'interrupted'` outcome is not an error and rides the claim only;
+    like the claim, the field is never written as a bare `null`.
+    """
+    return {'error': error} if outcome in ('failed', 'denied') else {}
+
+
 def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
     """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 
