@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 import pydantic_ai.images as images_module
@@ -15,7 +16,7 @@ from pydantic_ai import (
     ImageUrl,
     UploadedFile,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageGenerationSettings,
     TestImageGenerationModel,
@@ -36,10 +37,11 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
-    from openai import AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types.image import Image
     from openai.types.images_response import ImagesResponse, Usage, UsageInputTokensDetails, UsageOutputTokensDetails
 
+    import pydantic_ai.images.openai as openai_images
     from pydantic_ai.images.openai import OpenAIImageGenerationModel, OpenAIImageGenerationSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -264,16 +266,210 @@ async def test_openai_response_without_base64():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_rejects_reference_images_before_request():
+async def test_openai_image_edit_request():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        created=456,
+        data=[Image.model_construct(b64_json='ZWRpdGVk')],
+        output_format='webp',
+        quality='high',
+        size='1024x1024',
+    )
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+
+    settings = OpenAIImageGenerationSettings(
+        n=1,
+        output_format='webp',
+        extra_headers={'x-test': 'header'},
+        extra_body={'provider_option': True},
+        openai_size='1024x1024',
+        openai_quality='high',
+        openai_background='opaque',
+        openai_input_fidelity='high',
+        openai_moderation='low',
+        openai_output_compression=80,
+        openai_user='user-123',
+    )
+    result = await model.generate(
+        'turn these into one image',
+        images=[
+            BinaryImage(data=b'first', media_type='image/png'),
+            BinaryImage(data=b'second', media_type='image/jpeg'),
+        ],
+        settings=settings,
+    )
+
+    mock_client.images.generate.assert_not_awaited()
+    mock_client.images.edit.assert_awaited_once()
+    kwargs = mock_client.images.edit.await_args.kwargs
+    assert kwargs['image'] == [
+        ('image-0.png', b'first', 'image/png'),
+        ('image-1.jpg', b'second', 'image/jpeg'),
+    ]
+    assert kwargs['prompt'] == 'turn these into one image'
+    assert kwargs['model'] == 'gpt-image-1'
+    assert kwargs['n'] == 1
+    assert kwargs['size'] == '1024x1024'
+    assert kwargs['output_format'] == 'webp'
+    assert kwargs['quality'] == 'high'
+    assert kwargs['background'] == 'opaque'
+    assert kwargs['input_fidelity'] == 'high'
+    assert kwargs['output_compression'] == 80
+    assert kwargs['user'] == 'user-123'
+    assert kwargs['extra_headers'] == {'x-test': 'header'}
+    assert kwargs['extra_body'] == {'provider_option': True}
+    assert 'moderation' not in kwargs
+    assert result.images[0].content == BinaryImage(data=b'edited', media_type='image/webp')
+    assert result.provider_details == {'created': 456}
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_edit_wire_payload():
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'created': 456,
+                'data': [{'b64_json': 'ZWRpdGVk'}],
+                'output_format': 'png',
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
+    provider = OpenAIProvider(openai_client=openai_client)
+    model = OpenAIImageGenerationModel('gpt-image-1.5', provider=provider)
+    settings = OpenAIImageGenerationSettings(output_format='png', openai_input_fidelity='high', openai_moderation='low')
+
+    try:
+        await model.generate(
+            'replace the subject',
+            images=[
+                BinaryImage(data=b'first-image', media_type='image/png'),
+                BinaryImage(data=b'second-image', media_type='image/webp'),
+            ],
+            settings=settings,
+        )
+    finally:
+        await http_client.aclose()
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == 'POST'
+    assert request.url.path == '/v1/images/edits'
+    assert request.headers['content-type'].startswith('multipart/form-data; boundary=')
+    body = request.content
+    assert b'name="prompt"' in body
+    assert b'replace the subject' in body
+    assert b'name="model"' in body
+    assert b'gpt-image-1.5' in body
+    assert b'name="input_fidelity"' in body
+    assert b'high' in body
+    assert b'name="output_format"' in body
+    assert b'filename="image-0.png"' in body
+    assert b'Content-Type: image/png' in body
+    assert b'filename="image-1.webp"' in body
+    assert b'Content-Type: image/webp' in body
+    assert body.index(b'first-image') < body.index(b'second-image')
+    assert b'name="moderation"' not in body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_edit_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
+    download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
+    monkeypatch.setattr(openai_images, 'download_item', download_mock)
+
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json='ZWRpdGVk')], output_format='png'
+    )
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+    image_url = ImageUrl('https://example.com/reference.png')
+
+    await model.generate('edit this image', images=[image_url])
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    assert mock_client.images.edit.await_args.kwargs['image'] == [('image-0.webp', b'downloaded', 'image/webp')]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    ('uploaded_file', 'error_message'),
+    [
+        (
+            UploadedFile(file_id='file-openai', provider_name='openai', media_type='image/png'),
+            'requires file content.*does not accept `UploadedFile.file_id`',
+        ),
+        (
+            UploadedFile(file_id='file-anthropic', provider_name='anthropic', media_type='image/png'),
+            "provider_name='anthropic'.*Expected `provider_name` to be `'openai'`",
+        ),
+    ],
+)
+async def test_openai_image_edit_rejects_uploaded_file(uploaded_file: UploadedFile, error_message: str):
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
-    with pytest.raises(UserError, match='Reference images are not supported'):
-        await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+    with pytest.raises(UserError, match=error_message):
+        await model.generate('edit this image', images=[uploaded_file])
 
     mock_client.images.generate.assert_not_awaited()
+    mock_client.images.edit.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_edit_rejects_unsupported_image_format():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+
+    with pytest.raises(UserError, match=r'only supports PNG, JPEG, or WebP.*image/gif'):
+        await model.generate('edit this image', images=[BinaryImage(data=b'gif', media_type='image/gif')])
+
+    mock_client.images.edit.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_edit_status_error():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.edit.side_effect = APIStatusError(
+        'test error',
+        response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1/images/edits')),
+        body={'error': 'test error'},
+    )
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.body == {'error': 'test error'}
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_connection_error():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.side_effect = APIConnectionError(
+        message='connection failed', request=httpx.Request('POST', 'https://example.com/v1/images/generations')
+    )
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+
+    with pytest.raises(ModelAPIError, match='connection failed'):
+        await model.generate('generate this image')
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

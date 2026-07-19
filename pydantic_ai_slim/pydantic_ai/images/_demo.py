@@ -75,6 +75,27 @@ def run_demo() -> None:
         print('image cost:', image_cost)
         print('image saved to:', str(image_path))
 
+        if image_model_name == 'gpt-image-1.5':
+            edited_image_result = image_generator.generate_sync(
+                'Replace the cat with a dog while preserving the cowboy hat, dancing pose, and Rome setting.',
+                images=[image_result.images[0].content],
+                settings=image_settings,
+            )
+            edited_image_path = _THIS_DIR / '_demo_output_gpt-image-1.5_edited.png'
+            with edited_image_path.open('wb') as f:
+                f.write(edited_image_result.images[0].content.data)
+
+            try:
+                edited_image_cost = edited_image_result.cost().total_price
+            except LookupError:
+                edited_image_cost = Decimal(0)
+
+            print('edited image count:', len(edited_image_result.images))
+            print('edited image media type:', edited_image_result.images[0].content.media_type)
+            print('edited image usage:', edited_image_result.usage)
+            print('edited image cost:', edited_image_cost)
+            print('edited image saved to:', str(edited_image_path))
+
 
 if __name__ == '__main__':
     main()

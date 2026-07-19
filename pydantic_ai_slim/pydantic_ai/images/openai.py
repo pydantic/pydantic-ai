@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import BinaryImage
+from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
+from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -52,8 +53,11 @@ class OpenAIImageGenerationSettings(ImageGenerationSettings, total=False):
     openai_background: Literal['transparent', 'opaque', 'auto']
     """OpenAI image background setting."""
 
+    openai_input_fidelity: Literal['high', 'low']
+    """OpenAI input fidelity setting for image editing."""
+
     openai_moderation: Literal['low', 'auto']
-    """OpenAI moderation strictness."""
+    """OpenAI moderation strictness for image generation."""
 
     openai_output_compression: int
     """OpenAI output compression setting."""
@@ -110,28 +114,41 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
-        if images:
-            raise UserError('Reference images are not supported by the OpenAI image generation adapter')
-
         settings = cast(OpenAIImageGenerationSettings, settings)
         output_compression = settings.get('openai_output_compression', OMIT)
 
         try:
-            response = await self._client.images.generate(
-                prompt=prompt,
-                model=self.model_name,
-                n=settings.get('n') or OMIT,
-                # The OpenAI SDK type can lag behind newer GPT Image size constraints.
-                size=cast(Any, settings.get('openai_size')) or OMIT,
-                output_format=settings.get('output_format') or OMIT,
-                quality=settings.get('openai_quality') or OMIT,
-                background=settings.get('openai_background') or OMIT,
-                moderation=settings.get('openai_moderation') or OMIT,
-                output_compression=output_compression,
-                user=settings.get('openai_user') or OMIT,
-                extra_headers=settings.get('extra_headers'),
-                extra_body=settings.get('extra_body'),
-            )
+            if images:
+                response = await self._client.images.edit(
+                    image=await self._map_input_images(images),
+                    prompt=prompt,
+                    model=self.model_name,
+                    n=settings.get('n') or OMIT,
+                    size=settings.get('openai_size') or OMIT,
+                    output_format=settings.get('output_format') or OMIT,
+                    quality=settings.get('openai_quality') or OMIT,
+                    background=settings.get('openai_background') or OMIT,
+                    input_fidelity=settings.get('openai_input_fidelity') or OMIT,
+                    output_compression=output_compression,
+                    user=settings.get('openai_user') or OMIT,
+                    extra_headers=settings.get('extra_headers'),
+                    extra_body=settings.get('extra_body'),
+                )
+            else:
+                response = await self._client.images.generate(
+                    prompt=prompt,
+                    model=self.model_name,
+                    n=settings.get('n') or OMIT,
+                    size=settings.get('openai_size') or OMIT,
+                    output_format=settings.get('output_format') or OMIT,
+                    quality=settings.get('openai_quality') or OMIT,
+                    background=settings.get('openai_background') or OMIT,
+                    moderation=settings.get('openai_moderation') or OMIT,
+                    output_compression=output_compression,
+                    user=settings.get('openai_user') or OMIT,
+                    extra_headers=settings.get('extra_headers'),
+                    extra_body=settings.get('extra_body'),
+                )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
@@ -140,6 +157,33 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         return self._map_response(prompt, settings, response)
+
+    async def _map_input_images(self, images: Sequence[ImageGenerationInput]) -> list[tuple[str, bytes, str]]:
+        mapped_images: list[tuple[str, bytes, str]] = []
+        for index, image in enumerate(images):
+            if isinstance(image, UploadedFile):
+                if image.provider_name != self.system:
+                    raise UserError(
+                        f'UploadedFile with `provider_name={image.provider_name!r}` cannot be used with '
+                        f'{type(self).__name__}. Expected `provider_name` to be `{self.system!r}`.'
+                    )
+                raise UserError(
+                    'OpenAI image editing requires file content and does not accept `UploadedFile.file_id`; '
+                    'use `BinaryImage` or `ImageUrl` instead'
+                )
+
+            if isinstance(image, ImageUrl):
+                downloaded_image = await download_item(image, data_format='bytes')
+                data = downloaded_image['data']
+                media_type = downloaded_image['data_type']
+            else:
+                data = image.data
+                media_type = image.media_type
+
+            extension = _openai_input_extension(media_type)
+            mapped_images.append((f'image-{index}.{extension}', data, media_type))
+
+        return mapped_images
 
     def _map_response(
         self, prompt: str, settings: ImageGenerationSettings, response: ImagesResponse
@@ -184,6 +228,18 @@ def _media_type_from_output_format(output_format: str) -> str:
     if output_format == 'jpeg':
         return 'image/jpeg'
     return f'image/{output_format}'
+
+
+def _openai_input_extension(media_type: str) -> str:
+    if media_type == 'image/png':
+        return 'png'
+    if media_type == 'image/jpeg':
+        return 'jpg'
+    if media_type == 'image/webp':
+        return 'webp'
+    raise UserError(
+        f'OpenAI image editing only supports PNG, JPEG, or WebP input images, got media type {media_type!r}'
+    )
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:
