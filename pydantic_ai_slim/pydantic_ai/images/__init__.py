@@ -36,6 +36,10 @@ __all__ = [
 KnownImageGenerationModelName = TypeAliasType(
     'KnownImageGenerationModelName',
     Literal[
+        'google:gemini-2.5-flash-image',
+        'google:gemini-3-pro-image',
+        'google:gemini-3.1-flash-image',
+        'google:gemini-3.1-flash-lite-image',
         'openai:gpt-image-1',
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
@@ -65,6 +69,10 @@ def infer_image_generation_model(
         from .openai import OpenAIImageGenerationModel
 
         return OpenAIImageGenerationModel(model_name, provider=provider)
+    elif provider_name == 'google':
+        from .google import GoogleImageGenerationModel
+
+        return GoogleImageGenerationModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown image generation model: {model}')  # pragma: no cover
 

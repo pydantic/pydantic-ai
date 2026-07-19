@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 from unittest.mock import AsyncMock
 
 import httpx
@@ -20,6 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageGenerationSettings,
+    KnownImageGenerationModelName,
     TestImageGenerationModel,
     infer_image_generation_model,
     merge_image_generation_settings,
@@ -45,6 +48,17 @@ with try_import() as openai_imports_successful:
     import pydantic_ai.images.openai as openai_images
     from pydantic_ai.images.openai import OpenAIImageGenerationModel, OpenAIImageGenerationSettings
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as google_imports_successful:
+    import pydantic_ai.images.google as google_images
+    from pydantic_ai.images.google import (
+        GoogleImageGenerationModel,
+        GoogleImageGenerationSettings,
+    )
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as image_demo_imports_successful:
+    import pydantic_ai.images._demo as images_demo
 
 TINY_PNG = (
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
@@ -177,6 +191,359 @@ def test_merge_image_generation_settings():
     )
     assert merge_image_generation_settings(None, overrides) == overrides
     assert merge_image_generation_settings(base, None) == base
+
+
+def test_known_google_image_generation_model_names():
+    known_names = get_args(KnownImageGenerationModelName.__value__)
+
+    assert {name for name in known_names if name.startswith('google:')} == {
+        'google:gemini-2.5-flash-image',
+        'google:gemini-3-pro-image',
+        'google:gemini-3.1-flash-image',
+        'google:gemini-3.1-flash-lite-image',
+    }
+
+
+@pytest.mark.skipif(not image_demo_imports_successful(), reason='Image demo dependencies not installed')
+def test_image_demo_provider_selection(monkeypatch: pytest.MonkeyPatch):
+    calls: list[str] = []
+    parse_providers = images_demo._parse_providers  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(images_demo, '_run_openai_demo', lambda: calls.append('openai'))
+    monkeypatch.setattr(images_demo, '_run_google_demo', lambda: calls.append('google'))
+
+    assert parse_providers([]) == {'openai', 'google'}
+    assert parse_providers(['--provider', 'google']) == {'google'}
+    assert parse_providers(['-p', 'google', '-p', 'openai']) == {'openai', 'google'}
+
+    images_demo.run_demo({'google'})
+    assert calls == ['google']
+
+    calls.clear()
+    images_demo.run_demo({'openai'})
+    assert calls == ['openai']
+
+    calls.clear()
+    images_demo.run_demo()
+    assert calls == ['openai', 'google']
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_infer_google_image_generation_model():
+    model = infer_image_generation_model(
+        'google:gemini-2.5-flash-image',
+        provider_factory=lambda _: GoogleProvider(api_key='test-api-key'),
+    )
+
+    assert isinstance(model, GoogleImageGenerationModel)
+    assert model.model_name == 'gemini-2.5-flash-image'
+    assert model.system == 'google'
+    assert model.base_url == 'https://generativelanguage.googleapis.com/'
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_wire_payload_and_response_mapping():
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [
+                                {'text': 'Here is the edited image.'},
+                                {
+                                    'inlineData': {'data': 'dGhvdWdodA==', 'mimeType': 'image/png'},
+                                    'thought': True,
+                                },
+                                {
+                                    'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'},
+                                    'thoughtSignature': 'c2lnbmF0dXJl',
+                                },
+                            ],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                        'index': 0,
+                    }
+                ],
+                'modelVersion': 'gemini-2.5-flash-image',
+                'responseId': 'response-123',
+                'usageMetadata': {
+                    'candidatesTokenCount': 5,
+                    'candidatesTokensDetails': [{'modality': 'IMAGE', 'tokenCount': 5}],
+                    'promptTokenCount': 3,
+                    'promptTokensDetails': [
+                        {'modality': 'TEXT', 'tokenCount': 1},
+                        {'modality': 'IMAGE', 'tokenCount': 2},
+                    ],
+                    'thoughtsTokenCount': 2,
+                    'totalTokenCount': 10,
+                },
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    settings = GoogleImageGenerationSettings(
+        google_image_config={'aspect_ratio': '1:1'},
+        extra_headers={'x-test-header': 'test-value'},
+    )
+
+    try:
+        result = await model.generate(
+            'replace the subject',
+            images=[
+                BinaryImage(
+                    data=b'first-image',
+                    media_type='image/png',
+                    vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'}},
+                ),
+                UploadedFile(
+                    file_id='https://generativelanguage.googleapis.com/v1beta/files/file-123',
+                    provider_name='google',
+                    media_type='image/webp',
+                ),
+                ImageUrl(
+                    'https://generativelanguage.googleapis.com/v1beta/files/file-456',
+                    media_type='image/jpeg',
+                ),
+            ],
+            settings=settings,
+        )
+    finally:
+        await http_client.aclose()
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == 'POST'
+    assert request.url.path == '/v1beta/models/gemini-2.5-flash-image:generateContent'
+    assert request.headers['x-test-header'] == 'test-value'
+    assert json.loads(request.content) == snapshot(
+        {
+            'contents': [
+                {
+                    'parts': [
+                        {'text': 'replace the subject'},
+                        {
+                            'inlineData': {'data': 'Zmlyc3QtaW1hZ2U=', 'mimeType': 'image/png'},
+                            'mediaResolution': {'level': 'MEDIA_RESOLUTION_LOW'},
+                        },
+                        {
+                            'fileData': {
+                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-123',
+                                'mimeType': 'image/webp',
+                            }
+                        },
+                        {
+                            'fileData': {
+                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-456',
+                                'mimeType': 'image/jpeg',
+                            }
+                        },
+                    ],
+                    'role': 'user',
+                }
+            ],
+            'generationConfig': {
+                'imageConfig': {'aspectRatio': '1:1'},
+                'responseModalities': ['TEXT', 'IMAGE'],
+            },
+        }
+    )
+    assert result == snapshot(
+        ImageGenerationResult(
+            images=[
+                GeneratedImage(
+                    content=BinaryImage(data=b'hello', media_type='image/png'),
+                    output_format='png',
+                    provider_details={'has_thought_signature': True},
+                )
+            ],
+            prompt='replace the subject',
+            model_name='gemini-2.5-flash-image',
+            provider_name='google',
+            timestamp=IsDatetime(),
+            usage=RequestUsage(
+                input_tokens=3,
+                output_tokens=7,
+                details={
+                    'thoughts_tokens': 2,
+                    'text_prompt_tokens': 1,
+                    'image_prompt_tokens': 2,
+                    'image_candidates_tokens': 5,
+                },
+            ),
+            settings=settings,
+            provider_details={'finish_reason': 'STOP'},
+            provider_response_id='response-123',
+            provider_url='https://example.com',
+        )
+    )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
+    download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    image_url = ImageUrl('https://example.com/reference.png')
+
+    try:
+        await model.generate('edit this image', images=[image_url])
+    finally:
+        await http_client.aclose()
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    body = json.loads(requests[0].content)
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    ('uploaded_file', 'error_message'),
+    [
+        (
+            UploadedFile(file_id='file-google', provider_name='google', media_type='image/png'),
+            'Google Files API URI.*starting with `https://`',
+        ),
+        (
+            UploadedFile(file_id='https://example.com/file.png', provider_name='openai', media_type='image/png'),
+            "provider_name='openai'.*Expected `provider_name` to be `'google'`",
+        ),
+    ],
+)
+async def test_google_image_generation_rejects_invalid_uploaded_file(uploaded_file: UploadedFile, error_message: str):
+    provider = GoogleProvider(api_key='test-api-key')
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    with pytest.raises(UserError, match=error_message):
+        await model.generate('edit this image', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_response_without_image():
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {'parts': [{'text': 'I cannot create that image.'}], 'role': 'model'},
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
+            await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_status_error():
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+    try:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await model.generate('tiny robot')
+    finally:
+        await http_client.aclose()
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == {
+        'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}
+    }
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_image_generation_vcr():
+    provider = GoogleProvider(api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')))
+    model = GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider)
+
+    result = await model.generate(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type.startswith('image/')
+    assert len(generated_image.content.data) > 100
+    assert generated_image.output_format
+    assert result.model_name == 'gemini-3.1-flash-lite-image'
+    assert result.provider_name == 'google'
+    assert result.provider_url == 'https://generativelanguage.googleapis.com/'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.provider_details == {'finish_reason': 'STOP'}
+    assert result.provider_response_id
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
+    provider = GoogleProvider(api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')))
+    model = GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider)
+
+    result = await model.generate(
+        'Transform the subject into a dog with a cowboy hat, dancing in Rome.',
+        images=[image_content],
+        settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.media_type.startswith('image/')
+    assert len(edited_image.content.data) > 100
+    assert edited_image.output_format
+    assert result.model_name == 'gemini-3.1-flash-lite-image'
+    assert result.provider_name == 'google'
+    assert result.provider_url == 'https://generativelanguage.googleapis.com/'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.provider_details == {'finish_reason': 'STOP'}
+    assert result.provider_response_id
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

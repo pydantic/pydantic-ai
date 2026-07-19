@@ -175,7 +175,13 @@ Include the [PR template](.github/pull_request_template.md), fill in the issue n
 
 ### Google, Bedrock, others
 
-Not yet documented here. **When you add the next model for one of these providers, add the landmines you encountered to this section before closing the session** (see Step 9).
+Google image-model landmines:
+
+- Direct image generation has a separate public literal, `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`. When the task is scoped to `ImageGenerator`, update and test this literal independently; do not automatically widen the change to conversational `KnownModelName`, gateway aliases, profiles, and capability snapshots unless those surfaces are explicitly in scope.
+- `Client().models.list()` returns a lazy pager. Keep the client in a named variable until iteration finishes; constructing it inline can let it be closed before the pager sends its request. The endpoint can still list deprecated preview image IDs, so cross-check the official deprecation page and add only current IDs.
+- Probe image settings on the exact model and API surface. For `gemini-3.1-flash-image`, the minimum `generateContent` value is `ImageConfigDict(image_size='512')`; the superficially similar literal `'0.5K'` is invalid and returns HTTP 400. `gemini-3.1-flash-lite-image` supports only 1K output. Do not transfer value spellings between model families or API examples without a live check.
+
+Bedrock and other providers are not yet documented here. **When you add the next model for one of these providers, add the landmines you encountered to this section before closing the session** (see Step 9).
 
 ## Step 9 — Update this skill
 
