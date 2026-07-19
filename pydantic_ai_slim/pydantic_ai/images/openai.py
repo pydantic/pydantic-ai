@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from .base import ImageGenerationModel
+from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings
 
@@ -101,8 +102,17 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         """The image generation model provider."""
         return self._provider.name
 
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
-        prompt, settings = self.prepare_generate(prompt, settings)
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+        if images:
+            raise UserError('Reference images are not supported by the OpenAI image generation adapter')
+
         settings = cast(OpenAIImageGenerationSettings, settings)
         output_compression = settings.get('openai_output_compression', OMIT)
 

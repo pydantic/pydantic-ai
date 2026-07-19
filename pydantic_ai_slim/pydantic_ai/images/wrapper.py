@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .base import ImageGenerationModel
+from .base import ImageGenerationInput, ImageGenerationModel
 from .result import ImageGenerationResult
 from .settings import ImageGenerationSettings
 
@@ -35,8 +36,14 @@ class WrapperImageGenerationModel(ImageGenerationModel):
         super().__init__()
         self.wrapped = infer_image_generation_model(wrapped) if isinstance(wrapped, str) else wrapped
 
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
-        return await self.wrapped.generate(prompt, settings=settings)
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        return await self.wrapped.generate(prompt, images=images, settings=settings)
 
     @property
     def model_name(self) -> str:

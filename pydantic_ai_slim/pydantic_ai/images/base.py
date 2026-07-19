@@ -1,7 +1,16 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
+
+from typing_extensions import TypeAliasType
+
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 
 from .result import ImageGenerationResult
 from .settings import ImageGenerationSettings, merge_image_generation_settings
+
+ImageGenerationInput = TypeAliasType('ImageGenerationInput', ImageUrl | BinaryImage | UploadedFile)
+"""An image input that can be used as a reference for image generation."""
 
 
 class ImageGenerationModel(ABC):
@@ -39,13 +48,35 @@ class ImageGenerationModel(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
         """Generate images for the given prompt."""
         raise NotImplementedError
 
     def prepare_generate(
-        self, prompt: str, settings: ImageGenerationSettings | None = None
-    ) -> tuple[str, ImageGenerationSettings]:
-        """Prepare the prompt and settings for image generation."""
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> tuple[str, list[ImageGenerationInput], ImageGenerationSettings]:
+        """Prepare the prompt, reference images, and settings for image generation."""
+        if not prompt.strip():
+            raise UserError('Image generation requires a non-empty prompt')
+
+        prepared_images = list(images or ())
+        for image in prepared_images:
+            if not isinstance(image, (ImageUrl, BinaryImage, UploadedFile)):
+                raise UserError(
+                    'Image generation inputs must be `ImageUrl`, `BinaryImage`, or `UploadedFile` instances'
+                )
+            if isinstance(image, UploadedFile) and not image.media_type.startswith('image/'):
+                raise UserError('Image generation `UploadedFile` inputs must have an image media type')
+
         settings = merge_image_generation_settings(self._settings, settings) or {}
-        return prompt, settings
+        return prompt, prepared_images, settings

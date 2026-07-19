@@ -1,11 +1,12 @@
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.usage import RequestUsage
 
-from .base import ImageGenerationModel
+from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings
 
@@ -32,6 +33,7 @@ class TestImageGenerationModel(ImageGenerationModel):
 
     _model_name: str
     _provider_name: str
+    last_images: list[ImageGenerationInput]
     last_settings: ImageGenerationSettings | None = None
 
     def __init__(
@@ -43,6 +45,7 @@ class TestImageGenerationModel(ImageGenerationModel):
     ):
         self._model_name = model_name
         self._provider_name = provider_name
+        self.last_images = []
         self.last_settings = None
         super().__init__(settings=settings)
 
@@ -54,8 +57,15 @@ class TestImageGenerationModel(ImageGenerationModel):
     def system(self) -> str:
         return self._provider_name
 
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
-        prompt, settings = self.prepare_generate(prompt, settings)
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+        self.last_images = images
         self.last_settings = settings
         image_count = settings.get('n') or 1
         output_format = settings.get('output_format') or 'png'

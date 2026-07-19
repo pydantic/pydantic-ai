@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -18,7 +18,7 @@ from pydantic_ai._instrumentation import (
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
-from .base import ImageGenerationModel
+from .base import ImageGenerationInput, ImageGenerationModel
 from .result import ImageGenerationResult
 from .settings import ImageGenerationSettings
 from .wrapper import WrapperImageGenerationModel
@@ -56,10 +56,16 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
         super().__init__(wrapped)
         self.instrumentation_settings = options or InstrumentationSettings()
 
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
-        prompt, settings = self.prepare_generate(prompt, settings)
-        with self._instrument(prompt, settings) as finish:
-            result = await super().generate(prompt, settings=settings)
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
+        with self._instrument(prompt, images, settings) as finish:
+            result = await super().generate(prompt, images=images, settings=settings)
             finish(result)
             return result
 
@@ -67,6 +73,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
     def _instrument(
         self,
         prompt: str,
+        images: Sequence[ImageGenerationInput],
         settings: ImageGenerationSettings | None,
     ) -> Generator[Callable[[ImageGenerationResult], None]]:
         operation = 'image_generation'
@@ -76,6 +83,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             'prompt_length': len(prompt),
+            'input_image_count': len(images),
         }
 
         if settings:
@@ -89,6 +97,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                 'type': 'object',
                 'properties': {
                     'prompt_length': {'type': 'integer'},
+                    'input_image_count': {'type': 'integer'},
                     'image_generation_settings': {'type': 'object'},
                     'image_count': {'type': 'integer'},
                     **({'prompt': {'type': 'string'}} if self.instrumentation_settings.include_content else {}),

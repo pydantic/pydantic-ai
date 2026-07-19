@@ -5,8 +5,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pydantic_ai import BinaryImage, GeneratedImage, ImageGenerationResult, ImageGenerator
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+import pydantic_ai.images as images_module
+from pydantic_ai import (
+    BinaryImage,
+    GeneratedImage,
+    ImageGenerationInput,
+    ImageGenerationResult,
+    ImageGenerator,
+    ImageUrl,
+    UploadedFile,
+)
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageGenerationSettings,
     TestImageGenerationModel,
@@ -71,6 +80,89 @@ async def test_image_generator_with_test_model():
         )
     )
     assert test_model.last_settings == {'n': 2}
+
+
+async def test_image_generator_forwards_reference_images():
+    test_model = TestImageGenerationModel()
+    generator = ImageGenerator(test_model)
+    images = (
+        ImageUrl('https://example.com/reference.png'),
+        BinaryImage(data=TINY_PNG, media_type='image/png'),
+        UploadedFile(file_id='file-reference', provider_name='openai', media_type='image/webp'),
+    )
+
+    await generator.generate('edit these images', images=images)
+
+    assert test_model.last_images == list(images)
+
+
+async def test_image_generator_override():
+    default_model = TestImageGenerationModel(model_name='default')
+    override_model = TestImageGenerationModel(model_name='override')
+    generator = ImageGenerator(default_model)
+
+    with generator.override(model=override_model):
+        result = await generator.generate('tiny robot')
+        assert result.model_name == 'override'
+
+    with generator.override():
+        result = await generator.generate('tiny robot')
+        assert result.model_name == 'default'
+
+
+async def test_image_generator_eager_and_deferred_model_inference(monkeypatch: pytest.MonkeyPatch):
+    resolved_model = TestImageGenerationModel(model_name='resolved')
+    inferred_models: list[object] = []
+
+    def infer_model(model: object) -> TestImageGenerationModel:
+        if not isinstance(model, TestImageGenerationModel):
+            inferred_models.append(model)
+        return resolved_model
+
+    monkeypatch.setattr(images_module, 'infer_image_generation_model', infer_model)
+
+    eager_generator = ImageGenerator('test:eager', defer_model_check=False)
+    assert eager_generator.model is resolved_model
+    assert inferred_models == ['test:eager']
+
+    inferred_models.clear()
+    deferred_generator = ImageGenerator('test:deferred')
+    assert deferred_generator.model == 'test:deferred'
+    assert inferred_models == []
+
+    result = await deferred_generator.generate('tiny robot')
+    assert result.model_name == 'resolved'
+    assert deferred_generator.model is resolved_model
+    assert inferred_models == ['test:deferred']
+
+
+def test_image_generator_sync_forwards_reference_images():
+    test_model = TestImageGenerationModel()
+    generator = ImageGenerator(test_model)
+    image = BinaryImage(data=TINY_PNG, media_type='image/png')
+
+    generator.generate_sync('edit this image', images=[image])
+
+    assert test_model.last_images == [image]
+
+
+async def test_image_generation_requires_non_empty_prompt():
+    with pytest.raises(UserError, match='non-empty prompt'):
+        await TestImageGenerationModel().generate('  ')
+
+
+async def test_image_generation_rejects_non_image_uploaded_file():
+    document = UploadedFile(file_id='file-document', provider_name='openai', media_type='application/pdf')
+
+    with pytest.raises(UserError, match='must have an image media type'):
+        await TestImageGenerationModel().generate('edit this image', images=[document])
+
+
+async def test_image_generation_rejects_invalid_input_type():
+    invalid_input = cast(ImageGenerationInput, object())
+
+    with pytest.raises(UserError, match='must be `ImageUrl`, `BinaryImage`, or `UploadedFile`'):
+        await TestImageGenerationModel().generate('edit this image', images=[invalid_input])
 
 
 def test_merge_image_generation_settings():
@@ -171,10 +263,28 @@ async def test_openai_response_without_base64():
         await model.generate('tiny robot')
 
 
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_rejects_reference_images_before_request():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+
+    with pytest.raises(UserError, match='Reference images are not supported'):
+        await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+
+    mock_client.images.generate.assert_not_awaited()
+
+
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_instrumentation(capfire: CaptureLogfire):
+    reference_url = 'https://example.com/private-reference.png'
     generator = ImageGenerator(TestImageGenerationModel(), instrument=True)
-    await generator.generate('tiny robot', settings={'n': 1})
+    await generator.generate(
+        'tiny robot',
+        images=[ImageUrl(reference_url), BinaryImage(data=TINY_PNG, media_type='image/png')],
+        settings={'n': 1},
+    )
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     span = next(span for span in spans if 'image_generation' in span['name'])
@@ -191,12 +301,14 @@ async def test_instrumentation(capfire: CaptureLogfire):
                 'gen_ai.provider.name': 'test',
                 'gen_ai.request.model': 'test',
                 'prompt_length': 10,
+                'input_image_count': 2,
                 'image_generation_settings': {'n': 1},
                 'prompt': 'tiny robot',
                 'logfire.json_schema': {
                     'type': 'object',
                     'properties': {
                         'prompt_length': {'type': 'integer'},
+                        'input_image_count': {'type': 'integer'},
                         'image_generation_settings': {'type': 'object'},
                         'image_count': {'type': 'integer'},
                         'prompt': {'type': 'string'},
@@ -215,6 +327,27 @@ async def test_instrumentation(capfire: CaptureLogfire):
         }
     )
     assert 'aGVsbG8=' not in str(span)
+    assert reference_url not in str(span)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrument_all(capfire: CaptureLogfire):
+    generator = ImageGenerator(TestImageGenerationModel())
+    ImageGenerator.instrument_all()
+    try:
+        await generator.generate('instrumented globally')
+    finally:
+        ImageGenerator.instrument_all(False)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    image_generation_spans = [span for span in spans if 'image_generation' in span['name']]
+    assert len(image_generation_spans) == 1
+    assert image_generation_spans[0]['attributes']['input_image_count'] == 0
+    assert image_generation_spans[0]['attributes']['prompt'] == 'instrumented globally'
+
+    await generator.generate('not instrumented globally')
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert len([span for span in spans if 'image_generation' in span['name']]) == 1
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

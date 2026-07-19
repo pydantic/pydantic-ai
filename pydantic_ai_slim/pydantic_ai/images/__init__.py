@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
-from .base import ImageGenerationModel
+from .base import ImageGenerationInput, ImageGenerationModel
 from .instrumented import InstrumentedImageGenerationModel, instrument_image_generation_model
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings, merge_image_generation_settings
@@ -20,6 +20,7 @@ from .wrapper import WrapperImageGenerationModel
 
 __all__ = [
     'GeneratedImage',
+    'ImageGenerationInput',
     'ImageGenerationModel',
     'ImageGenerationResult',
     'ImageGenerationSettings',
@@ -126,15 +127,27 @@ class ImageGenerator:
             if model_token is not None:
                 self._override_model.reset(model_token)
 
-    async def generate(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
-        """Generate images from a text prompt."""
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        """Generate images from a prompt and optional reference images."""
         model = self._get_model()
         settings = merge_image_generation_settings(self._settings, settings)
-        return await model.generate(prompt, settings=settings)
+        return await model.generate(prompt, images=images, settings=settings)
 
-    def generate_sync(self, prompt: str, *, settings: ImageGenerationSettings | None = None) -> ImageGenerationResult:
+    def generate_sync(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
         """Synchronous version of [`generate()`][pydantic_ai.images.ImageGenerator.generate]."""
-        return _utils.run_until_complete(self.generate(prompt, settings=settings))
+        return _utils.run_until_complete(self.generate(prompt, images=images, settings=settings))
 
     def _get_model(self) -> ImageGenerationModel:
         """Create a model configured for this generator."""

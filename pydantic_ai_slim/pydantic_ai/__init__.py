@@ -46,6 +46,7 @@ from .exceptions import (
 from .format_prompt import format_as_xml
 from .images import (
     GeneratedImage,
+    ImageGenerationInput,
     ImageGenerationModel,
     ImageGenerationResult,
     ImageGenerationSettings,
@@ -191,6 +192,7 @@ __all__ = (
     'EmbeddingResult',
     # images
     'ImageGenerator',
+    'ImageGenerationInput',
     'ImageGenerationModel',
     'ImageGenerationSettings',
     'ImageGenerationResult',
