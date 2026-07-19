@@ -132,6 +132,14 @@ def _reasoning_support(model_name: str) -> _ReasoningSupport:
     )
 
 
+# Vendor namespace prefixes that some OpenAI-compatible backends prepend to the
+# underlying OpenAI model id. AWS Bedrock Mantle, for example, serves OpenAI
+# models as `openai.<model>` because it fronts multiple vendors behind a single
+# endpoint. These are stripped in `openai_model_profile` before capability
+# detection so the real OpenAI family is what gets matched.
+_VENDOR_MODEL_PREFIXES: tuple[str, ...] = ('openai.',)
+
+
 class OpenAIModelProfile(ModelProfile, total=False):
     """Profile for models used with `OpenAIChatModel`.
 
@@ -281,6 +289,19 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    # Some OpenAI-compatible backends namespace model ids with a vendor prefix
+    # (e.g. AWS Bedrock Mantle serves OpenAI models as `openai.gpt-5.6-sol`).
+    # The capability checks below use `model_name.startswith(...)`, so a prefix
+    # like `openai.` would both shadow the real family (`gpt-5.6` no longer
+    # matches) and collide with unrelated checks (the `o`-series prefix matches
+    # the leading `o` of `openai.`). Strip the known vendor namespace so the
+    # underlying OpenAI model id is what's matched. See:
+    # https://github.com/pydantic/pydantic-ai/issues/6517
+    for vendor_prefix in _VENDOR_MODEL_PREFIXES:
+        if model_name.startswith(vendor_prefix):
+            model_name = model_name[len(vendor_prefix) :]
+            break
+
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6

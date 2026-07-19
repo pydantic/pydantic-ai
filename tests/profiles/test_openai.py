@@ -225,3 +225,29 @@ def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
             'additionalProperties': False,
         }
     )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-5.6-sol',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.3-codex',
+        'gpt-oss-120b',
+        'o3',
+    ],
+)
+def test_vendor_prefixed_model_id_matches_bare_profile(model_name: str):
+    """A vendor-namespaced id (e.g. Bedrock Mantle's `openai.<model>`) resolves
+    to the same profile as the underlying bare OpenAI model id.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6517:
+    previously the `openai.` prefix shadowed the real family (so e.g.
+    `openai.gpt-5.6-sol` lost `openai_supports_phase`) and collided with the
+    `o`-series prefix check (so e.g. `openai.gpt-oss-120b` was wrongly flagged
+    as a reasoning model).
+    """
+    prefixed = openai_model_profile(f'openai.{model_name}')
+    bare = openai_model_profile(model_name)
+    assert dict(prefixed) == dict(bare)
