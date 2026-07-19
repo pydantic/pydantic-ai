@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -377,6 +378,44 @@ async def test_openai_image_edit_wire_payload():
     assert b'Content-Type: image/webp' in body
     assert body.index(b'first-image') < body.index(b'second-image')
     assert b'name="moderation"' not in body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr
+async def test_openai_image_edit_vcr(openai_api_key: str, assets_path: Path):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIImageGenerationModel('gpt-image-1.5', provider=provider)
+    reference_image = BinaryImage(data=(assets_path / 'kiwi.jpg').read_bytes(), media_type='image/jpeg')
+    settings = OpenAIImageGenerationSettings(
+        n=1,
+        output_format='jpeg',
+        openai_size='1024x1024',
+        openai_quality='low',
+        openai_input_fidelity='low',
+        openai_output_compression=100,
+    )
+
+    result = await model.generate(
+        'Place this kiwi fruit on a plain white studio background.',
+        images=[reference_image],
+        settings=settings,
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == 'image/jpeg'
+    assert len(generated_image.content.data) > 100
+    assert generated_image.size == '1024x1024'
+    assert generated_image.quality == 'low'
+    assert generated_image.output_format == 'jpeg'
+    assert result.prompt == 'Place this kiwi fruit on a plain white studio background.'
+    assert result.model_name == 'gpt-image-1.5'
+    assert result.provider_name == 'openai'
+    assert result.provider_url == 'https://api.openai.com/v1/'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+    assert result.provider_details is not None
+    assert result.provider_details.get('created')
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
