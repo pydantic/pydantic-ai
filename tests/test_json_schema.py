@@ -256,7 +256,7 @@ def test_typeless_anyof_member_still_recursed():
 
 
 def test_inline_defs_preserves_ref_sibling_keywords():
-    """Keywords alongside a `$ref` (e.g. a field-level description/default) must survive inlining."""
+    """Test internal schema walking, which has no provider request to cover with VCR."""
     from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 
     schema = {
@@ -264,7 +264,14 @@ def test_inline_defs_preserves_ref_sibling_keywords():
         'properties': {
             'field': {'$ref': '#/$defs/Foo', 'description': 'field-level description', 'default': None},
         },
-        '$defs': {'Foo': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        '$defs': {
+            'Foo': {
+                'type': 'object',
+                'description': 'model-level description',
+                'default': 'model default',
+                'properties': {'x': {'type': 'integer'}},
+            }
+        },
     }
 
     result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
@@ -273,6 +280,7 @@ def test_inline_defs_preserves_ref_sibling_keywords():
     # The referenced definition is inlined...
     assert field['type'] == 'object'
     assert field['properties'] == {'x': {'type': 'integer'}}
+    assert '$ref' not in field
     # ...and the sibling keywords are preserved rather than dropped.
     assert field['description'] == 'field-level description'
     assert field['default'] is None
