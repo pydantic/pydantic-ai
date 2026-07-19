@@ -5720,7 +5720,7 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
 ]
 provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
@@ -8315,7 +8315,7 @@ wheels = [
 
 [[package]]
 name = "xai-sdk"
-version = "1.14.0"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -8327,9 +8327,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/20/8e0824608923120aff1084258809eb1d1f7bbc63c00da247bae90cc2b50c/xai_sdk-1.14.0.tar.gz", hash = "sha256:aef21dc234885fedd91c7292514f6a734e8e712e504538e8764d935ec2a83046", size = 415759, upload-time = "2026-05-27T05:15:15.868Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/79/722beabb2ffbac413e4e776230ee56db2710e83c02f038f5769f9da748c1/xai_sdk-1.17.0.tar.gz", hash = "sha256:ec695ad8b459a4080c01f6e7bb8abf38ed6a4ec69532bfdd73c4de14db1d485c", size = 452803, upload-time = "2026-06-12T03:44:13.329Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/dd/fcfac12b4a18b2d8b4d4778179aaf0ce928ccf443ff9c38ecec7516586cd/xai_sdk-1.14.0-py3-none-any.whl", hash = "sha256:02157e58ffd0c049b324eb0612c82ae44310f2a2b62343c5acbc5a87ca37afcd", size = 257346, upload-time = "2026-05-27T05:15:14.173Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/ad/99ad3209727f6e0e280681c05aa6a49feb130926d939bdb4767ee825b0da/xai_sdk-1.17.0-py3-none-any.whl", hash = "sha256:88a6a53181fa13d55662e3296dafd2a3cf258803450b7d82c7318b8c64e8a485", size = 273997, upload-time = "2026-06-12T03:44:11.828Z" },
 ]
 
 [[package]]

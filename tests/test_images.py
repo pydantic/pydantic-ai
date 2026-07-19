@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,16 @@ with try_import() as google_imports_successful:
         GoogleImageGenerationSettings,
     )
     from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as xai_imports_successful:
+    import grpc
+    from xai_sdk import AsyncClient as XaiAsyncClient
+    from xai_sdk.aio.image import ImageResponse as XaiImageResponse
+    from xai_sdk.proto import image_pb2 as xai_image_pb2, usage_pb2 as xai_usage_pb2
+
+    import pydantic_ai.images.xai as xai_images
+    from pydantic_ai.images.xai import XaiImageGenerationModel, XaiImageGenerationSettings
+    from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as image_demo_imports_successful:
     import pydantic_ai.images._demo as images_demo
@@ -204,27 +215,41 @@ def test_known_google_image_generation_model_names():
     }
 
 
+def test_known_xai_image_generation_model_names():
+    known_names = get_args(KnownImageGenerationModelName.__value__)
+
+    assert {name for name in known_names if name.startswith('xai:')} == {
+        'xai:grok-imagine-image',
+        'xai:grok-imagine-image-quality',
+    }
+
+
 @pytest.mark.skipif(not image_demo_imports_successful(), reason='Image demo dependencies not installed')
-def test_image_demo_provider_selection(monkeypatch: pytest.MonkeyPatch):
+async def test_image_demo_provider_selection(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
     parse_providers = images_demo._parse_providers  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(images_demo, '_run_openai_demo', lambda: calls.append('openai'))
-    monkeypatch.setattr(images_demo, '_run_google_demo', lambda: calls.append('google'))
+    monkeypatch.setattr(images_demo, '_run_openai_demo', AsyncMock(side_effect=lambda: calls.append('openai')))
+    monkeypatch.setattr(images_demo, '_run_google_demo', AsyncMock(side_effect=lambda: calls.append('google')))
+    monkeypatch.setattr(images_demo, '_run_xai_demo', AsyncMock(side_effect=lambda: calls.append('xai')))
 
-    assert parse_providers([]) == {'openai', 'google'}
+    assert parse_providers([]) == {'openai', 'google', 'xai'}
     assert parse_providers(['--provider', 'google']) == {'google'}
     assert parse_providers(['-p', 'google', '-p', 'openai']) == {'openai', 'google'}
 
-    images_demo.run_demo({'google'})
+    await images_demo.run_demo({'google'})
     assert calls == ['google']
 
     calls.clear()
-    images_demo.run_demo({'openai'})
+    await images_demo.run_demo({'openai'})
     assert calls == ['openai']
 
     calls.clear()
-    images_demo.run_demo()
-    assert calls == ['openai', 'google']
+    await images_demo.run_demo({'xai'})
+    assert calls == ['xai']
+
+    calls.clear()
+    await images_demo.run_demo()
+    assert calls == ['openai', 'google', 'xai']
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -544,6 +569,282 @@ async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
     assert result.usage.output_tokens > 0
     assert result.provider_details == {'finish_reason': 'STOP'}
     assert result.provider_response_id
+
+
+def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
+    proto = xai_image_pb2.ImageResponse(
+        images=[
+            xai_image_pb2.GeneratedImage(
+                base64=f'data:image/jpeg;base64,{base64.b64encode(image_data).decode()}',
+                respect_moderation=respect_moderation,
+            )
+            for image_data in data
+        ],
+        model='grok-imagine-image',
+        usage=xai_usage_pb2.SamplingUsage(
+            prompt_tokens=7,
+            completion_tokens=11,
+            total_tokens=18,
+            reasoning_tokens=3,
+            cached_prompt_text_tokens=2,
+            prompt_text_tokens=4,
+            prompt_image_tokens=3,
+            cost_in_usd_ticks=200_000_000,
+        ),
+    )
+    return [XaiImageResponse(proto, index) for index in range(len(data))]
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_infer_xai_image_generation_model():
+    model = infer_image_generation_model(
+        'xai:grok-imagine-image',
+        provider_factory=lambda _: XaiProvider(xai_client=XaiAsyncClient(api_key='test-api-key')),
+    )
+
+    assert isinstance(model, XaiImageGenerationModel)
+    assert model.model_name == 'grok-imagine-image'
+    assert model.system == 'xai'
+    assert model.base_url == 'https://api.x.ai/v1'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_wire_payload_and_response_mapping():
+    mock_client = AsyncMock()
+    responses = _xai_image_responses(b'first-image', b'second-image')
+    mock_client.image.sample_batch.return_value = responses
+    provider = XaiProvider(xai_client=cast(XaiAsyncClient, mock_client))
+    model = XaiImageGenerationModel('grok-imagine-image', provider=provider)
+    settings = XaiImageGenerationSettings(
+        n=2,
+        xai_user='user-123',
+        xai_aspect_ratio='1:1',
+        xai_resolution='1k',
+    )
+
+    result = await model.generate(
+        'replace the subject',
+        images=[
+            UploadedFile(file_id='file-123', provider_name='xai', media_type='image/jpeg'),
+            BinaryImage(data=b'binary-image', media_type='image/png'),
+            ImageUrl('https://example.com/reference.webp'),
+        ],
+        settings=settings,
+    )
+
+    mock_client.image.sample_batch.assert_awaited_once_with(
+        'replace the subject',
+        'grok-imagine-image',
+        2,
+        image_url=None,
+        image_file_id=None,
+        image_urls=['data:image/png;base64,YmluYXJ5LWltYWdl', 'https://example.com/reference.webp'],
+        image_file_ids=['file-123'],
+        user='user-123',
+        image_format='base64',
+        aspect_ratio='1:1',
+        resolution='1k',
+    )
+    assert result == snapshot(
+        ImageGenerationResult(
+            images=[
+                GeneratedImage(
+                    content=BinaryImage(data=b'first-image', media_type='image/jpeg'),
+                    output_format='jpeg',
+                    provider_details={'respect_moderation': True},
+                ),
+                GeneratedImage(
+                    content=BinaryImage(data=b'second-image', media_type='image/jpeg'),
+                    output_format='jpeg',
+                    provider_details={'respect_moderation': True},
+                ),
+            ],
+            prompt='replace the subject',
+            model_name='grok-imagine-image',
+            provider_name='xai',
+            timestamp=IsDatetime(),
+            usage=RequestUsage(
+                input_tokens=7,
+                output_tokens=11,
+                details={
+                    'reasoning_tokens': 3,
+                    'cached_prompt_text_tokens': 2,
+                    'input_text_tokens': 4,
+                    'input_image_tokens': 3,
+                },
+            ),
+            settings=settings,
+            provider_details={'cost_in_usd_ticks': 200000000, 'cost_usd': 0.02},
+            provider_url='https://api.x.ai/v1',
+        )
+    )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_single_uploaded_file():
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'edited-image')[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    await model.generate(
+        'edit this image',
+        images=[UploadedFile(file_id='file-123', provider_name='xai', media_type='image/jpeg')],
+    )
+
+    mock_client.image.sample.assert_awaited_once_with(
+        'edit this image',
+        'grok-imagine-image',
+        image_url=None,
+        image_file_id='file-123',
+        image_urls=None,
+        image_file_ids=None,
+        user=None,
+        image_format='base64',
+        aspect_ratio=None,
+        resolution=None,
+    )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_downloads_forced_image_url(monkeypatch: pytest.MonkeyPatch):
+    download_mock = AsyncMock(return_value={'data': b'downloaded-image', 'data_type': 'image/webp'})
+    monkeypatch.setattr(xai_images, 'download_item', download_mock)
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'edited-image')[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+    image_url = ImageUrl('https://example.com/reference.png', force_download=True)
+
+    await model.generate('edit this image', images=[image_url])
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    assert mock_client.image.sample.await_args.kwargs['image_url'] == (
+        'data:image/webp;base64,ZG93bmxvYWRlZC1pbWFnZQ=='
+    )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_rejects_uploaded_file_provider_mismatch():
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, AsyncMock())),
+    )
+
+    with pytest.raises(UserError, match="Expected `provider_name` to be `'xai'`"):
+        await model.generate(
+            'edit this image',
+            images=[UploadedFile(file_id='file-123', provider_name='google', media_type='image/jpeg')],
+        )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_rejects_mixed_inputs_that_would_be_reordered():
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, AsyncMock())),
+    )
+
+    with pytest.raises(UserError, match='Place all `UploadedFile` inputs first'):
+        await model.generate(
+            'edit these images',
+            images=[
+                ImageUrl('https://example.com/reference.png'),
+                UploadedFile(file_id='file-123', provider_name='xai', media_type='image/jpeg'),
+            ],
+        )
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_invalid_response():
+    mock_client = AsyncMock()
+    proto = xai_image_pb2.ImageResponse(
+        images=[xai_image_pb2.GeneratedImage(respect_moderation=False)],
+        model='grok-imagine-image',
+    )
+    mock_client.image.sample.return_value = XaiImageResponse(proto, 0)
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match='did not contain valid base64 image data'):
+        await model.generate('tiny robot')
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_status_error():
+    class TestRpcError(grpc.RpcError):
+        def code(self) -> grpc.StatusCode:
+            return grpc.StatusCode.RESOURCE_EXHAUSTED
+
+        def details(self) -> str:
+            return 'rate limit exceeded'
+
+    mock_client = AsyncMock()
+    mock_client.image.sample.side_effect = TestRpcError()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.generate('tiny robot')
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == 'rate limit exceeded'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.vcr
+def test_xai_image_generation_vcr(xai_provider: XaiProvider):
+    model = XaiImageGenerationModel('grok-imagine-image', provider=xai_provider)
+    generator = ImageGenerator(model)
+
+    result = generator.generate_sync(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=XaiImageGenerationSettings(xai_aspect_ratio='1:1', xai_resolution='1k'),
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == 'image/jpeg'
+    assert len(generated_image.content.data) > 100
+    assert generated_image.output_format == 'jpeg'
+    assert generated_image.provider_details == {'respect_moderation': True}
+    assert result.model_name == 'grok-imagine-image'
+    assert result.provider_name == 'xai'
+    assert result.provider_url == 'https://api.x.ai/v1'
+    assert result.usage == RequestUsage()
+    assert result.provider_details == {'cost_in_usd_ticks': 200000000, 'cost_usd': 0.02}
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.vcr
+async def test_xai_image_edit_binary_image_vcr(xai_provider: XaiProvider, image_content: BinaryImage):
+    model = XaiImageGenerationModel('grok-imagine-image', provider=xai_provider)
+
+    result = await model.generate(
+        'Replace the cat with a dog while preserving the cowboy hat, dancing pose, and Rome setting.',
+        images=[image_content],
+        settings=XaiImageGenerationSettings(xai_aspect_ratio='1:1', xai_resolution='1k'),
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.media_type == 'image/jpeg'
+    assert len(edited_image.content.data) > 100
+    assert edited_image.output_format == 'jpeg'
+    assert edited_image.provider_details == {'respect_moderation': True}
+    assert result.model_name == 'grok-imagine-image'
+    assert result.provider_name == 'xai'
+    assert result.provider_url == 'https://api.x.ai/v1'
+    assert result.usage == RequestUsage()
+    assert result.provider_details == {'cost_in_usd_ticks': 220000000, 'cost_usd': 0.022000000000000002}
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

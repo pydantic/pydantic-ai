@@ -44,6 +44,8 @@ KnownImageGenerationModelName = TypeAliasType(
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
+        'xai:grok-imagine-image',
+        'xai:grok-imagine-image-quality',
     ],
 )
 """Known model names that can be used with the `model` parameter of `ImageGenerator`."""
@@ -73,6 +75,10 @@ def infer_image_generation_model(
         from .google import GoogleImageGenerationModel
 
         return GoogleImageGenerationModel(model_name, provider=provider)
+    elif provider_name == 'xai':
+        from .xai import XaiImageGenerationModel
+
+        return XaiImageGenerationModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown image generation model: {model}')  # pragma: no cover
 

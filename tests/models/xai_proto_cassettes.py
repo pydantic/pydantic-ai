@@ -44,7 +44,8 @@ with try_import() as imports_successful:
     import yaml
     from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
-    from xai_sdk.proto import chat_pb2, collections_pb2
+    from xai_sdk.aio.image import ImageResponse
+    from xai_sdk.proto import chat_pb2, collections_pb2, image_pb2
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,20 @@ class StreamInteraction:
     chunks_json: list[dict[str, Any]] | None = None
 
 
+ImageMethod = Literal['sample', 'sample_batch']
+
+
+@dataclass
+class ImageMethodInteraction:
+    """A single `client.image.sample()` or `sample_batch()` call."""
+
+    method: ImageMethod
+    response_raw: bytes
+    response_count: int
+    request_json: dict[str, Any] | None = None
+    response_json: dict[str, Any] | None = None
+
+
 CollectionsMethod = Literal['create', 'upload_document', 'delete']
 CollectionsResponseProtoType = Literal['CollectionMetadata', 'DocumentMetadata', '']
 
@@ -95,7 +110,7 @@ class CollectionsMethodInteraction:
 
 
 # Union type for interactions (used for type hints in the ordered list)
-Interaction = SampleInteraction | StreamInteraction | CollectionsMethodInteraction
+Interaction = SampleInteraction | StreamInteraction | ImageMethodInteraction | CollectionsMethodInteraction
 
 
 class XaiAsyncClientLike(Protocol):
@@ -109,6 +124,9 @@ class XaiAsyncClientLike(Protocol):
 
     @property
     def files(self) -> Any: ...
+
+    @property
+    def image(self) -> Any: ...
 
     @property
     def collections(self) -> Any: ...
@@ -220,6 +238,17 @@ class XaiProtoCassette:
                         response_json=block.get('response_json'),
                     )
                 )
+            elif 'image_method' in item:
+                block = item['image_method']
+                interactions.append(
+                    ImageMethodInteraction(
+                        method=block['method'],
+                        response_raw=block['response_raw'],
+                        response_count=block['response_count'],
+                        request_json=block.get('request_json'),
+                        response_json=_sanitize_image_response_json(block.get('response_json')),
+                    )
+                )
         return cls(interactions=interactions)
 
     def dump(self, path: Path) -> None:
@@ -278,6 +307,18 @@ class XaiProtoCassette:
                     block['response_json'] = interaction.response_json
                 block['response_raw'] = interaction.response_raw
                 interactions_data.append({'collections_method': block})
+
+            elif isinstance(interaction, ImageMethodInteraction):
+                block = {
+                    'method': interaction.method,
+                    'response_count': interaction.response_count,
+                }
+                if interaction.request_json:
+                    block['request_json'] = interaction.request_json
+                if interaction.response_json:
+                    block['response_json'] = interaction.response_json
+                block['response_raw'] = interaction.response_raw
+                interactions_data.append({'image_method': block})
 
         data: dict[str, Any] = {
             'version': self.version,
@@ -386,6 +427,10 @@ class XaiProtoCassetteClient:
         return type('Files', (), {'upload': self._files_upload})
 
     @property
+    def image(self) -> Any:
+        return _CassetteImageStub(self)
+
+    @property
     def collections(self) -> Any:
         return _CassetteCollectionsStub(self)
 
@@ -398,6 +443,34 @@ class XaiProtoCassetteClient:
         # Keeping similar shape to the real SDK return value.
         file_id = f'file-{abs(hash((len(data), filename))) % 1_000_000:06d}'
         return type('UploadedFile', (), {'id': file_id})()
+
+
+@dataclass
+class _CassetteImageStub:
+    """Replay-only stub for `client.image.sample()` and `sample_batch()`."""
+
+    _client: XaiProtoCassetteClient
+
+    def _consume(self, expected_method: ImageMethod) -> ImageMethodInteraction:
+        interaction = self._client.next_interaction()
+        if not isinstance(interaction, ImageMethodInteraction) or interaction.method != expected_method:
+            raise RuntimeError(
+                f'Cassette out of order at interaction {self._client.interaction_idx - 1}: '
+                f'expected image.{expected_method}(), got {type(interaction).__name__}'
+                + (f' (method={interaction.method})' if isinstance(interaction, ImageMethodInteraction) else '')
+                + '. Re-record the cassette.'
+            )
+        return interaction
+
+    async def sample(self, *_args: Any, **_kwargs: Any) -> ImageResponse:
+        interaction = self._consume('sample')
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return ImageResponse(proto, 0)
+
+    async def sample_batch(self, *_args: Any, **_kwargs: Any) -> list[ImageResponse]:
+        interaction = self._consume('sample_batch')
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return [ImageResponse(proto, index) for index in range(interaction.response_count)]
 
 
 @dataclass
@@ -467,6 +540,19 @@ class XaiProtoCassetteHybridClient:
         self.interaction_idx += 1
         return interaction
 
+    def peek_interaction(self) -> Interaction | None:
+        """Return the next interaction without consuming it."""
+        return self._peek_interaction()
+
+    def consume_interaction(self) -> Interaction:
+        """Consume and return the next interaction."""
+        return self._consume_interaction()
+
+    @property
+    def inner_image(self) -> Any:
+        """Return the real SDK image sub-client."""
+        return self._inner.image
+
     @property
     def chat(self) -> Any:
         return type('Chat', (), {'create': self._chat_create})
@@ -474,6 +560,10 @@ class XaiProtoCassetteHybridClient:
     @property
     def files(self) -> Any:
         return type('Files', (), {'upload': self._inner.files.upload})
+
+    @property
+    def image(self) -> Any:
+        return _HybridImageStub(self)
 
     @property
     def collections(self) -> Any:
@@ -578,6 +668,55 @@ class XaiProtoCassetteHybridClient:
 
 
 @dataclass
+class _HybridImageStub:
+    """Replay existing image interactions and record new episodes."""
+
+    _client: XaiProtoCassetteHybridClient
+
+    def _replay(self, method: ImageMethod) -> list[ImageResponse] | None:
+        interaction = self._client.peek_interaction()
+        if not isinstance(interaction, ImageMethodInteraction):
+            return None
+        if interaction.method != method:
+            raise RuntimeError(
+                f'Cassette out of order at interaction {self._client.interaction_idx}: '
+                f'expected image.{interaction.method}(), got image.{method}(). Re-record the cassette.'
+            )
+        self._client.consume_interaction()
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return [ImageResponse(proto, index) for index in range(interaction.response_count)]
+
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        if responses := self._replay('sample'):
+            return responses[0]
+
+        response = await self._client.inner_image.sample(*args, **kwargs)
+        self._record('sample', [response], args, kwargs)
+        return response
+
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        if responses := self._replay('sample_batch'):
+            return responses
+
+        responses = list(await self._client.inner_image.sample_batch(*args, **kwargs))
+        self._record('sample_batch', responses, args, kwargs)
+        return responses
+
+    def _record(
+        self,
+        method: ImageMethod,
+        responses: list[ImageResponse],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        self._client.cassette.interactions.append(
+            _make_image_interaction(method, responses, args, kwargs, self._client.include_debug_json)
+        )
+        self._client.interaction_idx += 1
+        self._client.dirty = True
+
+
+@dataclass
 class XaiProtoRecorder:
     """Record `chat.sample()` and `chat.stream()` responses as protobuf bytes.
 
@@ -602,6 +741,10 @@ class XaiProtoRecorder:
     @property
     def files(self) -> Any:
         return type('Files', (), {'upload': self._inner.files.upload})
+
+    @property
+    def image(self) -> Any:
+        return _RecorderImageStub(self._inner.image, self.cassette, self.include_debug_json)
 
     @property
     def collections(self) -> Any:
@@ -682,6 +825,29 @@ class XaiProtoRecorder:
 
 
 @dataclass
+class _RecorderImageStub:
+    """Record-mode stub for `client.image.sample()` and `sample_batch()`."""
+
+    inner_image: Any
+    cassette: XaiProtoCassette
+    include_debug_json: bool = False
+
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        response = await self.inner_image.sample(*args, **kwargs)
+        self.cassette.interactions.append(
+            _make_image_interaction('sample', [response], args, kwargs, self.include_debug_json)
+        )
+        return response
+
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        responses = list(await self.inner_image.sample_batch(*args, **kwargs))
+        self.cassette.interactions.append(
+            _make_image_interaction('sample_batch', responses, args, kwargs, self.include_debug_json)
+        )
+        return responses
+
+
+@dataclass
 class _RecorderCollectionsStub:
     """Record-mode stub for `client.collections.*` async methods.
 
@@ -753,9 +919,55 @@ def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str,
     return sanitized
 
 
+def _make_image_interaction(
+    method: ImageMethod,
+    responses: list[ImageResponse],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    include_debug_json: bool,
+) -> ImageMethodInteraction:
+    if not responses:
+        raise RuntimeError(f'xAI image.{method}() returned no responses')
+
+    proto = responses[0].proto
+    response_json = (
+        _sanitize_image_response_json(MessageToDict(proto, preserving_proto_field_name=True))
+        if include_debug_json
+        else None
+    )
+    return ImageMethodInteraction(
+        method=method,
+        response_raw=proto.SerializeToString(),
+        response_count=len(responses),
+        request_json=_sanitize_kwargs(args, kwargs),
+        response_json=response_json,
+    )
+
+
+def _sanitize_image_response_json(response_json: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Keep image response debug JSON useful without duplicating large or temporary payloads."""
+    if response_json is None:
+        return None
+
+    images = response_json.get('images')
+    if isinstance(images, list):
+        for image in cast(list[Any], images):
+            if not isinstance(image, dict):
+                continue
+            image_dict = cast(dict[str, Any], image)
+            if isinstance(encoded := image_dict.get('base64'), str):
+                image_dict['base64'] = f'<base64 image len={len(encoded)}>'
+            if isinstance(image_dict.get('url'), str):
+                image_dict['url'] = '<image URL redacted>'
+
+    return response_json
+
+
 def _sanitize_value(value: Any) -> Any:
     if isinstance(value, bytes):
         return f'<bytes len={len(value)}>'
+    if isinstance(value, str) and value.startswith('data:'):
+        return f'<data URL len={len(value)}>'
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, (list, tuple)):
