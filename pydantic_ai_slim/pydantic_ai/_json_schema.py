@@ -103,7 +103,11 @@ class JsonSchemaTransformer(ABC):
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
-                schema = def_schema
+                # Preserve keywords that sit alongside the $ref (e.g. a field-level
+                # `description`/`default` that overrides the referenced model's);
+                # inlining the def by itself would otherwise drop them.
+                siblings = {k: v for k, v in schema.items() if k != '$ref'}
+                schema = {**def_schema, **siblings} if siblings else def_schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')

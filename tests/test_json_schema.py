@@ -253,3 +253,26 @@ def test_typeless_anyof_member_still_recursed():
 
     # Single-member union collapses into the member, which is still transformed.
     assert result == {'type': 'integer'}
+
+
+def test_inline_defs_preserves_ref_sibling_keywords():
+    """Keywords alongside a `$ref` (e.g. a field-level description/default) must survive inlining."""
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'field': {'$ref': '#/$defs/Foo', 'description': 'field-level description', 'default': None},
+        },
+        '$defs': {'Foo': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    field = result['properties']['field']
+
+    # The referenced definition is inlined...
+    assert field['type'] == 'object'
+    assert field['properties'] == {'x': {'type': 'integer'}}
+    # ...and the sibling keywords are preserved rather than dropped.
+    assert field['description'] == 'field-level description'
+    assert field['default'] is None
