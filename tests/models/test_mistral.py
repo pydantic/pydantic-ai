@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from pydantic import BaseModel
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -31,7 +32,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -434,6 +435,94 @@ async def test_stream_text(allow_model_requests: None):
         assert result.is_complete
         assert result.usage.input_tokens == 5
         assert result.usage.output_tokens == 5
+
+
+@pytest.mark.parametrize('with_tool', [False, True])
+async def test_stream_forwards_model_settings(allow_model_requests: None, with_tool: bool):
+    """The mock captures request fields that VCR matching does not compare."""
+    stream = [text_chunk('hello'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=MistralModelSettings(
+            temperature=0.0,
+            top_p=1.0,
+            max_tokens=100,
+            timeout=2.5,
+            seed=42,
+            presence_penalty=0.3,
+            frequency_penalty=0.1,
+            stop_sequences=['STOP'],
+        ),
+    )
+
+    if with_tool:
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert {
+        'temperature': kwargs['temperature'],
+        'top_p': kwargs['top_p'],
+        'max_tokens': kwargs['max_tokens'],
+        'timeout_ms': kwargs['timeout_ms'],
+        'random_seed': kwargs['random_seed'],
+        'presence_penalty': kwargs['presence_penalty'],
+        'frequency_penalty': kwargs['frequency_penalty'],
+        'stop': kwargs['stop'],
+    } == snapshot(
+        {
+            'temperature': 0.0,
+            'top_p': 1.0,
+            'max_tokens': 100,
+            'timeout_ms': 2500,
+            'random_seed': 42,
+            'presence_penalty': 0.3,
+            'frequency_penalty': 0.1,
+            'stop': ['STOP'],
+        }
+    )
+    if with_tool:
+        assert len(kwargs['tools']) == 1
+        assert kwargs['tool_choice'] == 'auto'
+    else:
+        assert isinstance(kwargs['tools'], MistralUnset)
+        assert kwargs['tool_choice'] is None
+
+
+@pytest.mark.parametrize('with_tool', [False, True])
+async def test_stream_preserves_unset_model_settings(allow_model_requests: None, with_tool: bool):
+    """Consolidating request paths must not add defaults to no-tool requests."""
+    stream = [text_chunk('hello'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model)
+
+    if with_tool:
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if with_tool:
+        assert kwargs['top_p'] == 1
+        assert kwargs['n'] == 1
+    else:
+        assert kwargs['top_p'] is None
+        assert isinstance(kwargs['n'], MistralUnset)
+    assert isinstance(kwargs['temperature'], MistralUnset)
+    assert isinstance(kwargs['max_tokens'], MistralUnset)
+    assert isinstance(kwargs['random_seed'], MistralUnset)
 
 
 async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
@@ -954,13 +1043,218 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([1, 1, 1])
+        assert v == snapshot([1, 1])
         assert result.is_complete
         assert result.usage.input_tokens == 6
         assert result.usage.output_tokens == 6
 
         # double check usage matches stream count
         assert result.usage.output_tokens == len(stream)
+
+
+@pytest.mark.parametrize(
+    'output_type, json_chunks, expected',
+    [
+        pytest.param(float, ('{"response":20', '}'), 20.0, id='number-accepts-integer'),
+        pytest.param(float, ('{"response":1', '.5}'), 1.5, id='number-accepts-decimal-continuation'),
+        pytest.param(int, ('{"response":1.0', '}'), 1, id='integer-accepts-zero-fraction'),
+    ],
+)
+async def test_stream_result_type_numeric_json(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    json_chunks: tuple[str, ...],
+    expected: int | float,
+) -> None:
+    """Use mock chunks because a live model cannot reliably emit the exact numeric spellings and boundaries."""
+    stream = [text_chunk(text) for text in json_chunks[:-1]]
+    stream.append(text_chunk(json_chunks[-1], finish_reason='stop'))
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+
+@pytest.mark.parametrize(
+    'output_type, partial_value, valid_value, expected',
+    [
+        pytest.param(float, '1', '2.5', 2.5, id='number-with-integer-prefix'),
+        pytest.param(int, '1.0', '2', 2, id='integer-with-integral-float-prefix'),
+    ],
+)
+async def test_stream_result_type_numeric_json_retries_malformed_continuation(
+    allow_model_requests: None,
+    output_type: type[int] | type[float],
+    partial_value: str,
+    valid_value: str,
+    expected: int | float,
+) -> None:
+    """Reject a compatible numeric prefix when the completed JSON is malformed.
+
+    A live model cannot reliably reproduce the exact chunk boundary and malformed retry sequence.
+    """
+    streams = [
+        [text_chunk(f'{{"response":{partial_value}'), text_chunk('x}', finish_reason='stop')],
+        [text_chunk(f'{{"response":{valid_value}}}', finish_reason='stop')],
+    ]
+    mock_client = MockMistralAI.create_stream_mock(streams)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=output_type)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == expected
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 2
+
+
+class _StaleIntField(TypedDict):
+    value: int
+
+
+class _DuplicateIntField(TypedDict):
+    a: int
+    b: str
+
+
+class _NullableIntField(TypedDict):
+    value: int | None
+
+
+class _StringField(TypedDict):
+    value: str
+
+
+@pytest.mark.parametrize(
+    'first_chunk, partial_value, complete_value',
+    [
+        pytest.param('{"value":"item 1', 'item 1', 'item 12', id='plain'),
+        pytest.param('{"value":"item \\"1', 'item "1', 'item "12', id='escaped-quote'),
+    ],
+)
+async def test_stream_output_keeps_digit_ending_partial_string(
+    allow_model_requests: None,
+    first_chunk: str,
+    partial_value: str,
+    complete_value: str,
+) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact string chunk boundary."""
+    stream = [text_chunk(first_chunk), text_chunk('2"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_StringField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': partial_value},
+            {'value': complete_value},
+            {'value': complete_value},
+        ]
+
+
+async def test_stream_output_keeps_incomplete_unicode_escape(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact escape boundary."""
+    stream = [text_chunk('{"value":"\\u12'), text_chunk('34"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_StringField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': '\u1234'},
+            {'value': '\u1234'},
+        ]
+
+
+class _PartialIntField(TypedDict):
+    value: int
+    label: NotRequired[str]
+
+
+async def test_stream_output_keeps_integer_followed_by_whitespace(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact whitespace boundary."""
+    stream = [text_chunk('{"value":1 '), text_chunk(',"label":"x"}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_PartialIntField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': 1},
+            {'value': 1, 'label': 'x'},
+            {'value': 1, 'label': 'x'},
+        ]
+
+
+class _FloatField(TypedDict):
+    value: float
+
+
+async def test_stream_output_keeps_partial_float(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact numeric boundary."""
+    stream = [text_chunk('{"value":1.2'), text_chunk('3}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_FloatField)
+
+    async with agent.run_stream('User prompt value') as result:
+        assert [item async for item in result.stream_output(debounce_by=None)] == [
+            {'value': 1.2},
+            {'value': 1.23},
+            {'value': 1.23},
+        ]
+
+
+async def test_stream_output_nullable_integer_prefix_fails_validation(allow_model_requests: None) -> None:
+    """Use mock chunks because a live model cannot reliably reproduce the exact numeric boundary."""
+    stream = [text_chunk('{"value":1'), text_chunk('.5}', finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=_NullableIntField)
+
+    async with agent.run_stream('User prompt value') as result:
+        with pytest.raises(UnexpectedModelBehavior, match='Output validation failed during streaming'):
+            await result.get_output()
+
+
+@pytest.mark.parametrize(
+    'output_type, json_chunks',
+    [
+        pytest.param(int, ('{"response":1', '.5}'), id='top-level-int'),
+        pytest.param(list[int], ('{"response":[1', '.5]}'), id='array-of-int'),
+        pytest.param(_StaleIntField, ('{"value":1', '.5}'), id='object-int-field'),
+        pytest.param(_DuplicateIntField, ('{"a":0,"b":"x","a":1', '.5}'), id='duplicate-key'),
+    ],
+)
+async def test_stream_output_defers_stale_integer_prefix(
+    allow_model_requests: None,
+    output_type: Any,
+    json_chunks: tuple[str, str],
+) -> None:
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/6504.
+
+    A live model cannot reliably reproduce the exact numeric spelling and chunk boundary, so this
+    uses mocked SDK chunks.
+
+    When a chunk boundary falls inside a number right after an integral prefix (`1`) and the
+    completed value is non-integral (`1.5`), the partial parse (e.g. `{"response": 1`) used to be
+    emitted as a stale `1`. The completed `1.5` then fails `integer` validation, so nothing replaced
+    the stale args and the run silently returned `1`, a value the model never produced. The emission
+    must instead be deferred until the number is complete, so the invalid `1.5` reaches the
+    output-retry path rather than being silently truncated. As the issue notes, a top-level integer,
+    an integer array item, and an integer object field all share this hazard.
+    """
+    stream = [text_chunk(json_chunks[0]), text_chunk(json_chunks[1], finish_reason='stop')]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent: Agent[None, Any] = Agent(model=model, output_type=output_type)
+
+    # `run_stream` exhausts output retries and raises while entering the context manager, so the
+    # body never runs.
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        async with agent.run_stream('User prompt value'):
+            pass  # pragma: no cover
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -2135,6 +2429,81 @@ def test_generate_user_output_format_multiple(mistral_api_key: str):
             },
             True,
         ),
+        (
+            'Number accepts integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20},
+            True,
+        ),
+        (
+            'Number accepts float',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': 20.5},
+            True,
+        ),
+        (
+            'Number rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'number'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Integer accepts float with zero fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.0},
+            True,
+        ),
+        (
+            'Integer rejects float with fractional part',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': 1.5},
+            False,
+        ),
+        (
+            'Integer rejects boolean',
+            {'required': ['value'], 'properties': {'value': {'type': 'integer'}}},
+            {'value': True},
+            False,
+        ),
+        (
+            'Boolean accepts booleans',
+            {
+                'required': ['true_value', 'false_value'],
+                'properties': {
+                    'true_value': {'type': 'boolean'},
+                    'false_value': {'type': 'boolean'},
+                },
+            },
+            {'true_value': True, 'false_value': False},
+            True,
+        ),
+        (
+            'Boolean rejects integer',
+            {'required': ['value'], 'properties': {'value': {'type': 'boolean'}}},
+            {'value': 1},
+            False,
+        ),
+        (
+            'Nested number accepts integer',
+            {
+                'required': ['outer'],
+                'properties': {
+                    'outer': {
+                        'type': 'object',
+                        'required': ['inner'],
+                        'properties': {'inner': {'type': 'number'}},
+                    }
+                },
+            },
+            {'outer': {'inner': 20}},
+            True,
+        ),
+        (
+            'Array of number accepts integers',
+            {'required': ['values'], 'properties': {'values': {'type': 'array', 'items': {'type': 'number'}}}},
+            {'values': [1, 2, 3]},
+            True,
+        ),
     ],
 )
 def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: dict[str, Any], expected: bool) -> None:
@@ -2880,6 +3249,14 @@ def test_map_content_concatenates_text_chunks() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+def test_get_timeout_ms() -> None:
+    assert MistralModel._get_timeout_ms(None) is None  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
+    assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
+        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:

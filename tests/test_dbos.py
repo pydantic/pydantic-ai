@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
@@ -75,6 +76,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -809,6 +811,84 @@ async def test_toolset_without_id():
     DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+async def test_mcp_toolset_without_id():
+    # Unlike `FunctionToolset`, an `MCPToolset` is wrapped in a `DBOSMCPToolset` whose step names and per-run
+    # tool-defs cache key both derive from the toolset's `id`; without one, two id-less MCP toolsets would
+    # collide on both. Require an `id` up front, like Temporal does for all leaf toolsets.
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+            "The ID will be used to identify the MCP server's steps within the workflow."
+        ),
+    ):
+        DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))
+
+
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so a capability combined with a
+    local MCP server can be used under DBOS instead of tripping the id-less-MCP guard. An `MCP` with
+    no explicit `id` derives one from its URL, which is what lets the contributed leaf pass the guard.
+
+    This isn't a VCR test: it inspects the constructed toolset tree and DBOS registration during local
+    agent construction, before any model or MCP request, so there's no network round-trip to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api'),
+        ],
+    )
+    # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
+    # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
+    dbos_agent = DBOSAgent(agent)
+
+    leaves: list[AbstractToolset[object]] = []
+    for toolset in dbos_agent.toolsets:
+        toolset.apply(leaves.append)
+    # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
+    # capability id.
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
+
+
+async def test_capability_contributed_toolsets_with_colliding_derived_id():
+    """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
+    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools). The
+    DBOS wrapper guards against duplicate leaf ids at construction, telling the user to set explicit ids.
+
+    Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
+    check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
+
+    This isn't a VCR test: the collision is rejected during local `DBOSAgent` construction, before any
+    model or MCP request, so there's no network round-trip to record.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'a.com-api'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+        ),
+    ):
+        DBOSAgent(
+            Agent(
+                model,
+                name='colliding_capability_agent',
+                capabilities=[MCP(url='https://a.com/api'), MCP(url='https://a.com/v2/api')],
+            )
+        )
+
+
 async def test_dbos_agent():
     assert isinstance(complex_dbos_agent.model, DBOSModel)
     assert complex_dbos_agent.model.wrapped == complex_agent.model
@@ -998,6 +1078,41 @@ async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None,
         ),
     ):
         await simple_dbos_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_dbos_cancel_suspended_response_runs_in_step(allow_model_requests: None, dbos: DBOS):
+    """`DBOSModel.cancel_suspended_response` must run as a DBOS step, not inline in the workflow.
+
+    The provider teardown that cancels a server-side suspended/background job is a raw HTTP call;
+    wrapping it as a step makes it durable, retried, and recorded rather than running unrecorded
+    inside the workflow.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    dbos_model = DBOSModel(
+        RecordingModel(),
+        step_name_prefix='cancel_suspended',
+        step_config={},
+        get_event_stream_handler=lambda: None,
+    )
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def cancel_in_workflow() -> None:
+        await dbos_model.cancel_suspended_response(response)
+
+    with SetWorkflowID(wfid):
+        await cancel_in_workflow()
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['cancel_suspended__model.cancel_suspended_response'])
+    assert cancelled == [response]
 
 
 async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: None, dbos: DBOS):

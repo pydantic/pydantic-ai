@@ -207,7 +207,7 @@ async def test_channel_less_tool_return_framing(
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_chat_failed_tool_return_keeps_files_out_of_error() -> None:
-    """Direct mapping proves shared text-plus-files framing without relying on VCR body matching."""
+    """Direct mapping proves failed text references files moved to the trailing user message."""
     image = ImageUrl(url='https://example.com/image.png', identifier='report')
     part = ToolReturnPart(
         tool_name='tool',
@@ -219,7 +219,11 @@ async def test_openai_chat_failed_tool_return_keeps_files_out_of_error() -> None
     wire = await _map_openai_chat(part)
 
     assert wire == [
-        {'role': 'tool', 'tool_call_id': 'call_1', 'content': _FAILED_WIRE_CONTENT},
+        {
+            'role': 'tool',
+            'tool_call_id': 'call_1',
+            'content': '[{"error":"Disk full"},"See file report."]',
+        },
         {
             'role': 'user',
             'content': [

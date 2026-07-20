@@ -1,0 +1,194 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the weather in London? Use the get_weather tool, then answer.
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_weather
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+    raw: !!binary |
+      CksKRwpFV2hhdCBpcyB0aGUgd2VhdGhlciBpbiBMb25kb24/IFVzZSB0aGUgZ2V0X3dlYXRoZXIg
+      dG9vbCwgdGhlbiBhbnN3ZXIuEAESFWdyb2stNC1mYXN0LXJlYXNvbmluZ4oBhQEKggEKC2dldF93
+      ZWF0aGVyInN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJj
+      aXR5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5Il0sICJ0eXBlIjog
+      Im9iamVjdCJ9kgECCAHAAQE=
+  response_sample:
+    json:
+      id: cec8162c-a241-9d79-841b-e6270632e5d7
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_weather
+              arguments: '{"city":"London"}'
+          reasoning_content: 'The question is: "What is the weather in London? Use
+            the get_weather tool, then answer."
+
+            '
+          encrypted_content: GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60
+      created: '2026-06-24T18:24:10.512425532Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 11
+        prompt_tokens: 221
+        total_tokens: 343
+        prompt_text_tokens: 221
+        reasoning_tokens: 111
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '4468500'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_weather
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        top_p: 0.95
+        use_encrypted_content: true
+    raw: !!binary |
+      CiRjZWM4MTYyYy1hMjQxLTlkNzktODQxYi1lNjI3MDYzMmU1ZDcS7wYIBBrqBhACGlMKK2NhbGwt
+      ZjRlYjIxZjQtNjRkYy00NjM2LThhMjgtNWFjNGI2ZjJkYmY5LTAQARgBUiAKC2dldF93ZWF0aGVy
+      EhF7ImNpdHkiOiJMb25kb24ifSJZVGhlIHF1ZXN0aW9uIGlzOiAiV2hhdCBpcyB0aGUgd2VhdGhl
+      ciBpbiBMb25kb24/IFVzZSB0aGUgZ2V0X3dlYXRoZXIgdG9vbCwgdGhlbiBhbnN3ZXIuIgoqswVH
+      SkNlOXZzSGliY1hYbk1FSkJPOG5pUlVtK0NrMXF6TlFkb1IzOW5BR0pFT25ReHFXa0hxYnFtWHJE
+      UXhqbmp0RFJsU1d6WlpRbHdNbi9idU5pZ1EyVUk3eS80Y2xzdS9SdE9KUzc0bTB2WFI4M1grdURy
+      WjVtdEQrVFIyMktnMnoyNG9IR2lDNVRUUHAyS3NvNmJOaWkxOTJxcUF5cW85Ni9TMXJzVzdtQUN1
+      QzBTaWlHbG9kSkowK21OaGttY2hWZmg0S3FrSWVYR3B3aHdwTGdhVkVBV0dveHVVQVJUdldONG1r
+      QlYrYWR5MHpJdmMvTDZCbk56WVdUQmY3c3dnQ1VQQ29PUWppbTFLNkhiYm1HV3JIQk4zVlBEdDBP
+      QkF1Mkl1ZCtzVVpqUTZxclhSNnRRRVB5cU5rVy9lKzdlRHdCWUZMZjJINGl5MDc1dXh5TFJYRVlm
+      alVjaHZlbE44VUFyVmhXV3NxajVPQVFXaUkrQklmeFVHNVJ6eFFiRmFHWFAwaTJET0RoT2V3U0Ur
+      VW1TcHg4cm4wN2NyWS9mYU1vL2h1UjZzUEtOdmlQTHp2czNjQjhuUFVXU2MvOCtlNi9JL3M0YlRw
+      NnVjWmpSa0RVOURvUVFWU25laGMvV3VzNGFmNUIyT1piREQzY1NVOUtnaVZDT0VrOXBQRzJ1YVdp
+      WWxNdVJKNGt4SmRvVm8wMkZZdVp6QTZFenpzaFdVK014R2FGTklvNlVyUnVvdHkxN2RBTHlQQmRG
+      ZTluZXMzQWJwNVdOWE5HVGFUYXlKQ3lGVVZYQWZUZ0J5UmZadzBreEpNbUpwZ1MzODYwdFdDT1ZU
+      S3FOaEZtL2VpVVp1TE5BWkEremJFajZTT3pMbGRGUThOZUExY0V6TEc2T3FMMjlUcnNybzE1N1Yv
+      NmxyQzYwOAEqDAjKwfDRBhC8/Kv0ATIIZ3Jvay00LjM6E2ZwX2ViM2MwMDNmYzY2YzE0ZWRKHAgL
+      EN0BGNcCIN0BMG84gAFYlN6QApAB3QGYAXpanAEQASABLTMzMz86AggBQoUBCoIBCgtnZXRfd2Vh
+      dGhlciJzeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0
+      eSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJv
+      YmplY3QifU0zM3M/aAE=
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is the weather in London? Use the get_weather tool, then answer.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_weather
+            arguments: '{"city":"London"}'
+        reasoning_content: 'The question is: "What is the weather in London? Use the
+          get_weather tool, then answer."
+
+          '
+        encrypted_content: GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60
+      - content:
+        - text: It is sunny and 25°C.
+        role: ROLE_TOOL
+        tool_call_id: call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0
+      model: grok-4-fast-reasoning
+      tools:
+      - function:
+          name: get_weather
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+    raw: !!binary |
+      CksKRwpFV2hhdCBpcyB0aGUgd2VhdGhlciBpbiBMb25kb24/IFVzZSB0aGUgZ2V0X3dlYXRoZXIg
+      dG9vbCwgdGhlbiBhbnN3ZXIuEAEK7AYKAgoAEAIiUworY2FsbC1mNGViMjFmNC02NGRjLTQ2MzYt
+      OGEyOC01YWM0YjZmMmRiZjktMBABGAFSIAoLZ2V0X3dlYXRoZXISEXsiY2l0eSI6IkxvbmRvbiJ9
+      KllUaGUgcXVlc3Rpb24gaXM6ICJXaGF0IGlzIHRoZSB3ZWF0aGVyIGluIExvbmRvbj8gVXNlIHRo
+      ZSBnZXRfd2VhdGhlciB0b29sLCB0aGVuIGFuc3dlci4iCjKzBUdKQ2U5dnNIaWJjWFhuTUVKQk84
+      bmlSVW0rQ2sxcXpOUWRvUjM5bkFHSkVPblF4cVdrSHFicW1YckRReGpuanREUmxTV3paWlFsd01u
+      L2J1TmlnUTJVSTd5LzRjbHN1L1J0T0pTNzRtMHZYUjgzWCt1RHJaNW10RCtUUjIyS2cyejI0b0hH
+      aUM1VFRQcDJLc282Yk5paTE5MnFxQXlxbzk2L1MxcnNXN21BQ3VDMFNpaUdsb2RKSjArbU5oa21j
+      aFZmaDRLcWtJZVhHcHdod3BMZ2FWRUFXR294dVVBUlR2V040bWtCVithZHkwekl2Yy9MNkJuTnpZ
+      V1RCZjdzd2dDVVBDb09RamltMUs2SGJibUdXckhCTjNWUER0ME9CQXUySXVkK3NVWmpRNnFyWFI2
+      dFFFUHlxTmtXL2UrN2VEd0JZRkxmMkg0aXkwNzV1eHlMUlhFWWZqVWNodmVsTjhVQXJWaFdXc3Fq
+      NU9BUVdpSStCSWZ4VUc1Unp4UWJGYUdYUDBpMkRPRGhPZXdTRStVbVNweDhybjA3Y3JZL2ZhTW8v
+      aHVSNnNQS052aVBMenZzM2NCOG5QVVdTYy84K2U2L0kvczRiVHA2dWNaalJrRFU5RG9RUVZTbmVo
+      Yy9XdXM0YWY1QjJPWmJERDNjU1U5S2dpVkNPRWs5cFBHMnVhV2lZbE11Uko0a3hKZG9WbzAyRll1
+      WnpBNkV6enNoV1UrTXhHYUZOSW82VXJSdW90eTE3ZEFMeVBCZEZlOW5lczNBYnA1V05YTkdUYVRh
+      eUpDeUZVVlhBZlRnQnlSZlp3MGt4Sk1tSnBnUzM4NjB0V0NPVlRLcU5oRm0vZWlVWnVMTkFaQSt6
+      YkVqNlNPekxsZEZROE5lQTFjRXpMRzZPcUwyOVRyc3JvMTU3Vi82bHJDNjAKSQoYChZJdCBpcyBz
+      dW5ueSBhbmQgMjXCsEMuEAU6K2NhbGwtZjRlYjIxZjQtNjRkYy00NjM2LThhMjgtNWFjNGI2ZjJk
+      YmY5LTASFWdyb2stNC1mYXN0LXJlYXNvbmluZ4oBhQEKggEKC2dldF93ZWF0aGVyInN7ImFkZGl0
+      aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjog
+      InN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5Il0sICJ0eXBlIjogIm9iamVjdCJ9kgECCAHA
+      AQE=
+  response_sample:
+    json:
+      id: 23466ffa-07c3-9154-b7f9-b6126bab0b90
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: It is sunny and 25°C in London.
+          role: ROLE_ASSISTANT
+          reasoning_content: 'The tool returned: "It is sunny and 25°C."
+
+            '
+          encrypted_content: 2E7rMf5LocXcKv4G20Oigq9xtL11f/ardvNfOMoTwyWC3KogBeXOiNLAsae4N4V2HAhclkF01utl0vVSY8Ad0hkezMP8+pPKoO2hA6JJh5ZwnbWd25uLDtaoMm3JAmMb6fCZqkwAf33uzxc/lnSQ5Msxd3JY4CwghvFZEzU/a022M+0gWFyZjzJmJWUk5zD39hrHfZZr9xd3G1RxM3KoGN6ZXCA2+YL1oL1htcSBkUafo2XSkF6WN7vMpOqPSD0JI2zaAdJ3BzByVdJDTr27gi9E
+      created: '2026-06-24T18:24:11.676621847Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 10
+        prompt_tokens: 358
+        total_tokens: 415
+        prompt_text_tokens: 358
+        reasoning_tokens: 47
+        cached_prompt_text_tokens: 192
+        cost_in_usd_ticks: '3884000'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_weather
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        top_p: 0.95
+        use_encrypted_content: true
+    raw: !!binary |
+      CiQyMzQ2NmZmYS0wN2MzLTkxNTQtYjdmOS1iNjEyNmJhYjBiOTAS9AIIAxrvAgogSXQgaXMgc3Vu
+      bnkgYW5kIDI1wrBDIGluIExvbmRvbi4QAiIsVGhlIHRvb2wgcmV0dXJuZWQ6ICJJdCBpcyBzdW5u
+      eSBhbmQgMjXCsEMuIgoqmAIyRTdyTWY1TG9jWGNLdjRHMjBPaWdxOXh0TDExZi9hcmR2TmZPTW9U
+      d3lXQzNLb2dCZVhPaU5MQXNhZTRONFYySEFoY2xrRjAxdXRsMHZWU1k4QWQwaGtlek1QOCtwUEtv
+      TzJoQTZKSmg1WnduYldkMjV1TER0YW9NbTNKQW1NYjZmQ1pxa3dBZjMzdXp4Yy9sblNRNU1zeGQz
+      Slk0Q3dnaHZGWkV6VS9hMDIyTSswZ1dGeVpqekptSldVazV6RDM5aHJIZlpacjl4ZDNHMVJ4TTNL
+      b0dONlpYQ0EyK1lMMW9MMWh0Y1NCa1VhZm8yWFNrRjZXTjd2TXBPcVBTRDBKSTJ6YUFkSjNCekJ5
+      VmRKRFRyMjdnaTlFOAEqDAjLwfDRBhCX3NHCAjIIZ3Jvay00LjM6E2ZwX2ViM2MwMDNmYzY2YzE0
+      ZWRKHAgKEOYCGJ8DIOYCMC84wAFY4IftAZAB5gKYATlanAEQASABLTMzMz86AggBQoUBCoIBCgtn
+      ZXRfd2VhdGhlciJzeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6
+      IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlw
+      ZSI6ICJvYmplY3QifU0zM3M/aAE=

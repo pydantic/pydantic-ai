@@ -83,9 +83,10 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -369,6 +370,162 @@ async def test_empty_messages() -> None:
             },
         ]
     )
+
+
+async def test_run_stream_error_closes_open_text() -> None:
+    """A mid-stream `UsageLimitExceeded` while a text message is open must emit `TEXT_MESSAGE_END` before `RUN_ERROR`.
+
+    Like the AI SDK, the AG-UI client mishandles an unclosed message (see #3108), so the base class
+    must close the open part before the error. See #6546, mirroring #4963 for dangling tool calls.
+    """
+
+    async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield 'lots of streamed text '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_text))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TEXT_MESSAGE_END'
+    # The `TEXT_MESSAGE_END` must carry the same `messageId` as its `TEXT_MESSAGE_START`, or the client can't close the part.
+    message_start = next(e for e in events if e['type'] == 'TEXT_MESSAGE_START')
+    message_end = next(e for e in events if e['type'] == 'TEXT_MESSAGE_END')
+    assert message_end['messageId'] == message_start['messageId']
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_END',
+            'RUN_ERROR',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_thinking() -> None:
+    """A mid-stream `UsageLimitExceeded` while a thinking message is open must close it before `RUN_ERROR`."""
+
+    async def stream_thinking(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {0: DeltaThinkingPart(content='lots of thinking ')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_thinking))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version='0.1.10')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'THINKING_END'
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'THINKING_START',
+            'THINKING_TEXT_MESSAGE_START',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_CONTENT',
+            'THINKING_TEXT_MESSAGE_END',
+            'THINKING_END',
+            'RUN_ERROR',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_native_tool_call() -> None:
+    """A mid-stream `UsageLimitExceeded` while a native tool call is open must emit `TOOL_CALL_END` before `RUN_ERROR`.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` lands outside
+    `_pending_tool_calls` (which only holds already-dispatched calls), so without an explicit close the AG-UI
+    client is left with a dangling tool call when the run errors.
+    """
+
+    async def stream_native_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns]:
+        # A native tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'hi'}
+            )
+        }
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the run
+        # errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='call_2',
+                    args={'query': ' '.join(f'word{i}' for i in range(40))},
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_native_tool_call))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TOOL_CALL_END'
+    # The `TOOL_CALL_END` must carry the same `toolCallId` as its `TOOL_CALL_START`, or the client can't close the call.
+    tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
+    tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
+    assert tool_end['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_ERROR'])
+
+
+async def test_run_stream_error_closes_open_tool_call() -> None:
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `TOOL_CALL_END` before `RUN_ERROR`.
+
+    A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
+    open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
+    an explicit close the AG-UI client is left with a dangling tool call when the run errors.
+    """
+
+    async def stream_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
+        # run errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: DeltaToolCall(
+                    name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2'
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_tool_call))
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e['type'] for e in events]
+    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TOOL_CALL_END'
+    # The `TOOL_CALL_END` must carry the same `toolCallId` as its `TOOL_CALL_START`, or the client can't close the call.
+    tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
+    tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
+    assert tool_end['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_ERROR'])
 
 
 async def test_multiple_messages() -> None:
@@ -1752,6 +1909,119 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
     # A non-empty result proves the return part kept its typed identity; the call part's
     # identity matters to Anthropic history replay, so pin it too.
     assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
+
+
+@pytest.mark.parametrize(
+    'outcome,old_outcome',
+    [('failed', 'failed'), ('denied', 'failed'), ('interrupted', 'success')],
+)
+def test_dump_load_roundtrip_non_success_outcome(
+    outcome: Literal['failed', 'denied', 'interrupted'], old_outcome: Literal['success', 'failed']
+) -> None:
+    """A tool return keeps its non-`'success'` outcome through dump/load on >= 0.1.11.
+
+    `ToolMessage` has no outcome slot, so the claim rides the `encrypted_value` carrier like
+    `tool_kind` does — losing it would change how the return serializes to the provider (e.g. a
+    native error channel) and break prompt-cache prefix stability. Below 0.1.11, the public
+    `error` field preserves failures and degrades denials to failures, while interruptions have
+    no protocol representation and degrade to success.
+
+    Not VCR-backed: this pins local adapter serialization (including the exact wire payload)
+    and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='c1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='c1',
+                    content='The tool call did not produce a regular result.',
+                    outcome=outcome,
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_msg.encrypted_value == f'{{"pydantic_ai": {{"outcome": "{outcome}"}}}}'
+    assert tool_msg.error == (
+        'The tool call did not produce a regular result.' if outcome in ('failed', 'denied') else None
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == outcome
+
+    old_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    old_tool_msg = next(msg for msg in old_msgs if isinstance(msg, ToolMessage))
+    assert 'encrypted_value' not in old_tool_msg.model_fields_set
+    old_reloaded = AGUIAdapter.load_messages(old_msgs)
+    old_return = next(
+        part
+        for message in old_reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert old_return.outcome == old_outcome
+
+
+def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
+    """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(tool_name='web_search', tool_call_id='s1', args='{}', provider_name='anthropic'),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='s1',
+                    content='The search failed.',
+                    provider_name='anthropic',
+                    outcome='failed',
+                ),
+            ]
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13'))
+    reloaded_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
+    assert reloaded_return.outcome == 'failed'
+
+
+def test_load_forged_encrypted_outcome_stays_success() -> None:
+    """An unrecognized client-supplied outcome claim is ignored and loads as a successful return.
+
+    Not VCR-backed: this pins local handling of untrusted client input and makes no model request.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[ToolCall(id='c1', function=FunctionCall(name='my_tool', arguments='{}'))],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='c1',
+                content='done',
+                encrypted_value='{"pydantic_ai": {"outcome": "exploded"}}',
+            ),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert isinstance(return_part, ToolReturnPart)
+    assert return_part.outcome == 'success'
 
 
 def test_load_tool_kind_falls_back_to_call_claim() -> None:
@@ -4157,9 +4427,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     assert isinstance(tool_msgs[0].content, str)
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4180,9 +4448,7 @@ def test_dump_tool_return_none_content_becomes_empty_string() -> None:
     assert tool_msgs[0].content == ''
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
     )
@@ -4204,9 +4470,7 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     ]
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4238,9 +4502,7 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
     assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4276,9 +4538,7 @@ def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
     ]
 
     reloaded = AGUIAdapter.load_messages(raw)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4414,9 +4674,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
             ToolMessage(id='msg_3', content=result_content, tool_call_id='call_1'),
         ]
     )
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -4875,7 +5133,7 @@ def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
         [ActivityMessage(id='activity-1', activity_type='pydantic_ai_file', content=content)],
         preserve_file_data=True,
     )
-    file_parts = [part for message in reloaded for part in message.parts if isinstance(part, FilePart)]
+    file_parts = list(iter_message_parts(reloaded, ModelResponse, FilePart))
     assert len(file_parts) == 1
     assert file_parts[0].content.vendor_metadata is None
 
@@ -5896,8 +6154,7 @@ async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
     assert len(captured) == 1
     history_seen_by_model = captured[0]
     assert not any(
-        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
-        for message in history_seen_by_model
+        isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
 
 

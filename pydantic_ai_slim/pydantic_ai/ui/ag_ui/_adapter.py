@@ -92,13 +92,14 @@ try:
         dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
+        parse_encrypted_outcome,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
     )
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
@@ -474,8 +475,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
                     # results stay untyped — typed return parts imply success to their readers.
+                    # A non-success outcome claim (the return would otherwise reload as `'success'`,
+                    # changing how it serializes to the provider) also keeps the return untyped.
                     tool_kind = None
-                    if tool_msg.error is None:
+                    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
+                    encrypted_outcome = (
+                        parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    if encrypted_outcome is not None:
+                        outcome = encrypted_outcome
+                    elif tool_msg.error is not None:
+                        outcome = 'failed'
+                    else:
                         encrypted_tool_kind = (
                             parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
                         )
@@ -491,7 +502,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                                 tool_kind=tool_kind,
-                                outcome='failed' if tool_msg.error is not None else 'success',
+                                outcome=outcome,
                             )
                         )
                     else:
@@ -504,7 +515,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
-                                outcome='failed' if tool_msg.error is not None else 'success',
+                                outcome=outcome,
                             )
                         )
 
@@ -660,6 +671,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
+                # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
+                # since a `ToolMessage` has no outcome slot.
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -668,7 +681,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         error=part.model_response_str(wrap_if_error=False)
                         if part.outcome in ('failed', 'denied')
                         else None,
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
+                        **tool_kind_encrypted_value_kwargs(
+                            part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
+                        ),
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -779,7 +794,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             error=builtin_return.model_response_str(wrap_if_error=False)
                             if builtin_return.outcome in ('failed', 'denied')
                             else None,
-                            **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
+                            **tool_kind_encrypted_value_kwargs(
+                                builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
+                            ),
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
@@ -839,11 +856,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
-          when it has no `tool_name`) on reload, since the protocol has no separate retry concept;
-          the reloaded result is therefore presented to the model as a definitive failure rather
-          than a request to correct and retry.
-        - `ToolReturnPart` with `outcome='denied'` reloads as `outcome='failed'`, since AG-UI's
-          `ToolMessage.error` field can't distinguish a denial from a failure.
+        - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
+          carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
+          via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
+          `'success'`.
+        - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
           multimodal content gained a metadata carrier).

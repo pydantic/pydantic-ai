@@ -313,8 +313,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
-                        # already does, #5571/#5772): it carries only the requester's own request params and is
-                        # dict-validated by the constructors below.
+                        # already does — see https://github.com/pydantic/pydantic-ai/issues/5571 and
+                        # https://github.com/pydantic/pydantic-ai/issues/5772): it carries only the requester's own
+                        # request params and is dict-validated by the constructors below.
                         vendor_metadata = provider_meta.get('vendor_metadata')
                         force_download = provider_meta.get('force_download', False)
                         try:
@@ -531,12 +532,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if part.state == 'output-available':
+                                # A synthesized interrupted return dumps as neutral `output-available`
+                                # with an `'interrupted'` outcome claim in the metadata channel; restore
+                                # it so a round-trip doesn't upgrade the outcome to `'success'`. Like
+                                # error/denied returns it carries no `tool_kind` (typed return subclasses
+                                # signal shape-valid success to their readers).
+                                interrupted = provider_meta.get('outcome') == 'interrupted'
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=_validate_tool_output(part.output),
-                                        tool_kind=tool_kind,
+                                        outcome='interrupted' if interrupted else 'success',
+                                        tool_kind=None if interrupted else tool_kind,
                                     )
                                 )
                             # Error/denied returns deliberately carry no `tool_kind`: typed return
@@ -748,6 +756,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     else:
+                        # `'success'` and `'interrupted'` both render as neutral tool output; only
+                        # `'failed'` is an error, so `'interrupted'` is never surfaced as one.
                         ui_parts.append(
                             ToolOutputAvailablePart(
                                 type=tool_name,
@@ -808,11 +818,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
+        interrupted = isinstance(tool_result, ToolReturnPart) and tool_result.outcome == 'interrupted'
         call_provider_metadata = dump_provider_metadata(
             id=part.id,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
             tool_kind=part.tool_kind,
+            # `'interrupted'` is the one outcome the UI part state can't represent (it dumps as
+            # neutral `output-available` below), so it rides the metadata channel instead of
+            # degrading to `'success'` on a dump/load round-trip.
+            outcome='interrupted' if interrupted else None,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -845,6 +860,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                 )
             else:
+                # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
+                # is an error, so a synthesized `'interrupted'` return (from message-history repair)
+                # shows its interruption message as the output rather than an error.
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,

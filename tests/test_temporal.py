@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, S
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -52,7 +53,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import MCP, Capability, Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import UploadedFile
@@ -70,7 +71,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
@@ -88,6 +89,7 @@ try:
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -207,10 +209,18 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
+    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
+    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
+    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
+    # restricts `Path.home()` access.
+    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
+    download_dest_dir.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
 
@@ -1392,6 +1402,75 @@ async def test_toolset_without_id():
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+async def test_capability_contributed_toolset_id_from_capability():
+    """A capability's `id` flows to its contributed leaf toolset, so combining a capability with a
+    function toolset or MCP server can be used under Temporal instead of tripping the
+    'leaves need a unique id' error at construction.
+
+    This isn't a VCR test: it inspects the constructed toolset tree and registered Temporal activity
+    names during local agent construction, before any model or MCP request, so there's no network
+    round-trip to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add]),
+            MCP(url='https://mcp.example.com/api', id='docs'),
+        ],
+    )
+    # Previously raised `UserError` because the contributed leaf toolsets had `id=None`.
+    temporal_agent = TemporalAgent(agent)
+
+    # Each contributed leaf toolset is registered as activities named after the capability id, so the
+    # function toolset and the MCP server can be driven durably.
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__capability_agent__mcp_server__docs__get_tools' in activity_names
+
+
+async def test_deferred_capability_contributed_toolset_id_from_capability():
+    """A deferred capability (`defer_loading=True`) still stamps its `id` on the contributed leaf
+    toolset, so the derived id survives the deferred-loading wrapper and the toolset is registered as
+    durable activities. Deferred capabilities require an explicit `id`.
+
+    This isn't a VCR test: it inspects deferred toolset ids and registered Temporal activity names
+    during local agent construction, before any model or MCP request, so there's no network round-trip
+    to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/6334.
+    """
+
+    def add(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    agent = Agent(
+        model,
+        name='deferred_capability_agent',
+        capabilities=[
+            Capability(id='billing', tools=[add], defer_loading=True),
+            MCP(url='https://mcp.example.com/api', id='docs', defer_loading=True),
+        ],
+    )
+    temporal_agent = TemporalAgent(agent)
+
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_agent.temporal_activities
+    }
+    assert 'agent__deferred_capability_agent__toolset__billing__call_tool' in activity_names
+    assert 'agent__deferred_capability_agent__mcp_server__docs__get_tools' in activity_names
+
+
 # --- DynamicToolset / @agent.toolset tests ---
 
 
@@ -1861,6 +1940,7 @@ async def test_temporal_agent():
             'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__model_cancel_suspended_response',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
             'agent__complex_agent__mcp_server__mcp__get_instructions',
@@ -3398,6 +3478,22 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
+def test_temporal_run_context_serializes_usage_limits():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        usage_limits=UsageLimits(request_limit=7, total_tokens_limit=1000),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage_limits'] == ctx.usage_limits
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage_limits == ctx.usage_limits
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -3424,6 +3520,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4292,6 +4389,99 @@ async def test_temporal_model_request_outside_workflow():
     assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
 
 
+async def test_temporal_model_cancel_suspended_response_outside_workflow():
+    """`TemporalModel.cancel_suspended_response()` falls back to the wrapped model outside a workflow.
+
+    Inside a workflow it runs the provider teardown in the `model_cancel_suspended_response` activity
+    (registered in `temporal_activities`) so the raw HTTP call never runs in the workflow sandbox;
+    outside a workflow it delegates straight to the wrapped model.
+    """
+    cancelled: list[ModelResponse] = []
+
+    class RecordingModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response)
+
+    temporal_model = TemporalModel(
+        RecordingModel(),
+        activity_name_prefix='test__direct_cancel',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # The cancel activity is registered alongside the request activities.
+    assert [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in temporal_model.temporal_activities
+    ] == snapshot(
+        [
+            'test__direct_cancel__model_request',
+            'test__direct_cancel__model_request_stream',
+            'test__direct_cancel__model_cancel_suspended_response',
+        ]
+    )
+
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    await temporal_model.cancel_suspended_response(response)
+    assert cancelled == [response]
+
+
+# Module-level so the `@workflow.defn` below can bind to it (mirrors `simple_temporal_agent`). The
+# activity records into this list; since activities always run outside the workflow sandbox in the
+# worker process, the workflow can dispatch the teardown while the assertion still observes it here.
+model_cancel_calls: list[ModelResponse] = []
+
+
+class CancelRecordingModel(TestModel):
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        model_cancel_calls.append(response)
+
+
+cancel_temporal_model = TemporalModel(
+    CancelRecordingModel(),
+    activity_name_prefix='cancel_suspended',
+    activity_config=BASE_ACTIVITY_CONFIG,
+    deps_type=type(None),
+)
+
+
+@workflow.defn
+class CancelSuspendedResponseWorkflow:
+    @workflow.run
+    async def run(self, response: ModelResponse) -> None:
+        # In-workflow, `cancel_suspended_response` must dispatch the provider teardown to the
+        # `model_cancel_suspended_response` activity rather than make the raw HTTP call in the sandbox.
+        await cancel_temporal_model.cancel_suspended_response(response)
+
+
+async def test_temporal_model_cancel_suspended_response_in_workflow(client: Client):
+    """Inside a workflow, `cancel_suspended_response` tears the server-side job down via an activity.
+
+    Counterpart to `test_temporal_model_cancel_suspended_response_outside_workflow`: it drives the
+    in-workflow override -> `workflow.execute_activity` -> activity-body path end to end, proving the
+    wrapped model's cancel actually runs and that the `ModelResponse` argument survives serialization
+    across both the workflow and activity boundaries.
+    """
+    model_cancel_calls.clear()
+    response = ModelResponse(parts=[TextPart('paused')], state='suspended')
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelSuspendedResponseWorkflow],
+        activities=cancel_temporal_model.temporal_activities,
+    ):
+        await client.execute_workflow(
+            CancelSuspendedResponseWorkflow.run,
+            args=[response],
+            id=CancelSuspendedResponseWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    # The teardown ran in the activity worker against the wrapped model, with the response faithfully
+    # round-tripped through both serialization boundaries.
+    assert model_cancel_calls == [response]
+
+
 async def test_temporal_model_request_stream_outside_workflow():
     """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
 
@@ -4365,6 +4555,18 @@ def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> No
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is pydantic_data_converter
+
+
+def test_pydantic_ai_plugin_passes_pydantic_monty_through_sandbox() -> None:
+    runner = SandboxedWorkflowRunner()
+    config: dict[str, Any] = {'workflow_runner': runner}
+
+    result = PydanticAIPlugin().configure_worker(config)  # type: ignore[arg-type]
+
+    assert 'workflow_runner' in result
+    configured_runner = result['workflow_runner']
+    assert isinstance(configured_runner, SandboxedWorkflowRunner)
+    assert 'pydantic_monty' in configured_runner.restrictions.passthrough_modules
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
