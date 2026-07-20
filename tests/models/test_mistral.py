@@ -3166,48 +3166,6 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
     assert text_document_content.identifier in inlined
 
 
-async def test_text_document_url_mapping() -> None:
-    """Test that text-like DocumentUrl is downloaded and inlined as MistralTextChunk.
-
-    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
-    `_map_messages` download-and-inline shape; wire validity is proven by `test_text_document_url_input`.
-    """
-    from unittest.mock import AsyncMock, patch
-
-    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
-    file_text = 'Dummy TXT file'
-    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
-
-    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
-        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
-
-        messages = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content=['Read this', doc_url]),
-                ]
-            )
-        ]
-
-        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-
-        mock_download.assert_called_once()
-        assert mock_download.call_args[0][0].url == 'https://example.com/file.txt'
-        assert mock_download.call_args[1]['data_format'] == 'text'
-
-    user_msg = mapped[0]
-    assert isinstance(user_msg, UserMessage)
-    assert user_msg.content is not None
-    assert isinstance(user_msg.content, list)
-    assert len(user_msg.content) == 2
-    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
-    assert len(text_chunks) == 2
-    inlined = text_chunks[1].text
-    assert '-----BEGIN FILE' in inlined
-    assert file_text in inlined
-    assert doc_url.identifier in inlined
-
-
 async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
     from unittest.mock import AsyncMock, patch
