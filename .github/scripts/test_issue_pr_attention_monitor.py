@@ -225,6 +225,18 @@ def test_snapshot_rejects_aggregate_oversize(monkeypatch: pytest.MonkeyPatch):
         monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)
 
 
+def test_snapshot_uses_utf8_without_ascii_escape_inflation(tmp_path: Path):
+    value = item(7)
+    value['body'] = '🤖' * 100
+    client = SnapshotClient({7: value})
+    path = tmp_path / 'snapshot.json'
+
+    monitor.write_snapshot(client, 'pydantic/pydantic-ai', str(path), now=NOW)
+
+    assert '🤖' in path.read_text(encoding='utf-8')
+    assert path.stat().st_size <= monitor._SNAPSHOT_LIMIT
+
+
 def test_parse_decisions_rejects_injection_and_duplicates(tmp_path: Path):
     output = tmp_path / 'output.json'
     write_output(output, ['1; echo pwned'])
@@ -405,6 +417,13 @@ def test_reconcile_stops_after_escalation():
     assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == ['#7: completed terminal escalation']
     deletes = [call for call in client.calls if call[0] == 'DELETE']
     assert monitor._ACTION_LABEL in deletes[0][1]
+
+
+def test_reconcile_cleans_an_obsolete_lower_stage_label():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._ESCALATED_LABEL])})
+
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: completed terminal escalation']
+    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
 
 
 def test_reconcile_rejects_a_foreign_stage_label():

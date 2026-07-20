@@ -23,6 +23,7 @@ _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
 _CANDIDATE_LIMIT = 10
 _RECONCILE_LIMIT = 25
+_EVENT_PAGE_LIMIT = 10
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
 _OWNER = 'adtyavrdhn'
@@ -249,7 +250,7 @@ def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict
             }
         )
     snapshot: dict[str, object] = {'generated_at': now.isoformat(), 'candidates': candidates}
-    if len(json.dumps(snapshot, indent=2).encode()) > _SNAPSHOT_LIMIT:
+    if len(json.dumps(snapshot, indent=2, ensure_ascii=False).encode()) > _SNAPSHOT_LIMIT:
         raise RuntimeError(f'Attention snapshot exceeds {_SNAPSHOT_LIMIT} bytes')
     return snapshot
 
@@ -259,7 +260,7 @@ def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.dateti
     snapshot = build_snapshot(client, repo, now=now)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(snapshot, indent=2), encoding='utf-8')
+    destination.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding='utf-8')
     candidates = cast(list[object], snapshot['candidates'])
     return [f'wrote {len(candidates)} attention candidate(s)']
 
@@ -491,7 +492,7 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     if current.get('state') != 'open' or _ACTION_LABEL not in labels:
         return None
     current_stage = _stage(labels)
-    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=3)
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
     transition = _transition(events, current_stage)
     if transition is None:
@@ -500,6 +501,10 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     if _actor(transition_event) != 'github-actions[bot]':
         _complete(client, repo, number, labels)
         return f'#{number}: removed a foreign attention transition'
+    current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
+    for label in labels.intersection(_STAGE_LABELS):
+        if label != current_stage_label:
+            _remove_label(client, repo, number, label)
     _ensure_owner(client, repo, number, current)
     if _acknowledged(timeline, transition_at):
         _complete(client, repo, number, labels)
