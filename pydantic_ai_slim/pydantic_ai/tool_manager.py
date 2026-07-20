@@ -296,7 +296,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with before/after/error tool_execute hooks."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -316,46 +316,21 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            async def execute_lifecycle(args: dict[str, Any]) -> Any:
-                # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+            # before_tool_execute
+            args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
 
-                # on_tool_execute_error handles failures from the tool body
-                try:
-                    tool_result = await do_execute(args)
-                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
-                    raise  # Control flow, not errors
-                except ModelRetry:
-                    raise  # Propagate to outer handler
-                except Exception as e:
-                    tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
-
-                # after_tool_execute
-                tool_result = await cap.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
-                )
-
-                return tool_result
-
+            # on_tool_execute_error handles failures from the tool body
             try:
-                # wrap_tool_execute encloses the complete execute lifecycle
-                tool_result = await cap.wrap_tool_execute(
-                    ctx,
-                    call=call,
-                    tool_def=tool_def,
-                    args=validated.validated_args,
-                    handler=execute_lifecycle,
-                )
-            except (ValidationError, ModelRetry) as e:
-                # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
-                # doing additional Pydantic validation on args/result) — convert to
-                # ToolRetryError for retry handling, unless the caller asked for raw errors.
-                if not wrap_validation_errors:
-                    raise
-                name = call.tool_name
-                self._check_max_retries(name, validated.tool.max_retries, e)
-                self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, call, e) from e
+                tool_result = await do_execute(args)
+            except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                raise  # Control flow, not errors
+            except ModelRetry:
+                raise  # Propagate to outer handler
+            except Exception as e:
+                tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+
+            # after_tool_execute
+            tool_result = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
         else:
             tool_result = await do_execute(validated.validated_args)
 
@@ -506,16 +481,45 @@ class ToolManager(Generic[AgentDepsT]):
 
         ctx = self.ctx
 
-        async def execute_tool_call_impl() -> Any:
-            return await self._execute_tool_call_impl(
-                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
-            )
+        def as_tool_retry(error: ValidationError | ModelRetry) -> ToolRetryError:
+            if not wrap_validation_errors:
+                raise error
+            name = validated.call.tool_name
+            max_retries = validated.tool.max_retries if validated.tool is not None else self.default_max_retries
+            self._check_max_retries(name, max_retries, error)
+            self.failed_tools.add(name)
+            return self._wrap_error_as_retry(name, validated.call, error)
 
-        if self.root_capability is not None:
-            return await self.root_capability._wrap_tool_call(  # pyright: ignore[reportPrivateUsage]
-                validated.ctx, call=validated.call, handler=execute_tool_call_impl
-            )
-        return await execute_tool_call_impl()
+        async def settle_tool_call(args: dict[str, Any] | None) -> Any:
+            try:
+                tool_result = await self._execute_tool_call_impl(
+                    replace(validated, validated_args=args),
+                    usage=ctx.usage,
+                    wrap_validation_errors=wrap_validation_errors,
+                )
+            except SkipToolExecution as e:
+                ctx.usage.tool_calls += 1
+                return e.result
+            except (ValidationError, ModelRetry) as e:
+                raise as_tool_retry(e) from e
+            return tool_result
+
+        tool_def = validated.tool.tool_def if validated.tool is not None else None
+        try:
+            if self.root_capability is not None and (tool_def is None or tool_def.kind not in ('output', 'external')):
+                return await self.root_capability.wrap_tool_execute(
+                    validated.ctx,
+                    call=validated.call,
+                    tool_def=tool_def,
+                    args=validated.validated_args,
+                    handler=settle_tool_call,
+                )
+            return await settle_tool_call(validated.validated_args)
+        except SkipToolExecution as e:
+            ctx.usage.tool_calls += 1
+            return e.result
+        except (ValidationError, ModelRetry) as e:
+            raise as_tool_retry(e) from e
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 
@@ -744,15 +748,7 @@ class ToolManager(Generic[AgentDepsT]):
         if validated.tool.tool_def.kind == 'external':
             raise RuntimeError('External tools cannot be called')
 
-        try:
-            tool_result = await self._run_execute_hooks(
-                validated, usage=usage, wrap_validation_errors=wrap_validation_errors
-            )
-        except SkipToolExecution as e:
-            usage.tool_calls += 1
-            return e.result
-
-        return tool_result
+        return await self._run_execute_hooks(validated, usage=usage, wrap_validation_errors=wrap_validation_errors)
 
     async def _raw_execute(
         self,

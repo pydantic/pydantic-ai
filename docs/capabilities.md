@@ -1592,19 +1592,21 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
-**Execution hooks** — `args` is always the validated `dict[str, Any]`:
+**Execution hooks** — `args` is the validated `dict[str, Any]` for the before, after, and error hooks.
+`wrap_tool_execute` also wraps stored validation failures, where `args` is `None`; `tool_def` is
+also `None` when the tool name is unknown.
 
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] | `(ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs` | Modify args before execution |
 | [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] | `(ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any) -> Any` | Modify execution result |
-| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: WrapToolExecuteHandler) -> Any` | Wrap the before, execute, error, and after hooks |
+| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition \| None, args: ValidatedToolArgs \| None, handler: WrapToolExecuteHandler) -> Any` | Wrap a stored validation failure or the complete execution lifecycle |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx: RunContext, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
 
-For tool execution, `wrap_tool_execute` encloses `before_tool_execute`, the tool body,
-`on_tool_execute_error`, and `after_tool_execute`.
+`wrap_tool_execute` encloses either the stored validation error, or `before_tool_execute`,
+the tool body, `on_tool_execute_error`, and `after_tool_execute` for a valid call.
 
 #### Output hooks
 
@@ -2077,8 +2079,8 @@ class VerboseLogging(AbstractCapability[Any]):
         ctx: RunContext[Any],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: dict[str, Any],
+        tool_def: ToolDefinition | None,
+        args: dict[str, Any] | None,
         handler: WrapToolExecuteHandler,
     ) -> Any:
         print(f'  Tool call: {call.tool_name}({args})')

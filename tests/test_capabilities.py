@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
 from types import NoneType
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import anyio
@@ -5133,7 +5133,13 @@ class LoggingCapability(AbstractCapability[Any]):
         return result
 
     async def wrap_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition | None,
+        args: dict[str, Any] | None,
+        handler: Any,
     ) -> Any:
         self.log.append(f'wrap_tool_execute:{call.tool_name}:before')
         result = await handler(args)
@@ -5637,13 +5643,29 @@ class TestToolExecuteHooks:
         result = await agent.run('call tool')
         assert 'modified: original' in result.output
 
-    async def test_skip_tool_execution(self):
+    @pytest.mark.parametrize('skip_phase', ['before', 'wrap'])
+    async def test_skip_tool_execution(self, skip_phase: Literal['before', 'wrap']):
         @dataclass
         class SkipExecCap(AbstractCapability[Any]):
             async def before_tool_execute(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
             ) -> dict[str, Any]:
-                raise SkipToolExecution('denied')
+                if skip_phase == 'before':
+                    raise SkipToolExecution('denied')
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition | None,
+                args: dict[str, Any] | None,
+                handler: Any,
+            ) -> Any:
+                if skip_phase == 'wrap':
+                    raise SkipToolExecution('denied')
+                return await handler(args)
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -5680,8 +5702,8 @@ class TestToolExecuteHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition,
-                args: dict[str, Any],
+                tool_def: ToolDefinition | None,
+                args: dict[str, Any] | None,
                 handler: Any,
             ) -> Any:
                 try:
@@ -5773,10 +5795,11 @@ class TestToolExecuteHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition,
-                args: dict[str, Any],
+                tool_def: ToolDefinition | None,
+                args: dict[str, Any] | None,
                 handler: Any,
             ) -> Any:
+                assert args is not None
                 captured_args.append(('execute', args))
                 return await handler(args)
 
@@ -13632,8 +13655,8 @@ class TestModelRetryFromHooks:
                 ctx: RunContext[Any],
                 *,
                 call: ToolCallPart,
-                tool_def: ToolDefinition,
-                args: dict[str, Any],
+                tool_def: ToolDefinition | None,
+                args: dict[str, Any] | None,
                 handler: Any,
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')

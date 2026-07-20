@@ -73,7 +73,7 @@ ValidatedToolArgs: TypeAlias = dict[str, Any]
 WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[ValidatedToolArgs]]
 """Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
 
-WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
+WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs | None], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
 RawOutput: TypeAlias = str | dict[str, Any]
@@ -637,16 +637,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    async def _wrap_tool_call(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        """Wrap settling a tool call by raising a stored validation error or executing it."""
-        return await handler()
-
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -752,13 +742,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
+        tool_def: ToolDefinition | None,
+        args: ValidatedToolArgs | None,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wrap the full tool execution lifecycle.
+        """Wrap settling a tool call.
 
-        `handler(args)` runs the before, execute, error, and after hooks for the tool.
+        `handler(args)` raises a stored validation error, or runs the before, execute,
+        error, and after hooks for a successfully validated tool call. `tool_def` is
+        `None` only for an unknown tool, and `args` is `None` when validation failed.
         """
         return await handler(args)
 
