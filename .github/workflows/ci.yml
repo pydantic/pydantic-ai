@@ -54,6 +54,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py::test_attention_dynamic_workflow_is_bounded_to_specialists
+          .github/scripts/test_pydantic_ai_runner.py::test_attention_dynamic_workflow_runs_bounded_fanout
           .github/scripts/test_issue_pr_attention_monitor.py
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
