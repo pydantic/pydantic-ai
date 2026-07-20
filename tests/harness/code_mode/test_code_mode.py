@@ -236,6 +236,48 @@ class TestCodeMode:
         # The base description must tell the model to await tool calls.
         assert 'await' in description
 
+    async def test_run_code_description_explains_final_expression_return(self) -> None:
+        """The model is told how to return a value after assigning it."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+        description = tools['run_code'].tool_def.description
+
+        assert description is not None
+        assert 'End the snippet with the value to return as a bare expression.' in description
+        assert 'result = some_expression\nresult' in description
+        assert 'Without a non-`None` final expression or print output, `run_code` returns `{}`.' in description
+        assert 'A final expression that evaluates to `None` is treated as no result.' in description
+        assert 'results = await asyncio.gather' not in description
+        assert 'With `print()` output and no non-`None` final expression' in description
+        assert 'With `print()` output and a plain, non-`None` final expression' in description
+        assert 'With `print()` output and a multimodal final expression' in description
+
+    async def test_run_code_function_examples_are_expressions(self) -> None:
+        """Async, sync, and mixed function examples do not end on assignments."""
+        cases: list[tuple[FunctionToolset[object], tuple[str, ...]]] = [
+            (_build_function_toolset(add), ('e.g. `await tool_name(arg=value)`.',)),
+            (
+                FunctionToolset[object](tools=[Tool(add, sequential=True)]),
+                ('e.g. `tool_name(arg=value)`.',),
+            ),
+            (
+                FunctionToolset[object](tools=[Tool(add, sequential=True), Tool(greet)]),
+                ('e.g. `await tool_name(arg=value)`.', 'e.g. `tool_name(arg=value)`.'),
+            ),
+        ]
+
+        for toolset, expected_examples in cases:
+            wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
+            assert isinstance(wrapper, CodeModeToolset)
+
+            description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
+
+            assert description is not None
+            assert all(example in description for example in expected_examples)
+            assert 'e.g. `result =' not in description
+
     async def test_run_code_executes_call_through_monty(self) -> None:
         """End-to-end: `run_code` runs Python in Monty and dispatches to a sync wrapped tool."""
         toolset = _build_function_toolset(add)
@@ -389,6 +431,19 @@ class TestCodeMode:
         result = await wrapper.call_tool('run_code', {'code': '1 + 2'}, ctx, tools['run_code'])
         # No print output → result returned directly (not wrapped in a dict).
         assert result.return_value == 3
+
+    async def test_run_code_treats_none_as_no_expression_result(self) -> None:
+        """A final `None` uses the same return shapes as no final expression."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        result = await wrapper.call_tool('run_code', {'code': 'None'}, ctx, tools['run_code'])
+        assert result.return_value == {}
+
+        printed = await wrapper.call_tool('run_code', {'code': 'print("done")\nNone'}, ctx, tools['run_code'])
+        assert printed.return_value == {'output': 'done\n'}
 
     async def test_run_code_syntax_error_becomes_model_retry(self) -> None:
         """A Python syntax error is surfaced as `ModelRetry` so the model can fix it."""

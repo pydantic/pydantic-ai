@@ -44,6 +44,8 @@ print(result.output)
 The model writes code like:
 
 ```python
+import asyncio
+
 paris, tokyo = await asyncio.gather(
     get_weather(city='Paris'),
     get_weather(city='Tokyo'),
@@ -144,13 +146,21 @@ become callable functions inside `run_code`. Tools without
 
 ## Return values
 
-The last expression in the code snippet is automatically captured as the return value -- the model does not need to `print()`.
+The last expression in the code snippet is automatically captured as the return value -- the model does not need to `print()`. An assignment stores a value in the REPL but does not return it. A final expression that evaluates to `None` is also treated as no result. Without a non-`None` final expression or print output, `run_code` returns `{}`. Put the assigned name on the final line:
+
+```python
+result = await get_weather(city='Paris')
+result
+```
 
 | Scenario | Return |
 |---|---|
-| No print output | Last expression value |
-| With print output | `{"output": "<printed text>", "result": <last expression>}` |
-| Multimodal content (e.g. images) | Returned natively for model processing |
+| Non-`None` final expression with no print output | Last expression value |
+| Final assignment or `None` result with no print output | `{}` |
+| Print output with no final expression or a `None` result | `{"output": "<printed text>"}` |
+| Print output with a plain, non-`None` final expression | `{"output": "<printed text>", "result": <last expression>}` |
+| Multimodal final expression with no print output | Returned natively for model processing |
+| Print output with a multimodal final expression | List with printed text followed by native multimodal content |
 
 ## REPL state
 

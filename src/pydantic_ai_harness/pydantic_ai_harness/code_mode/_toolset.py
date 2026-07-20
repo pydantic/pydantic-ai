@@ -85,7 +85,7 @@ Write and run Python code in a sandboxed environment.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No classes**: class definitions are not supported
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python. For example: `import asyncio` then `results = await asyncio.gather(tool_one(...), tool_two(...))`."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python. For example: `import asyncio` then `await asyncio.gather(tool_one(...), tool_two(...))`."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -116,11 +116,23 @@ _RUN_CODE_DESCRIPTION_TAIL = """\
 State is preserved between calls (REPL-style). Set `restart: true` to reset state.
 
 The last expression's value is automatically captured as the return value -- you do **not** need to \
-`print()` it. Avoid `print()` for return values as it produces Python string representations, not \
-structured data. Use `print()` only for supplementary logging or debug output.
+`print()` it. End the snippet with the value to return as a bare expression. A final assignment stores \
+the value but does not return it. A final expression that evaluates to `None` is treated as no result. \
+Without a non-`None` final expression or print output, `run_code` returns `{}`. For example:
 
-Returns the last expression's value directly. If `print()` was also called, returns \
-`{"output": "<printed text>", "result": <last expression>}`.\
+```python
+result = some_expression
+result
+```
+
+Avoid `print()` for return values as it produces Python string representations, not structured data. \
+Use `print()` only for supplementary logging or debug output.
+
+Returns a non-`None` last expression's value directly when nothing is printed. With `print()` output \
+and no non-`None` final expression, returns `{"output": "<printed text>"}`. With `print()` output and a \
+plain, non-`None` final expression, returns \
+`{"output": "<printed text>", "result": <last expression>}`. With `print()` output and a multimodal \
+final expression, returns a list with the printed text followed by the native content.\
 """
 
 
@@ -149,15 +161,15 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     if has_async and not has_sync:
         return base + (
             ' All tool functions are async: invoke them with `await`,'
-            ' e.g. `result = await tool_name(arg=value)`.'
+            ' e.g. `await tool_name(arg=value)`.'
             ' Calling without `await` returns an unresolved future, not the value.'
         )
     if has_sync and not has_async:
-        return base + (' All tool functions are synchronous: call them directly, e.g. `result = tool_name(arg=value)`.')
+        return base + (' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.')
     return base + (
         ' Async functions (`async def`) must be invoked with `await`,'
-        ' e.g. `result = await tool_name(arg=value)`.'
-        ' Sync functions (`def`) are called directly, e.g. `result = tool_name(arg=value)`.'
+        ' e.g. `await tool_name(arg=value)`.'
+        ' Sync functions (`def`) are called directly, e.g. `tool_name(arg=value)`.'
     )
 
 
