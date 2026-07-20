@@ -3001,20 +3001,22 @@ def test_openai_map_tool_search_call_unit():
     assert mixed.content == {'discovered_tools': [{'name': 'real'}]}
 
 
-def test_openai_processes_hosted_tool_search_output_with_null_call_ids() -> None:
-    """The hosted output is authoritative even though OpenAI provides no correlation ID."""
+@pytest.mark.parametrize('call_id', [None, 'call_1'], ids=['null-id', 'explicit-id'])
+@pytest.mark.parametrize('output_first', [False, True], ids=['call-first', 'output-first'])
+def test_openai_processes_hosted_tool_search_call_and_output(call_id: str | None, output_first: bool) -> None:
+    """A matched output follows its call regardless of provider item order."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     call = ResponseToolSearchCall(
         id='ts_1',
         arguments={'paths': ['get_exchange_rate', 'stock_lookup']},
-        call_id=None,
+        call_id=call_id,
         execution='server',
         status='completed',
         type='tool_search_call',
     )
     output = ResponseToolSearchOutputItem(
         id='tso_1',
-        call_id=None,
+        call_id=call_id,
         execution='server',
         status='completed',
         tools=[
@@ -3024,19 +3026,20 @@ def test_openai_processes_hosted_tool_search_output_with_null_call_ids() -> None
         type='tool_search_output',
     )
 
+    response_items = [output, call] if output_first else [call, output]
     response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-        response_message([call, output]), OpenAIResponsesModelSettings(), ModelRequestParameters()
+        response_message(response_items), OpenAIResponsesModelSettings(), ModelRequestParameters()
     )
 
     [call_part, return_part] = response.parts
     assert isinstance(call_part, NativeToolSearchCallPart)
     assert isinstance(return_part, NativeToolSearchReturnPart)
-    assert call_part.tool_call_id == return_part.tool_call_id == 'ts_1'
-    assert call_part.provider_details == {'call_id': None, 'execution': 'server', 'status': 'completed'}
+    assert call_part.tool_call_id == return_part.tool_call_id == (call_id or 'ts_1')
+    assert call_part.provider_details == {'call_id': call_id, 'execution': 'server', 'status': 'completed'}
     assert return_part.content == {'discovered_tools': [{'name': 'get_exchange_rate'}, {'name': 'stock_lookup'}]}
     assert return_part.provider_details == {
         'id': 'tso_1',
-        'call_id': None,
+        'call_id': call_id,
         'execution': 'server',
         'status': 'completed',
     }
@@ -3132,17 +3135,25 @@ def _openai_hosted_tool_search_items() -> tuple[list[ResponseToolSearchCall], li
     return calls, outputs
 
 
-def test_openai_preserves_unmatched_and_ambiguous_hosted_tool_search_outputs() -> None:
-    """Actual outputs are retained without guessing a null-ID pairing."""
+@pytest.mark.parametrize('call_id', [None, 'call_a'], ids=['null-id', 'explicit-id'])
+def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | None) -> None:
+    """An actual output is retained even when no matching call is present."""
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+    _, outputs = _openai_hosted_tool_search_items()
+    output = outputs[0].model_copy(update={'call_id': call_id})
+
+    response = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response_message([output]), OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+    [return_part] = response.parts
+    assert isinstance(return_part, NativeToolSearchReturnPart)
+    assert return_part.tool_call_id == (call_id or 'tso_a')
+
+
+def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> None:
+    """Multiple null-ID pairs retain item identities because OpenAI supplies no correlation."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
-
-    output_only = model._process_response(  # pyright: ignore[reportPrivateUsage]
-        response_message([outputs[0]]), OpenAIResponsesModelSettings(), ModelRequestParameters()
-    )
-    [output_only_part] = output_only.parts
-    assert isinstance(output_only_part, NativeToolSearchReturnPart)
-    assert output_only_part.tool_call_id == 'tso_a'
 
     ambiguous = model._process_response(  # pyright: ignore[reportPrivateUsage]
         response_message([calls[0], outputs[0], calls[1], outputs[1]]),
@@ -3153,6 +3164,19 @@ def test_openai_preserves_unmatched_and_ambiguous_hosted_tool_search_outputs() -
         part for part in ambiguous.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
     assert [part.tool_call_id for part in ambiguous_parts] == ['ts_a', 'tso_a', 'ts_b', 'tso_b']
+
+
+def test_openai_ignores_client_tool_search_output() -> None:
+    """Client outputs are supplied by Pydantic AI and do not belong in model responses."""
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+    _, outputs = _openai_hosted_tool_search_items()
+    client_output = outputs[0].model_copy(update={'execution': 'client'})
+
+    response = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response_message([client_output]), OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+
+    assert response.parts == []
 
 
 async def test_openai_hosted_tool_search_null_id_streaming_parity(allow_model_requests: None) -> None:
@@ -3240,7 +3264,10 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
     output_status: Literal['in_progress', 'completed'],
     discovered_names: list[str],
 ) -> None:
-    """Stateless replay sends the authoritative output and keeps hosted `call_id` null."""
+    """Replay the authoritative output while keeping hosted `call_id` null.
+
+    This pins the request payload because cassette matching does not compare request bodies.
+    """
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     history: list[ModelMessage] = [
         ModelResponse(
@@ -3324,7 +3351,10 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
 
 @pytest.mark.parametrize('send_item_ids', [False, True])
 async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_item_ids: bool) -> None:
-    """Persisted pre-fix empty returns mean unknown output, not authoritative emptiness."""
+    """Keep a persisted pre-fix empty return distinct from an authoritative empty output.
+
+    This pins the request payload because cassette matching does not compare request bodies.
+    """
     legacy_history: list[ModelMessage] = [
         ModelResponse(
             parts=[
@@ -3355,6 +3385,31 @@ async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_i
 
     assert len(openai_messages) == 1
     assert openai_messages[0].get('type') == 'tool_search_call'
+
+
+async def test_openai_replay_falls_back_from_invalid_provider_call_id() -> None:
+    """Malformed persisted provider metadata must not leak into the request payload."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': []},
+                    tool_call_id='ts_1',
+                    id='ts_1',
+                    provider_name='openai',
+                    provider_details={'call_id': 1},
+                )
+            ],
+            provider_name='openai',
+        )
+    ]
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+
+    _, [tool_search_call] = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history, OpenAIResponsesModelSettings(), ModelRequestParameters(native_tools=[ToolSearchTool()])
+    )
+
+    assert tool_search_call.get('call_id') == 'ts_1'
 
 
 @pytest.mark.vcr

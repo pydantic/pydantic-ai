@@ -2079,6 +2079,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         unambiguous_tool_search_output = _unambiguous_null_id_tool_search_output(response)
+        server_tool_search_call_ids = {
+            item.call_id or item.id
+            for item in response.output
+            if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server'
+        }
+        tool_search_outputs = {
+            item.call_id: item
+            for item in response.output
+            if isinstance(item, responses.ResponseToolSearchOutputItem)
+            and item.execution == 'server'
+            and item.call_id is not None
+            and item.call_id in server_tool_search_call_ids
+        }
+        if unambiguous_tool_search_output is not None:
+            output_item, call_id = unambiguous_tool_search_output
+            tool_search_outputs[call_id] = output_item
+        paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -2173,18 +2190,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # `ToolReturnPart` is produced by the tool runner, not here.
                     items.append(_map_client_tool_search_call(item, self.system))
                 else:
-                    items.append(_map_tool_search_call(item, self.system))
+                    call_part = _map_tool_search_call(item, self.system)
+                    items.append(call_part)
+                    if output_item := tool_search_outputs.get(call_part.tool_call_id):
+                        items.append(_build_tool_search_return_part(call_part.tool_call_id, output_item, self.system))
             elif isinstance(item, responses.ResponseToolSearchOutputItem):
-                if item.execution == 'server':
-                    inferred_call_id = (
-                        unambiguous_tool_search_output[1]
-                        if unambiguous_tool_search_output is not None
-                        and unambiguous_tool_search_output[0].id == item.id
-                        else None
-                    )
-                    items.append(
-                        _build_tool_search_return_part(item.call_id or inferred_call_id or item.id, item, self.system)
-                    )
+                if item.execution == 'server' and item.id not in paired_tool_search_output_ids:
+                    items.append(_build_tool_search_return_part(item.call_id or item.id, item, self.system))
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
                 call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
                 items.append(call_part)
