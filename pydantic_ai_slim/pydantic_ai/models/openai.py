@@ -2078,25 +2078,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
-        null_id_tool_search_calls = [
-            output_item
-            for output_item in response.output
-            if isinstance(output_item, responses.ResponseToolSearchCall)
-            and output_item.execution == 'server'
-            and output_item.call_id is None
-        ]
-        null_id_tool_search_outputs = [
-            output_item
-            for output_item in response.output
-            if isinstance(output_item, responses.ResponseToolSearchOutputItem)
-            and output_item.execution == 'server'
-            and output_item.call_id is None
-        ]
-        null_id_tool_search_call_id = (
-            null_id_tool_search_calls[0].id
-            if len(null_id_tool_search_calls) == len(null_id_tool_search_outputs) == 1
-            else None
-        )
+        unambiguous_tool_search_output = _unambiguous_null_id_tool_search_output(response)
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -2194,10 +2176,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     items.append(_map_tool_search_call(item, self.system))
             elif isinstance(item, responses.ResponseToolSearchOutputItem):
                 if item.execution == 'server':
+                    inferred_call_id = (
+                        unambiguous_tool_search_output[1]
+                        if unambiguous_tool_search_output is not None
+                        and unambiguous_tool_search_output[0].id == item.id
+                        else None
+                    )
                     items.append(
-                        _build_tool_search_return_part(
-                            item.call_id or null_id_tool_search_call_id or item.id, item, self.system
-                        )
+                        _build_tool_search_return_part(item.call_id or inferred_call_id or item.id, item, self.system)
                     )
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
                 call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
@@ -3175,7 +3161,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, NativeToolReturnPart):
-                        if from_same_provider and isinstance(item, NativeToolSearchReturnPart):
+                        if (
+                            from_same_provider
+                            and isinstance(item, NativeToolSearchReturnPart)
+                            and not _is_legacy_synthetic_tool_search_return(item)
+                        ):
                             call_id, status, provider_details = _tool_search_replay_details(item)
                             tool_search_output = _build_tool_search_output_param(
                                 item,
@@ -3702,9 +3692,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
-            pending_null_id_tool_search_calls: list[str] = []
-            tool_search_output_call_ids: dict[str, str] = {}
-
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
 
@@ -3726,6 +3713,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
+                if (
+                    isinstance(
+                        chunk,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    )
+                    and (unambiguous_output := _unambiguous_null_id_tool_search_output(chunk.response)) is not None
+                ):
+                    output_item, call_id = unambiguous_output
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{output_item.id}-return',
+                        part=_build_tool_search_return_part(call_id, output_item, self.provider_name),
+                    )
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -3831,8 +3834,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             )
                         else:
                             call_part = _map_tool_search_call(chunk.item, self.provider_name)
-                            if chunk.item.call_id is None:
-                                pending_null_id_tool_search_calls.append(call_part.tool_call_id)
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                             )
@@ -3842,15 +3843,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        # Added carries the full discovered-tools payload; emit the return
-                        # part here. Done repeats the same item — handled as a no-op
-                        # below to avoid double-emission.
-                        call_id = chunk.item.call_id or (
-                            pending_null_id_tool_search_calls.pop()
-                            if len(pending_null_id_tool_search_calls) == 1
-                            else chunk.item.id
-                        )
-                        tool_search_output_call_ids[chunk.item.id] = call_id
+                        # Added carries the discovered-tools payload. Keep its own item
+                        # identity until a terminal response proves a single call/output
+                        # association; Done replaces this part with final status and tools.
+                        call_id = chunk.item.call_id or chunk.item.id
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return',
                             part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
@@ -3978,7 +3974,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        call_id = tool_search_output_call_ids.get(chunk.item.id, chunk.item.call_id or chunk.item.id)
+                        call_id = chunk.item.call_id or chunk.item.id
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return',
                             part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
@@ -4714,6 +4710,27 @@ def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
     raise UnexpectedModelBehavior(f'Unrecognized tool_search arguments shape: {raw!r}')
 
 
+def _unambiguous_null_id_tool_search_output(
+    response: responses.Response,
+) -> tuple[responses.ResponseToolSearchOutputItem, str] | None:
+    """Associate hosted null-ID items only when the whole response has one of each."""
+    calls = [
+        item
+        for item in response.output
+        if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server' and item.call_id is None
+    ]
+    outputs = [
+        item
+        for item in response.output
+        if isinstance(item, responses.ResponseToolSearchOutputItem)
+        and item.execution == 'server'
+        and item.call_id is None
+    ]
+    if len(calls) == len(outputs) == 1:
+        return outputs[0], calls[0].id
+    return None
+
+
 def _map_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> NativeToolSearchCallPart:
     """Map an OpenAI server-executed tool-search call without fabricating its output."""
     call_id = item.call_id or item.id
@@ -4738,6 +4755,13 @@ def _tool_search_replay_details(
     if status not in ('in_progress', 'completed', 'incomplete'):
         status = 'completed'
     return call_id, status, provider_details
+
+
+def _is_legacy_synthetic_tool_search_return(part: NativeToolSearchReturnPart) -> bool:
+    """Identify pre-fix empty placeholders that did not come from an output item."""
+    provider_details = part.provider_details or {}
+    has_output_identity = any(key in provider_details for key in ('id', 'call_id', 'execution'))
+    return not part.discovered_tools and not has_output_identity
 
 
 def _build_tool_search_output_param(

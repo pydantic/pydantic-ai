@@ -3106,8 +3106,140 @@ def test_openai_does_not_fabricate_missing_hosted_tool_search_output() -> None:
     assert isinstance(call_part, NativeToolSearchCallPart)
 
 
+def _openai_hosted_tool_search_items() -> tuple[list[ResponseToolSearchCall], list[ResponseToolSearchOutputItem]]:
+    calls = [
+        ResponseToolSearchCall(
+            id=f'ts_{suffix}',
+            arguments={'paths': [name]},
+            call_id=None,
+            execution='server',
+            status='completed',
+            type='tool_search_call',
+        )
+        for suffix, name in [('a', 'get_exchange_rate'), ('b', 'stock_lookup')]
+    ]
+    outputs = [
+        ResponseToolSearchOutputItem(
+            id=f'tso_{suffix}',
+            call_id=None,
+            execution='server',
+            status='completed',
+            tools=[FunctionTool(name=name, description='', parameters={}, strict=False, type='function')],
+            type='tool_search_output',
+        )
+        for suffix, name in [('a', 'get_exchange_rate'), ('b', 'stock_lookup')]
+    ]
+    return calls, outputs
+
+
+def test_openai_preserves_unmatched_and_ambiguous_hosted_tool_search_outputs() -> None:
+    """Actual outputs are retained without guessing a null-ID pairing."""
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+    calls, outputs = _openai_hosted_tool_search_items()
+
+    output_only = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response_message([outputs[0]]), OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+    [output_only_part] = output_only.parts
+    assert isinstance(output_only_part, NativeToolSearchReturnPart)
+    assert output_only_part.tool_call_id == 'tso_a'
+
+    ambiguous = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response_message([calls[0], outputs[0], calls[1], outputs[1]]),
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
+    )
+    ambiguous_parts = [
+        part for part in ambiguous.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    ]
+    assert [part.tool_call_id for part in ambiguous_parts] == ['ts_a', 'tso_a', 'ts_b', 'tso_b']
+
+
+async def test_openai_hosted_tool_search_null_id_streaming_parity(allow_model_requests: None) -> None:
+    """Multiple null-ID pairs use the same conservative identity policy in both modes."""
+    from openai.types import responses as resp
+
+    calls, outputs = _openai_hosted_tool_search_items()
+    final_items = [calls[0], outputs[0], calls[1], outputs[1]]
+    completed_response = response_message(final_items).model_copy(update={'status': 'completed'})
+    created_response = response_message([]).model_copy(update={'status': 'in_progress'})
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0)
+    ]
+    sequence_number = 1
+    for output_index, item in enumerate(final_items):
+        added_item = item.model_copy(update={'status': 'in_progress'})
+        stream.extend(
+            [
+                resp.ResponseOutputItemAddedEvent(
+                    item=added_item,
+                    output_index=output_index,
+                    type='response.output_item.added',
+                    sequence_number=sequence_number,
+                ),
+                resp.ResponseOutputItemDoneEvent(
+                    item=item,
+                    output_index=output_index,
+                    type='response.output_item.done',
+                    sequence_number=sequence_number + 1,
+                ),
+            ]
+        )
+        sequence_number += 2
+    stream.append(
+        resp.ResponseCompletedEvent(
+            response=completed_response,
+            type='response.completed',
+            sequence_number=sequence_number,
+        )
+    )
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='test')])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
+    ) as streamed_response:
+        assert [event async for event in streamed_response]
+
+    streamed = streamed_response.get()
+    non_streamed = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        completed_response, OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+    streamed_parts = [
+        part for part in streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    ]
+    non_streamed_parts = [
+        part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    ]
+    assert (
+        [part.tool_call_id for part in streamed_parts]
+        == [part.tool_call_id for part in non_streamed_parts]
+        == [
+            'ts_a',
+            'tso_a',
+            'ts_b',
+            'tso_b',
+        ]
+    )
+
+
 @pytest.mark.parametrize('send_item_ids', [False, True])
-async def test_openai_replays_hosted_tool_search_call_and_output(send_item_ids: bool) -> None:
+@pytest.mark.parametrize(
+    ('call_status', 'output_status', 'discovered_names'),
+    [
+        ('completed', 'completed', ['get_exchange_rate', 'stock_lookup']),
+        ('completed', 'completed', []),
+        ('incomplete', 'in_progress', []),
+    ],
+)
+async def test_openai_replays_hosted_tool_search_call_and_output(
+    send_item_ids: bool,
+    call_status: Literal['completed', 'incomplete'],
+    output_status: Literal['in_progress', 'completed'],
+    discovered_names: list[str],
+) -> None:
     """Stateless replay sends the authoritative output and keeps hosted `call_id` null."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     history: list[ModelMessage] = [
@@ -3118,17 +3250,17 @@ async def test_openai_replays_hosted_tool_search_call_and_output(send_item_ids: 
                     tool_call_id='ts_1',
                     id='ts_1',
                     provider_name='openai',
-                    provider_details={'call_id': None, 'execution': 'server', 'status': 'completed'},
+                    provider_details={'call_id': None, 'execution': 'server', 'status': call_status},
                 ),
                 NativeToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'get_exchange_rate'}]},
+                    content={'discovered_tools': [{'name': name} for name in discovered_names]},
                     tool_call_id='ts_1',
                     provider_name='openai',
                     provider_details={
                         'id': 'tso_1',
                         'call_id': None,
                         'execution': 'server',
-                        'status': 'completed',
+                        'status': output_status,
                     },
                 ),
             ],
@@ -3142,7 +3274,13 @@ async def test_openai_replays_hosted_tool_search_call_and_output(send_item_ids: 
                 description='Look up an exchange rate.',
                 with_native=ToolSearchTool.kind,
                 defer_loading=True,
-            )
+            ),
+            ToolDefinition(
+                name='stock_lookup',
+                description='Look up a stock price.',
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -3156,21 +3294,25 @@ async def test_openai_replays_hosted_tool_search_call_and_output(send_item_ids: 
         'arguments': {'queries': ['get_exchange_rate']},
         'type': 'tool_search_call',
         'execution': 'server',
-        'status': 'completed',
+        'status': call_status,
     }
     expected_output: dict[str, Any] = {
         'call_id': None,
         'execution': 'server',
-        'status': 'completed',
+        'status': output_status,
         'tools': [
             {
-                'name': 'get_exchange_rate',
+                'name': name,
                 'parameters': {'type': 'object', 'properties': {}},
                 'type': 'function',
-                'description': 'Look up an exchange rate.',
+                'description': {
+                    'get_exchange_rate': 'Look up an exchange rate.',
+                    'stock_lookup': 'Look up a stock price.',
+                }[name],
                 'strict': False,
                 'defer_loading': True,
             }
+            for name in discovered_names
         ],
         'type': 'tool_search_output',
     }
@@ -3178,6 +3320,41 @@ async def test_openai_replays_hosted_tool_search_call_and_output(send_item_ids: 
         expected_call['id'] = 'ts_1'
         expected_output['id'] = 'tso_1'
     assert openai_messages == [expected_call, expected_output]
+
+
+@pytest.mark.parametrize('send_item_ids', [False, True])
+async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_item_ids: bool) -> None:
+    """Persisted pre-fix empty returns mean unknown output, not authoritative emptiness."""
+    legacy_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['get_exchange_rate']},
+                    tool_call_id='ts_old',
+                    id='ts_old',
+                    provider_name='openai',
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': []},
+                    tool_call_id='ts_old',
+                    provider_name='openai',
+                    provider_details={'status': 'completed'},
+                ),
+            ],
+            provider_name='openai',
+        )
+    ]
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(legacy_history))
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+        ModelRequestParameters(native_tools=[ToolSearchTool()]),
+    )
+
+    assert len(openai_messages) == 1
+    assert openai_messages[0].get('type') == 'tool_search_call'
 
 
 @pytest.mark.vcr
@@ -3252,12 +3429,6 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
     # cassette matcher does not compare request bodies. Here we only verify the deferred
     # corpus remains present in the recorded integration flow.
     second_request = cast(dict[str, Any], interactions[1]['request']['parsed_body'])
-    second_input_types = {
-        cast(str, item.get('type'))
-        for item in cast(list[dict[str, Any]], second_request['input'])
-        if isinstance(item, dict)
-    }
-    assert 'tool_search_call' in second_input_types
     second_deferred = {
         cast(str, t['name'])
         for t in cast(list[dict[str, Any]], second_request['tools'])
@@ -3295,6 +3466,11 @@ async def test_openai_hosted_tool_search_stateless_continuation(
     second = await agent.run(
         'Call get_exchange_rate with pair="USD/EUR". Do not search again.',
         message_history=first.all_messages(),
+    )
+    assert not any(
+        isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+        for message in second.new_messages()
+        for part in message.parts
     )
     rate_returns = [
         part
@@ -3537,7 +3713,14 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
-    assert streamed_events, 'expected streaming events from the request stream'
+    assert any(
+        isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolSearchCallPart)
+        for event in streamed_events
+    )
+    assert any(
+        isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolSearchReturnPart)
+        for event in streamed_events
+    )
 
 
 @pytest.mark.vcr
