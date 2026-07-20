@@ -1438,6 +1438,75 @@ Fix the errors and try again.\
             )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_argument_validation_error_emits_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-an-int'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2  # pragma: no cover
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    [tool_span] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert tool_span['gen_ai.tool.name'] == 'double'
+    assert tool_span['logfire.level_num'] == 17
+    assert 'int_parsing' in tool_span['gen_ai.tool.call.result']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_records_recovered_and_modified_result(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    @dataclass
+    class RecoverAndModify(AbstractCapability[Any]):
+        async def on_tool_execute_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            return 'recovered'
+
+        async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            return f'modified {kwargs["result"]}'
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('fail', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverAndModify()],
+    )
+
+    @agent.tool_plain
+    def fail() -> str:
+        raise ValueError('boom')
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    [tool_span] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert tool_span.get('logfire.level_num', 0) < 17
+    assert tool_span['gen_ai.tool.call.result'] == 'modified recovered'
+
+
 class WeatherInfo(BaseModel):
     temperature: float
     description: str

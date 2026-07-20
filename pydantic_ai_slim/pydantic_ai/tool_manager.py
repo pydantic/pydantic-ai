@@ -316,15 +316,13 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            try:
+            async def execute_lifecycle(args: dict[str, Any]) -> Any:
                 # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
-                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
+                # on_tool_execute_error handles failures from the tool body
                 try:
-                    tool_result = await cap.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                    )
+                    tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
                     raise  # Control flow, not errors
                 except ModelRetry:
@@ -335,6 +333,18 @@ class ToolManager(Generic[AgentDepsT]):
                 # after_tool_execute
                 tool_result = await cap.after_tool_execute(
                     ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                )
+
+                return tool_result
+
+            try:
+                # wrap_tool_execute encloses the complete execute lifecycle
+                tool_result = await cap.wrap_tool_execute(
+                    ctx,
+                    call=call,
+                    tool_def=tool_def,
+                    args=validated.validated_args,
+                    handler=execute_lifecycle,
                 )
             except (ValidationError, ModelRetry) as e:
                 # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
@@ -470,8 +480,8 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call via capability hooks.
 
-        The Instrumentation capability (if present) creates trace spans via its
-        wrap_tool_execute hook.
+        The Instrumentation capability (if present) creates a trace span around this
+        operation, including a stored validation error or the full execution lifecycle.
 
         Args:
             validated: The validation result from validate_tool_call().
@@ -494,8 +504,18 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        return await self._execute_tool_call_impl(
-            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
+        ctx = self.ctx
+
+        async def execute_tool_call_impl() -> Any:
+            return await self._execute_tool_call_impl(
+                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
+            )
+
+        if self.root_capability is None:
+            return await execute_tool_call_impl()
+
+        return await self.root_capability._wrap_tool_operation(  # pyright: ignore[reportPrivateUsage]
+            validated.ctx, call=validated.call, handler=execute_tool_call_impl
         )
 
     # --- Output tool methods (output hooks, no tool hooks) ---

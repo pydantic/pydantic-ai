@@ -34,6 +34,7 @@ from .abstract import (
     WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
+    WrapToolOperationHandler,
     WrapToolValidateHandler,
 )
 
@@ -344,6 +345,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         handler: WrapToolExecuteHandler,
     ) -> Any:
         return await self.wrapped.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=handler)
+
+    async def _wrap_tool_operation(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: WrapToolOperationHandler,
+    ) -> Any:
+        return await self.wrapped._wrap_tool_operation(ctx, call=call, handler=handler)
 
     async def on_tool_execute_error(
         self,

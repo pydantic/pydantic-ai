@@ -548,6 +548,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
+    async def _wrap_tool_operation(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        chain = handler
+        for capability in reversed(self.capabilities):
+            if _ctx_for_available_cap(capability, ctx) is not None:
+                chain = _make_tool_operation_wrap(capability, ctx, call, chain)
+        return await chain()
+
     async def on_tool_execute_error(
         self,
         ctx: RunContext[AgentDepsT],
@@ -791,6 +804,20 @@ def _make_tool_execute_wrap(
     async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(
             _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
+        )
+
+    return wrapped
+
+
+def _make_tool_operation_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    call: ToolCallPart,
+    inner: Callable[[], Awaitable[Any]],
+) -> Callable[[], Awaitable[Any]]:
+    async def wrapped() -> Any:
+        return await cap._wrap_tool_operation(  # pyright: ignore[reportPrivateUsage]
+            _ctx_for_cap(cap, ctx), call=call, handler=inner
         )
 
     return wrapped

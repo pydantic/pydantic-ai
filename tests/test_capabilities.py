@@ -5700,6 +5700,49 @@ class TestToolExecuteHooks:
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
 
+    @pytest.mark.parametrize('tool_fails', [False, True])
+    async def test_wrap_tool_execute_wraps_execute_lifecycle(self, tool_fails: bool):
+        events: list[str] = []
+
+        @dataclass
+        class LifecycleCap(AbstractCapability[Any]):
+            async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
+                events.append('before')
+                return kwargs['args']
+
+            async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('wrap:before')
+                result = await kwargs['handler'](kwargs['args'])
+                events.append('wrap:after')
+                return result
+
+            async def on_tool_execute_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('on_error')
+                return 'recovered'
+
+            async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('after')
+                return kwargs['result']
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[LifecycleCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            events.append('tool')
+            if tool_fails:
+                raise ValueError('tool failed')
+            return 'tool result'
+
+        await agent.run('call tool')
+        assert events == [
+            'wrap:before',
+            'before',
+            'tool',
+            *(['on_error'] if tool_fails else []),
+            'after',
+            'wrap:after',
+        ]
+
     async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
         """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
 
