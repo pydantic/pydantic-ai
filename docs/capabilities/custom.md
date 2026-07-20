@@ -664,7 +664,7 @@ For building web UIs that transform streamed events into protocol-specific forma
 
 Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure (after `wrap_*` has had its chance to recover):
 
-```
+```text
 before_X → wrap_X(handler)
   ├─ success ─────────→ after_X (modify result)
   └─ failure → on_X_error
@@ -1070,7 +1070,7 @@ class ConditionalTools(AbstractCapability[Any]):
     hidden_tools: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools[Any]':
+    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools':
         # In the spec, there's no condition callable — always hide
         return cls(condition=lambda ctx: True, hidden_tools=hidden_tools)
 

@@ -114,7 +114,7 @@ WebFetch(allowed_domains=['example.com'], local=True)
 
 ### Building your own
 
-All four capabilities are subclasses of [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] with a local fallback:
+All five capabilities are subclasses of [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] with a local fallback:
 
 ```python {title="custom_native_or_local.py" test="skip" lint="skip"}
 from pydantic_ai.native_tools import CodeExecutionTool

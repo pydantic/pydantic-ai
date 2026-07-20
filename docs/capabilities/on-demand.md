@@ -31,7 +31,7 @@ agent = Agent(
 
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
-```
+```text
 The following capabilities are deferred and can be loaded using the `load_capability` tool:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
