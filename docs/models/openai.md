@@ -870,8 +870,13 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+!!! note "Tool calling requires server configuration"
+    For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
+
 !!! note "Multiple system messages are merged by default"
     `VLLMProvider` sets `openai_chat_supports_multiple_system_messages` to `False` on its [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], so consecutive leading system messages are merged into one before the request is sent. Some chat templates served by vLLM reject more than one leading system message, and the restriction cannot be inferred reliably from a model ID or a server's custom chat template, so this setting applies to every vLLM model. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message) for details. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`.
+
+    vLLM formats messages using the served model's chat template. Some templates reject the `system` role entirely, which message merging cannot fix. In that case, serve a compatible custom `--chat-template` or omit system prompts. See the [vLLM OpenAI-compatible server guide](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/#chat-template).
 
 ### Nebius AI Studio
 

@@ -73,12 +73,14 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         # required tool choice, and strict function tools. It does not support OpenAI file content parts or native
         # tool return schemas.
         # `openai_chat_supports_multiple_system_messages` is forced off because some chat templates served by
-        # vLLM reject more than one leading system message. See #5812.
+        # vLLM reject more than one leading system message.
+        # See https://github.com/pydantic/pydantic-ai/issues/5812.
         #
         # `openai_chat_thinking_field='reasoning'` matches vLLM, which renamed `reasoning_content` to `reasoning`
-        # to follow OpenAI's gpt-oss guidance (vllm-project/vllm#27752). Older vLLM servers only emit
-        # `reasoning_content`, but reading falls back to it (see `OpenAIChatModel._process_thinking`), and
-        # this only sets the field used when sending reasoning back on multi-turn requests.
+        # to follow OpenAI's gpt-oss guidance. See https://github.com/vllm-project/vllm/issues/27752.
+        # Older vLLM servers only emit `reasoning_content`, but reading falls back to it (see
+        # `OpenAIChatModel._process_thinking`), and this only sets the field used when sending reasoning back on
+        # multi-turn requests.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
