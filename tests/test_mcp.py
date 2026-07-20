@@ -15,7 +15,7 @@ import json
 import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import anyio
@@ -491,6 +491,29 @@ class TestMCPToolsetIntegration:
             tools = await toolset.get_tools(run_context)
             with pytest.raises(ToolFailed, match='boom'):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
+
+    @pytest.mark.parametrize(
+        ('tool_error_behavior', 'expected_exception'),
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ToolFailed, id='failed'),
+        ],
+    )
+    async def test_direct_tool_error_is_converted(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        tool_error_behavior: Literal['retry', 'failed'],
+        expected_exception: type[ModelRetry] | type[ToolFailed],
+    ):
+        """A direct FastMCP `ToolError` still follows the configured model-visible behavior."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=tool_error_behavior)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(side_effect=ToolError('direct tool error'))
+            with pytest.raises(expected_exception, match='direct tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     async def test_tool_failed_preserves_structured_error_content(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
