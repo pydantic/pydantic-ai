@@ -26,8 +26,8 @@ _RECONCILE_LIMIT = 25
 _EVENT_PAGE_LIMIT = 10
 _RESPONSE_LIMIT = 5_000_000
 _SNAPSHOT_LIMIT = 80_000
-_OWNER = 'adtyavrdhn'
-_ESCALATION_OWNER = 'DouweM'
+_FALLBACK_OWNER = 'adtyavrdhn'
+_MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
 _ACTION_LABEL = 'needs-maintainer-action'
 _PINGED_LABEL = 'attention-pinged'
 _ESCALATED_LABEL = 'attention-escalated'
@@ -348,6 +348,31 @@ def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[s
     client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': list(labels)})
 
 
+def _maintainer_assignees(client: GitHubClient, repo: str, item: Mapping[str, Any]) -> list[str]:
+    maintainers: list[str] = []
+    for assignee in item.get('assignees', []):
+        login = str(assignee['login'])
+        encoded = urllib.parse.quote(login, safe='')
+        permission = cast(Mapping[str, object], client.get(f'/repos/{repo}/collaborators/{encoded}/permission')).get(
+            'permission'
+        )
+        if permission in _MAINTAINER_PERMISSIONS:
+            maintainers.append(login)
+    return sorted(maintainers, key=str.casefold)
+
+
+def _ensure_recipients(client: GitHubClient, repo: str, number: int, item: Mapping[str, Any]) -> list[str]:
+    if maintainers := _maintainer_assignees(client, repo, item):
+        return maintainers
+    assigned = cast(
+        dict[str, Any],
+        client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [_FALLBACK_OWNER]}),
+    )
+    if _FALLBACK_OWNER.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
+        raise RuntimeError(f'GitHub did not assign @{_FALLBACK_OWNER}')
+    return [_FALLBACK_OWNER]
+
+
 def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
     encoded = urllib.parse.quote(label, safe='')
     try:
@@ -391,8 +416,9 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
             for label in labels.intersection(_STAGE_LABELS):
                 _remove_label(client, repo, number, label)
             _add_labels(client, repo, number, [_ACTION_LABEL])
-            _ensure_owner(client, repo, number, current)
-            lines.append(f'#{number}: assigned @{_OWNER} and requested maintainer attention')
+            recipients = _ensure_recipients(client, repo, number, current)
+            mentions = ' '.join(f'@{login}' for login in recipients)
+            lines.append(f'#{number}: requested maintainer attention from {mentions}')
         except (urllib.error.HTTPError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
@@ -400,15 +426,6 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
     if failures:
         raise RuntimeError('Failed to apply attention: ' + '; '.join(failures))
     return lines
-
-
-def _ensure_owner(client: GitHubClient, repo: str, number: int, item: Mapping[str, Any]) -> None:
-    assignees = {str(value['login']).casefold() for value in item.get('assignees', [])}
-    if _OWNER.casefold() in assignees:
-        return
-    assigned = cast(dict[str, Any], client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [_OWNER]}))
-    if _OWNER.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
-        raise RuntimeError(f'GitHub did not assign @{_OWNER}')
 
 
 def _stage(labels: set[str]) -> Literal[0, 1, 2]:
@@ -427,10 +444,9 @@ def _advance_stage(client: GitHubClient, repo: str, number: int, labels: set[str
             _remove_label(client, repo, number, label)
 
 
-def _reminder(stage: Literal[1, 2]) -> str:
-    if stage == 1:
-        return f'@{_OWNER} this still needs a maintainer decision. Could you take a look?'
-    return f'@{_ESCALATION_OWNER} this still needs a decision after a reminder to @{_OWNER}.'
+def _reminder(recipients: Sequence[str]) -> str:
+    mentions = ' '.join(f'@{login}' for login in recipients)
+    return f'{mentions} this still needs a maintainer decision. Could you take a look?'
 
 
 def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
@@ -458,10 +474,10 @@ def _actor(event: Mapping[str, Any]) -> str:
     return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
 
 
-def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime) -> bool:
-    owners = {_OWNER.casefold(), _ESCALATION_OWNER.casefold()}
+def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime, recipients: Sequence[str]) -> bool:
+    recipient_logins = {login.casefold() for login in recipients}
     return any(
-        (_actor(event).casefold() in owners or event.get('author_association') in {'MEMBER', 'OWNER'})
+        (_actor(event).casefold() in recipient_logins or event.get('author_association') in {'MEMBER', 'OWNER'})
         and event.get('event') in {'commented', 'reviewed'}
         and (event_time := _event_time(event)) is not None
         and event_time >= since
@@ -486,7 +502,7 @@ def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) ->
         _remove_label(client, repo, number, label)
 
 
-def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
+def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> tuple[str, bool] | None:
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
     if current.get('state') != 'open' or _ACTION_LABEL not in labels:
@@ -500,36 +516,41 @@ def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.dat
     transition_at, transition_event = transition
     if _actor(transition_event) != 'github-actions[bot]':
         _complete(client, repo, number, labels)
-        return f'#{number}: removed a foreign attention transition'
+        return f'#{number}: removed a foreign attention transition', False
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
             _remove_label(client, repo, number, label)
-    _ensure_owner(client, repo, number, current)
-    if _acknowledged(timeline, transition_at):
+    recipients = _ensure_recipients(client, repo, number, current)
+    reminder_transition = _transition(events, 1) if current_stage == 2 else None
+    acknowledged_since = reminder_transition[0] if reminder_transition is not None else transition_at
+    if _acknowledged(timeline, acknowledged_since, recipients):
         _complete(client, repo, number, labels)
-        return f'#{number}: maintainer acknowledged the request'
-    if current_stage > 0:
-        current_body = _reminder(cast(Literal[1, 2], current_stage))
+        return f'#{number}: maintainer acknowledged the request', False
+    if current_stage == 1:
+        current_body = _reminder(recipients)
         if not _fixed_comment_exists(timeline, current_body, transition_at):
+            _remove_label(client, repo, number, _PINGED_LABEL)
+            _add_labels(client, repo, number, [_PINGED_LABEL])
             client.post(f'/repos/{repo}/issues/{number}/comments', {'body': current_body})
-            if current_stage == 2:
-                _remove_label(client, repo, number, _ACTION_LABEL)
-            return f'#{number}: restored reminder {current_stage}'
+            return f'#{number}: restored maintainer reminder', False
     if current_stage == 2:
-        _remove_label(client, repo, number, _ACTION_LABEL)
-        return f'#{number}: completed terminal escalation'
+        return f'#{number}: queued private Slack escalation', True
     if now - transition_at < _SLA:
         return None
-    next_stage = current_stage + 1
-    _advance_stage(client, repo, number, labels, next_stage)
-    client.post(f'/repos/{repo}/issues/{number}/comments', {'body': _reminder(next_stage)})
-    if next_stage == 2:
-        _remove_label(client, repo, number, _ACTION_LABEL)
-    return f'#{number}: posted reminder {next_stage}'
+    if current_stage == 0:
+        _advance_stage(client, repo, number, labels, 1)
+        client.post(f'/repos/{repo}/issues/{number}/comments', {'body': _reminder(recipients)})
+        return f'#{number}: reminded assigned maintainer', False
+    _advance_stage(client, repo, number, labels, 2)
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    if _acknowledged(timeline, transition_at, recipients):
+        _complete(client, repo, number, labels | {_ESCALATED_LABEL})
+        return f'#{number}: maintainer acknowledged the request', False
+    return f'#{number}: queued private Slack escalation', True
 
 
-def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime, escalations: list[int] | None = None) -> list[str]:
     """Advance a bounded batch of active attention requests."""
     ensure_labels(client, repo)
     encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
@@ -544,8 +565,11 @@ def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]
     for item in items:
         number = int(item['number'])
         try:
-            if line := _reconcile_item(client, repo, number, now=now):
+            if result := _reconcile_item(client, repo, number, now=now):
+                line, should_escalate = result
                 lines.append(line)
+                if should_escalate and escalations is not None:
+                    escalations.append(number)
         except (urllib.error.HTTPError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
@@ -554,6 +578,54 @@ def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]
         lines.append('additional attention items remain for a later rotated batch')
     if failures:
         raise RuntimeError('Failed to reconcile attention: ' + '; '.join(failures))
+    return lines
+
+
+def _write_escalations(repo: str, numbers: Sequence[int], path: str) -> None:
+    unique_numbers = sorted(set(numbers))
+    Path(path).write_text(json.dumps({'items': unique_numbers}), encoding='utf-8')
+    if output_path := os.environ.get('GITHUB_OUTPUT'):
+        links = ', '.join(f'<https://github.com/{repo}/issues/{number}|#{number}>' for number in unique_numbers)
+        payload = {'text': f':warning: Maintainer attention needs your view: {links}'}
+        with Path(output_path).open('a', encoding='utf-8') as output:
+            output.write(f'has_escalations={str(bool(unique_numbers)).lower()}\n')
+            output.write(f'escalation_items={json.dumps(unique_numbers, separators=(",", ":"))}\n')
+            output.write(f'slack_payload={json.dumps(payload, separators=(",", ":"))}\n')
+
+
+def _escalation_numbers(loaded: object) -> list[int]:
+    if not isinstance(loaded, Mapping):
+        raise ValueError('Escalations must contain only an items list')
+    data = cast(Mapping[str, object], loaded)
+    if set(data) != {'items'} or not isinstance(data['items'], list):
+        raise ValueError('Escalations must contain only an items list')
+    numbers = cast(list[object], data['items'])
+    if (
+        len(numbers) > _RECONCILE_LIMIT
+        or any(not isinstance(number, int) or isinstance(number, bool) or number < 1 for number in numbers)
+        or len(numbers) != len(set(numbers))
+    ):
+        raise ValueError('Escalations must contain unique positive item numbers within the batch limit')
+    return cast(list[int], numbers)
+
+
+def finalize_escalations(client: GitHubClient, repo: str, numbers: Sequence[int]) -> list[str]:
+    """Clear active state only after the private Slack delivery succeeds."""
+    lines: list[str] = []
+    failures: list[str] = []
+    for number in numbers:
+        try:
+            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+            labels = _labels(current)
+            if {_ACTION_LABEL, _ESCALATED_LABEL} <= labels:
+                _remove_label(client, repo, number, _ACTION_LABEL)
+                lines.append(f'#{number}: delivered private Slack escalation')
+        except (urllib.error.HTTPError, RuntimeError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'#{number}: {type(exc).__name__}: {exc}')
+    if failures:
+        raise RuntimeError('Failed to finalize attention: ' + '; '.join(failures))
     return lines
 
 
@@ -568,8 +640,9 @@ def _write_summary(lines: Sequence[str]) -> None:
 def main() -> int:
     """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile'])
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'finalize'])
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
+    parser.add_argument('--escalation-path', default='attention-escalations.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
     token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
@@ -585,8 +658,18 @@ def main() -> int:
         if not args.agent_output:
             parser.error('--agent-output is required')
         lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path)
+    elif args.mode == 'reconcile':
+        escalations: list[int] = []
+        lines = reconcile(client, repo, now=now, escalations=escalations)
+        _write_escalations(repo, escalations, args.escalation_path)
     else:
-        lines = reconcile(client, repo, now=now)
+        source = os.environ.get('ATTENTION_ESCALATIONS')
+        loaded: object = (
+            json.loads(source)
+            if source is not None
+            else json.loads(Path(args.escalation_path).read_text(encoding='utf-8'))
+        )
+        lines = finalize_escalations(client, repo, _escalation_numbers(loaded))
     _write_summary(lines)
     for line in lines:
         print(line)

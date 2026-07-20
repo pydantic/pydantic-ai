@@ -17,7 +17,13 @@ NOW = dt.datetime(2026, 7, 20, tzinfo=dt.timezone.utc)
 OLD = '2026-07-16T00:00:00Z'
 
 
-def item(number: int, *, labels: list[str] | None = None, updated_at: str = OLD) -> dict[str, Any]:
+def item(
+    number: int,
+    *,
+    labels: list[str] | None = None,
+    assignees: list[str] | None = None,
+    updated_at: str = OLD,
+) -> dict[str, Any]:
     return {
         'number': number,
         'state': 'open',
@@ -26,7 +32,7 @@ def item(number: int, *, labels: list[str] | None = None, updated_at: str = OLD)
         'body': 'Please decide the project direction.',
         'comments': 0,
         'labels': [{'name': label} for label in labels or []],
-        'assignees': [],
+        'assignees': [{'login': login} for login in assignees or []],
     }
 
 
@@ -36,6 +42,7 @@ class FakeClient:
         self.calls: list[tuple[str, str, object | None]] = []
         self.fail_get: set[int] = set()
         self.assignment_succeeds = True
+        self.permissions: dict[str, str] = {}
         self.timelines: dict[int, list[dict[str, Any]]] = {}
 
     def get(self, path: str) -> Any:
@@ -44,6 +51,9 @@ class FakeClient:
             return {'name': path.rsplit('/', 1)[-1]}
         if '/issues?state=open&labels=' in path:
             return list(self.items.values())
+        if '/collaborators/' in path and path.endswith('/permission'):
+            login = path.split('/collaborators/')[1].split('/')[0]
+            return {'permission': self.permissions.get(login, 'read')}
         if '/issues/' in path and '/comments?' not in path:
             number = int(path.split('/issues/')[1].split('/')[0])
             if number in self.fail_get:
@@ -56,7 +66,9 @@ class FakeClient:
     def post(self, path: str, payload: object) -> Any:
         self.calls.append(('POST', path, payload))
         if path.endswith('/assignees'):
-            return {'assignees': [{'login': monitor._OWNER}]} if self.assignment_succeeds else {'assignees': []}
+            return (
+                {'assignees': [{'login': monitor._FALLBACK_OWNER}]} if self.assignment_succeeds else {'assignees': []}
+            )
         return {}
 
     def delete(self, path: str) -> None:
@@ -78,13 +90,13 @@ class FakeClient:
                 'label': {'name': label},
             }
         ]
-        if stage > 0 and path.endswith('/timeline'):
+        if stage == 1 and path.endswith('/timeline'):
             events.append(
                 {
                     'event': 'commented',
                     'created_at': OLD,
                     'actor': {'login': 'github-actions[bot]'},
-                    'body': monitor._reminder(stage),
+                    'body': monitor._reminder([monitor._FALLBACK_OWNER]),
                 }
             )
         return events
@@ -282,12 +294,26 @@ def test_apply_revalidates_then_assigns_and_labels(tmp_path: Path):
 
     lines = monitor.apply_decisions(client, 'pydantic/pydantic-ai', str(output), str(snapshot))
 
-    assert lines == ['#7: assigned @adtyavrdhn and requested maintainer attention']
+    assert lines == ['#7: requested maintainer attention from @adtyavrdhn']
     assert (
         'POST',
         '/repos/pydantic/pydantic-ai/issues/7/assignees',
         {'assignees': ['adtyavrdhn']},
     ) in client.calls
+
+
+def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path):
+    snapshot = tmp_path / 'snapshot.json'
+    output = tmp_path / 'output.json'
+    write_snapshot(snapshot, [{'number': 7, 'updated_at': OLD}])
+    write_output(output, ['7'])
+    client = FakeClient({7: item(7, assignees=['alice', 'bob', 'reader'])})
+    client.permissions = {'alice': 'maintain', 'bob': 'write', 'reader': 'read'}
+
+    assert monitor.apply_decisions(client, 'r', str(output), str(snapshot)) == [
+        '#7: requested maintainer attention from @alice @bob'
+    ]
+    assert not any(call[1].endswith('/assignees') for call in client.calls)
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):
@@ -393,37 +419,152 @@ def test_apply_keeps_processing_after_one_item_fails(tmp_path: Path):
     assert any(call[0] == 'POST' and call[1].endswith('/issues/2/labels') for call in client.calls)
 
 
-@pytest.mark.parametrize(
-    ('labels', 'expected_stage', 'mention'),
-    [
-        ([monitor._ACTION_LABEL], 1, '@adtyavrdhn'),
-        ([monitor._ACTION_LABEL, monitor._PINGED_LABEL], 2, '@DouweM'),
-    ],
-)
-def test_reconcile_advances_visible_stage_labels(labels: list[str], expected_stage: int, mention: str):
-    client = FakeClient({7: item(7, labels=labels)})
+def test_reconcile_reminds_assigned_maintainers():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL], assignees=['bob', 'alice'])})
+    client.permissions = {'alice': 'admin', 'bob': 'write'}
 
-    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == [f'#7: posted reminder {expected_stage}']
+    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == ['#7: reminded assigned maintainer']
 
     comment = next(call for call in client.calls if call[0] == 'POST' and call[1].endswith('/comments'))
-    assert mention in str(comment[2])
-    next_label = monitor._STAGE_LABELS[expected_stage - 1]
-    assert any(call[0] == 'POST' and call[2] == {'labels': [next_label]} for call in client.calls)
+    assert comment[2] == {'body': '@alice @bob this still needs a maintainer decision. Could you take a look?'}
+    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
 
 
-def test_reconcile_stops_after_escalation():
+def test_reconcile_queues_private_escalation_without_public_comment():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    escalations: list[int] = []
+
+    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW, escalations=escalations) == [
+        '#7: queued private Slack escalation'
+    ]
+    assert escalations == [7]
+    assert not any(call[1].endswith('/comments') for call in client.calls)
+    assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
+
+
+def test_reconcile_retries_private_escalation_until_delivery():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._ESCALATED_LABEL])})
+    escalations: list[int] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, escalations=escalations) == ['#7: queued private Slack escalation']
+    assert escalations == [7]
+    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
+    assert not any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
+
+
+def test_terminal_stage_preserves_the_reminder_acknowledgement_boundary():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._PINGED_LABEL},
+        },
+        {
+            'event': 'commented',
+            'created_at': '2026-07-18T00:00:00Z',
+            'actor': {'login': monitor._FALLBACK_OWNER},
+            'body': 'I will handle this.',
+        },
+        {
+            'event': 'labeled',
+            'created_at': '2026-07-19T00:00:00Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ESCALATED_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: maintainer acknowledged the request']
+
+
+def test_reconcile_rechecks_acknowledgement_before_queueing_slack():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL])})
+    event = {
+        'event': 'labeled',
+        'created_at': OLD,
+        'actor': {'login': 'github-actions[bot]'},
+        'label': {'name': monitor._PINGED_LABEL},
+    }
+    reminder = {
+        'event': 'commented',
+        'created_at': OLD,
+        'actor': {'login': 'github-actions[bot]'},
+        'body': monitor._reminder([monitor._FALLBACK_OWNER]),
+    }
+    calls = 0
+
+    def pages(path: str, *, count: int = 1) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        if path.endswith('/events'):
+            return [event]
+        if calls == 2:
+            return [event, reminder]
+        return [
+            event,
+            reminder,
+            {
+                'event': 'commented',
+                'created_at': '2026-07-18T00:00:00Z',
+                'actor': {'login': monitor._FALLBACK_OWNER},
+            },
+        ]
+
+    client.last_pages = pages  # type: ignore[method-assign]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: maintainer acknowledged the request']
+
+
+def test_finalize_clears_active_state_only_after_slack_delivery(tmp_path: Path):
+    path = tmp_path / 'escalations.json'
+    path.write_text('{"items": [7]}', encoding='utf-8')
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])})
 
-    assert monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW) == ['#7: completed terminal escalation']
-    deletes = [call for call in client.calls if call[0] == 'DELETE']
-    assert monitor._ACTION_LABEL in deletes[0][1]
+    assert monitor.finalize_escalations(client, 'r', monitor._escalation_numbers(json.loads(path.read_text()))) == [
+        '#7: delivered private Slack escalation'
+    ]
+    assert any(call[0] == 'DELETE' and monitor._ACTION_LABEL in call[1] for call in client.calls)
 
 
-def test_reconcile_cleans_an_obsolete_lower_stage_label():
-    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL, monitor._ESCALATED_LABEL])})
+def test_finalize_continues_after_one_delivered_item_fails():
+    client = FakeClient(
+        {
+            7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL]),
+            8: item(8, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL]),
+        }
+    )
+    client.fail_get.add(7)
 
-    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: completed terminal escalation']
-    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
+    with pytest.raises(RuntimeError, match=r'#7: HTTPError'):
+        monitor.finalize_escalations(client, 'r', [7, 8])
+    assert any(call[0] == 'DELETE' and '/issues/8/' in call[1] for call in client.calls)
+
+
+def test_finalize_clears_delivered_state_if_item_closed_during_delivery():
+    closed = item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL])
+    closed['state'] = 'closed'
+    client = FakeClient({7: closed})
+
+    assert monitor.finalize_escalations(client, 'r', [7]) == ['#7: delivered private Slack escalation']
+
+
+def test_escalation_output_is_fixed_and_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / 'github-output'
+    path = tmp_path / 'escalations.json'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+
+    monitor._write_escalations('pydantic/pydantic-ai', [8, 7, 7], str(path))
+
+    assert json.loads(path.read_text(encoding='utf-8')) == {'items': [7, 8]}
+    values = dict(line.split('=', 1) for line in output.read_text(encoding='utf-8').splitlines())
+    assert values['has_escalations'] == 'true'
+    assert values['escalation_items'] == '[7,8]'
+    assert json.loads(values['slack_payload']) == {
+        'text': ':warning: Maintainer attention needs your view: '
+        '<https://github.com/pydantic/pydantic-ai/issues/7|#7>, '
+        '<https://github.com/pydantic/pydantic-ai/issues/8|#8>'
+    }
 
 
 def test_reconcile_rejects_a_foreign_stage_label():
@@ -467,7 +608,7 @@ def test_maintainer_comment_completes_the_request():
         {
             'event': 'commented',
             'created_at': '2026-07-17T00:00:00Z',
-            'actor': {'login': monitor._OWNER},
+            'actor': {'login': monitor._FALLBACK_OWNER},
             'body': 'Decision made.',
         },
     ]
@@ -498,7 +639,7 @@ def test_member_acknowledgement_in_the_same_second_completes_the_request():
 
 def test_reconcile_does_not_trust_a_shared_bot_comment_as_state():
     client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL])})
-    body = monitor._reminder(1)
+    body = monitor._reminder([monitor._FALLBACK_OWNER])
     client.timelines[7] = [
         {
             'event': 'labeled',
@@ -514,7 +655,7 @@ def test_reconcile_does_not_trust_a_shared_bot_comment_as_state():
         },
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: posted reminder 1']
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: reminded assigned maintainer']
     assert sum(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls) == 1
 
 
@@ -529,9 +670,32 @@ def test_reconcile_restores_a_missing_comment_after_label_success():
         }
     ]
 
-    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: restored reminder 1']
-    assert not any(call[0] == 'POST' and call[1].endswith('/labels') for call in client.calls)
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: restored maintainer reminder']
+    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
     assert sum(call[0] == 'POST' and call[1].endswith('/comments') for call in client.calls) == 1
+
+
+def test_reassignment_restarts_the_reminder_sla():
+    client = FakeClient({7: item(7, labels=[monitor._ACTION_LABEL, monitor._PINGED_LABEL], assignees=['bob'])})
+    client.permissions = {'bob': 'write'}
+    client.timelines[7] = [
+        {
+            'event': 'labeled',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._PINGED_LABEL},
+        },
+        {
+            'event': 'commented',
+            'created_at': OLD,
+            'actor': {'login': 'github-actions[bot]'},
+            'body': '@alice this still needs a maintainer decision. Could you take a look?',
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == ['#7: restored maintainer reminder']
+    assert any(call[0] == 'DELETE' and monitor._PINGED_LABEL in call[1] for call in client.calls)
+    assert any(call[0] == 'POST' and call[2] == {'labels': [monitor._PINGED_LABEL]} for call in client.calls)
 
 
 def test_reconcile_ignores_closed_or_opted_out_items():
@@ -549,7 +713,7 @@ def test_full_page_processes_a_bounded_batch_instead_of_aborting():
 
     lines = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
 
-    assert sum('posted reminder' in line for line in lines) == monitor._RECONCILE_LIMIT
+    assert sum('reminded assigned maintainer' in line for line in lines) == monitor._RECONCILE_LIMIT
     assert lines[-1] == 'additional attention items remain for a later rotated batch'
 
 
@@ -578,6 +742,18 @@ def test_snapshot_is_inside_harness_workspace_and_writer_has_only_fixed_output()
     assert 'Slack' not in text
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in text
     assert 'github: false' in text
+
+
+def test_operations_workflow_routes_only_terminal_escalation_to_slack():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
+    text = workflow.read_text()
+
+    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in text
+    assert 'steps.reconcile.outputs.slack_payload' in text
+    assert 'issue_pr_attention_monitor.py finalize' in text
+    assert 'permissions: {}' in text
+    assert 'ATTENTION_ESCALATIONS' in text
+    assert 'Douwe' not in text
 
 
 class StubResponse(io.BytesIO):
