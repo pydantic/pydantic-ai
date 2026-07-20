@@ -210,13 +210,14 @@ Session behaviour is configured through realtime model settings. The simplest pa
 provider-prefixed model ID and per-session settings:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings, SemanticVAD
+from pydantic_ai.realtime import TurnDetection
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 settings = OpenAIRealtimeModelSettings(
     max_tokens=2_000,
     parallel_tool_calls=True,
     voice='alloy',
-    turn_detection=SemanticVAD(eagerness='high'),
+    turn_detection=TurnDetection(sensitivity='high', silence_duration_ms=400),
     openai_input_noise_reduction='near_field',
     openai_output_speed=1.1,
 )
@@ -229,7 +230,8 @@ async with agent.realtime_session(
 
 [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] contains the settings shared by
 all realtime providers: `tool_choice`, `parallel_tool_calls`, `max_tokens`, `voice`,
-`input_transcription_model`, and `output_modality`. You can instead set defaults on a model and
+`input_transcription_model`, `output_modality`, and
+[`turn_detection`][pydantic_ai.realtime.TurnDetection]. You can instead set defaults on a model and
 override individual values for one session:
 
 ```python {test="skip" lint="skip"}
@@ -238,6 +240,20 @@ async with agent.realtime_session(
     model_settings=OpenAIRealtimeModelSettings(max_tokens=4_000),
 ) as session:
     ...
+```
+
+For finer OpenAI control, `openai_turn_detection` accepts
+[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and fully overrides the shared
+`turn_detection` setting:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.openai import SemanticVAD
+
+settings = OpenAIRealtimeModelSettings(
+    turn_detection=TurnDetection(sensitivity='high'),
+    openai_turn_detection=SemanticVAD(eagerness='high'),
+)
 ```
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not apply
@@ -279,7 +295,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | --- | --- |
 | `voice`, `google_language_code`, `google_multi_speaker` ([`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker]) | Prebuilt voice, output language, per-speaker voices |
 | `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery; let the model decide when to speak (native-audio models) |
-| `google_vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | VAD `disabled`, start/end sensitivity, padding/silence |
+| `google_vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | Finer Gemini-specific VAD control: `disabled`, separate start/end sensitivity, padding/silence; fully overrides `turn_detection` |
 | `google_activity_handling`, `google_turn_coverage` | Whether activity interrupts; which input a turn covers (`activity_only`/`all_input`/`all_video`) |
 | `google_input_transcription`, `google_output_transcription`, `google_transcription_language_codes` | Transcription on/off and language hints |
 | `google_context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
@@ -293,22 +309,25 @@ Gemini Developer API) or `provider='google-cloud'` for Vertex AI / ADC, or a
 
 ### xAI Grok Voice configuration
 
-[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] keeps a minimal surface, reusing the
-OpenAI provider's [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] turn-detection knobs:
+[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] supports the shared
+[`TurnDetection`][pydantic_ai.realtime.TurnDetection] configuration:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.realtime.openai import ServerVAD
+from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 settings = XaiRealtimeModelSettings(
-    voice='eve',                                       # eve (default), ara, rex, sal, leo, or a custom ID
-    turn_detection=ServerVAD(threshold=0.85),      # or None for push-to-talk
-    input_transcription_model='auto',                  # the default (see Transcribing user input)
+    voice='eve',                                    # eve (default), ara, rex, sal, leo, or a custom ID
+    turn_detection=TurnDetection(sensitivity='low'),  # or False for push-to-talk
+    input_transcription_model='auto',               # the default (see Transcribing user input)
 )
 model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 ```
 
-The shared realtime settings can be configured on the model or passed to `realtime_session`. Grok
+For an exact server-VAD threshold or automatic-response behavior, use the
+`xai_turn_detection=` escape hatch with [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it
+fully overrides `turn_detection`. The shared
+realtime settings can be configured on the model or passed to `realtime_session`. Grok
 Voice reports the input transcript as cumulative snapshots that can
 retroactively correct earlier text, so live partials are not streamed — the transcript is surfaced at
 the end of each user turn.
@@ -329,13 +348,16 @@ Live model transcribes natively, so there is no separate transcription model to 
 
 ## Turn-taking and barge-in
 
-By default the provider uses server-side voice activity detection
-([`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]): it decides when the user has started and
-stopped speaking, commits the audio, and triggers a response — and interrupts the model when the
-user barges in. [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] uses a model to decide turn
-boundaries instead. [Push-to-talk](#push-to-talk-manual-turn-taking) drives turns manually instead of
-by detection. Gemini's native-audio models also decide on their own when to speak, via
-`google_proactive_audio`.
+By default each provider uses its automatic voice activity detection: it decides when the user has
+started and stopped speaking and when to trigger a response. Configure the common behavior with
+[`TurnDetection`][pydantic_ai.realtime.TurnDetection]: `sensitivity` maps to the closest provider
+knob, while `prefix_padding_ms` and `silence_duration_ms` pass through on OpenAI, xAI, and Gemini.
+For finer control, `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override the
+shared setting. OpenAI's escape hatch also supports
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD].
+
+[Push-to-talk](#push-to-talk-manual-turn-taking) drives turns manually instead of by detection.
+Gemini's native-audio models can also decide on their own when to speak via `google_proactive_audio`.
 
 When the user barges in you get a [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] event; stop
 playing any buffered model audio immediately, and call
@@ -359,14 +381,17 @@ Voice lacks — call `interrupt()` without `audio_end_ms` there.
 
 ### Push-to-talk (manual turn-taking)
 
-Disable automatic detection with `turn_detection=None` and drive the turn yourself: stream audio,
+Automatic detection is **on by default**; disable it with `turn_detection=False` for push-to-talk.
+This is only supported on providers that expose manual turn control through Pydantic AI (OpenAI and
+xAI — see [`supports_manual_turn_control`](#capabilities)); Gemini Live has no manual turn verbs, so
+`turn_detection=False` raises a `UserError` there. Drive the turn yourself: stream audio,
 [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user's turn, then
 [`create_response`][pydantic_ai.realtime.RealtimeSession.create_response] to ask the model to reply.
 [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio] discards uncommitted audio.
 
 ```python {test="skip" lint="skip"}
 model = OpenAIRealtimeModel(
-    'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=None)
+    'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
 async with agent.realtime_session(model=model) as session:
     await session.send_audio(chunk)

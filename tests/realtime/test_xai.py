@@ -11,7 +11,7 @@ import base64
 import json
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -25,10 +25,10 @@ from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
     RealtimeModelProfile,
-    RealtimeModelSettings,
     ReconnectedEvent,
     ToolCall,
     Transcript,
+    TurnDetection,
 )
 from pydantic_ai.realtime._base import SessionErrorEvent
 from pydantic_ai.tools import ToolDefinition
@@ -45,7 +45,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed')
 
 
-def _model(settings: RealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
+def _model(settings: rt_xai.XaiRealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
     return XaiRealtimeModel(provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
 
 
@@ -122,7 +122,7 @@ def test_profile() -> None:
 
 def test_session_config_shape() -> None:
     """`voice` and `turn_detection` sit at the session top level (unlike OpenAI's nested GA shape)."""
-    model = _model(RealtimeModelSettings(voice='ara'))
+    model = _model(rt_xai.XaiRealtimeModelSettings(voice='ara'))
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('Be nice', tools, None)  # pyright: ignore[reportPrivateUsage]
     assert config == {
@@ -167,11 +167,40 @@ def test_session_config_transcription_disabled() -> None:
 
 
 def test_session_config_manual_turn_detection_is_null() -> None:
-    """`turn_detection=None` disables VAD (push-to-talk), sent as an explicit null."""
+    """`turn_detection=False` disables VAD (push-to-talk), sent as an explicit null."""
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(turn_detection=None)
+        'hi', None, rt_xai.XaiRealtimeModelSettings(turn_detection=False)
     )
     assert config['turn_detection'] is None
+
+
+@pytest.mark.parametrize(('sensitivity', 'threshold'), [('low', 0.7), ('medium', 0.5), ('high', 0.3)])
+def test_session_config_cross_provider_turn_detection_sensitivity(
+    sensitivity: Literal['low', 'medium', 'high'], threshold: float
+) -> None:
+    config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi',
+        None,
+        rt_xai.XaiRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity)),
+    )
+    assert config['turn_detection']['threshold'] == threshold
+
+
+def test_session_config_xai_turn_detection_overrides_base() -> None:
+    config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi',
+        None,
+        rt_xai.XaiRealtimeModelSettings(
+            turn_detection=TurnDetection(sensitivity='high'),
+            xai_turn_detection=rt_xai.ServerVAD(threshold=0.9, create_response=False),
+        ),
+    )
+    assert config['turn_detection'] == {
+        'type': 'server_vad',
+        'create_response': False,
+        'interrupt_response': True,
+        'threshold': 0.9,
+    }
 
 
 def test_session_config_no_voice_by_default() -> None:
@@ -287,7 +316,9 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     monkeypatch.setattr(rt_xai.websockets, 'connect', fake_connect)
 
     model = XaiRealtimeModel(
-        'grok-voice-latest', provider=XaiProvider(api_key='k'), settings=RealtimeModelSettings(voice='eve')
+        'grok-voice-latest',
+        provider=XaiProvider(api_key='k'),
+        settings=rt_xai.XaiRealtimeModelSettings(voice='eve'),
     )
     async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)

@@ -32,6 +32,7 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
+from ..exceptions import UserError
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -77,6 +78,7 @@ from ._base import (
     ToolResult,
     Transcript,
     TurnCompleteEvent,
+    TurnDetection,
     inject_trace_context,
     reconnect_with_backoff,
     user_prompt_text,
@@ -120,7 +122,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_transcription_language_codes: list[str]
     """Language hints applied to input and output transcription."""
     google_vad: AutomaticVAD
-    """Server-side voice activity detection settings."""
+    """Gemini-specific server-side voice activity detection settings.
+
+    When present, this fully overrides the cross-provider `turn_detection` setting.
+    """
     google_activity_handling: Literal['interrupts', 'no_interruption']
     """Whether detected user activity interrupts the model."""
     google_turn_coverage: Literal['activity_only', 'all_input', 'all_video']
@@ -192,6 +197,17 @@ _TURN_COVERAGE = {
     'all_input': genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
+
+
+def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
+    """Map cross-provider turn detection to Gemini's automatic-VAD shape."""
+    sensitivity = turn_detection.sensitivity if turn_detection.sensitivity != 'medium' else None
+    return AutomaticVAD(
+        start_sensitivity=sensitivity,
+        end_sensitivity=sensitivity,
+        prefix_padding_ms=turn_detection.prefix_padding_ms,
+        silence_duration_ms=turn_detection.silence_duration_ms,
+    )
 
 
 def _seed_turns(messages: Sequence[ModelMessage]) -> list[genai_types.Content | genai_types.ContentDict]:
@@ -341,7 +357,7 @@ def _ws_trace_context(client: Client) -> Generator[None]:
 
 
 @dataclass
-class GoogleRealtimeModel(RealtimeModel):
+class GoogleRealtimeModel(RealtimeModel[GoogleRealtimeModelSettings]):
     """Gemini Live API model.
 
     Session and generation configuration is read from
@@ -368,7 +384,7 @@ class GoogleRealtimeModel(RealtimeModel):
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
     provider: InitVar[Provider[Client] | str] = 'google'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: GoogleRealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
 
@@ -433,7 +449,23 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> genai_types.RealtimeInputConfig | None:
         """Build the turn-taking config from `vad`, `activity_handling`, and `turn_coverage`."""
         detection: genai_types.AutomaticActivityDetection | None = None
-        vad = model_settings.get('google_vad')
+        if 'google_vad' in model_settings:
+            vad = model_settings['google_vad']
+        elif 'turn_detection' in model_settings:
+            turn_detection = model_settings['turn_detection']
+            if turn_detection is False:
+                # Disabling VAD is push-to-talk, which needs manual turn control Gemini Live doesn't
+                # expose through this session API yet (no `commit_audio()`/`create_response()`), so a
+                # disabled session would be unusable. Fail loudly instead.
+                raise UserError(
+                    'Gemini Live does not support disabling automatic turn detection (push-to-talk) '
+                    'through the realtime session API yet, as it has no manual turn controls. Use '
+                    'automatic turn detection (the default) or configure `google_vad`.'
+                )
+            # `True` means the provider default (on), same as an absent setting.
+            vad = None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
+        else:
+            vad = None
         if vad is not None:
             detection = genai_types.AutomaticActivityDetection(
                 disabled=vad.disabled or None,
@@ -479,12 +511,12 @@ class GoogleRealtimeModel(RealtimeModel):
         self,
         instructions: str,
         tools: list[ToolDefinition] | None,
-        model_settings: RealtimeModelSettings | None,
+        model_settings: GoogleRealtimeModelSettings | None,
         *,
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
     ) -> genai_types.LiveConnectConfig:
-        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        settings = self._merge_model_settings(model_settings) or {}
         modality = (
             genai_types.Modality.AUDIO
             if settings.get('output_modality', 'audio') == 'audio'
@@ -538,7 +570,8 @@ class GoogleRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
-        settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        provider_model_settings = cast('GoogleRealtimeModelSettings', model_settings)
+        settings = self._merge_model_settings(provider_model_settings) or {}
         instructions = get_instructions(messages) or ''
         # Transparent reconnect needs both a backoff policy and session resumption (so the server
         # restores state on re-dial). Without resumption a re-dial would lose the conversation.

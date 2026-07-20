@@ -69,6 +69,7 @@ from ._openai_protocol import (
     map_event,
     obj,
     realtime_websocket_url,
+    resolve_base_turn_detection,
     resolve_transcription_model,
     seed_items,
     tool_choice_config,
@@ -102,6 +103,11 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """
     openai_output_speed: float
     """Playback speed multiplier for generated audio (0.25-1.5)."""
+    openai_turn_detection: ServerVAD | SemanticVAD
+    """OpenAI-specific server or semantic VAD configuration.
+
+    When present, this fully overrides the cross-provider `turn_detection` setting.
+    """
 
 
 def _int(value: Any) -> int:
@@ -352,7 +358,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
 
 @dataclass
-class OpenAIRealtimeModel(RealtimeModel):
+class OpenAIRealtimeModel(RealtimeModel[OpenAIRealtimeModelSettings]):
     """OpenAI Realtime API model.
 
     Authentication, base URL, and the HTTP/WebSocket client come from a
@@ -374,7 +380,7 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     model: str = 'gpt-realtime'
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: OpenAIRealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
@@ -407,11 +413,17 @@ class OpenAIRealtimeModel(RealtimeModel):
         tools: list[ToolDefinition] | None,
         model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
-        model_settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        model_settings = self._merge_model_settings(model_settings) or {}
+        if 'openai_turn_detection' in model_settings:
+            turn_detection = model_settings['openai_turn_detection']
+        elif 'turn_detection' in model_settings:
+            turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
+        else:
+            turn_detection = ServerVAD()
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
             'format': {'type': 'audio/pcm', 'rate': 24000},
-            'turn_detection': turn_detection_config(model_settings.get('turn_detection', ServerVAD())),
+            'turn_detection': turn_detection_config(turn_detection),
         }
         transcription_model = resolve_transcription_model(
             model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
@@ -461,7 +473,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.
         inject_trace_context(headers)
-        settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        provider_model_settings = cast('OpenAIRealtimeModelSettings', model_settings)
+        settings = self._merge_model_settings(provider_model_settings) or {}
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)

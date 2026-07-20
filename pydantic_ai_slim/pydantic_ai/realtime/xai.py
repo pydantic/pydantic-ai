@@ -54,13 +54,14 @@ from ._openai_protocol import (
     expect_event,
     map_event as _map_openai_event,
     realtime_websocket_url,
+    resolve_base_turn_detection,
     resolve_transcription_model,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
 )
-from .openai import OpenAIRealtimeConnection, SemanticVAD, ServerVAD
+from .openai import OpenAIRealtimeConnection, ServerVAD
 
 if TYPE_CHECKING:
     from ..providers.xai import XaiProvider
@@ -73,6 +74,12 @@ _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models."""
+
+    xai_turn_detection: ServerVAD
+    """xAI-specific server-VAD configuration.
+
+    When present, this fully overrides the cross-provider `turn_detection` setting.
+    """
 
 
 def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -105,7 +112,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
 
 @dataclass
-class XaiRealtimeModel(RealtimeModel):
+class XaiRealtimeModel(RealtimeModel[XaiRealtimeModelSettings]):
     """xAI Grok Voice realtime API model.
 
     Authentication and the base URL come from an [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider],
@@ -126,7 +133,7 @@ class XaiRealtimeModel(RealtimeModel):
 
     model: str = 'grok-voice-latest'
     provider: InitVar[XaiProvider | str] = 'xai'
-    settings: RealtimeModelSettings | None = field(default=None, kw_only=True)
+    settings: XaiRealtimeModelSettings | None = field(default=None, kw_only=True)
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
@@ -167,7 +174,7 @@ class XaiRealtimeModel(RealtimeModel):
         tools: list[ToolDefinition] | None,
         model_settings: XaiRealtimeModelSettings | None,
     ) -> dict[str, Any]:
-        model_settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        model_settings = self._merge_model_settings(model_settings) or {}
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
         audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
@@ -176,8 +183,11 @@ class XaiRealtimeModel(RealtimeModel):
         )
         if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
-        turn_detection = model_settings.get('turn_detection', ServerVAD())
-        if isinstance(turn_detection, SemanticVAD):
+        if 'xai_turn_detection' in model_settings:
+            turn_detection = model_settings['xai_turn_detection']
+        elif 'turn_detection' in model_settings:
+            turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
+        else:
             turn_detection = ServerVAD()
         config: dict[str, Any] = {
             'instructions': instructions,
@@ -209,7 +219,8 @@ class XaiRealtimeModel(RealtimeModel):
         headers = {'Authorization': f'Bearer {self._api_key}'}
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)
-        settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        provider_model_settings = cast('XaiRealtimeModelSettings', model_settings)
+        settings = self._merge_model_settings(provider_model_settings) or {}
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)

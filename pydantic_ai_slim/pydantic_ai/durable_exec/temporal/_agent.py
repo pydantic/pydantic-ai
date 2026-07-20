@@ -1113,7 +1113,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def realtime_session(
         self,
-        model: RealtimeModel | KnownRealtimeModelName | str,
+        model: RealtimeModel[Any] | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,

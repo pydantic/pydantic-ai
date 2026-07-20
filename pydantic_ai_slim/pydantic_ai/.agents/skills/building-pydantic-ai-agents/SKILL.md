@@ -225,14 +225,16 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import SpeechPart, SpeechPartDelta
-from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent
+from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent, TurnDetection
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main(microphone_chunk: bytes):
-    settings = OpenAIRealtimeModelSettings(voice='alloy')
+    settings = OpenAIRealtimeModelSettings(
+        voice='alloy', turn_detection=TurnDetection(sensitivity='high')
+    )
     async with agent.realtime_session(
         model='openai:gpt-realtime', model_settings=settings
     ) as session:
@@ -262,6 +264,11 @@ Key facts for building realtime agents:
   `supports_output_truncation`, and `supports_session_seeding`. OpenAI supports all of these; Gemini
   Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
   (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+- **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
+  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
+  `google_vad` only for finer provider-specific control; when present, they fully override the shared
+  setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
+  (OpenAI/xAI only — Gemini has no manual turn controls and raises).
 - **Tools**: every tool runs concurrently, so the model keeps speaking while it runs.
 
 See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.

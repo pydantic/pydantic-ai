@@ -41,6 +41,7 @@ concurrently so the model can keep speaking while it works.
 | --- | --- |
 | [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] | Provider ABC; `connect()` opens a connection. |
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
+| [`TurnDetection`][pydantic_ai.realtime.TurnDetection] | Cross-provider automatic VAD sensitivity, padding, and silence configuration. |
 | [`KnownRealtimeModelName`][pydantic_ai.realtime.KnownRealtimeModelName] / [`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model] | Provider-prefixed model IDs and inference. |
 | [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
@@ -96,9 +97,11 @@ The OpenAI Realtime API provider. Requires the `realtime` and `openai` optional 
 (`pip install "pydantic-ai-slim[realtime,openai]"`).
 
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] configures
-the session, including turn-taking via [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] /
-[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] (or `None` for push-to-talk); resilience
-comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
+the session, including shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection]
+(or `None` for push-to-talk). For finer control, `openai_turn_detection` accepts
+[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and fully overrides the shared setting.
+Resilience comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel].
 
 ::: pydantic_ai.realtime.openai
@@ -113,7 +116,8 @@ SDK (which manages the WebSocket transport). Gemini expects **16 kHz** PCM input
 produces one response modality per session, and natively accepts live video frames sent as
 [`ImageInput`][pydantic_ai.realtime.ImageInput]. It exposes Gemini Live's session and generation
 configuration through [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] —
-turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] plus
+shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection], with finer Gemini-specific
+control via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] in `google_vad` plus
 `google_activity_handling`/`google_turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
 and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
 resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
@@ -127,8 +131,11 @@ The xAI Grok Voice realtime API provider. Requires the `realtime` and `xai` opti
 
 xAI's realtime API is a clone of the OpenAI Realtime protocol, so
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] reuses the OpenAI codec (event
-mapping, seeding, the WebSocket connection) and reuses [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]
-for turn-taking (or `None` for push-to-talk). It diverges only where xAI does: it supports
+mapping, seeding, the WebSocket connection). Turn-taking uses the shared
+[`TurnDetection`][pydantic_ai.realtime.TurnDetection] (or `None` for push-to-talk); for exact
+server-VAD control, `xai_turn_detection` accepts
+[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] and fully overrides the shared setting. It
+diverges only where xAI does: it supports
 cancellation-based interruption but not output truncation, has no image input, and surfaces input
 transcription at the end of each user turn. Authentication comes from an
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].

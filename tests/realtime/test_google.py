@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -27,13 +27,13 @@ from pydantic_ai.realtime import (
     AudioInput,
     InputSpeechStartEvent,
     InputTranscript,
-    RealtimeModelSettings,
     ReconnectedEvent,
     SessionUsageEvent,
     ToolCall,
     ToolResult,
     Transcript,
     TurnCompleteEvent,
+    TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.tools import ToolDefinition
@@ -300,7 +300,9 @@ def test_config_minimal_text_no_transcription_no_vad() -> None:
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
-    config = GoogleRealtimeModel()._config('hi', None, RealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, GoogleRealtimeModelSettings()
+    )
     assert config.max_output_tokens is None
     assert config.temperature is None
     assert config.top_p is None
@@ -802,6 +804,61 @@ def test_realtime_input_full() -> None:
     assert detection.silence_duration_ms == 300  # type: ignore[union-attr]
     assert rt.activity_handling == genai_types.ActivityHandling.NO_INTERRUPTION
     assert rt.turn_coverage == genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO
+
+
+@pytest.mark.parametrize(
+    ('sensitivity', 'expected_start', 'expected_end'),
+    [
+        (
+            'low',
+            genai_types.StartSensitivity.START_SENSITIVITY_LOW,
+            genai_types.EndSensitivity.END_SENSITIVITY_LOW,
+        ),
+        ('medium', None, None),
+        (
+            'high',
+            genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
+            genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
+        ),
+    ],
+)
+def test_cross_provider_turn_detection_sensitivity(
+    sensitivity: Literal['low', 'medium', 'high'],
+    expected_start: genai_types.StartSensitivity | None,
+    expected_end: genai_types.EndSensitivity | None,
+) -> None:
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    realtime_input_config = config.realtime_input_config
+    assert realtime_input_config is not None
+    detection = realtime_input_config.automatic_activity_detection
+    assert detection is not None
+    assert detection.start_of_speech_sensitivity == expected_start
+    assert detection.end_of_speech_sensitivity == expected_end
+
+
+def test_google_vad_overrides_cross_provider_turn_detection() -> None:
+    config = GoogleRealtimeModel(
+        settings=GoogleRealtimeModelSettings(
+            turn_detection=TurnDetection(sensitivity='high'),
+            google_vad=AutomaticVAD(start_sensitivity='low', end_sensitivity='low'),
+        )
+    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    realtime_input_config = config.realtime_input_config
+    assert realtime_input_config is not None
+    detection = realtime_input_config.automatic_activity_detection
+    assert detection is not None
+    assert detection.start_of_speech_sensitivity == genai_types.StartSensitivity.START_SENSITIVITY_LOW
+    assert detection.end_of_speech_sensitivity == genai_types.EndSensitivity.END_SENSITIVITY_LOW
+
+
+def test_cross_provider_turn_detection_false_is_rejected() -> None:
+    """Gemini has no manual turn controls, so disabling VAD (push-to-talk) fails loudly rather than
+    producing an unusable session."""
+    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(turn_detection=False))
+    with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
+        model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_realtime_input_absent_when_unset() -> None:

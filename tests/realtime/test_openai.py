@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -18,7 +18,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -38,18 +37,24 @@ from pydantic_ai.realtime import (
     Transcript,
     TruncateOutput,
     TurnCompleteEvent,
-    openai as rt_openai,
+    TurnDetection,
 )
 from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
 from pydantic_ai.realtime._openai_protocol import realtime_websocket_url
-from pydantic_ai.realtime.openai import (
-    OpenAIRealtimeConnection,
-    OpenAIRealtimeModel,
-    map_event,
-)
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.realtime import openai as rt_openai
+    from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, map_event
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
 
 def _connect(
@@ -297,7 +302,9 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
 
     model = OpenAIRealtimeModel(
-        'gpt-realtime', provider=OpenAIProvider(api_key='k'), settings=RealtimeModelSettings(voice='alloy')
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings=rt_openai.OpenAIRealtimeModelSettings(voice='alloy'),
     )
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
 
@@ -362,7 +369,6 @@ async def test_connect_resolves_async_api_key_provider(monkeypatch: pytest.Monke
     regression would send `Authorization: Bearer ` (empty). A unit test because a cassette's request
     matcher ignores handshake headers.
     """
-    from openai import AsyncOpenAI
 
     async def provide_key() -> str:
         return 'sk-resolved'
@@ -385,7 +391,7 @@ async def test_connect_resolves_async_api_key_provider(monkeypatch: pytest.Monke
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
-            turn_detection=rt_openai.ServerVAD(
+            openai_turn_detection=rt_openai.ServerVAD(
                 threshold=0.7,
                 prefix_padding_ms=200,
                 silence_duration_ms=400,
@@ -407,9 +413,12 @@ def test_session_config_server_vad_params() -> None:
     }
 
 
-def test_session_config_semantic_vad() -> None:
+def test_session_config_openai_turn_detection_overrides_base() -> None:
     model = OpenAIRealtimeModel(
-        settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=rt_openai.SemanticVAD(eagerness='high'))
+        settings=rt_openai.OpenAIRealtimeModelSettings(
+            turn_detection=TurnDetection(sensitivity='low'),
+            openai_turn_detection=rt_openai.SemanticVAD(eagerness='high'),
+        )
     )
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
@@ -420,10 +429,32 @@ def test_session_config_semantic_vad() -> None:
     }
 
 
+@pytest.mark.parametrize(('sensitivity', 'threshold'), [('low', 0.7), ('medium', 0.5), ('high', 0.3)])
+def test_session_config_cross_provider_turn_detection_sensitivity(
+    sensitivity: Literal['low', 'medium', 'high'], threshold: float
+) -> None:
+    settings = rt_openai.OpenAIRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
+    config = OpenAIRealtimeModel(settings=settings)._session_config(  # pyright: ignore[reportPrivateUsage]
+        'hi', None, None
+    )
+    assert config['audio']['input']['turn_detection']['threshold'] == threshold
+
+
 def test_session_config_manual_turn_detection_is_null() -> None:
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=None))
+    """`turn_detection=False` disables VAD (push-to-talk), sent as an explicit null."""
+    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=False))
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] is None
+
+
+def test_session_config_turn_detection_true_matches_default() -> None:
+    """`turn_detection=True` enables server VAD at the provider defaults — identical to an absent setting."""
+    enabled = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=True))
+    default = OpenAIRealtimeModel()
+    assert (
+        enabled._session_config('hi', None, None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
+        == default._session_config('hi', None, None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
@@ -512,7 +543,7 @@ class HangingWebSocket(FakeWebSocket):
 async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = HangingWebSocket([])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', settings=RealtimeModelSettings(handshake_timeout=0.02))
+    model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(handshake_timeout=0.02))
     with pytest.raises(TimeoutError, match=re.escape("'session.created'")):
         async with _connect(model, 'x'):
             pass  # pragma: no cover
@@ -1038,7 +1069,9 @@ async def test_connect_tool_without_description(monkeypatch: pytest.MonkeyPatch)
 async def test_connect_without_transcription_model_omits_transcription(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-    model = OpenAIRealtimeModel('gpt-realtime', settings=RealtimeModelSettings(input_transcription_model=None))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(input_transcription_model=None)
+    )
     async with _connect(model, 'x') as conn:
         # A disabled transcription model reports `input_transcription_enabled=False`, so the session
         # finalizes user turns from retained audio instead of waiting for transcripts that never arrive.
@@ -1052,7 +1085,8 @@ async def test_connect_transcription_model_explicit_override(monkeypatch: pytest
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     # An explicit id is used verbatim, overriding the `'auto'` default; the connection reports transcription on.
     model = OpenAIRealtimeModel(
-        'gpt-realtime', settings=RealtimeModelSettings(input_transcription_model='gpt-4o-transcribe')
+        'gpt-realtime',
+        settings=rt_openai.OpenAIRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'),
     )
     async with _connect(model, 'x') as conn:
         assert conn.input_transcription_enabled is True

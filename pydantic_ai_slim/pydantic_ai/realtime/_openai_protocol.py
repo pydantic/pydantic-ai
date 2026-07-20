@@ -42,6 +42,7 @@ from ._base import (
     ToolCall,
     Transcript,
     TurnCompleteEvent,
+    TurnDetection,
     user_prompt_text,
 )
 
@@ -278,6 +279,33 @@ class SemanticVAD:
     """Whether to automatically generate a response when a turn ends."""
     interrupt_response: bool = True
     """Whether to automatically interrupt an in-progress response when the user starts speaking."""
+
+
+def server_vad_from_turn_detection(turn_detection: TurnDetection) -> ServerVAD:
+    """Map cross-provider turn detection to the OpenAI-compatible server-VAD shape."""
+    threshold = (
+        {'low': 0.7, 'medium': 0.5, 'high': 0.3}[turn_detection.sensitivity]
+        if turn_detection.sensitivity is not None
+        else None
+    )
+    return ServerVAD(
+        threshold=threshold,
+        prefix_padding_ms=turn_detection.prefix_padding_ms,
+        silence_duration_ms=turn_detection.silence_duration_ms,
+    )
+
+
+def resolve_base_turn_detection(base: bool | TurnDetection) -> ServerVAD | None:
+    """Resolve a cross-provider `turn_detection` value to a server-VAD config (or `None` to disable).
+
+    `True` (or an absent setting, handled by the caller) uses the provider defaults; `False` disables
+    detection (push-to-talk); a [`TurnDetection`][pydantic_ai.realtime.TurnDetection] maps its knobs.
+    """
+    if base is False:
+        return None
+    if base is True:
+        return ServerVAD()
+    return server_vad_from_turn_detection(base)
 
 
 def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dict[str, Any] | None:
