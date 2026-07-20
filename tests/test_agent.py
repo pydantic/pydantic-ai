@@ -969,6 +969,60 @@ def test_tool_output_max_retries_per_tool():
     )
 
 
+def test_tool_retry_budget_survives_interleaved_tool_calls():
+    """A tool's retry budget accumulates across steps even when other tool calls are interleaved between its failures.
+
+    Regression test for #6581: retry counts were rebuilt each step from only the tools that failed that
+    step, so a repeatedly failing tool that wasn't called in an intervening step had its count reset to 0
+    and looped forever instead of hitting `max_retries`.
+    """
+    flaky_retries: list[int] = []
+
+    def call_flaky_then_other(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(m, ModelResponse) for m in messages)
+        return ModelResponse(parts=[ToolCallPart('flaky_tool' if step % 2 == 0 else 'other_tool', {})])
+
+    agent = Agent(FunctionModel(call_flaky_then_other), retries=2)
+
+    @agent.tool
+    def flaky_tool(ctx: RunContext[object]) -> str:
+        flaky_retries.append(ctx.retry)
+        raise ModelRetry('always fails')
+
+    @agent.tool_plain
+    def other_tool() -> str:
+        return 'ok'
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky_tool' exceeded max retries count of 2"):
+        agent.run_sync('go')
+
+    assert flaky_retries == [0, 1, 2]
+
+
+def test_tool_retry_count_resets_after_successful_call():
+    """A tool's retry count resets to 0 after it succeeds, then re-accumulates on the next failure."""
+    retries_seen: list[int] = []
+
+    def keep_calling(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(m, ModelResponse) for m in messages)
+        if step < 4:
+            return ModelResponse(parts=[ToolCallPart('sometimes_tool', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(keep_calling), retries=2)
+
+    @agent.tool
+    def sometimes_tool(ctx: RunContext[object]) -> str:
+        retries_seen.append(ctx.retry)
+        if len(retries_seen) % 2 == 1:
+            raise ModelRetry('fails on odd calls')
+        return 'ok'
+
+    result = agent.run_sync('go')
+    assert result.output == 'done'
+    assert retries_seen == [0, 1, 0, 1]
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 

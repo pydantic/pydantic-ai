@@ -851,6 +851,48 @@ async def test_tool_manager_retry_count_survives_interleaved_successful_step():
     assert retry_values == [0, 1, 2]
 
 
+async def test_tool_manager_retry_count_increments_when_same_tool_fails_and_succeeds_in_one_step():
+    """A tool that both fails and succeeds in a single step still counts the failure toward its retry budget.
+
+    Pins the parallel same-tool contract from #2311/#2317: within one step the failing call increments the
+    count (failure wins), rather than the successful call resetting it. A "success wins" rule — dropping any
+    tool that appears in `succeeded_tools` even when it also failed — would reintroduce the #6581 unbounded
+    loop for a model that pairs a succeeding and a failing call to the same tool on every step.
+    """
+
+    @dataclass
+    class TestDeps:
+        pass
+
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    calls = 0
+
+    @toolset.tool
+    def flaky_tool(ctx: RunContext[Any], x: int) -> int:
+        """Fails on its first call in the step, succeeds on the second."""
+        nonlocal calls
+        calls += 1
+        if calls % 2 == 1:
+            raise ModelRetry('This call fails')
+        return x * 2
+
+    step_0_context = build_run_context(TestDeps())
+    step_0_tool_manager = await ToolManager[TestDeps](toolset).for_run_step(step_0_context)
+
+    # Same step: the tool fails once and succeeds once, landing in both failed_tools and succeeded_tools.
+    with pytest.raises(ToolRetryError):
+        await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 1}))
+    assert await step_0_tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={'x': 3})) == 6
+    assert step_0_tool_manager.failed_tools == {'flaky_tool'}
+    assert step_0_tool_manager.succeeded_tools == {'flaky_tool'}
+
+    # Failure wins: the count carries forward as 1, not dropped by the same-step success.
+    step_1_context = build_run_context(TestDeps(), run_step=1)
+    step_1_tool_manager = await step_0_tool_manager.for_run_step(step_1_context)
+    assert step_1_tool_manager.ctx is not None
+    assert step_1_tool_manager.ctx.retries == {'flaky_tool': 1}
+
+
 async def test_handle_call_wrap_validation_errors_false():
     """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
 
