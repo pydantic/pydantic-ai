@@ -133,6 +133,7 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'AgentInstructions',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
 )

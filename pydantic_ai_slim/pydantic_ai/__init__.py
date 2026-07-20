@@ -1,6 +1,8 @@
 from importlib.metadata import version as _metadata_version
 
 from ._template import TemplateStr
+from ._enqueue import PendingMessage
+from ._instructions import AgentInstructions
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -176,6 +178,8 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'PendingMessage',
+    'AgentInstructions',
     'InstrumentationSettings',
     # embeddings
     'Embedder',
