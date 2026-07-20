@@ -42,6 +42,7 @@ from pydantic_ai.tools import (
 )
 
 from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from ._event_stream import make_workflow_stream_event_handler
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
@@ -66,6 +67,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_topic: str | None = None,
+        event_stream_batch_interval: timedelta = timedelta(milliseconds=100),
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
@@ -102,6 +105,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 The callable receives the provider name and the current run context, allowing custom configuration such as injecting API keys stored on `deps`.
                 Note: This factory is only used inside Temporal workflows. Outside workflows, model strings are resolved using the default provider behavior.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
+            event_stream_topic: If set, every `AgentStreamEvent` is published to this topic on the parent workflow's
+                [`WorkflowStream`][temporalio.contrib.workflow_streams.WorkflowStream] so an external consumer can subscribe
+                to the workflow and observe events in real time. This enables streaming (it implies an event stream handler);
+                if an `event_stream_handler` is also set (here or on the wrapped agent), it still receives every event.
+                The workflow must construct a `WorkflowStream` in its `@workflow.init` for events to be delivered.
+            event_stream_batch_interval: How often the Workflow Stream client flushes buffered events to the workflow when
+                `event_stream_topic` is set. Defaults to 100ms.
             activity_config: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
             model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
             toolset_activity_config: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
@@ -119,7 +129,16 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         super().__init__(wrapped)
 
         self._name = name
-        self._event_stream_handler = event_stream_handler
+        if event_stream_topic is not None:
+            # Publish every event to the workflow stream as a side effect, forwarding to any
+            # user-supplied handler (set here or on the wrapped agent) so it still sees every event.
+            self._event_stream_handler = make_workflow_stream_event_handler(
+                event_stream_topic,
+                event_stream_batch_interval,
+                inner=event_stream_handler or super().event_stream_handler,
+            )
+        else:
+            self._event_stream_handler = event_stream_handler
         self.run_context_type = run_context_type
 
         if self.name is None:

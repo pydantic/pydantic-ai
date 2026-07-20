@@ -85,6 +85,7 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+    from temporalio.contrib.workflow_streams import WorkflowStream, WorkflowStreamClient
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -2288,6 +2289,93 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
                 id=SimpleAgentWorkflowWithEventStreamHandler.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+async def _streaming_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The capital '
+    yield 'of Mexico '
+    yield 'is Mexico City.'
+
+
+streaming_stream_model = FunctionModel(stream_function=_streaming_stream_function, model_name='streaming')
+
+# Populated (in the activity process) by the user-supplied handler below, to prove that setting
+# `event_stream_topic` still forwards every event to a user handler (the "tee").
+teed_events: list[AgentStreamEvent] = []
+
+
+async def teed_event_stream_handler(
+    ctx: RunContext,
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        teed_events.append(event)
+
+
+streaming_agent = Agent(streaming_stream_model, name='streaming_agent')
+# Setting `event_stream_topic` publishes every event to the workflow stream; the user handler still
+# receives them all.
+streaming_temporal_agent = TemporalAgent(
+    streaming_agent,
+    event_stream_handler=teed_event_stream_handler,
+    event_stream_topic='agent_events',
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class StreamingWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        # Hosts the stream that the agent's activities publish to.
+        self.stream = WorkflowStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await streaming_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_streaming_to_workflow_stream(allow_model_requests: None, client: Client):
+    teed_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StreamingWorkflow],
+        plugins=[AgentPlugin(streaming_temporal_agent)],
+    ):
+        handle = await client.start_workflow(
+            StreamingWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=StreamingWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+        # An external consumer subscribes to the same workflow to receive events in real time.
+        stream_client = WorkflowStreamClient.create(client, StreamingWorkflow.__name__)
+        collected: list[AgentStreamEvent] = []
+
+        async def collect() -> None:
+            async for item in stream_client.subscribe(
+                ['agent_events'],
+                from_offset=0,
+                result_type=AgentStreamEvent,  # type: ignore[arg-type]
+                poll_cooldown=timedelta(milliseconds=50),
+            ):
+                collected.append(item.data)
+                if isinstance(item.data, PartEndEvent):
+                    break
+
+        collect_task = asyncio.create_task(collect())
+        output = await handle.result()
+        await asyncio.wait_for(collect_task, timeout=10.0)
+
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+    # The external subscriber observed the streamed model events...
+    assert any(isinstance(event, PartStartEvent) for event in collected)
+    assert any(isinstance(event, PartDeltaEvent) for event in collected)
+    # ...and the user-supplied handler saw them too (the topic tees, it doesn't replace).
+    assert any(isinstance(event, PartStartEvent) for event in teed_events)
 
 
 # Unregistered model instance for testing error case

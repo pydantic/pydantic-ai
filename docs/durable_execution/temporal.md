@@ -198,6 +198,59 @@ As the streaming model request activity, workflow, and workflow execution call a
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
+#### Streaming events to a frontend with Workflow Streams
+
+Rather than standing up a separate message queue, you can use Temporal's built-in [Workflow Streams](https://docs.temporal.io/develop/python/workflows/workflow-streams) as the transport: the parent workflow itself becomes the durable, offset-addressed channel that an external consumer subscribes to.
+
+Set `event_stream_topic` on the `TemporalAgent` and construct a [`WorkflowStream`][temporalio.contrib.workflow_streams.WorkflowStream] in your workflow's `@workflow.init`. Every event is then published to that topic from within the activity, and any external process with the workflow ID can subscribe and observe events in real time (for example, to relay them over Server-Sent Events to a browser). Setting `event_stream_topic` enables streaming on its own; if you also set an `event_stream_handler`, it still receives every event.
+
+```python {test="skip"}
+from temporalio import workflow
+from temporalio.contrib.workflow_streams import WorkflowStream
+
+with workflow.unsafe.imports_passed_through():
+    from pydantic_ai import Agent
+    from pydantic_ai.durable_exec.temporal import TemporalAgent
+
+agent = Agent('openai:gpt-5.2', name='assistant')
+temporal_agent = TemporalAgent(agent, event_stream_topic='agent_events')
+
+
+@workflow.defn
+class AssistantWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        # Hosts the stream that the agent's activities publish to. Without this,
+        # published events are silently dropped.
+        self.stream = WorkflowStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent.run(prompt)
+        return result.output
+```
+
+An external consumer subscribes to the same workflow to receive events as they arrive:
+
+```python {test="skip"}
+from temporalio.client import Client
+from temporalio.contrib.workflow_streams import WorkflowStreamClient
+
+from pydantic_ai.messages import AgentStreamEvent
+
+
+async def relay_events(client: Client, workflow_id: str) -> None:
+    stream = WorkflowStreamClient.create(client, workflow_id)
+    async for item in stream.subscribe(['agent_events'], result_type=AgentStreamEvent):  # type: ignore[arg-type]
+        event = item.data
+        ...  # e.g. forward `event` to the frontend over SSE
+```
+
+!!! note "Caveats"
+    - Workflow Streams add roughly 100ms of latency per roundtrip and their cost scales with the number of durable batches; they're suited to driving a UI, not ultra-low-latency use cases like real-time voice.
+    - Delivery is at-least-once: if an activity is retried, its events are re-published, so consumers should tolerate duplicates. The workflow's final result remains authoritative.
+    - Live events reach external consumers only. `run_stream_events()` is still unavailable inside the workflow.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.2'`) and model instances. However, `TemporalAgent` does not support arbitrary model instances because they cannot be serialized for Temporal's replay mechanism.

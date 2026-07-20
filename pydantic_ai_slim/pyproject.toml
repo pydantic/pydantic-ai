@@ -118,7 +118,7 @@ web = ["starlette>=0.46.2", "httpx>=0.27.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio>=1.24.0"]
+temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
