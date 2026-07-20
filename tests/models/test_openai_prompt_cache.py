@@ -85,9 +85,15 @@ def responses_completion(text: str = 'done', usage: ResponseUsage | None = None)
 # ===== Chat Completions: breakpoints and request-level options =====
 
 
-async def test_openai_chat_cache_point_and_options(allow_model_requests: None):
+@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+async def test_openai_chat_cache_point_and_options(
+    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+):
     mock_client = MockOpenAI.create_mock(chat_completion())
-    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    if provider_name == 'openai':
+        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIChatModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
     result = await Agent(model, model_settings=settings).run(

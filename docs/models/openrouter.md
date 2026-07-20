@@ -109,7 +109,7 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
 
 ### OpenAI GPT-5.6 explicit caching
 
-[`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] does not currently translate [`CachePoint`][pydantic_ai.messages.CachePoint] into OpenAI's breakpoint protocol (OpenAI models on OpenRouter still get automatic caching). For explicit GPT-5.6 breakpoints, combine [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
+[`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] does not currently translate [`CachePoint`][pydantic_ai.messages.CachePoint] into OpenAI's breakpoint protocol (OpenAI models on OpenRouter still get automatic caching). For explicit GPT-5.6 breakpoints, combine [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]) with [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint

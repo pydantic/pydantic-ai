@@ -723,7 +723,8 @@ class CachePoint:
     - Anthropic
     - Amazon Bedrock (Converse API)
     - OpenAI (GPT-5.6 models)
-    - OpenRouter (Anthropic and Gemini models, plus OpenAI GPT-5.6 models via the Responses API)
+    - OpenRouter (Anthropic and Gemini models via `OpenRouterModel`, plus OpenAI GPT-5.6 models when
+      using `OpenAIChatModel` or `OpenAIResponsesModel` with `OpenRouterProvider`)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
