@@ -63,6 +63,10 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             # the base profile is resolved from (per the AWS model cards). Without this override the
             # image-output guard is bypassed and the request fails with an opaque provider error.
             supports_image_output=False,
+            # Bedrock Mantle proxies the OpenAI models but not OpenAI's server-hosted tools (web search,
+            # code interpreter, file search, image generation, ...); the AWS Mantle docs document only
+            # custom function calling, so the base profile's native tools are disabled to fail with a
+            # clean UserError rather than an opaque provider error.
             supported_native_tools=frozenset(),
         ),
     )

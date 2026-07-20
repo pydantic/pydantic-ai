@@ -85,7 +85,14 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
 
 @dataclass(init=False)
 class BedrockMantleChatModel(OpenAIChatModel):
-    """An OpenAI Chat Completions model served by Amazon Bedrock Mantle (GPT-OSS Safeguard)."""
+    """An OpenAI Chat Completions model served by Amazon Bedrock Mantle (GPT-OSS Safeguard).
+
+    The response-scoped tool-call-ID normalization added for #6536 is Responses-only: the ID reuse was
+    reproduced on Mantle GPT-5.6 Responses, and GPT-OSS Safeguard is a classification model that doesn't
+    emit multi-response tool-call flows, so the Chat Completions ingestion path is intentionally left
+    un-normalized. If a Chat-served Mantle model is later found to reuse tool-call IDs across responses,
+    the mechanism would need to extend to `OpenAIChatModel` (using `ChatCompletion.id`).
+    """
 
     _mantle_client: AsyncOpenAI = field(repr=False)
 
