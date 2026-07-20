@@ -809,7 +809,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
         unless overridden with the `fmt` argument.
 
-        All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
+        All other arguments are forwarded to [`from_spec`][pydantic_ai.agent.Agent.from_spec].
         """
         spec = AgentSpec.from_file(path, fmt=fmt)
         agent = cls.from_spec(

@@ -116,7 +116,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
-    """Queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    """Queue read and mutated by the internal `PendingMessageDrainCapability`.
 
     Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
@@ -284,7 +284,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the drain.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+            *content: One or more `EnqueueContent` items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each

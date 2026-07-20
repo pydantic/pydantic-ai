@@ -906,6 +906,7 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 
 
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+"""A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)

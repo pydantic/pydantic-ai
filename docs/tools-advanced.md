@@ -389,7 +389,7 @@ result = agent.run_sync(
 
 ### Dynamic tool choice via capabilities {#dynamic-tool-choice-via-capabilities}
 
-`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.Agent.run], the agent's own `model_settings`, or the underlying model's defaults).
+`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], the agent's own `model_settings`, or the underlying model's defaults).
 
 To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
 

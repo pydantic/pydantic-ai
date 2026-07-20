@@ -321,7 +321,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
         Returns a list suitable for prepending to a `ModelRequest`. Static strings and
-        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.agent.Agent.system_prompt]
         are evaluated using a minimal `RunContext` built from the provided kwargs — useful
         when reconstructing a `message_history` that should carry the agent's configured
         system prompt (e.g. in UI adapters or after history compaction).

@@ -96,7 +96,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](../agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, and `claude-sonnet-5`. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`, `claude-opus-4-8`, and `claude-sonnet-5`. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent

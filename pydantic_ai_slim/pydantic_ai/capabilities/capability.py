@@ -180,7 +180,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Decorator to register a plain (no-[`RunContext`][pydantic_ai.tools.RunContext]) function tool on this capability.
 
-        Mirrors [`Agent.tool_plain`][pydantic_ai.Agent.tool_plain]: the tool is added to this
+        Mirrors [`Agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]: the tool is added to this
         capability's function toolset and registered with the agent whenever the capability is active.
         """
         decorator = self._function_toolset.tool_plain(
@@ -250,7 +250,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Decorator to register a function tool (taking [`RunContext`][pydantic_ai.tools.RunContext]) on this capability.
 
-        Mirrors [`Agent.tool`][pydantic_ai.Agent.tool]: the tool is added to this capability's
+        Mirrors [`Agent.tool`][pydantic_ai.agent.Agent.tool]: the tool is added to this capability's
         function toolset and registered with the agent whenever the capability is active.
         """
         decorator = self._function_toolset.tool(

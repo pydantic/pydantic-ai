@@ -160,7 +160,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     manage_system_prompt: Literal['server', 'client'] = 'server'
     """Who owns the system prompt.
 
-    Only affects `system_prompt` — [`instructions`][pydantic_ai.Agent.instructions]
+    Only affects `system_prompt` — [`instructions`][pydantic_ai.agent.Agent.instructions]
     are always injected by the agent on every request regardless of this setting.
 
     `'server'` (default): the agent's configured `system_prompt` is authoritative.

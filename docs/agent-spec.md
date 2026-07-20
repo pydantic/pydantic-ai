@@ -27,7 +27,7 @@ capabilities:
 
 ## Loading specs
 
-[`Agent.from_file`][pydantic_ai.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
+[`Agent.from_file`][pydantic_ai.agent.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
 
 ```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
@@ -35,7 +35,7 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
-[`Agent.from_spec`][pydantic_ai.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
+[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
 
 ```python {title="from_spec_example.py"}
 from dataclasses import dataclass
@@ -68,7 +68,7 @@ Keyword arguments interact with spec fields as follows:
 
 When `deps_type` is passed, [template strings](#template-strings) in the spec's `instructions`, `description`, and capability arguments are compiled and validated against the deps type at construction time.
 
-For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
+For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
 
 ## Template strings
 
@@ -118,7 +118,7 @@ See [Publishing capabilities](capabilities/custom.md#publishing-capabilities) fo
 
 ## `AgentSpec` reference
 
-The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure:
+The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec structure:
 
 | Field | Type | Description |
 |---|---|---|
@@ -171,7 +171,7 @@ capabilities:
 
 ## Saving specs
 
-[`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
+[`AgentSpec.to_file`][pydantic_ai.agent.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
 
 ```python {title="save_spec_example.py"}
 from pydantic_ai import AgentSpec
