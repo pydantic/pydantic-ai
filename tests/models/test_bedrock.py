@@ -351,10 +351,10 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv)
 
 
 def _emit_bedrock_events(
-    events: HierarchicalEmitter, headers: dict[str, str] | None = None
+    events: HierarchicalEmitter, params: dict[str, Any], headers: dict[str, str] | None = None
 ) -> tuple[dict[str, str], list[tuple[Any, Any]]]:
     context: dict[str, Any] = {}
-    events.emit('provide-client-params.bedrock-runtime.CountTokens', params={}, model=None, context=context)
+    events.emit('provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context)
     headers = headers or {}
     responses = cast(
         list[tuple[Any, Any]],
@@ -388,7 +388,7 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
             barrier.wait()
-            headers = _emit_bedrock_events(self.meta.events, {'Content-Type': 'application/json'})[0]
+            headers = _emit_bedrock_events(self.meta.events, params, {'Content-Type': 'application/json'})[0]
             results[prompt] = headers
             return {'inputTokens': 1}
 
@@ -449,7 +449,7 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads()
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls[prompt] = headers
             return {'inputTokens': 1}
 
@@ -491,7 +491,7 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             results.setdefault(self.name, []).append(headers)
             if self.nested_client is not None:
                 self.nested_client.count_tokens(**params)
@@ -530,9 +530,9 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
         def __init__(self) -> None:
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
-        def count_tokens(self, **_: Any) -> dict[str, int]:
+        def count_tokens(self, **params: Any) -> dict[str, int]:
             nonlocal nested
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls.append(headers)
             if not nested:
                 nested = True
@@ -566,8 +566,8 @@ async def test_bedrock_direct_nested_call_does_not_inherit_outer_headers():
         def __init__(self) -> None:
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
-        def count_tokens(self, **_: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events)[0]
+        def count_tokens(self, **params: Any) -> dict[str, int]:
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls.append(headers)
             return {'inputTokens': 1}
 
@@ -579,7 +579,7 @@ async def test_bedrock_direct_nested_call_does_not_inherit_outer_headers():
             nested = True
             client.count_tokens()
 
-    client.meta.events.register_first('before-call.bedrock-runtime.CountTokens', make_nested_call)
+    client.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', make_nested_call)
     provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
 
@@ -605,7 +605,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
-            headers = _emit_bedrock_events(self.meta.events)[0]
+            headers = _emit_bedrock_events(self.meta.events, params)[0]
             calls.append(headers)
             return {'inputTokens': 1}
 
@@ -619,7 +619,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
     await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
 
     assert calls == [{'Tenant': 'a'}, {}]
-    _, responses = _emit_bedrock_events(client.meta.events)
+    _, responses = _emit_bedrock_events(client.meta.events, {})
     assert len(responses) == 1
 
 

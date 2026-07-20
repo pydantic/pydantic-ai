@@ -3,16 +3,14 @@ from __future__ import annotations
 import functools
 import typing
 import warnings
-import weakref
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from itertools import count
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
@@ -133,25 +131,17 @@ class _BotocoreRequestParams(TypedDict):
     headers: dict[str, str]
 
 
-_EXTRA_HEADERS: ContextVar[tuple[weakref.ReferenceType[BedrockRuntimeClient], dict[str, str]] | None] = ContextVar(
-    'bedrock_extra_headers', default=None
-)
 _EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
 _EXTRA_HEADERS_UNIQUE_ID_PREFIX = 'pydantic-ai-extra-headers'
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
+_EXTRA_HEADERS_PARAM = '__pydantic_ai_extra_headers'
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
+_BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
-def _capture_extra_headers(
-    client_ref: weakref.ReferenceType[BedrockRuntimeClient], context: dict[str, Any], **_: Any
-) -> None:
-    active_request = _EXTRA_HEADERS.get()
-    if active_request is None or (client := client_ref()) is None or active_request[0]() is not client:
-        return
-
-    context[_EXTRA_HEADERS_CONTEXT_KEY] = active_request[1]
-    # Consume the binding before later event phases, so a direct nested botocore call cannot inherit these headers.
-    _EXTRA_HEADERS.set((active_request[0], {}))
+def _capture_extra_headers(params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:
+    if extra_headers := params.pop(_EXTRA_HEADERS_PARAM, None):
+        context[_EXTRA_HEADERS_CONTEXT_KEY] = extra_headers
 
 
 def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
@@ -163,18 +153,17 @@ def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any
         headers[key] = value
 
 
-@contextmanager
-def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str, str] | None) -> Generator[None]:
-    """Send `extra_headers` with the Bedrock request made inside this context.
+def _register_extra_headers(client: BedrockRuntimeClient) -> None:
+    """Register handlers that move private client parameters into request headers.
 
     The injector is registered from every request path, not just those with `extra_headers`: botocore's emitter
     caches handler lookups without locking, so registering on a client that is already serving requests can poison
     that cache and silently drop the handler. Registering before every call means any request made through
     pydantic-ai has completed its own registration first, so the injector is present in any lookup it caches.
-    The operation-specific capture handlers bind headers to botocore's request context during its earliest event
-    phase and consume the request binding. The later injection phase therefore cannot give the headers to a direct
-    nested botocore call. `unique_id` makes re-registration a no-op inside botocore. Direct boto3 calls on a shared
-    client can still race the first registration; boto3 documents such event mutation on a shared client as unsafe.
+    The operation-specific capture handlers remove a private parameter from the intended client call and bind its
+    value to botocore's request context. A nested direct call has no such parameter, regardless of handler order.
+    `unique_id` makes re-registration a no-op inside botocore. Direct boto3 calls on a shared client can still race the
+    first registration; boto3 documents such event mutation on a shared client as unsafe.
     """
     # botocore records the `unique_id` before invalidating its handler lookup cache. Serializing this short mutation
     # prevents another pydantic-ai request from seeing the id and emitting against the stale cache in between.
@@ -183,7 +172,7 @@ def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str
             # botocore deduplicates unique IDs across all event names, so every operation needs its own ID.
             client.meta.events.register_first(
                 f'provide-client-params.bedrock-runtime.{operation}',
-                functools.partial(_capture_extra_headers, weakref.ref(client)),
+                _capture_extra_headers,
                 unique_id=f'{_EXTRA_HEADERS_UNIQUE_ID_PREFIX}-capture-{operation}',
             )
             client.meta.events.register_first(
@@ -192,12 +181,12 @@ def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str
                 unique_id=f'{_EXTRA_HEADERS_UNIQUE_ID_PREFIX}-inject-{operation}',
             )
 
-    # Bind empty headers too, so a nested request on the same client masks the outer request's headers.
-    token = _EXTRA_HEADERS.set((weakref.ref(client), extra_headers or {}))
-    try:
-        yield
-    finally:
-        _EXTRA_HEADERS.reset(token)
+
+def _call_with_extra_headers(
+    method: Callable[..., _BedrockCallResult], params: Mapping[str, Any], extra_headers: dict[str, str] | None
+) -> _BedrockCallResult:
+    """Call a botocore method with a private parameter that the capture handler removes before validation."""
+    return method(**params, **{_EXTRA_HEADERS_PARAM: extra_headers or {}})
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -761,8 +750,11 @@ class BedrockConverseModel(Model[BaseClient]):
         }
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
-            response = await anyio.to_thread.run_sync(functools.partial(client.count_tokens, **params))
+        with _map_api_errors(self.model_name):
+            _register_extra_headers(client)
+            response = await anyio.to_thread.run_sync(
+                functools.partial(_call_with_extra_headers, client.count_tokens, params, settings.get('extra_headers'))
+            )
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -996,11 +988,18 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name), _bedrock_extra_headers(client, settings.get('extra_headers')):
+        with _map_api_errors(self.model_name):
+            _register_extra_headers(client)
             if stream:
-                model_response = await anyio.to_thread.run_sync(functools.partial(client.converse_stream, **params))
+                model_response = await anyio.to_thread.run_sync(
+                    functools.partial(
+                        _call_with_extra_headers, client.converse_stream, params, settings.get('extra_headers')
+                    )
+                )
             else:
-                model_response = await anyio.to_thread.run_sync(functools.partial(client.converse, **params))
+                model_response = await anyio.to_thread.run_sync(
+                    functools.partial(_call_with_extra_headers, client.converse, params, settings.get('extra_headers'))
+                )
         return model_response
 
     @staticmethod
