@@ -23,9 +23,10 @@ except ImportError as e:
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
 # the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
 # snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`) don't support reasoning and are
-# deliberately excluded; keep this set in sync with the ids reporting `capabilities.reasoning`
-# on the Mistral `/v1/models` API. The `-latest` aliases resolve to a reasoning model on the
-# public API; on private deployments they may point to an older non-reasoning snapshot.
+# deliberately excluded; keep this set in sync with the Small/Medium family ids reporting
+# `capabilities.reasoning` on the Mistral `/v1/models` API. The alias ids (`-latest`,
+# `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model on the public API; on
+# private deployments they may point to an older non-reasoning snapshot.
 # See https://docs.mistral.ai/capabilities/reasoning/.
 #
 # This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
@@ -37,7 +38,10 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
+        'mistral-medium',
+        'mistral-medium-3',
         'mistral-medium-3-5',
+        'mistral-medium-3.5',
         'mistral-medium-2604',
     }
 )

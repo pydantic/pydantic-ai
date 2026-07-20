@@ -3344,8 +3344,8 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
 # These are kwarg-level unit tests rather than VCR tests: the cassette matcher isn't sensitive to
 # the request body, so a dropped or mis-mapped `reasoning_effort` would still replay green against
 # a recording. Asserting the SDK kwarg directly is what pins the mapping; the mistralai SDK omits
-# `UNSET` fields from the request body at serialization. Wire-level pinning of the disable signal
-# belongs in tests/test_thinking_wire_contract.py once Mistral cassettes are recorded.
+# `UNSET` fields from the request body at serialization. The wire-level pinning (mapped values,
+# UNSET omission, magistral absence) lives in tests/test_thinking_wire_contract.py.
 
 
 @pytest.mark.parametrize(

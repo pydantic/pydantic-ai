@@ -30,7 +30,10 @@ pytestmark = [
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
+        'mistral-medium',
+        'mistral-medium-3',
         'mistral-medium-3-5',
+        'mistral-medium-3.5',
         'mistral-medium-2604',
     ],
 )
