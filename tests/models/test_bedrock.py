@@ -419,13 +419,13 @@ async def test_bedrock_extra_headers_registration_is_serialized_across_threads()
             self._active_registrations = 0
             self.overlapped = False
 
-        def register(self, *args: Any, **kwargs: Any) -> None:
+        def register_first(self, *args: Any, **kwargs: Any) -> None:
             with self._state_lock:
                 self._active_registrations += 1
                 self.overlapped |= self._active_registrations > 1
             try:
                 sleep(0.1)
-                super().register(*args, **kwargs)
+                super().register_first(*args, **kwargs)
             finally:
                 with self._state_lock:
                     self._active_registrations -= 1
@@ -550,6 +550,48 @@ async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers(
     await model.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'outer'}), request_parameters)
 
     assert calls == [{'Tenant': 'outer'}, {}]
+
+
+async def test_bedrock_direct_nested_call_does_not_inherit_outer_headers():
+    """A direct nested botocore call on the same client must not inherit the outer request's headers.
+
+    Not a VCR test: a botocore event handler deterministically makes a nested call before the outer request is sent,
+    which a recorded response cannot reproduce.
+    """
+    calls: list[dict[str, str]] = []
+    nested = False
+
+    class NestedBedrockClient:
+        def __init__(self) -> None:
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+        def count_tokens(self, **_: Any) -> dict[str, int]:
+            headers: dict[str, str] = {}
+            self.meta.events.emit(
+                'before-call.bedrock-runtime.CountTokens', model=None, params={'headers': headers}, request_signer=None
+            )
+            calls.append(headers)
+            return {'inputTokens': 1}
+
+    client = NestedBedrockClient()
+
+    def make_nested_call(**_: Any) -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            client.count_tokens()
+
+    client.meta.events.register('before-call.bedrock-runtime.CountTokens', make_nested_call)
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+    await model.count_tokens(
+        [ModelRequest.user_text_prompt('Hello!')],
+        BedrockModelSettings(extra_headers={'Tenant': 'outer'}),
+        ModelRequestParameters(),
+    )
+
+    assert calls == [{}, {'Tenant': 'outer'}]
 
 
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
