@@ -18,7 +18,7 @@ import logfire
 
 from pydantic_ai import Agent, Embedder, UploadedFile
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
-from pydantic_ai.images import ImageGenerator
+from pydantic_ai.images import ImageGenerationResult, ImageGenerator
 from pydantic_ai.images.google import GoogleImageGenerationModel, GoogleImageGenerationSettings
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 from pydantic_ai.images.xai import XaiImageGenerationModel, XaiImageGenerationSettings
@@ -29,6 +29,17 @@ ProviderName = Literal['openai', 'google', 'xai']
 _PROVIDER_NAMES: tuple[ProviderName, ...] = ('openai', 'google', 'xai')
 _GENERATION_PROMPT = 'A cat with a cowboy hat, dancing in Rome.'
 _MUTATION_PROMPT = 'Replace the cat with a dog while preserving the cowboy hat, dancing pose, and Rome setting.'
+
+
+def _image_cost(result: ImageGenerationResult) -> Decimal | Literal['unavailable']:
+    try:
+        return result.cost().total_price
+    except LookupError:
+        return 'unavailable'
+
+
+def _provider_reported_cost(result: ImageGenerationResult) -> object:
+    return (result.provider_details or {}).get('cost_usd', 'unavailable')
 
 
 def main() -> None:
@@ -107,16 +118,11 @@ async def _run_openai_demo() -> None:
         with image_path.open('wb') as f:
             f.write(image_result.images[0].content.data)
 
-        try:
-            image_cost = image_result.cost().total_price
-        except LookupError:
-            image_cost = Decimal(0)
-
         print('image count:', len(image_result.images))
         print('image model:', image_model_name)
         print('image media type:', image_result.images[0].content.media_type)
         print('image usage:', image_result.usage)
-        print('image cost:', image_cost)
+        print('image cost:', _image_cost(image_result))
         print('image saved to:', str(image_path))
 
         if image_model_name == 'gpt-image-1.5':
@@ -129,15 +135,10 @@ async def _run_openai_demo() -> None:
             with edited_image_path.open('wb') as f:
                 f.write(edited_image_result.images[0].content.data)
 
-            try:
-                edited_image_cost = edited_image_result.cost().total_price
-            except LookupError:
-                edited_image_cost = Decimal(0)
-
             print('edited image count:', len(edited_image_result.images))
             print('edited image media type:', edited_image_result.images[0].content.media_type)
             print('edited image usage:', edited_image_result.usage)
-            print('edited image cost:', edited_image_cost)
+            print('edited image cost:', _image_cost(edited_image_result))
             print('edited image saved to:', str(edited_image_path))
 
 
@@ -156,15 +157,10 @@ async def _run_google_demo() -> None:
     with google_image_path.open('wb') as f:
         f.write(google_image_result.images[0].content.data)
 
-    try:
-        google_image_cost = google_image_result.cost().total_price
-    except LookupError:
-        google_image_cost = Decimal(0)
-
     print('google image count:', len(google_image_result.images))
     print('google image media type:', google_image_result.images[0].content.media_type)
     print('google image usage:', google_image_result.usage)
-    print('google image cost:', google_image_cost)
+    print('google image cost:', _image_cost(google_image_result))
     print('google image saved to:', str(google_image_path))
 
     uploaded_image = await google_provider.client.aio.files.upload(
@@ -192,15 +188,10 @@ async def _run_google_demo() -> None:
     with google_edited_image_path.open('wb') as f:
         f.write(google_edited_image_result.images[0].content.data)
 
-    try:
-        google_edited_image_cost = google_edited_image_result.cost().total_price
-    except LookupError:
-        google_edited_image_cost = Decimal(0)
-
     print('google edited image count:', len(google_edited_image_result.images))
     print('google edited image media type:', google_edited_image_result.images[0].content.media_type)
     print('google edited image usage:', google_edited_image_result.usage)
-    print('google edited image cost:', google_edited_image_cost)
+    print('google edited image cost:', _image_cost(google_edited_image_result))
     print('google edited image saved to:', str(google_edited_image_path))
 
 
@@ -218,15 +209,11 @@ async def _run_xai_demo() -> None:
     with xai_image_path.open('wb') as f:
         f.write(xai_image_result.images[0].content.data)
 
-    try:
-        xai_image_cost = xai_image_result.cost().total_price
-    except LookupError:
-        xai_image_cost = Decimal(0)
-
     print('xai image count:', len(xai_image_result.images))
     print('xai image media type:', xai_image_result.images[0].content.media_type)
     print('xai image usage:', xai_image_result.usage)
-    print('xai image cost:', xai_image_cost)
+    print('xai image cost:', _image_cost(xai_image_result))
+    print('xai provider-reported cost (USD):', _provider_reported_cost(xai_image_result))
     print('xai provider details:', xai_image_result.provider_details)
     print('xai image saved to:', str(xai_image_path))
 
@@ -253,15 +240,11 @@ async def _run_xai_demo() -> None:
     with xai_edited_image_path.open('wb') as f:
         f.write(xai_edited_image_result.images[0].content.data)
 
-    try:
-        xai_edited_image_cost = xai_edited_image_result.cost().total_price
-    except LookupError:
-        xai_edited_image_cost = Decimal(0)
-
     print('xai edited image count:', len(xai_edited_image_result.images))
     print('xai edited image media type:', xai_edited_image_result.images[0].content.media_type)
     print('xai edited image usage:', xai_edited_image_result.usage)
-    print('xai edited image cost:', xai_edited_image_cost)
+    print('xai edited image cost:', _image_cost(xai_edited_image_result))
+    print('xai edited provider-reported cost (USD):', _provider_reported_cost(xai_edited_image_result))
     print('xai edited provider details:', xai_edited_image_result.provider_details)
     print('xai edited image saved to:', str(xai_edited_image_path))
 

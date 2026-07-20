@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 
-from genai_prices import calc_price, types as genai_types
+from genai_prices import types as genai_types
 
 from pydantic_ai._utils import now_utc as _now_utc
 from pydantic_ai.messages import BinaryImage
@@ -79,27 +79,17 @@ class ImageGenerationResult:
     """Provider API URL, if available."""
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the image generation request.
+        """Calculate the cost of the image generation request when image pricing is supported.
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data.
+        Image generation pricing is temporarily unavailable while [`genai-prices`](https://github.com/pydantic/genai-prices)
+        adds support for image-token and per-image pricing.
 
         Raises:
-            LookupError: If pricing data is not available for this model/provider.
+            LookupError: Until image generation pricing is supported.
         """
-        assert self.model_name, 'Model name is required to calculate price'
-        if self.provider_url:
-            try:
-                return calc_price(
-                    self.usage,
-                    self.model_name,
-                    provider_api_url=self.provider_url,
-                    genai_request_timestamp=self.timestamp,
-                )
-            except LookupError:
-                pass
-        return calc_price(
-            self.usage,
-            self.model_name,
-            provider_id=self.provider_name,
-            genai_request_timestamp=self.timestamp,
-        )
+        # TODO: Enable image generation pricing once the data-driven unit registry lands and
+        # genai-prices supports image-token and per-image pricing:
+        # https://github.com/pydantic/genai-prices/pull/351
+        # https://github.com/pydantic/genai-prices/issues/185
+        # https://github.com/pydantic/genai-prices/issues/410
+        raise LookupError('`ImageGenerationResult.cost()` is unavailable until `genai-prices` supports image pricing')

@@ -174,6 +174,13 @@ def test_image_generator_sync_forwards_reference_images():
     assert test_model.last_images == [image]
 
 
+def test_image_generation_cost_is_unavailable():
+    result = ImageGenerator(TestImageGenerationModel()).generate_sync('tiny robot')
+
+    with pytest.raises(LookupError, match='until `genai-prices` supports image pricing'):
+        result.cost()
+
+
 async def test_image_generation_requires_non_empty_prompt():
     with pytest.raises(UserError, match='non-empty prompt'):
         await TestImageGenerationModel().generate('  ')
@@ -1231,6 +1238,7 @@ async def test_instrumentation(capfire: CaptureLogfire):
     )
     assert 'aGVsbG8=' not in str(span)
     assert reference_url not in str(span)
+    assert 'operation.cost' not in span['attributes']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
