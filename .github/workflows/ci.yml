@@ -51,6 +51,8 @@ jobs:
       - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0" "pydantic-monty==0.0.16"
 
       - name: Test GitHub agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py::test_attention_dynamic_workflow_is_bounded_to_specialists
