@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -13,15 +14,19 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
+from ..models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
@@ -130,16 +135,36 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     mistral_model_profile_mock.assert_called_with('mistral-medium-2505')
     assert mistral_profile is not None
     assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # Azure AI Foundry's Mistral gateway rejects `max_completion_tokens` with 422 (#6593); the
+    # override is applied by `AzureProvider.model_profile` itself, scoped to the Mistral prefixes.
+    assert mistral_profile.get('openai_chat_supports_max_completion_tokens', True) is False
 
     mistral_profile = provider.model_profile('mistralai-Mixtral-8x22B-Instruct-v0-1')
     mistral_model_profile_mock.assert_called_with('mixtral-8x22b-instruct-v0-1')
     assert mistral_profile is not None
     assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('openai_chat_supports_max_completion_tokens', True) is False
+
+    # `ministral`/`magistral` are Mistral-family model lines (also grouped under Bedrock's `mistral`
+    # provider namespace) and must get the same Azure gateway override as `mistral`/`mistralai-`.
+    ministral_profile = provider.model_profile('Ministral-3B')
+    mistral_model_profile_mock.assert_called_with('ministral-3b')
+    assert ministral_profile is not None
+    assert ministral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert ministral_profile.get('openai_chat_supports_max_completion_tokens', True) is False
+
+    magistral_profile = provider.model_profile('magistral-small-2509')
+    mistral_model_profile_mock.assert_called_with('magistral-small-2509')
+    assert magistral_profile is not None
+    assert magistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert magistral_profile.get('openai_chat_supports_max_completion_tokens', True) is False
 
     cohere_profile = provider.model_profile('cohere-command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
     assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # The Azure-only override is scoped to the Mistral prefixes and must not leak to sibling gateways.
+    assert 'openai_chat_supports_max_completion_tokens' not in cohere_profile
 
     grok_profile = provider.model_profile('grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
@@ -234,3 +259,65 @@ def test_azure_provider_foundry_serverless_with_openai_model():
         ),
     )
     assert type(model.client) is AsyncOpenAI
+
+
+async def test_azure_mistral_max_tokens_uses_legacy_field(allow_model_requests: None) -> None:
+    """Azure AI Foundry's Mistral gateway rejects `max_completion_tokens` with 422 (#6593).
+
+    Unit test (not VCR): cassette matchers ignore the request body, so a VCR test would stay
+    green even if `max_tokens` were still routed to the wrong key. Goes through a real
+    `AzureProvider` (rather than a manually-injected `profile=`) so the assertion exercises the
+    actual gateway-composition path in `AzureProvider.model_profile`. Mirrors the gateway-specific
+    override OpenRouter applies for the same underlying limitation (#5926).
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'mistral-medium-2505', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+    )
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=256))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 256
+    assert 'max_completion_tokens' not in kwargs
+
+
+async def test_azure_ministral_max_tokens_uses_legacy_field(allow_model_requests: None) -> None:
+    """Same as `test_azure_mistral_max_tokens_uses_legacy_field`, but for the exact deployment name
+    reported in #6593 (`Ministral-3B`), which doesn't share the `mistral`/`mistralai-` prefix and
+    would otherwise fall through to the generic OpenAI profile and keep sending
+    `max_completion_tokens`.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('Ministral-3B', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=256))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 256
+    assert 'max_completion_tokens' not in kwargs
+
+
+async def test_non_azure_openai_provider_mistral_name_unaffected(allow_model_requests: None) -> None:
+    """A bare `OpenAIProvider` doesn't run Mistral family detection, so a Mistral-named model still
+    gets the default OpenAI profile and sends `max_completion_tokens`.
+
+    Confirms the Azure-only override doesn't leak into the generic `OpenAIProvider` path, and
+    documents that the reporter's exact repro in #6593 (a bare `OpenAIProvider` with an unprefixed
+    deployment name) isn't fixed by this change — it needs an explicit `profile=` until
+    `OpenAIProvider` family-detection is addressed separately.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('Ministral-3B', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=256))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_completion_tokens'] == 256
+    assert 'max_tokens' not in kwargs

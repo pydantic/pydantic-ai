@@ -57,6 +57,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
             'deepseek': deepseek_model_profile,
             'mistralai-': mistral_model_profile,
             'mistral': mistral_model_profile,
+            # `ministral`/`magistral` are Mistral-family model lines that don't share the
+            # `mistral`/`mistralai-` prefix. Bedrock already groups them under its `mistral`
+            # provider namespace (see `bedrock_mistral_model_profile`'s
+            # `models_that_support_structured_output` handling of `ministral-3`/`magistral-small`),
+            # so route them through `mistral_model_profile` here too — otherwise a deployment named
+            # e.g. `Ministral-3B` (the exact model from #6593) would fall through to the generic
+            # OpenAI profile and keep sending `max_completion_tokens`, which Azure's Mistral gateway
+            # rejects with a 422.
+            'ministral': mistral_model_profile,
+            'magistral': mistral_model_profile,
             'cohere-': cohere_model_profile,
             'grok': grok_model_profile,
         }
@@ -71,6 +81,13 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
                     profile_func(model_name),
                 )
+                if profile_func is mistral_model_profile:
+                    # Azure AI Foundry's Mistral gateway rejects `max_completion_tokens` with 422
+                    # "Extra inputs are not permitted"; only the legacy `max_tokens` field is accepted.
+                    # Scoped to the Azure gateway (the reproduced case, #6593) rather than
+                    # `mistral_model_profile` itself, since other providers that merge that profile
+                    # haven't been confirmed to share the same limitation.
+                    base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False))
                 break
         if base is None:
             # OpenAI models are unprefixed.
