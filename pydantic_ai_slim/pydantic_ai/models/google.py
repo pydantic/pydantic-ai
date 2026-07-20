@@ -1708,10 +1708,7 @@ def _native_tool_return_part_dict(
     if 'raw_tool_response' in provider_details:
         raw_response = provider_details['raw_tool_response']
         response = (
-            raw_response
-            if raw_response is None
-            or (_utils.is_str_dict(raw_response) and all(isinstance(key, str) for key in raw_response))
-            else {'result': raw_response}
+            raw_response if raw_response is None or _utils.is_str_dict(raw_response) else {'result': raw_response}
         )
     else:
         response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
@@ -2048,12 +2045,6 @@ def _map_grounding_metadata(
 ) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
     if grounding_metadata and (web_search_queries := grounding_metadata.web_search_queries):
         tool_call_id = _utils.generate_tool_call_id()
-        tool_return = NativeToolReturnPart(
-            provider_name=provider_name,
-            tool_name=WebSearchTool.kind,
-            tool_call_id=tool_call_id,
-            content=_web_search_grounding_chunks(grounding_metadata),
-        )
         return (
             NativeToolCallPart(
                 provider_name=provider_name,
@@ -2061,7 +2052,12 @@ def _map_grounding_metadata(
                 tool_call_id=tool_call_id,
                 args={'queries': web_search_queries},
             ),
-            tool_return,
+            NativeToolReturnPart(
+                provider_name=provider_name,
+                tool_name=WebSearchTool.kind,
+                tool_call_id=tool_call_id,
+                content=_web_search_grounding_chunks(grounding_metadata),
+            ),
         )
     else:
         return None, None
@@ -2113,9 +2109,9 @@ def _fill_native_tool_return_from_grounding(
     `search_suggestions` HTML widget, delivering the retrieved contexts / source URLs in
     `grounding_metadata` instead — in streaming, several chunks later. Metadata reconstruction is skipped
     when explicit parts are present (to avoid duplicate parts), so the results are recovered by filling
-    the explicit part here. For web_search, the raw API response is preserved in
-    `provider_details['raw_tool_response']` so follow-up requests can echo it back unchanged.
-
+    the explicit part here. The replaced web_search response is already preserved in
+    `provider_details['raw_tool_response']` by `_map_tool_response`, so follow-up requests can echo it
+    back unchanged.
     """
     grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
     if item.tool_name == FileSearchTool.kind:
@@ -2123,8 +2119,6 @@ def _fill_native_tool_return_from_grounding(
             item.content = retrieved_contexts
     elif item.tool_name == WebSearchTool.kind:
         if sources := _web_search_grounding_chunks(grounding_metadata):
-            if 'raw_tool_response' not in (item.provider_details or {}):
-                item.provider_details = {**(item.provider_details or {}), 'raw_tool_response': item.content}
             item.content = sources
 
 
@@ -2140,12 +2134,6 @@ def _map_file_search_grounding_metadata(
         return None, None
 
     tool_call_id = _utils.generate_tool_call_id()
-    tool_return = NativeToolReturnPart(
-        provider_name=provider_name,
-        tool_name=FileSearchTool.kind,
-        tool_call_id=tool_call_id,
-        content=retrieved_contexts,
-    )
     return (
         NativeToolCallPart(
             provider_name=provider_name,
@@ -2153,7 +2141,12 @@ def _map_file_search_grounding_metadata(
             tool_call_id=tool_call_id,
             args={},
         ),
-        tool_return,
+        NativeToolReturnPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            content=retrieved_contexts,
+        ),
     )
 
 
@@ -2162,12 +2155,6 @@ def _map_url_context_metadata(
 ) -> tuple[NativeToolCallPart, NativeToolReturnPart] | tuple[None, None]:
     if url_context_metadata and (url_metadata := url_context_metadata.url_metadata):
         tool_call_id = _utils.generate_tool_call_id()
-        tool_return = NativeToolReturnPart(
-            provider_name=provider_name,
-            tool_name=WebFetchTool.kind,
-            tool_call_id=tool_call_id,
-            content=[meta.model_dump(mode='json') for meta in url_metadata],
-        )
         # Extract URLs from the metadata
         urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
         return (
@@ -2177,7 +2164,12 @@ def _map_url_context_metadata(
                 tool_call_id=tool_call_id,
                 args={'urls': urls} if urls else None,
             ),
-            tool_return,
+            NativeToolReturnPart(
+                provider_name=provider_name,
+                tool_name=WebFetchTool.kind,
+                tool_call_id=tool_call_id,
+                content=[meta.model_dump(mode='json') for meta in url_metadata],
+            ),
         )
     else:
         return None, None

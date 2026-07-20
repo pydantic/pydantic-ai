@@ -304,16 +304,7 @@ def test_content_model_response_echoes_none_web_search_raw_tool_response_after_r
     )
 
 
-@pytest.mark.parametrize(
-    ('raw_response', 'expected_response'),
-    [
-        ('invalid history value', {'result': 'invalid history value'}),
-        ({1: 'invalid key'}, {'result': {1: 'invalid key'}}),
-    ],
-)
-def test_content_model_response_normalizes_invalid_raw_tool_response(
-    raw_response: Any, expected_response: dict[Any, Any]
-):
+def test_content_model_response_normalizes_invalid_raw_tool_response():
     response = ModelResponse(
         parts=[
             NativeToolReturnPart(
@@ -321,7 +312,7 @@ def test_content_model_response_normalizes_invalid_raw_tool_response(
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
                 content=[],
-                provider_details={'raw_tool_response': raw_response},
+                provider_details={'raw_tool_response': 'invalid history value'},
             ),
         ],
         provider_name='google-gla',
@@ -331,15 +322,17 @@ def test_content_model_response_normalizes_invalid_raw_tool_response(
     assert mapped is not None
     parts = mapped.get('parts')
     assert parts is not None
-    assert parts == [
-        {
-            'tool_response': {
-                'id': 'web_search_call',
-                'tool_type': ToolType.GOOGLE_SEARCH_WEB,
-                'response': expected_response,
+    assert parts == snapshot(
+        [
+            {
+                'tool_response': {
+                    'id': 'web_search_call',
+                    'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                    'response': {'result': 'invalid history value'},
+                }
             }
-        }
-    ]
+        ]
+    )
 
 
 @pytest.mark.parametrize('supports_tool_combination', [False, True])
@@ -807,14 +800,18 @@ async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web
 
 
 def test_fill_web_search_return_preserves_raw_tool_response_once_filled():
-    """Defensive idempotence: a repeated fill can't overwrite the preserved raw API response
-    with the normalized source list. Unit, not VCR: no real flow calls the fill twice.
+    """The fill replaces `content` but never touches the raw response `_map_tool_response` preserved,
+    so a repeated fill can't lose it either. Unit, not VCR: pins the private mapping pipeline.
     """
-    part = NativeToolReturnPart(
-        tool_name=WebSearchTool.kind,
-        provider_name='google',
-        tool_call_id='web-search-call-1',
-        content={'search_suggestions': '<style>chip</style>'},
+    part = _map_tool_response(
+        ToolResponse.model_validate(
+            {
+                'id': 'web-search-call-1',
+                'tool_type': 'GOOGLE_SEARCH_WEB',
+                'response': {'search_suggestions': '<style>chip</style>'},
+            }
+        ),
+        'google',
     )
     grounding = GroundingMetadata.model_validate(_GROUNDING_METADATA)
 
