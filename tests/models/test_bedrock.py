@@ -312,6 +312,7 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv,
     without recording three cassettes, and header-blind cassette matchers could not pin the signature anyway.
     """
     env.remove('AWS_BEARER_TOKEN_BEDROCK')
+    mocker.patch.object(bedrock_module, '_EXTRA_HEADERS_TOKENS', count())
     provider = BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='AKIA6666666666666666',
