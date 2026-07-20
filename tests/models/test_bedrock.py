@@ -79,6 +79,7 @@ with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
     from vcr.cassette import Cassette
 
+    import pydantic_ai.models.bedrock as bedrock_module
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -357,6 +358,7 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv,
         assert 'custom-header' in _decode_header(headers['Authorization'])
     assert len(recorded_api_params) == 3
     assert all('secret-header-value' not in repr(params) for params in recorded_api_params)
+    assert not getattr(bedrock_module, '_EXTRA_HEADERS_BY_TOKEN')
 
 
 def _emit_bedrock_events(
@@ -642,6 +644,7 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
     await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
 
     assert calls == [{'Tenant': 'a'}, {}]
+    assert not getattr(bedrock_module, '_EXTRA_HEADERS_BY_TOKEN')
     _, responses = _emit_bedrock_events(client.meta.events, {})
     assert len(responses) == 1
 

@@ -136,7 +136,8 @@ _EXTRA_HEADERS_UNIQUE_ID_PREFIX = 'pydantic-ai-extra-headers'
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 _EXTRA_HEADERS_PARAM = '__pydantic_ai_extra_headers'
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
-_EXTRA_HEADERS_BY_TOKEN: dict[object, tuple[int, dict[str, str]]] = {}
+_EXTRA_HEADERS_TOKENS = count()
+_EXTRA_HEADERS_BY_TOKEN: dict[int, tuple[int, dict[str, str]]] = {}
 _EXTRA_HEADERS_TOKEN_LOCK = Lock()
 _BedrockCallResult = TypeVar('_BedrockCallResult')
 
@@ -203,8 +204,8 @@ def _call_with_extra_headers(
     extra_headers: dict[str, str] | None,
 ) -> _BedrockCallResult:
     """Call a botocore method with a private parameter that the capture handler removes before validation."""
-    token = object()
     with _EXTRA_HEADERS_TOKEN_LOCK:
+        token = next(_EXTRA_HEADERS_TOKENS)
         _EXTRA_HEADERS_BY_TOKEN[token] = (id(client), extra_headers or {})
     try:
         # Only the opaque token reaches botocore's history recorder; header values remain in the private registry.
