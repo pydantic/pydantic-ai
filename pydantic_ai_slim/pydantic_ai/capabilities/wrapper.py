@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -344,15 +344,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         handler: WrapToolExecuteHandler,
     ) -> Any:
         return await self.wrapped.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=handler)
-
-    async def _wrap_tool_operation(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        return await self.wrapped._wrap_tool_operation(ctx, call=call, handler=handler)
 
     async def on_tool_execute_error(
         self,

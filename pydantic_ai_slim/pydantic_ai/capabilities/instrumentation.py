@@ -419,20 +419,20 @@ class Instrumentation(AbstractCapability[Any]):
             handle_tool_control_flow=True,
         )
 
-    async def _wrap_tool_operation(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        return await self._run_tool_span(
-            span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
+    def _record_tool_validation_error(self, call: ToolCallPart, error: ToolRetryError) -> None:
+        """Record the zero-width tool span for a stored validation failure."""
+        settings = self.settings
+        names = self._instrumentation_names
+        with settings.tracer.start_as_current_span(
+            names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
-            action=handler,
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
-            handle_tool_control_flow=True,
-        )
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            if settings.include_content and span.is_recording():
+                span.set_attribute(names.tool_result_attr, error.tool_retry.model_response())
+            span.record_exception(error, escaped=True)
+            span.set_status(StatusCode.ERROR)
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)

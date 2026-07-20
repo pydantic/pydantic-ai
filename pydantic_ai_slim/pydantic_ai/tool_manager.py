@@ -41,6 +41,28 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 )
 
 
+def _record_tool_validation_error(
+    root_capability: AbstractCapability[Any], call: ToolCallPart, error: ToolRetryError
+) -> None:
+    """Ask active instrumentation capabilities to record a stored validation failure."""
+    from .capabilities.instrumentation import Instrumentation
+    from .capabilities.wrapper import WrapperCapability
+
+    instrumentations: list[Instrumentation] = []
+    seen: set[int] = set()
+
+    def collect(capability: AbstractCapability[Any]) -> None:
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, Instrumentation) and id(capability) not in seen:
+            seen.add(id(capability))
+            instrumentations.append(capability)
+
+    root_capability.apply(collect)
+    for instrumentation in instrumentations:
+        instrumentation._record_tool_validation_error(call, error)  # pyright: ignore[reportPrivateUsage]
+
+
 @dataclass
 class ValidatedToolCall(Generic[AgentDepsT]):
     """Result of validating a tool call's arguments (may represent success or failure).
@@ -504,22 +526,13 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        ctx = self.ctx
+        if not validated.args_valid and self.root_capability is not None:
+            assert validated.validation_error is not None
+            _record_tool_validation_error(self.root_capability, validated.call, validated.validation_error)
 
-        async def execute_tool_call_impl() -> Any:
-            return await self._execute_tool_call_impl(
-                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
-            )
-
-        if self.root_capability is None:
-            return await execute_tool_call_impl()
-
-        if not validated.args_valid:
-            return await self.root_capability._wrap_tool_operation(  # pyright: ignore[reportPrivateUsage]
-                validated.ctx, call=validated.call, handler=execute_tool_call_impl
-            )
-
-        return await execute_tool_call_impl()
+        return await self._execute_tool_call_impl(
+            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
+        )
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 

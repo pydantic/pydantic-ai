@@ -76,9 +76,6 @@ WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[Validated
 WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
-_WrapToolOperationHandler: TypeAlias = Callable[[], Awaitable[Any]]
-"""Handler type for the internal tool operation wrap point."""
-
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
@@ -754,16 +751,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `handler(args)` runs the before, execute, error, and after hooks for the tool.
         """
         return await handler(args)
-
-    async def _wrap_tool_operation(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: _WrapToolOperationHandler,
-    ) -> Any:
-        """Wrap the internal operation that raises stored validation errors or executes the tool."""
-        return await handler()
 
     async def on_tool_execute_error(
         self,
