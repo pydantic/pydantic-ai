@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
@@ -25,6 +25,23 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+
+
+def test_tool_failed_pydantic_schema_accepts_instance() -> None:
+    """The custom schema accepts Python instances and preserves its tagged JSON representation."""
+    adapter = TypeAdapter(ToolFailed)
+    error = ToolFailed('Disk full')
+
+    assert adapter.validate_python(error) is error
+    assert adapter.validate_json(adapter.dump_json(error)) == error
+    assert adapter.json_schema() == {
+        'properties': {
+            'kind': {'const': 'tool-failed', 'title': 'Kind', 'type': 'string'},
+            'message': {'title': 'Message', 'type': 'string'},
+        },
+        'required': ['message', 'kind'],
+        'type': 'object',
+    }
 
 
 @pytest.mark.parametrize(

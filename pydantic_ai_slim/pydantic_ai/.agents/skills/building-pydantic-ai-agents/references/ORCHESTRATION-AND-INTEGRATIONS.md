@@ -84,6 +84,16 @@ Temporal entry points:
 
 There are parallel integrations for DBOS and Prefect.
 
+## Handle MCP Tool Errors
+
+Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
+
+- `'retry'` asks the model to correct and retry the call. This is the default.
+- `'failed'` reports a completed failed result via `ToolFailed` without consuming retry budget.
+- `'error'` propagates the underlying exception to application code.
+
+Structured server error content remains model-visible for both `'retry'` and `'failed'`.
+
 ## Use Embeddings for RAG
 
 Use `Embedder(...)` for query/document embeddings when the user is building retrieval or semantic search.

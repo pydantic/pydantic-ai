@@ -373,11 +373,10 @@ class CohereModel(Model[AsyncClientV2]):
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
-                content = part.model_response_str()
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=content,
+                    content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:

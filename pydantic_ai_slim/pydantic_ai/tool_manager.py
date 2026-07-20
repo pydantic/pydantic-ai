@@ -945,6 +945,8 @@ class ToolManager(Generic[AgentDepsT]):
             # from a successful tool return.
             return tool_call_result
         if isinstance(tool_call_result, ToolFailed):
+            if not wrap_validation_errors:
+                raise tool_call_result
             raise self._wrap_error_as_failed(call.tool_name, call, tool_call_result)
         if isinstance(tool_call_result, ToolApproved):
             validate_call = call

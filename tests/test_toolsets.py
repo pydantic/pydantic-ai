@@ -33,7 +33,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     InstructionPart,
     ModelRequest,
@@ -45,7 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -866,6 +873,26 @@ async def test_handle_call_raw_mode_propagates_tool_failed_from_body():
     with pytest.raises(ToolFailed, match='body failed'):
         await tool_manager.handle_call(
             ToolCallPart(tool_name='failing', args={}),
+            wrap_validation_errors=False,
+        )
+
+
+async def test_handle_call_raw_mode_propagates_deferred_tool_failed():
+    """A deferred handler result honors the same raw-error contract as an in-process failure."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def failing_later() -> None:
+        raise CallDeferred
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    tool_manager.resolve_deferred_tool_calls = AsyncMock(
+        return_value=DeferredToolResults(calls={'call-1': ToolFailed('deferred failed')})
+    )
+
+    with pytest.raises(ToolFailed, match='deferred failed'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='failing_later', args={}, tool_call_id='call-1'),
             wrap_validation_errors=False,
         )
 

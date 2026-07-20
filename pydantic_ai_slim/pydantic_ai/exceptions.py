@@ -93,7 +93,7 @@ class ToolFailed(Exception):
         self.message = message
         super().__init__(message)
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and other.message == self.message
 
     def __hash__(self) -> int:
@@ -102,18 +102,22 @@ class ToolFailed(Exception):
     @classmethod
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
         """Pydantic core schema to allow `ToolFailed` to be (de)serialized."""
-        schema = core_schema.typed_dict_schema(
+        serialized_schema = core_schema.typed_dict_schema(
             {
                 'message': core_schema.typed_dict_field(core_schema.str_schema()),
                 'kind': core_schema.typed_dict_field(core_schema.literal_schema(['tool-failed'])),
             }
         )
-        return core_schema.no_info_after_validator_function(
-            lambda dct: ToolFailed(dct['message']),
-            schema,
+        deserialization_schema = core_schema.no_info_after_validator_function(
+            lambda dct: cls(dct['message']),
+            serialized_schema,
+        )
+        return core_schema.json_or_python_schema(
+            json_schema=deserialization_schema,
+            python_schema=core_schema.union_schema([core_schema.is_instance_schema(cls), deserialization_schema]),
             serialization=core_schema.plain_serializer_function_ser_schema(
                 lambda x: {'message': x.message, 'kind': 'tool-failed'},
-                return_schema=schema,
+                return_schema=serialized_schema,
             ),
         )
 

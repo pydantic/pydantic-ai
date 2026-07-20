@@ -174,16 +174,8 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
             toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
         """
         toolset = toolset or self.wrapped
-
-        async def _validate_and_call() -> Any:
-            # Re-validation is inside `_wrap_call_tool_result` (not before it) because an args
-            # validator can itself raise a control-flow exception like `ToolFailed`/`ModelRetry`;
-            # keeping it here converts that to a serializable marker instead of letting it escape
-            # the activity as a failure. `ValidationError` is not caught, so it still propagates.
-            args_dict = tool.args_validator.validate_python(tool_args)
-            return await toolset.call_tool(name, args_dict, ctx, tool)
-
-        return await self._wrap_call_tool_result(_validate_and_call())
+        args_dict = tool.args_validator.validate_python(tool_args)
+        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
 def temporalize_toolset(

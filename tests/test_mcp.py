@@ -34,6 +34,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from fastmcp.client import Client
+    from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
         SSETransport,
         StreamableHttpTransport,
@@ -491,6 +492,33 @@ class TestMCPToolsetIntegration:
             with pytest.raises(ToolFailed, match='boom'):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
+    async def test_tool_failed_preserves_structured_error_content(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Structured MCP error details remain model-visible instead of collapsing to the first text block.
+
+        This uses an in-process client result because no external model or HTTP provider boundary is involved.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        structured_error = {'errorCategory': 'validation', 'isRetryable': False, 'detail': 'bad input'}
+
+        async def call_tool(*args: Any, **kwargs: Any) -> Any:
+            assert kwargs['raise_on_error'] is False
+            return CallToolResult(
+                content=[mcp_types.TextContent(type='text', text='bad input')],
+                structured_content=structured_error,
+                meta=None,
+                is_error=True,
+            )
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool
+            with pytest.raises(ToolFailed) as exc_info:
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+        assert json.loads(exc_info.value.message) == structured_error
+
     @pytest.mark.parametrize(
         'leaf_factory',
         [
@@ -525,17 +553,30 @@ class TestMCPToolsetIntegration:
             with pytest.raises(ModelRetry, match='grouped tool error'):
                 await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
-    async def test_call_tool_unwraps_real_exception_group_to_tool_failed(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    @pytest.mark.parametrize(
+        ('leaf_factory', 'expected_exception'),
+        [
+            pytest.param(lambda: ToolError('grouped tool error'), ToolFailed, id='tool-error'),
+            pytest.param(
+                lambda: McpError(mcp_types.ErrorData(code=400, message='grouped protocol error')),
+                ModelRetry,
+                id='mcp-error',
+            ),
+        ],
+    )
+    async def test_call_tool_unwraps_real_exception_group_with_failed_behavior(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        leaf_factory: Any,
+        expected_exception: type[ToolFailed] | type[ModelRetry],
     ):
-        """With `tool_error_behavior='failed'`, a tool error wrapped in an `ExceptionGroup` (the
-        production race) becomes a `ToolFailed` result instead of re-raising the raw group and
-        aborting the run — mirroring the bare-`ToolError` path."""
+        """Failed behavior converts completed tool errors but keeps grouped protocol errors retryable."""
         toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
 
         async def call_tool_in_failing_task_group(*args: Any, **kwargs: Any) -> Any:
             async def fail() -> None:
-                raise ToolError('grouped tool error')
+                raise leaf_factory()
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(fail)
@@ -543,7 +584,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             toolset.client.call_tool = call_tool_in_failing_task_group
-            with pytest.raises(ToolFailed, match='grouped tool error'):
+            with pytest.raises(expected_exception, match=r'grouped (tool|protocol) error'):
                 await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     async def test_call_tool_reraises_grouped_errors_it_must_not_convert(

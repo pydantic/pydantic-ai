@@ -261,6 +261,7 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
 """
 
+
 A = TypeVar('A')
 
 
