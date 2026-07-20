@@ -3135,6 +3135,26 @@ def _openai_hosted_tool_search_items() -> tuple[list[ResponseToolSearchCall], li
     return calls, outputs
 
 
+def _openai_hosted_tool_search_parameters() -> ModelRequestParameters:
+    return ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up an exchange rate.',
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
+            ToolDefinition(
+                name='stock_lookup',
+                description='Look up a stock price.',
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+
+
 @pytest.mark.parametrize('call_id', [None, 'call_a'], ids=['null-id', 'explicit-id'])
 def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | None) -> None:
     """An actual output is retained even when no matching call is present."""
@@ -3150,8 +3170,8 @@ def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | Non
     assert return_part.tool_call_id == (call_id or 'tso_a')
 
 
-def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> None:
-    """Multiple null-ID pairs retain item identities because OpenAI supplies no correlation."""
+async def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> None:
+    """Ambiguous null-ID pairs retain and replay every provider item without guessed correlation."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
 
@@ -3164,6 +3184,18 @@ def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> None:
         part for part in ambiguous.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
     assert [part.tool_call_id for part in ambiguous_parts] == ['ts_a', 'tso_a', 'ts_b', 'tso_b']
+
+    _, replayed_items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ambiguous],
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        _openai_hosted_tool_search_parameters(),
+    )
+    assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
+        ('tool_search_call', 'ts_a', None),
+        ('tool_search_output', 'tso_a', None),
+        ('tool_search_call', 'ts_b', None),
+        ('tool_search_output', 'tso_b', None),
+    ]
 
 
 def test_openai_ignores_client_tool_search_output() -> None:
@@ -3179,12 +3211,19 @@ def test_openai_ignores_client_tool_search_output() -> None:
     assert response.parts == []
 
 
-async def test_openai_hosted_tool_search_null_id_streaming_parity(allow_model_requests: None) -> None:
-    """Multiple null-ID pairs use the same conservative identity policy in both modes."""
+@pytest.mark.parametrize(
+    ('pair_count', 'expected_ids'),
+    [(1, ['ts_a', 'ts_a']), (2, ['ts_a', 'tso_a', 'ts_b', 'tso_b'])],
+    ids=['singleton', 'ambiguous'],
+)
+async def test_openai_hosted_tool_search_null_id_streaming_parity(
+    allow_model_requests: None, pair_count: int, expected_ids: list[str]
+) -> None:
+    """Single and ambiguous null-ID responses converge to the same history in both modes."""
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
-    final_items = [calls[0], outputs[0], calls[1], outputs[1]]
+    final_items = [item for pair in zip(calls[:pair_count], outputs[:pair_count]) for item in pair]
     completed_response = response_message(final_items).model_copy(update={'status': 'completed'})
     created_response = response_message([]).model_copy(update={'status': 'in_progress'})
     stream: list[resp.ResponseStreamEvent] = [
@@ -3240,12 +3279,7 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(allow_model_re
     assert (
         [part.tool_call_id for part in streamed_parts]
         == [part.tool_call_id for part in non_streamed_parts]
-        == [
-            'ts_a',
-            'tso_a',
-            'ts_b',
-            'tso_b',
-        ]
+        == expected_ids
     )
 
 
@@ -3294,26 +3328,10 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
             provider_name='openai',
         )
     ]
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='get_exchange_rate',
-                description='Look up an exchange rate.',
-                with_native=ToolSearchTool.kind,
-                defer_loading=True,
-            ),
-            ToolDefinition(
-                name='stock_lookup',
-                description='Look up a stock price.',
-                with_native=ToolSearchTool.kind,
-                defer_loading=True,
-            ),
-        ],
-        native_tools=[ToolSearchTool()],
-    )
-
     _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids), params
+        history,
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+        _openai_hosted_tool_search_parameters(),
     )
 
     expected_call: dict[str, Any] = {
