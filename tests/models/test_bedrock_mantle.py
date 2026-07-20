@@ -70,6 +70,48 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
         assert replay_result.output == 'OK'
 
 
+async def test_reused_tool_call_ids_gpt_5_5(allow_model_requests: None) -> None:
+    """The Responses ID reset is a property of the `/openai/v1` endpoint, not just gpt-5.6.
+
+    gpt-5.5 resets its tool-call IDs to `call_0` across separate responses too, so pydantic-ai must
+    re-qualify them here as well — this covers the broadened response-scoped gate on a non-5.6 model.
+    """
+    model = infer_model('bedrock-mantle:openai.gpt-5.5', lambda _: _provider())
+    agent = Agent(
+        model,
+        instructions=(
+            'Call first_tool. After receiving its result, call second_tool in a new model response. '
+            'After receiving that result, answer with both results. Never call both tools in one response.'
+        ),
+    )
+
+    @agent.tool_plain
+    def first_tool() -> str:
+        return 'first result'
+
+    @agent.tool_plain
+    def second_tool() -> str:
+        return 'second result'
+
+    result = await agent.run('Follow the tool instructions.')
+    messages = result.all_messages()
+
+    tool_calls = [
+        (message.provider_response_id, tool_call_part)
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for tool_call_part in message.tool_calls
+    ]
+    assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
+    assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
+    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
+    # gpt-5.5 reuses the raw `call_0` id across separate responses (like gpt-5.6); the qualified ids
+    # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
+    assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+    replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
+    assert replay_result.output == 'OK'
+
+
 async def test_gpt_oss_responses(allow_model_requests: None) -> None:
     """GPT-OSS is served on the Responses API at `/v1/responses` (not GPT-5.x's `/openai/v1`)."""
     model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: _provider())

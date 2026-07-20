@@ -51,9 +51,12 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         interface = 'responses'
     else:
         interface = 'openai-responses'
-    # Mantle GPT-5.6 resets Responses tool-call IDs across separate responses; qualify them with the
-    # response ID at ingestion so pydantic-ai keeps its history-wide-unique invariant. See #6536.
-    response_scoped = interface == 'openai-responses' and base_model_name.startswith('gpt-5.6')
+    # Mantle GPT-5.x on the `/openai/v1` Responses endpoint resets tool-call IDs to `call_0` across
+    # separate responses (verified live on 5.5 and 5.6); qualify them with the response ID at ingestion
+    # so pydantic-ai keeps its history-wide-unique invariant. GPT-OSS on `/v1/responses` is unaffected
+    # (globally-unique IDs), so this keys on the endpoint family rather than the model version — the
+    # reset follows the endpoint, and a per-version allowlist would silently miss future GPT-5.x. See #6536.
+    response_scoped = interface == 'openai-responses'
     return merge_profile(
         openai_model_profile(base_model_name),
         BedrockMantleModelProfile(

@@ -214,7 +214,18 @@ def test_bedrock_mantle_profiles() -> None:
             'supported_native_tools': frozenset(),
         }
     )
-    # Response-scoped IDs only apply to GPT-5.6 Responses.
+    # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
+    # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
+    # not the model version.
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('openai_responses_tool_call_ids_are_response_scoped')
+        is True
+    )
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('openai_responses_tool_call_ids_are_response_scoped')
+        is True
+    )
+    # GPT-OSS on `/v1/responses` keeps globally-unique IDs, so it is not response-scoped.
     assert (
         infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get(
             'openai_responses_tool_call_ids_are_response_scoped', False
