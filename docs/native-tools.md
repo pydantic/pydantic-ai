@@ -797,19 +797,17 @@ See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-to
 ### Usage
 
 ```py {title="advisor_anthropic.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Advisor
+from pydantic_ai import Agent, AdvisorTool
+from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[Advisor(model='claude-opus-4-8')],
+    capabilities=[NativeTool(AdvisorTool(model='claude-opus-4-8'))],
 )
 
 result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
 print(result.output)
 ```
-
-You can also configure the tool directly with [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool].
 
 Advisor blocks round-trip through message history automatically. Advisors newer than Opus 4.8 (Claude Fable 5 and Claude Mythos 5) return encrypted advice the client cannot read — it is stored verbatim and decrypted server-side on the next turn — while Opus 4.8 and older advisors return plaintext. If you continue a conversation without the advisor tool, the advisor blocks are stripped from the replayed history, since the API rejects advisor blocks that aren't accompanied by the advisor tool definition.
 

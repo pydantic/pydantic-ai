@@ -31,7 +31,7 @@ Reach for these when the provider supports them:
 - `MemoryTool`
 - `MCPServerTool`
 - `FileSearchTool`
-- `AdvisorTool` (Anthropic only; also available as the `Advisor()` capability — lets a faster executor model consult a stronger advisor model mid-generation)
+- `AdvisorTool` (Anthropic only; lets a faster executor model consult a stronger advisor model mid-generation)
 
 ## Dynamic Native Tool Configuration
 
