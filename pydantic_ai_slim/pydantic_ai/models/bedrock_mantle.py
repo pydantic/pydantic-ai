@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from functools import cached_property
+from typing import TYPE_CHECKING, Literal, cast
 
 from ..exceptions import UserError
 from ..profiles import ModelProfileSpec
-from ..providers.bedrock_mantle import BedrockMantleProvider
+from ..providers.bedrock_mantle import BedrockMantleModelProfile, BedrockMantleProvider
 from .openai import (
     OpenAIChatModel,
     OpenAIChatModelSettings,
@@ -74,9 +75,11 @@ class BedrockMantleResponsesModel(OpenAIResponsesModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Chat Completions API; '
                 'construct it with `BedrockMantleChatModel` instead.'
             )
-        self._mantle_client = provider._openai_client(  # pyright: ignore[reportPrivateUsage]
-            'openai-responses' if interface == 'openai-responses' else 'responses'
-        )
+        self._mantle_client = provider._openai_client(interface)  # pyright: ignore[reportPrivateUsage]
+
+    @cached_property
+    def profile(self) -> BedrockMantleModelProfile:
+        return cast(BedrockMantleModelProfile, super().profile)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -120,7 +123,11 @@ class BedrockMantleChatModel(OpenAIChatModel):
                 f'Model {model_name!r} is served on the Bedrock Mantle Responses API; '
                 'construct it with `BedrockMantleResponsesModel` instead.'
             )
-        self._mantle_client = provider._openai_client('chat')  # pyright: ignore[reportPrivateUsage]
+        self._mantle_client = provider._openai_client(interface)  # pyright: ignore[reportPrivateUsage]
+
+    @cached_property
+    def profile(self) -> BedrockMantleModelProfile:
+        return cast(BedrockMantleModelProfile, super().profile)
 
     @property
     def client(self) -> AsyncOpenAI:

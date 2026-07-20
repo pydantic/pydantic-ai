@@ -15,11 +15,7 @@ from __future__ import annotations as _annotations
 
 import re
 
-__all__ = (
-    'BEDROCK_GEO_PREFIXES',
-    'remove_bedrock_geo_prefix',
-    'split_bedrock_model_id',
-)
+__all__ = ('BEDROCK_GEO_PREFIXES', 'remove_bedrock_geo_prefix', 'split_bedrock_model_id')
 
 # Known geo prefixes for cross-region inference profile IDs
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
