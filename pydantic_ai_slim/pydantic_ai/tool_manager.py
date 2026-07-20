@@ -675,7 +675,9 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise
 
-        self.succeeded_tools.add(name)
+        # Gated like `failed_tools` above: raw-mode (streaming) callers leave retry-budget state untouched.
+        if wrap_validation_errors:
+            self.succeeded_tools.add(name)
         return result
 
     async def handle_output_tool_call(
@@ -741,10 +743,13 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except SkipToolExecution as e:
             usage.tool_calls += 1
-            self.succeeded_tools.add(validated.call.tool_name)
-            return e.result
+            tool_result = e.result
 
-        self.succeeded_tools.add(validated.call.tool_name)
+        # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
+        # raw-mode callers (e.g. sandboxed dispatch) leave retry-budget state untouched, so a
+        # nested success must not reset the tool's carried retry count in the next run step.
+        if wrap_validation_errors:
+            self.succeeded_tools.add(validated.call.tool_name)
         return tool_result
 
     async def _raw_execute(

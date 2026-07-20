@@ -922,6 +922,9 @@ async def test_handle_call_wrap_validation_errors_false():
         )
         == 10
     )
+    # The raw-mode success leaves retry-budget state untouched: it is not recorded in
+    # succeeded_tools, so it can't reset a carried retry count in the next run step.
+    assert tool_manager.succeeded_tools == set()
 
     # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
     with pytest.raises(ValidationError):
