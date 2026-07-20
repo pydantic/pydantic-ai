@@ -456,8 +456,7 @@ def test_mistral_mistral_large():
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_small_latest():
-    """Small 4 / Medium 3.5 have adjustable reasoning: thinking is opt-in via
-    `reasoning_effort`, unlike always-on magistral."""
+    """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
     profile = MistralProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
 
@@ -1076,8 +1075,7 @@ def test_azure_mistral_prefix():
 
 
 def test_azure_mistral_small_latest():
-    """The Azure route reuses the shared Mistral profile, which no longer advertises thinking for
-    adjustable models, so `thinking` is ignored here. Adjustable reasoning is native-provider-only."""
+    """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
     from pydantic_ai.providers.azure import AzureProvider
 
     profile = AzureProvider.model_profile('mistral-small-latest')
@@ -1351,9 +1349,8 @@ def test_litellm_openai_gpt():
 
 
 def test_litellm_magistral():
-    """The always-on magistral flags are advertised on the LiteLLM route. The bare family profile
-    skips the OpenAI baseline (structured output etc.), a pre-existing gap shared with the other
-    sparse family profiles (deepseek, cohere) that should be fixed for all prefixes at once."""
+    """Magistral's always-on flags survive the LiteLLM route. The sparse family profile skips the
+    OpenAI baseline (structured output), a pre-existing gap shared with deepseek and cohere."""
     from pydantic_ai.providers.litellm import LiteLLMProvider
 
     profile = LiteLLMProvider.model_profile('mistral/magistral-medium-latest')
@@ -1367,9 +1364,8 @@ def test_litellm_magistral():
 
 
 def test_litellm_mistral_small_latest():
-    """LiteLLM's Mistral route must NOT advertise thinking for adjustable models: LiteLLM rejects
-    `reasoning_effort` for non-magistral mistral models, so this route falls back to the plain
-    OpenAI profile. Adjustable reasoning is native-provider-only."""
+    """LiteLLM must not advertise thinking for adjustable Mistral ids (it rejects `reasoning_effort`
+    for them); the route falls back to the plain OpenAI profile."""
     from pydantic_ai.providers.litellm import LiteLLMProvider
 
     profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')

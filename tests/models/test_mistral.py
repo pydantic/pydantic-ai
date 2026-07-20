@@ -3341,11 +3341,9 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
 ## Reasoning effort
 #####################
 
-# These are kwarg-level unit tests rather than VCR tests: the cassette matcher isn't sensitive to
-# the request body, so a dropped or mis-mapped `reasoning_effort` would still replay green against
-# a recording. Asserting the SDK kwarg directly is what pins the mapping; the mistralai SDK omits
-# `UNSET` fields from the request body at serialization. The wire-level pinning (mapped values,
-# UNSET omission, magistral absence) lives in tests/test_thinking_wire_contract.py.
+# Kwarg-level unit tests: the cassette matcher ignores the request body, so a mis-mapped
+# `reasoning_effort` would replay green against a recording. The wire bodies themselves
+# (mapped values, UNSET omission, magistral absence) are pinned in tests/test_thinking_wire_contract.py.
 
 
 @pytest.mark.parametrize(
@@ -3390,11 +3388,8 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
 async def test_reasoning_effort_not_sent_for_always_on_model(
     allow_model_requests: None, thinking: ThinkingLevel
 ) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent for any `thinking` value.
-
-    Enabled levels reach `_translate_thinking` and are dropped by its always-on guard;
-    `thinking=False` is stripped upstream in `prepare_request` and never reaches the model.
-    """
+    """`magistral` always reasons, so `reasoning_effort` is never sent: enabled levels are dropped
+    by `_translate_thinking`'s always-on guard, `False` is stripped upstream in `prepare_request`."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -3444,11 +3439,7 @@ async def test_reasoning_effort_stream_not_sent_without_config(allow_model_reque
 
 
 async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) -> None:
-    """thinking=False maps to reasoning_effort='none' on the function-calling streaming path.
-
-    This pins reasoning_effort on every request of a tool-call round trip, which issues
-    multiple sequential streaming requests.
-    """
+    """`thinking=False` sends `reasoning_effort='none'` on every request of a streamed tool-call round trip."""
     streams = [
         [
             func_chunk(

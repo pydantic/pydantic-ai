@@ -1,12 +1,8 @@
 """Tests for Mistral model profile detection.
 
-- `supports_thinking`: whether the model supports thinking/reasoning
-- `thinking_always_enabled`: whether thinking is always on (`magistral`) or opt-in via
-  `reasoning_effort` (the adjustable-reasoning models)
-
-Adjustable reasoning lives on `MistralProvider`, not the shared `mistral_model_profile`, so the
-15 OpenAI-compatible providers that reuse the shared profile keep ignoring `thinking` instead of
-sending Mistral effort values their routes reject.
+Adjustable reasoning lives on `MistralProvider`, not the shared `mistral_model_profile`: the
+OpenAI-compatible providers that reuse the shared profile must keep ignoring `thinking` instead
+of sending effort values Mistral rejects.
 """
 
 from __future__ import annotations as _annotations
@@ -38,19 +34,14 @@ pytestmark = [
     ],
 )
 def test_adjustable_reasoning_models(model_name: str):
-    """Models with adjustable reasoning: thinking supported on the native provider, opt-in via
-    `reasoning_effort`."""
+    """Adjustable-reasoning ids: the native provider advertises thinking, opt-in via `reasoning_effort`."""
     profile = MistralProvider.model_profile(model_name)
     assert profile.get('supports_thinking') is True
     assert profile.get('thinking_always_enabled') is False
 
 
 def test_adjustable_reasoning_not_on_shared_profile():
-    """The shared `mistral_model_profile` must NOT advertise thinking for adjustable models.
-
-    It is consumed by the 15 OpenAI-compatible proxy providers (LiteLLM, Azure, etc.) whose
-    routes reject Mistral's `reasoning_effort`, so thinking stays a native-provider concern.
-    """
+    """The shared profile must NOT advertise thinking for adjustable ids (see module docstring)."""
     assert mistral_model_profile('mistral-small-latest') is None
     assert MistralProvider.model_profile('mistral-small-latest').get('supports_thinking') is True
 
@@ -96,7 +87,6 @@ def test_non_thinking_models(model_name: str):
 
 @pytest.mark.parametrize('model_name', _NON_REASONING_MODELS)
 def test_non_thinking_models_native_provider(model_name: str):
-    """The native provider must not advertise thinking for these ids either, so accidental
-    widening of the adjustable allowlist gets caught."""
+    """The native provider must not advertise thinking for these ids either; catches allowlist widening."""
     profile = MistralProvider.model_profile(model_name)
     assert not profile.get('supports_thinking')
