@@ -23,9 +23,15 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -48,6 +54,15 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
+
+ModelSelection: TypeAlias = 'Model | KnownModelName | str'
+"""A concrete model selection, before model ID resolution."""
+
+ModelSelector: TypeAlias = 'Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection | Awaitable[ModelSelection]]'
+"""A sync or async per-step model selector."""
+
+AgentModel: TypeAlias = 'ModelSelection | ModelSelector[AgentDepsT]'
+"""A static model selection or a callable evaluated for every request step."""
 
 RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
@@ -241,6 +256,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with an agent.
+
+        Called after the agent's own configuration is available and before capability
+        contributions are extracted. Constructor capabilities are bound once during agent
+        construction; static run capabilities are bound once per run. Override this to inspect
+        the agent and return an agent-bound copy. The default returns `self`.
+
+        A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] result is also bound before
+        its own [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] hook. A specialized
+        run-bound value returned by an ordinary capability's `for_run()` is not bound again.
+        """
+        return self
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -290,6 +319,42 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these settings are registered up front but merge as an empty dict until the
         model calls the `load_capability` tool for this capability.
+        """
+        return None
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        """Return a static model, a per-step model selector, or `None` to make no selection.
+
+        A selector receives
+        [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] and may be
+        synchronous or asynchronous. Static selections are resolved once per run; selectors
+        are evaluated before each new logical model request step. When several capabilities
+        contribute a model, the last non-`None` selection wins. This differs from
+        [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
+        where the first resolver to return a model wins.
+
+        See [Selecting the model](../capabilities.md#selecting-the-model) for precedence,
+        bootstrap, and deferred-capability semantics.
+        """
+        return None
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `resolve_model_id`."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        """Resolve a model ID, or return `None` to defer.
+
+        Capabilities are tried in user-supplied order. When every capability returns `None`, the ID
+        is passed to [`infer_model`][pydantic_ai.models.infer_model]. The context provides
+        the agent and actual run dependencies, so resolution can configure tenant-specific
+        providers or look up models in a registry.
         """
         return None
 
