@@ -1595,6 +1595,37 @@ def test_skipped_tool_execution_has_success_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_execute_hook_retry_exhaustion_does_not_record_result(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    @dataclass
+    class RetryTool(AbstractCapability[Any]):
+        async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
+            raise ModelRetry('never visible')
+
+    agent = Agent(
+        FunctionModel(lambda _messages, _info: ModelResponse(parts=[ToolCallPart('retry', {})])),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryTool()],
+    )
+
+    @agent.tool_plain(retries=0)
+    def retry() -> str:
+        return 'result'
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+        agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    [tool_span] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert tool_span['logfire.level_num'] == 17
+    assert 'gen_ai.tool.call.result' not in tool_span
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_tool_span_respects_public_wrapper_order(capfire: CaptureLogfire) -> None:
     @dataclass
     class OuterToolSpan(AbstractCapability[Any]):

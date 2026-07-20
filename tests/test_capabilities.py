@@ -5833,6 +5833,10 @@ class TestToolExecuteHooks:
                     raise ValueError('after failed')
                 return kwargs['result']
 
+            async def on_tool_execute_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+                events.append('on_error')
+                raise kwargs['error']
+
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[RecoveringCap()])
 
         @agent.tool_plain
