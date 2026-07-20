@@ -116,6 +116,7 @@ try:
     from anthropic.types.beta import (
         BetaAdvisorTool20260301Param,
         BetaAdvisorToolResultBlock,
+        BetaAdvisorToolResultBlockParam,
         BetaBase64PDFSourceParam,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
@@ -208,6 +209,9 @@ try:
     )
     from anthropic.types.beta.beta_advisor_tool_result_block import (
         Content as AdvisorToolResultBlockContent,
+    )
+    from anthropic.types.beta.beta_advisor_tool_result_block_param import (
+        Content as AdvisorToolResultBlockParamContent,
     )
     from anthropic.types.beta.beta_bash_code_execution_tool_result_block import (
         Content as BashCodeExecutionToolResultBlockContent,
@@ -1479,6 +1483,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # also covers the no-history single-turn custom callable case (where the local
         # `search_tools` exchange is created on this turn).
         tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+        # The API 400s if advisor blocks appear in history without the advisor tool in the current
+        # request, so when it's absent we strip advisor call/result blocks during replay (per
+        # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
+        # verbatim (no pairing logic needed).
+        advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
         # Filter `tool_reference` entries during replay against the tools the current turn
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
@@ -1586,6 +1595,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaTextEditorCodeExecutionToolResultBlockParam
                     | BetaWebFetchToolResultBlockParam
                     | BetaToolSearchToolResultBlockParam
+                    | BetaAdvisorToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
@@ -1661,6 +1671,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_fetch',
+                                    input=response_part.args_as_dict(),
+                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
+                                assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == AdvisorTool.kind:
+                                if not advisor_active:
+                                    continue
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='advisor',
                                     input=response_part.args_as_dict(),
                                 )
                                 _add_anthropic_caller_param(server_tool_use_block_param, response_part)
@@ -1801,6 +1822,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 _add_anthropic_caller_param(block, response_part)
                                 assistant_content_params.append(block)
+                            elif response_part.tool_name == AdvisorTool.kind:
+                                # Drop advisor result blocks when continuing without the advisor tool: the
+                                # API 400s if they appear in history without the tool in the request, and
+                                # Anthropic's docs prescribe stripping them (mirrors the orphan tool-search
+                                # drop above). When kept, the discriminated content dict round-trips verbatim
+                                # so the server can decrypt a redacted advisor result on the next turn.
+                                if advisor_active and isinstance(response_part.content, dict):
+                                    assistant_content_params.append(
+                                        BetaAdvisorToolResultBlockParam(
+                                            tool_use_id=tool_use_id,
+                                            type='advisor_tool_result',
+                                            content=cast(
+                                                AdvisorToolResultBlockParamContent,
+                                                response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                            ),
+                                        )
+                                    )
                             elif isinstance(response_part, NativeToolSearchReturnPart):
                                 assistant_content_params.append(
                                     _build_tool_search_replay_block(response_part, tool_use_id, available_tool_names)
