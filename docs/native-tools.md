@@ -14,6 +14,7 @@ Pydantic AI supports the following native tools:
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
+- **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic only)
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
@@ -772,6 +773,59 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Advisor Tool
+
+The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets a faster "executor" model consult a stronger "advisor" model mid-generation, without switching the agent's model. The executor decides when to ask for advice; the provider runs the advisor sub-inference server-side and feeds the result back into the executor's context.
+
+See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) documentation for the executor/advisor compatibility matrix, which is validated by the API.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Available on the direct Claude API and Claude Platform on AWS. Not available on Bedrock (InvokeModel), Vertex, or Foundry. |
+| OpenAI | ❌ | |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+```py {title="advisor_anthropic.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Advisor
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[Advisor(model='claude-opus-4-8')],
+)
+
+result = agent.run_sync('Design a caching strategy for our API. Consult your advisor first.')
+print(result.output)
+```
+
+You can also configure the tool directly with [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool].
+
+Advisor blocks round-trip through message history automatically. Advisors newer than Opus 4.8 (Claude Fable 5 and Claude Mythos 5) return encrypted advice the client cannot read — it is stored verbatim and decrypted server-side on the next turn — while Opus 4.8 and older advisors return plaintext. If you continue a conversation without the advisor tool, the advisor blocks are stripped from the replayed history, since the API rejects advisor blocks that aren't accompanied by the advisor tool definition.
+
+!!! note "Streaming"
+    When streaming, expect a quiet pause while the advisor runs: the advisor sub-inference does not stream, so its result arrives all at once as a single block rather than incrementally.
+
+Advisor tokens are reported separately under `advisor_*` keys on [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] (e.g. `advisor_input_tokens`, `advisor_output_tokens`, `advisor_iterations`) and are excluded from the request's top-level token totals, because they are billed at the advisor model's rates rather than the executor's.
+
+### Configuration Options
+
+| Parameter | Anthropic |
+|-----------|-----------|
+| `model` | ✅ (required — the advisor model to consult) |
+| `max_uses` | ✅ (cap on advisor consultations per run) |
+| `max_tokens` | ✅ (cap on advisor output tokens, minimum 1024; makes the result carry a `stop_reason`) |
+| `caching` | ✅ (`'5m'` or `'1h'` — ephemeral caching of the advisor context) |
 
 ## MCP Server Tool
 
