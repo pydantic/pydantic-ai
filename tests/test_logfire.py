@@ -12,7 +12,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -1672,12 +1672,9 @@ def test_execute_hook_retry_exhaustion_does_not_record_result(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_tool_span_respects_public_wrapper_order(capfire: CaptureLogfire) -> None:
+def test_tool_span_wraps_public_execute_wrapper(capfire: CaptureLogfire) -> None:
     @dataclass
     class OuterToolSpan(AbstractCapability[Any]):
-        def get_ordering(self) -> CapabilityOrdering:
-            return CapabilityOrdering(position='outermost')
-
         async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
             with logfire.span('outer tool wrapper'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 return await kwargs['handler'](kwargs['args'])
@@ -1701,7 +1698,7 @@ def test_tool_span_respects_public_wrapper_order(capfire: CaptureLogfire) -> Non
     spans = capfire.exporter.exported_spans_as_dict()
     outer_span = next(span for span in spans if span['name'] == 'outer tool wrapper')
     tool_span = next(span for span in spans if span['name'] == 'execute_tool double')
-    assert tool_span['parent']['span_id'] == outer_span['context']['span_id']
+    assert outer_span['parent']['span_id'] == tool_span['context']['span_id']
 
 
 class WeatherInfo(BaseModel):

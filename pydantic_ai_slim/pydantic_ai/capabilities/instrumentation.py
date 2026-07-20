@@ -22,18 +22,15 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
-from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
-    ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
     WrapRunHandler,
-    WrapToolExecuteHandler,
 )
 
 if TYPE_CHECKING:
@@ -351,17 +348,6 @@ class Instrumentation(AbstractCapability[Any]):
         ) as span:
             try:
                 result = await action()
-            except SkipToolExecution as exc:
-                if not handle_tool_control_flow:
-                    span.record_exception(exc, escaped=True)
-                    span.set_status(StatusCode.ERROR)
-                    raise
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        names.tool_result_attr,
-                        exc.result if isinstance(exc.result, str) else serialize_result(exc.result),
-                    )
-                raise
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
                     span.record_exception(exc, escaped=True)
@@ -402,37 +388,15 @@ class Instrumentation(AbstractCapability[Any]):
 
         return result
 
-    async def wrap_tool_execute(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
-    ) -> Any:
+    async def _instrument_tool_call(self, call: ToolCallPart, handler: Callable[[], Awaitable[Any]]) -> Any:
+        """Instrument the operation that raises a stored validation error or executes the tool."""
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
-            action=lambda: handler(args),
+            action=handler,
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
             handle_tool_control_flow=True,
         )
-
-    def _record_tool_validation_error(self, call: ToolCallPart, error: ToolRetryError) -> None:
-        """Record the zero-width tool span for a stored validation failure."""
-        settings = self.settings
-        names = self._instrumentation_names
-        with settings.tracer.start_as_current_span(
-            names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            if settings.include_content and span.is_recording():
-                span.set_attribute(names.tool_result_attr, error.tool_retry.model_response())
-            span.record_exception(error, escaped=True)
-            span.set_status(StatusCode.ERROR)
 
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)

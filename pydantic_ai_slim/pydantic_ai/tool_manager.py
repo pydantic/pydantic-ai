@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -41,10 +41,13 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 )
 
 
-def _record_tool_validation_error(
-    root_capability: AbstractCapability[Any], ctx: RunContext[Any], call: ToolCallPart, error: ToolRetryError
-) -> None:
-    """Ask active instrumentation capabilities to record a stored validation failure."""
+async def _instrument_tool_call(
+    root_capability: AbstractCapability[Any],
+    ctx: RunContext[Any],
+    call: ToolCallPart,
+    handler: Callable[[], Awaitable[Any]],
+) -> Any:
+    """Run a tool call through active instrumentation capabilities."""
     from .capabilities.combined import CombinedCapability
     from .capabilities.instrumentation import Instrumentation
     from .capabilities.wrapper import WrapperCapability
@@ -65,8 +68,18 @@ def _record_tool_validation_error(
             instrumentations.append(capability)
 
     collect(root_capability)
-    for instrumentation in instrumentations:
-        instrumentation._record_tool_validation_error(call, error)  # pyright: ignore[reportPrivateUsage]
+
+    def wrap(instrumentation: Instrumentation, inner: Callable[[], Awaitable[Any]]) -> Callable[[], Awaitable[Any]]:
+        async def wrapped() -> Any:
+            return await instrumentation._instrument_tool_call(  # pyright: ignore[reportPrivateUsage]
+                call, inner
+            )
+
+        return wrapped
+
+    for instrumentation in reversed(instrumentations):
+        handler = wrap(instrumentation, handler)
+    return await handler()
 
 
 @dataclass
@@ -532,15 +545,18 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        if not validated.args_valid and self.root_capability is not None:
-            assert validated.validation_error is not None
-            _record_tool_validation_error(
-                self.root_capability, validated.ctx, validated.call, validated.validation_error
+        ctx = self.ctx
+
+        async def execute_tool_call_impl() -> Any:
+            return await self._execute_tool_call_impl(
+                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
             )
 
-        return await self._execute_tool_call_impl(
-            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
-        )
+        if self.root_capability is not None:
+            return await _instrument_tool_call(
+                self.root_capability, validated.ctx, validated.call, execute_tool_call_impl
+            )
+        return await execute_tool_call_impl()
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 
