@@ -526,13 +526,8 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
     assert results == {'b': [{'Setup': 'b'}]}
     results.clear()
 
-    nested = False
-
     def forward_before_capture(params: dict[str, Any], **_: Any) -> None:
-        nonlocal nested
-        if not nested:
-            nested = True
-            client_b.count_tokens(**params)
+        client_b.count_tokens(**params)
 
     client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', forward_before_capture)
     await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
@@ -646,6 +641,8 @@ async def test_bedrock_extra_headers_do_not_leak_into_later_requests():
 
     assert calls == [{'Tenant': 'a'}, {}]
     assert not getattr(bedrock_module, '_EXTRA_HEADERS_BY_TOKEN')
+    stale_headers, _ = _emit_bedrock_events(client.meta.events, {'__pydantic_ai_extra_headers': -1})
+    assert stale_headers == {}
     _, responses = _emit_bedrock_events(client.meta.events, {})
     assert len(responses) == 1
 
