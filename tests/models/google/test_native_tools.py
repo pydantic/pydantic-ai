@@ -304,7 +304,16 @@ def test_content_model_response_echoes_none_web_search_raw_tool_response_after_r
     )
 
 
-def test_content_model_response_normalizes_invalid_raw_tool_response():
+@pytest.mark.parametrize(
+    ('raw_response', 'expected_response'),
+    [
+        ('invalid history value', {'result': 'invalid history value'}),
+        ({1: 'invalid key'}, {'result': {1: 'invalid key'}}),
+    ],
+)
+def test_content_model_response_normalizes_invalid_raw_tool_response(
+    raw_response: Any, expected_response: dict[Any, Any]
+):
     response = ModelResponse(
         parts=[
             NativeToolReturnPart(
@@ -312,7 +321,7 @@ def test_content_model_response_normalizes_invalid_raw_tool_response():
                 provider_name='google-gla',
                 tool_call_id='web_search_call',
                 content=[],
-                provider_details={'raw_tool_response': 'invalid history value'},
+                provider_details={'raw_tool_response': raw_response},
             ),
         ],
         provider_name='google-gla',
@@ -322,17 +331,15 @@ def test_content_model_response_normalizes_invalid_raw_tool_response():
     assert mapped is not None
     parts = mapped.get('parts')
     assert parts is not None
-    assert parts == snapshot(
-        [
-            {
-                'tool_response': {
-                    'id': 'web_search_call',
-                    'tool_type': ToolType.GOOGLE_SEARCH_WEB,
-                    'response': {'result': 'invalid history value'},
-                }
+    assert parts == [
+        {
+            'tool_response': {
+                'id': 'web_search_call',
+                'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                'response': expected_response,
             }
-        ]
-    )
+        }
+    ]
 
 
 @pytest.mark.parametrize('supports_tool_combination', [False, True])

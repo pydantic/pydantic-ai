@@ -1708,7 +1708,10 @@ def _native_tool_return_part_dict(
     if 'raw_tool_response' in provider_details:
         raw_response = provider_details['raw_tool_response']
         response = (
-            raw_response if raw_response is None or _utils.is_str_dict(raw_response) else {'result': raw_response}
+            raw_response
+            if raw_response is None
+            or (_utils.is_str_dict(raw_response) and all(isinstance(key, str) for key in raw_response))
+            else {'result': raw_response}
         )
     else:
         response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
