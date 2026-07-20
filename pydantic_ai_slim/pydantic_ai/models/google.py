@@ -1706,7 +1706,10 @@ def _native_tool_return_part_dict(
         return None
     provider_details = item.provider_details or {}
     if 'raw_tool_response' in provider_details:
-        response = cast(dict[str, Any] | None, provider_details['raw_tool_response'])
+        raw_response = provider_details['raw_tool_response']
+        response = (
+            raw_response if raw_response is None or _utils.is_str_dict(raw_response) else {'result': raw_response}
+        )
     else:
         response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
     part: PartDict = {
