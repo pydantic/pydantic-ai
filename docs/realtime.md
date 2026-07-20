@@ -138,6 +138,7 @@ The remaining realtime control-plane events:
 | [`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent] | The user stopped speaking; the model is about to respond. |
 | [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] | The model finished a turn (`interrupted=True` if the user barged in). |
 | [`ReconnectedEvent`][pydantic_ai.realtime.ReconnectedEvent] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
+| [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent] | The provider reported a **recoverable** error mid-session; the session keeps running. A non-recoverable error instead raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. |
 
 ## Message history
 
@@ -524,7 +525,9 @@ async with agent.realtime_session(model=model) as session:
 
 Pass `usage` to accumulate into a shared [`RunUsage`][pydantic_ai.usage.RunUsage] (e.g. to total a
 voice session and follow-up text runs together), and `usage_limits` to cap a session. Token and
-tool-call limits are enforced as usage accrues; on breach the session emits a non-recoverable
+tool-call limits are enforced as usage accrues; a breach raises
+[`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from the session's event iterator,
+matching how `run` / `iter` surface a usage limit.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.usage import RunUsage, UsageLimits

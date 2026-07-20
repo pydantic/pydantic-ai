@@ -49,6 +49,13 @@ def _model(settings: RealtimeModelSettings | None = None, **kwargs: Any) -> XaiR
     return XaiRealtimeModel(provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
 
 
+def test_realtime_rejects_custom_api_host() -> None:
+    """A custom `api_host` sets the gRPC channel target, which the realtime WebSocket can't honor (it
+    derives its URL from `base_url`), so construction fails loudly rather than dialing the wrong host."""
+    with pytest.raises(UserError, match='does not support a custom `api_host`'):
+        XaiRealtimeModel(provider=XaiProvider(api_key='k', api_host='grpc.custom.example.com'))
+
+
 def _connect(
     model: XaiRealtimeModel,
     instructions: str,

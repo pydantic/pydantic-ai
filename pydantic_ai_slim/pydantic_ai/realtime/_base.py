@@ -395,7 +395,8 @@ RealtimeEvent = TypeAliasType(
     | TurnCompleteEvent
     | InputSpeechStartEvent
     | InputSpeechEndEvent
-    | ReconnectedEvent,
+    | ReconnectedEvent
+    | SessionErrorEvent,
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
 

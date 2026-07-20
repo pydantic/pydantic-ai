@@ -323,11 +323,13 @@ async def test_audio_delta_streams_and_transcript_pairs() -> None:
     )
 
 
-async def test_control_events_pass_through() -> None:
+async def test_control_events_and_recoverable_error_pass_through() -> None:
     conn = FakeRealtimeConnection([TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')])
     session = RealtimeSession(conn, _noop_runner)
     events = [e async for e in session]
-    assert events == [TurnCompleteEvent(interrupted=True)]
+    # A recoverable error is mid-stream: the session keeps running and surfaces the event to the
+    # consumer (rather than swallowing it) so a quiet failure is observable.
+    assert events == [TurnCompleteEvent(interrupted=True), SessionErrorEvent(message='oops')]
 
 
 async def test_fatal_session_error_raises() -> None:

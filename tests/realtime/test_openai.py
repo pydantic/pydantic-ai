@@ -354,6 +354,34 @@ async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.
     assert 'traceparent' in fake_connect.headers
 
 
+async def test_connect_resolves_async_api_key_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handshake resolves an async `api_key` provider via the SDK, not the empty static field.
+
+    `AsyncOpenAI` accepts a `Callable[[], Awaitable[str]]` for `api_key`, leaving `client.api_key` empty
+    until the SDK refreshes it per request. The raw WebSocket handshake bypasses that request path, so a
+    regression would send `Authorization: Bearer ` (empty). A unit test because a cassette's request
+    matcher ignores handshake headers.
+    """
+    from openai import AsyncOpenAI
+
+    async def provide_key() -> str:
+        return 'sk-resolved'
+
+    client = AsyncOpenAI(api_key=provide_key)
+    assert not client.api_key  # unresolved until the SDK refreshes it
+
+    ws = FakeWebSocket([_created(), _updated()])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(openai_client=client))
+    async with _connect(model, 'hi') as conn:
+        _ = [e async for e in conn]
+
+    assert fake_connect.headers is not None
+    assert fake_connect.headers['Authorization'] == 'Bearer sk-resolved'
+
+
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(

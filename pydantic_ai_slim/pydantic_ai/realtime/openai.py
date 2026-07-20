@@ -451,7 +451,12 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         url = f'{realtime_websocket_url(self._provider.base_url)}?model={self.model}'
-        headers = {'Authorization': f'Bearer {self._provider.client.api_key}'}
+        # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
+        # until resolved. The raw WebSocket handshake bypasses the SDK's request path (which resolves
+        # it per request), so resolve it here via the SDK's own refresh — a no-op returning the static
+        # key when no provider is configured, so the handshake stays byte-identical in that case.
+        api_key = await self._provider.client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
+        headers = {'Authorization': f'Bearer {api_key}'}
         # Propagate trace context over the handshake so a proxy (e.g. the Pydantic AI Gateway) can nest
         # its realtime spans under this session's trace; the raw WebSocket bypasses the provider's
         # `httpx` client, which would otherwise inject it.

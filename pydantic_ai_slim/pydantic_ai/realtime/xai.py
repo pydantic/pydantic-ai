@@ -141,6 +141,15 @@ class XaiRealtimeModel(RealtimeModel):
                 '`XaiProvider` was built from a pre-configured `xai_client` whose key is not exposed. '
                 'Pass `provider=XaiProvider(api_key=...)` (or set `XAI_API_KEY`) instead.'
             )
+        if provider.api_host is not None:
+            # The realtime WebSocket URL is derived from `base_url` (the canonical xAI host), not the
+            # gRPC channel target set by `api_host`. Rather than silently connect to the canonical host
+            # with the key while the user expects their custom host, fail loudly.
+            raise UserError(
+                'The xAI realtime provider does not support a custom `api_host`: the realtime WebSocket '
+                'connects to the canonical xAI realtime endpoint, not the gRPC channel target that '
+                '`api_host` sets. Remove `api_host` from the `XaiProvider` to use realtime.'
+            )
         self._provider = provider
         self._api_key = api_key
 

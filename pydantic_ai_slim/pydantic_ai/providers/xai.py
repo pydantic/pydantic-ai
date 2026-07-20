@@ -79,6 +79,16 @@ class XaiProvider(Provider[AsyncClient]):
         """
         return self._api_key
 
+    @property
+    def api_host(self) -> str | None:
+        """The custom `api_host` this provider was configured with, or `None`.
+
+        Read by [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] to reject a custom host
+        it can't yet honor: the realtime WebSocket derives its URL from `base_url`, not the gRPC channel
+        target that `api_host` sets.
+        """
+        return self._api_host
+
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return grok_model_profile(model_name)
@@ -123,6 +133,9 @@ class XaiProvider(Provider[AsyncClient]):
         # Retained so transports authenticating outside the gRPC SDK (e.g. the realtime WebSocket) can
         # read it back; `None` when a pre-configured `xai_client` was passed, since its key isn't exposed.
         self._api_key: str | None = None
+        # Retained so the realtime WebSocket (which derives its host from `base_url`, not the gRPC
+        # channel target) can detect a custom `api_host` it can't yet honor and fail loudly.
+        self._api_host: str | None = api_host
         if xai_client is not None:
             self._client = xai_client
         else:

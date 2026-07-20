@@ -664,7 +664,10 @@ class RealtimeSession:
             return [event]
         if isinstance(event, SessionErrorEvent):
             if event.recoverable:
-                return []
+                # A recoverable error is mid-stream: the session keeps running, so surface the event to
+                # the consumer (rather than swallowing it) for observability. Only a non-recoverable
+                # error ends the session, by raising.
+                return [event]
             raise RealtimeError(event.message)
         assert_never(event)
 

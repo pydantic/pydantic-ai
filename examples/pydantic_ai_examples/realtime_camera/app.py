@@ -444,6 +444,9 @@ async def ws(socket: WebSocket) -> None:
                         if (message := _json_message(event)) is not None:
                             await emit(message)
                 except Exception:
+                    # Log before tearing down so a pump failure (e.g. a provider error surfaced through
+                    # the session) is diagnosable instead of a silent disconnect.
+                    logfire.exception('Realtime event pump failed')
                     tg.cancel_scope.cancel()
                 finally:
                     with anyio.CancelScope(shield=True):
