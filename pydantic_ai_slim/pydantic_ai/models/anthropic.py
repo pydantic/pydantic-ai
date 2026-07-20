@@ -2417,14 +2417,16 @@ _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
-    """Extract Anthropic usage into a flat dict, preserving compaction iteration totals.
+    """Extract Anthropic usage into a flat dict, preserving compaction and advisor iteration totals.
 
-    Anthropic's top-level `input_tokens`/`output_tokens` exclude compaction iteration usage
-    (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
-    so they're kept as-is here and the compaction iteration totals are recorded under
-    `compaction_*` keys. `_map_usage` sums them back into the request totals at extraction time,
-    which also keeps streaming correct: the fixed compaction totals set by the start event
-    survive the merge with delta events that only carry the top-level values.
+    Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
+    usage (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
+    so they're kept as-is here and the iteration totals are recorded under `compaction_*` / `advisor_*`
+    keys. `_map_usage` sums the compaction totals back into the request totals at extraction time (which
+    also keeps streaming correct: the fixed totals set by the start event survive the merge with delta
+    events that only carry the top-level values). Advisor totals are deliberately NOT summed back, since
+    advisor tokens are billed at the advisor model's rates, not the executor's, and folding them into the
+    request totals would misprice the request via genai-prices.
     """
     details: dict[str, int] = {}
     for key in _COMPACTION_TOKEN_KEYS:
@@ -2436,14 +2438,28 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         return details
 
     compaction_iterations = [it for it in iterations if it.type == 'compaction']
-    if not compaction_iterations:
+    advisor_iterations = [it for it in iterations if it.type == 'advisor_message']
+    if not compaction_iterations and not advisor_iterations:
         return details
 
-    details['compaction_iterations'] = len(compaction_iterations)
-    details['message_iterations'] = len(iterations) - len(compaction_iterations)
-    for key in _COMPACTION_TOKEN_KEYS:
-        if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
-            details[f'compaction_{key}'] = compaction_total
+    # Both compaction and advisor iterations are separate from executor turns, so exclude them from
+    # the `message_iterations` count.
+    details['message_iterations'] = len(iterations) - len(compaction_iterations) - len(advisor_iterations)
+
+    if compaction_iterations:
+        details['compaction_iterations'] = len(compaction_iterations)
+        for key in _COMPACTION_TOKEN_KEYS:
+            if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
+                details[f'compaction_{key}'] = compaction_total
+
+    if advisor_iterations:
+        details['advisor_iterations'] = len(advisor_iterations)
+        # The advisor iteration token fields share the names in `_COMPACTION_TOKEN_KEYS`. These are
+        # recorded for observability only; `_map_usage` must not fold them into the request totals.
+        for key in _COMPACTION_TOKEN_KEYS:
+            if advisor_total := sum(getattr(it, key) for it in advisor_iterations):
+                details[f'advisor_{key}'] = advisor_total
+
     return details
 
 
