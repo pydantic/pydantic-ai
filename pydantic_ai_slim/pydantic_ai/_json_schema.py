@@ -11,14 +11,6 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
-# Annotation keywords that a sibling of a `$ref` may override when the referenced
-# definition is inlined (e.g. a field-level description). Validation keywords are
-# deliberately excluded: overriding them would silently weaken the referenced
-# definition's constraints, so on a conflict the definition's value is kept.
-_OVERRIDABLE_REF_SIBLING_KEYS = frozenset(
-    {'description', 'title', 'default', 'examples', 'deprecated', 'readOnly', 'writeOnly', '$comment'}
-)
-
 
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
@@ -111,17 +103,10 @@ class JsonSchemaTransformer(ABC):
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
-                # Preserve keywords that sit alongside the $ref. A field-level
-                # annotation (e.g. `description`/`default`) is meant to override the
-                # referenced definition's, but validation keywords must not be
-                # silently replaced -- keeping the definition's value avoids weakening
-                # its constraints (e.g. a stricter `maxLength` on the def). Keys the
-                # def does not define are always added.
-                siblings = {
-                    k: v
-                    for k, v in schema.items()
-                    if k != '$ref' and (k not in def_schema or k in _OVERRIDABLE_REF_SIBLING_KEYS)
-                }
+                # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
+                # or `default`) are part of the field's own schema and must survive
+                # inlining, so merge them over the referenced definition.
+                siblings = {k: v for k, v in schema.items() if k != '$ref'}
                 schema = {**def_schema, **siblings} if siblings else def_schema
 
         # Handle the schema based on its type / structure

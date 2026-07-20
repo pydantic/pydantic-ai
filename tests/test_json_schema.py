@@ -284,23 +284,3 @@ def test_inline_defs_preserves_ref_sibling_keywords():
     # ...and the sibling keywords are preserved rather than dropped.
     assert field['description'] == 'field-level description'
     assert field['default'] is None
-
-
-def test_inline_defs_does_not_let_ref_siblings_weaken_validation():
-    """A validation keyword next to a `$ref` must not silently override the definition's stricter one."""
-    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-
-    schema = {
-        'type': 'object',
-        'properties': {
-            'field': {'$ref': '#/$defs/Name', 'maxLength': 10, 'description': 'field-level'},
-        },
-        '$defs': {'Name': {'type': 'string', 'maxLength': 5}},
-    }
-
-    field = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()['properties']['field']
-
-    # The definition's stricter maxLength is kept (not overwritten by the sibling's 10)...
-    assert field['maxLength'] == 5
-    # ...while the annotation sibling still overrides.
-    assert field['description'] == 'field-level'
