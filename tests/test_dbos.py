@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -921,6 +922,25 @@ async def test_dbos_agent():
     assert isinstance(toolsets[4], ExternalToolset)
     assert toolsets[4].id == 'external'
     assert toolsets[4] == complex_agent.toolsets[3]
+
+
+def test_dbos_model_connect_not_supported():
+    assert isinstance(simple_dbos_agent.model, DBOSModel)
+    wrapped_type = type(simple_dbos_agent.model.wrapped)
+
+    with patch.object(wrapped_type, '_pydantic_ai_websocket_connect', True, create=True):
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
+                'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            ),
+        ):
+            simple_dbos_agent.model.connect()
+
+    with patch.object(wrapped_type, 'connect', return_value='custom connection', create=True) as connect:
+        assert simple_dbos_agent.model.connect('argument', option=True) == 'custom connection'
+        connect.assert_called_once_with('argument', option=True)
 
 
 async def test_dbos_agent_run(allow_model_requests: None, dbos: DBOS):

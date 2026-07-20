@@ -4271,6 +4271,25 @@ async def test_temporal_agent_model_selection_by_instance(
         assert output == expected_output
 
 
+def test_temporal_model_connect_not_supported():
+    assert isinstance(simple_temporal_agent.model, TemporalModel)
+    wrapped_type = type(simple_temporal_agent.model.wrapped)
+
+    with patch.object(wrapped_type, '_pydantic_ai_websocket_connect', True, create=True):
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
+                'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            ),
+        ):
+            simple_temporal_agent.model.connect()
+
+    with patch.object(wrapped_type, 'connect', return_value='custom connection', create=True) as connect:
+        assert simple_temporal_agent.model.connect('argument', option=True) == 'custom connection'
+        connect.assert_called_once_with('argument', option=True)
+
+
 def test_temporal_model_profile_for_raw_strings():
     """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
 

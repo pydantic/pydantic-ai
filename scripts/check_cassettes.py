@@ -30,55 +30,64 @@ def _sanitize_cassette_name(name: str) -> str:
     return name
 
 
-def _has_vcr_marker(decorator_list: list[ast.expr]) -> bool:
-    """Check if a decorator list contains pytest.mark.vcr (with or without parens)."""
+def _has_marker(decorator_list: list[ast.expr], marker_name: str) -> bool:
+    """Check if a decorator list contains a pytest marker, with or without parentheses."""
     for dec in decorator_list:
-        # @pytest.mark.vcr or @pytest.mark.vcr()
-        if isinstance(dec, ast.Attribute) and dec.attr == 'vcr':
+        if isinstance(dec, ast.Attribute) and dec.attr == marker_name:
             return True
-        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'vcr':
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == marker_name:
             return True
     return False
 
 
-def _has_module_vcr_marker(tree: ast.Module) -> bool:
-    """Check if the module has pytestmark = [..., pytest.mark.vcr, ...]."""
+def _has_module_marker(tree: ast.Module, marker_name: str) -> bool:
+    """Check if the module's `pytestmark` assignment contains a marker."""
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
             if not (isinstance(target, ast.Name) and target.id == 'pytestmark'):
                 continue
-            return 'vcr' in ast.dump(node.value)
+            return any(isinstance(value, ast.Attribute) and value.attr == marker_name for value in ast.walk(node.value))
     return False
 
 
 def _collect_vcr_tests_from_file(path: Path) -> set[str]:
-    """Parse a Python test file and return cassette names for VCR-marked tests."""
+    """Parse a Python test file and return cassette names for VCR or ws_cassette-marked tests."""
     try:
         tree = ast.parse(path.read_text(encoding='utf-8'))
     except SyntaxError:
         return set()
 
-    module_has_vcr = _has_module_vcr_marker(tree)
+    module_has_cassette = _has_module_marker(tree, 'vcr') or _has_module_marker(tree, 'ws_cassette')
     cassette_names: set[str] = set()
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             if not node.name.startswith('test_'):
                 continue
-            if module_has_vcr or _has_vcr_marker(node.decorator_list):
-                # Parametrized tests get []  suffixes but cassettes use the base name
+            if (
+                module_has_cassette
+                or _has_marker(node.decorator_list, 'vcr')
+                or _has_marker(node.decorator_list, 'ws_cassette')
+            ):
                 cassette_names.add(_sanitize_cassette_name(node.name))
 
         elif isinstance(node, ast.ClassDef):
-            class_has_vcr = _has_vcr_marker(node.decorator_list)
+            class_has_cassette = _has_marker(node.decorator_list, 'vcr') or _has_marker(
+                node.decorator_list, 'ws_cassette'
+            )
             for method in ast.iter_child_nodes(node):
                 if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 if not method.name.startswith('test_'):
                     continue
-                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list):
+                if (
+                    module_has_cassette
+                    or class_has_cassette
+                    or _has_marker(method.decorator_list, 'vcr')
+                    or _has_marker(method.decorator_list, 'ws_cassette')
+                ):
                     cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
 
     return cassette_names
@@ -114,6 +123,7 @@ def get_all_tests() -> dict[str, set[str]]:
 
 
 def main() -> int:
+    """Check cassette files against cassette-backed tests."""
     verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
     print('Collecting cassettes...')

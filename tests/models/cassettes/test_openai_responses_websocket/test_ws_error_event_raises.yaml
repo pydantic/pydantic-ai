@@ -1,0 +1,18 @@
+version: 1
+interactions:
+- direction: sent
+  data:
+    type: response.create
+    model: gpt-4o-mini
+    input:
+    - role: user
+      content: trigger an error
+- direction: received
+  data:
+    type: error
+    status: 400
+    error:
+      code: previous_response_not_found
+      message: Previous response with id 'resp_abc' not found.
+      param: previous_response_id
+synthetic: true

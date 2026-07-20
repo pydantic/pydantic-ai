@@ -11,9 +11,11 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
@@ -22,7 +24,7 @@ from typing import Any, Literal, cast, get_args, overload
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, TypedDict, assert_never
+from typing_extensions import Never, Self, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
@@ -127,6 +129,7 @@ try:
         Omit,
         omit,
     )
+    from openai.resources.responses.responses import AsyncResponsesConnection
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -180,6 +183,7 @@ try:
     from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     OMIT = omit
 except ImportError as _import_error:
@@ -199,6 +203,33 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+
+
+@contextmanager
+def _map_ws_errors(model_name: str) -> Generator[None]:
+    from websockets.exceptions import (
+        ConnectionClosedError,
+        ConnectionClosedOK,
+        InvalidStatus,
+        WebSocketException,
+    )
+
+    try:
+        yield
+    except InvalidStatus as e:
+        raise ModelHTTPError(status_code=e.response.status_code, model_name=model_name, body=str(e)) from e
+    except ConnectionClosedError as e:
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket connection closed unexpectedly: {e}') from e
+    except ConnectionClosedOK as e:
+        # Only reachable from the handshake or `send()`, e.g. sending after the 60 minute connection
+        # limit: the SDK's connection iterator already swallows a clean close during `recv()`.
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket connection closed: {e}') from e
+    except WebSocketException as e:
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket error: {e}') from e
+    except (OSError, TimeoutError) as e:
+        # `websockets.connect` raises `OSError` for DNS/connection failures and `TimeoutError`
+        # when the handshake exceeds its `open_timeout`; neither is a `WebSocketException`.
+        raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {e}') from e
 
 
 __all__ = (
@@ -308,6 +339,28 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
+
+_ResponseStreamSource = AsyncStream[responses.ResponseStreamEvent] | AsyncGenerator[responses.ResponseStreamEvent, None]
+_ResponsePeekableStream = _utils.PeekableAsyncStream[responses.ResponseStreamEvent, _ResponseStreamSource]
+
+
+@dataclass
+class _WSSession:
+    """State for one open WebSocket connection created by `OpenAIResponsesModel.connect()`.
+
+    Stored in a `ContextVar` mapping keyed by the owning model's `id()`, so a connection is
+    only ever used by the model instance that opened it. The session object is shared
+    by reference with tasks forked from the `connect()` context, e.g. via `asyncio.gather`,
+    so `in_use`/`poisoned` mutations are visible across those tasks.
+    """
+
+    connection: AsyncResponsesConnection
+    in_use: bool = False
+    poisoned: bool = False
+    active: bool = True
+
+
+_WS_SESSIONS: ContextVar[dict[int, _WSSession] | None] = ContextVar('pydantic_ai.openai_ws_sessions', default=None)
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -533,6 +586,17 @@ class _ResponsesRequestParams:
     text: responses.ResponseTextConfigParam | Omit
     truncation: Literal['auto', 'disabled'] | Omit
     context_management: list[ContextManagement] | Omit
+    max_output_tokens: int | Omit
+    temperature: float | Omit
+    top_p: float | Omit
+    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    top_logprobs: int | Omit
+    store: bool | None | Omit
+    user: str | Omit
+    include: list[responses.ResponseIncludable] | Omit
+    prompt_cache_key: str | Omit
+    prompt_cache_retention: Any
+    background: bool | Omit
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -690,9 +754,13 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state.
 
-    Requires the referenced response to have been stored (see
+    Over HTTP, the referenced response must have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
-    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+    which defaults to `True` on OpenAI's side). Inside an active
+    [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
+    context, the most recent response is kept in connection-local memory, so chaining works with
+    `openai_store=False` and Zero Data Retention. That in-memory state is lost when the connection
+    closes; after reconnecting, send the full input context unless the response was stored.
 
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
@@ -778,6 +846,28 @@ def _resolve_openai_service_tier(
     if unified := model_settings.get('service_tier'):
         return unified
     return OMIT
+
+
+def _ws_error_details(event: responses.ResponseErrorEvent) -> tuple[Any, Any, int | None, dict[str, Any]]:
+    """Extract an error event's fields from both the SDK and documented wire shapes."""
+    extra = event.model_extra or {}
+    nested_error = extra.get('error')
+    nested_error = nested_error if _is_str_dict(nested_error) else {}
+
+    code = event.code or nested_error.get('code')
+    message = event.message or nested_error.get('message') or 'Unknown WebSocket error'
+    status = extra.get('status')
+    return code, message, status if isinstance(status, int) else None, nested_error
+
+
+def _ws_error(event: responses.ResponseErrorEvent, model_name: str) -> ModelAPIError:
+    """Map an OpenAI Responses WebSocket `error` event to a model error."""
+    code, message, status, nested_error = _ws_error_details(event)
+    formatted_message = f'WebSocket error ({code}): {message}' if code else f'WebSocket error: {message}'
+
+    if status is not None and status >= 400:
+        return ModelHTTPError(status_code=status, model_name=model_name, body=nested_error or formatted_message)
+    return ModelAPIError(model_name=model_name, message=formatted_message)
 
 
 @dataclass(init=False)
@@ -1768,6 +1858,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
+    _pydantic_ai_websocket_connect = True
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1852,6 +1944,79 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return frozenset(
             {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
         )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        extra_query: Mapping[str, object] | None = None,
+        extra_headers: Mapping[str, str | Omit] | None = None,
+        websocket_connection_options: WebSocketConnectionOptions | None = None,
+    ) -> AsyncGenerator[Self]:
+        """Open a persistent WebSocket connection to the OpenAI Responses API.
+
+        Requests made inside this context by this model instance, including those made by
+        `agent.run()`, use one persistent WebSocket connection instead of HTTP. Sequential
+        requests reuse that connection, reducing per-request latency.
+
+        A connection supports one in-flight response at a time. Concurrent requests on the
+        same connection raise `UserError`; use one `connect()` context per concurrent agent
+        run. OpenAI limits WebSocket connections to 60 minutes.
+
+        If a request is cancelled or a stream is abandoned before its terminal event, unread
+        events may remain on the connection and its state is unknown. Later requests on the
+        same connection raise `UserError` until you exit and re-enter `connect()`. A provider
+        `error` event raises `ModelAPIError` and usually leaves the connection usable, as does a
+        response that finishes with a terminal event, including `response.failed` and
+        `response.incomplete`. A `websocket_connection_limit_reached` error requires a new context.
+
+        Per-request `timeout`, `extra_headers`, and `extra_body` model settings are not
+        supported over WebSocket and are ignored. Pass `extra_headers` here to set handshake
+        headers instead. OpenAI background mode is also unsupported and raises `UserError`;
+        suspended background responses created earlier are resumed over HTTP.
+
+        This requires the `websockets` package, available with `pip install openai[realtime]`.
+        The provider endpoint must support OpenAI Responses WebSocket mode. OpenAI exposes
+        this at `wss://api.openai.com/v1/responses`; other providers only work if they expose
+        the same protocol.
+
+        ```python {test="skip" lint="skip"}
+        model = OpenAIResponsesModel('gpt-5')
+        agent = Agent(model)
+
+        async with model.connect():
+            result = await agent.run('Hello')  # uses WebSocket
+        result2 = await agent.run('Hello')     # back to HTTP
+        ```
+        """
+        try:
+            import websockets  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        except ImportError as _e:
+            raise ImportError(
+                'Please install `websockets` to use WebSocket mode, '
+                'you can use the OpenAI SDK `realtime` optional group — `pip install "openai[realtime]"`'
+            ) from _e
+
+        check_allow_model_requests()
+        connection_manager = self.client.responses.connect(
+            extra_query=extra_query or {},
+            extra_headers=extra_headers or {},
+            websocket_connection_options=websocket_connection_options or {},
+        )
+        with _map_ws_errors(self.model_name):
+            connection = await connection_manager.__aenter__()
+
+        session = _WSSession(connection=connection)
+        sessions = {**(_WS_SESSIONS.get() or {}), id(self): session}
+        token = _WS_SESSIONS.set(sessions)
+        try:
+            yield self
+        finally:
+            # Child tasks inherit the ContextVar mapping by value but share the session object.
+            # Mark it inactive so a task that outlives this context falls back to HTTP.
+            session.active = False
+            _WS_SESSIONS.reset(token)
+            await connection_manager.__aexit__(None, None, None)
 
     async def compact_messages(
         self,
@@ -1956,9 +2121,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        continuation_info = self._get_continuation_info(messages, settings)
+        if session := self._ws_session():
+            if continuation_info is None and settings.get('openai_background'):
+                raise UserError('`openai_background` is not supported inside `OpenAIResponsesModel.connect()`.')
 
-        if info := self._get_continuation_info(messages, settings):
-            response_id, _, _ = info
+        if session and continuation_info is None:
+            # Unlike the HTTP path, there's no `ModelResponse` short-circuit here: the Azure content-filter
+            # recovery inspects an `APIStatusError`, which HTTP transport raises but WebSocket mode does not
+            # (failures arrive as `error` events instead).
+            response = await self._ws_send_request(session, messages, settings, model_request_parameters)
+            return self._process_response(response, settings, model_request_parameters)
+
+        if continuation_info:
+            response_id, _, _ = continuation_info
             response = await self._responses_retrieve(response_id, settings)
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
@@ -2034,9 +2210,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        continuation_info = self._get_continuation_info(messages, settings)
 
-        if info := self._get_continuation_info(messages, settings):
-            response_id, last_sequence_number, previous_model_name = info
+        if session := self._ws_session():
+            if continuation_info is None and settings.get('openai_background'):
+                raise UserError('`openai_background` is not supported inside `OpenAIResponsesModel.connect()`.')
+
+        if session and continuation_info is None:
+            event_stream = self._ws_send_stream(session, messages, settings, model_request_parameters)
+            peekable_response: _ResponsePeekableStream = _utils.PeekableAsyncStream(event_stream)
+            try:
+                yield await self._process_streamed_response(peekable_response, settings, model_request_parameters)
+            finally:
+                await peekable_response.aclose()
+            return
+
+        if continuation_info:
+            response_id, last_sequence_number, previous_model_name = continuation_info
             if last_sequence_number is None:
                 # Some background responses were not previously streamed and have no resumable
                 # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
@@ -2061,8 +2251,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
             return
         async with response:
+            peekable_response: _ResponsePeekableStream = _utils.PeekableAsyncStream(response)
             sr = await self._process_streamed_response(
-                response,
+                peekable_response,
                 settings,
                 model_request_parameters,
                 expected_model_name=previous_model_name,
@@ -2257,16 +2448,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[responses.ResponseStreamEvent],
+        response: _ResponsePeekableStream,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
         *,
         expected_model_name: OpenAIModelName | None = None,
     ) -> OpenAIResponsesStreamedResponse:
-        """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response: _utils.PeekableAsyncStream[
-            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
-        ] = _utils.PeekableAsyncStream(response)
+        """Process a streamed response, and prepare a streaming response to return.
+
+        The `response` wraps an `AsyncStream` over HTTP, or the `_ws_send_stream` async generator in WebSocket mode.
+        """
+        peekable_response = response
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
@@ -2369,6 +2561,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             )
 
+        include = self._build_include(model_settings)
+
+        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory',
+        # so we have to use `Any` to not hit type errors.
+        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+
         return _ResponsesRequestParams(
             model=self.model_name,
             input=openai_messages,
@@ -2382,7 +2580,187 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             text=text,
             truncation=model_settings.get('openai_truncation', OMIT),
             context_management=model_settings.get('openai_context_management', OMIT),
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            service_tier=_resolve_openai_service_tier(model_settings),
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            store=model_settings.get('openai_store', OMIT),
+            user=model_settings.get('openai_user', OMIT),
+            include=include or OMIT,
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            prompt_cache_retention=prompt_cache_retention,
+            background=model_settings.get('openai_background', OMIT),
         )
+
+    def _apply_responses_request_settings(
+        self,
+        request_params: _ResponsesRequestParams,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> _ResponsesRequestParams:
+        """Apply settings that the HTTP path historically resolves after building shared parameters."""
+        _drop_sampling_params_for_reasoning(self.profile, model_settings, model_request_parameters)
+        _drop_unsupported_params(self.profile, model_settings)
+
+        # OpenAI SDK type stubs incorrectly use 'in-memory' but the API requires 'in_memory'.
+        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+        return replace(
+            request_params,
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            service_tier=_resolve_openai_service_tier(model_settings),
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            store=model_settings.get('openai_store', OMIT),
+            user=model_settings.get('openai_user', OMIT),
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            prompt_cache_retention=prompt_cache_retention,
+            background=model_settings.get('openai_background', OMIT),
+        )
+
+    def _ws_session(self) -> _WSSession | None:
+        session = (_WS_SESSIONS.get() or {}).get(id(self))
+        return session if session and session.active else None
+
+    def _ws_acquire(self, session: _WSSession) -> None:
+        """Mark the WS connection as in-use; raise if already in use."""
+        if session.poisoned:
+            raise UserError(
+                'A previous response on this WebSocket connection was cancelled or failed before completing, '
+                'so the connection state is unknown. Exit and re-enter `connect()` before sending another request.'
+            )
+        if session.in_use:
+            raise UserError(
+                'This WebSocket connection is already handling a request. '
+                'For parallel requests, use separate `model.connect()` contexts.'
+            )
+        session.in_use = True
+
+    async def _ws_create(self, connection: AsyncResponsesConnection, request_params: _ResponsesRequestParams) -> None:
+        """Send a `response.create` over the WebSocket connection using prebuilt request params."""
+        # `stream`/`background` are HTTP transport fields that the WebSocket protocol doesn't use:
+        # a WebSocket connection always streams events back. See OpenAI's WebSocket-mode guide.
+        await connection.response.create(
+            model=request_params.model,
+            input=request_params.input,
+            instructions=request_params.instructions,
+            parallel_tool_calls=request_params.parallel_tool_calls,
+            tools=request_params.tools,
+            tool_choice=request_params.tool_choice,
+            previous_response_id=request_params.previous_response_id,
+            conversation=request_params.conversation,
+            reasoning=request_params.reasoning,
+            text=request_params.text,
+            truncation=request_params.truncation,
+            context_management=request_params.context_management,
+            max_output_tokens=request_params.max_output_tokens,
+            temperature=request_params.temperature,
+            top_p=request_params.top_p,
+            service_tier=request_params.service_tier,
+            top_logprobs=request_params.top_logprobs,
+            store=request_params.store,
+            user=request_params.user,
+            include=request_params.include,
+            prompt_cache_key=request_params.prompt_cache_key,
+            prompt_cache_retention=request_params.prompt_cache_retention,
+        )
+
+    async def _ws_send_request(
+        self,
+        session: _WSSession,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response:
+        """Send a request over WS and collect events until completion, returning the final Response."""
+        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
+        # message part or a failed file download) leaves the connection untouched, so it must not
+        # poison the session.
+        request_params = await self._build_responses_request_params(
+            messages, model_settings, model_request_parameters, self.profile
+        )
+        request_params = self._apply_responses_request_settings(
+            request_params, model_settings, model_request_parameters
+        )
+        self._ws_acquire(session)
+        clean = False
+        try:
+            with _map_ws_errors(self.model_name):
+                await self._ws_create(session.connection, request_params)
+
+                async for event in session.connection:
+                    if isinstance(
+                        event,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    ):
+                        clean = True
+                        return event.response
+                    elif isinstance(event, responses.ResponseErrorEvent):
+                        # An `error` event terminates this turn and leaves no response events unread.
+                        code, _, _, _ = _ws_error_details(event)
+                        clean = code != 'websocket_connection_limit_reached'
+                        raise _ws_error(event, self.model_name)
+
+            raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
+        finally:
+            session.in_use = False
+            if not clean:
+                session.poisoned = True
+
+    async def _ws_send_stream(
+        self,
+        session: _WSSession,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[responses.ResponseStreamEvent, None]:
+        """Send a request over WS and yield events until a terminal event."""
+        # Build the request params before acquiring the session: a failure here (e.g. an unsupported
+        # message part or a failed file download) leaves the connection untouched, so it must not
+        # poison the session.
+        request_params = await self._build_responses_request_params(
+            messages, model_settings, model_request_parameters, self.profile
+        )
+        request_params = self._apply_responses_request_settings(
+            request_params, model_settings, model_request_parameters
+        )
+        self._ws_acquire(session)
+        clean = False
+        try:
+            with _map_ws_errors(self.model_name):
+                await self._ws_create(session.connection, request_params)
+
+                async for event in session.connection:
+                    if isinstance(event, responses.ResponseErrorEvent):
+                        code, _, _, _ = _ws_error_details(event)
+                        clean = code != 'websocket_connection_limit_reached'
+                        raise _ws_error(event, self.model_name)
+                    if isinstance(
+                        event,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    ):
+                        # Mark clean before yielding: the terminal event drains the response, so the
+                        # connection is reusable even if the consumer closes the generator at this
+                        # yield instead of advancing past it.
+                        clean = True
+                        yield event
+                        return
+                    yield event
+
+            raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
+        finally:
+            session.in_use = False
+            if not clean:
+                session.poisoned = True
 
     @staticmethod
     def _build_request_options(
@@ -2419,21 +2797,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         profile = self.profile
-
-        include = self._build_include(model_settings)
-
         request_params = await self._build_responses_request_params(
             messages,
             model_settings,
             model_request_parameters,
             profile,
         )
-        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
-        _drop_unsupported_params(profile, model_settings)
+        request_params = self._apply_responses_request_settings(
+            request_params, model_settings, model_request_parameters
+        )
         extra_headers, timeout = self._build_request_options(model_settings)
-
-        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
 
         with _map_api_errors(self.model_name):
             try:
@@ -2449,19 +2822,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     text=request_params.text,
                     truncation=request_params.truncation,
                     context_management=request_params.context_management,
-                    max_output_tokens=model_settings.get('max_tokens', OMIT),
+                    max_output_tokens=request_params.max_output_tokens,
                     stream=stream,
-                    temperature=model_settings.get('temperature', OMIT),
-                    top_p=model_settings.get('top_p', OMIT),
-                    service_tier=_resolve_openai_service_tier(model_settings),
+                    temperature=request_params.temperature,
+                    top_p=request_params.top_p,
+                    service_tier=request_params.service_tier,
                     conversation=request_params.conversation,
-                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=model_settings.get('openai_store', OMIT),
-                    user=model_settings.get('openai_user', OMIT),
-                    include=include or OMIT,
-                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                    prompt_cache_retention=prompt_cache_retention,
-                    background=model_settings.get('openai_background', OMIT),
+                    top_logprobs=request_params.top_logprobs,
+                    store=request_params.store,
+                    user=request_params.user,
+                    include=request_params.include,
+                    prompt_cache_key=request_params.prompt_cache_key,
+                    prompt_cache_retention=request_params.prompt_cache_retention,
+                    background=request_params.background,
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -3637,7 +4010,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
+    _response: _ResponsePeekableStream
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -3664,7 +4037,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**(self.provider_details or {}), 'background': True}
 
     async def close_stream(self) -> None:
-        await self._response.source.close()
+        source = self._response.source
+        if isinstance(source, AsyncGenerator):  # WebSocket transport: the `_ws_send_stream` async generator.
+            raise NotImplementedError(
+                'Stream cancellation is not supported in WebSocket mode because the protocol has no cancel event. '
+                'The response keeps generating server side; exit the `connect()` context to close the connection instead.'
+            )
+        else:
+            await source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
@@ -3738,7 +4118,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.provider_response_id = chunk.response.id
                     self._store_conversation_id(chunk.response)
 
-                elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -3757,7 +4137,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
-                elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseIncompleteEvent):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
 

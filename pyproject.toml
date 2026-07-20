@@ -303,6 +303,9 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+markers = [
+    "ws_cassette: marks tests backed by WebSocket cassettes (recorded/replayed via custom fixture)",
+]
 filterwarnings = [
     "error",
     # boto3

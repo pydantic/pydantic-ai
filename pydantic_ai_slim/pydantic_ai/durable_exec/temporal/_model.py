@@ -145,6 +145,14 @@ class TemporalModel(WrapperModel):
             name=f'{activity_name_prefix}__model_cancel_suspended_response'
         )(cancel_suspended_response_activity)
 
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
+        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
+            raise UserError(
+                'WebSocket mode is not supported with Temporal: model requests run inside activities where a connection '
+                'opened with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            )
+        return getattr(self.wrapped, 'connect')(*args, **kwargs)
+
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]

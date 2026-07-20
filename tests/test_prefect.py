@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
@@ -8,7 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -753,6 +754,25 @@ async def test_prefect_agent():
     # Verify external toolset is NOT wrapped (passed through)
     external_toolset = external_toolsets[0]
     assert external_toolset.id == 'external'
+
+
+def test_prefect_model_connect_not_supported():
+    assert isinstance(simple_prefect_agent.model, PrefectModel)
+    wrapped_type = type(simple_prefect_agent.model.wrapped)
+
+    with patch.object(wrapped_type, '_pydantic_ai_websocket_connect', True, create=True):
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                'WebSocket mode is not supported with Prefect: model requests run inside tasks where a connection opened '
+                'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            ),
+        ):
+            simple_prefect_agent.model.connect()
+
+    with patch.object(wrapped_type, 'connect', return_value='custom connection', create=True) as connect:
+        assert simple_prefect_agent.model.connect('argument', option=True) == 'custom connection'
+        connect.assert_called_once_with('argument', option=True)
 
 
 def test_prefect_wrapper_visit_and_replace():

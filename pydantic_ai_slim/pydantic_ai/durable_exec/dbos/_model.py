@@ -11,6 +11,7 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -90,6 +91,14 @@ class DBOSModel(WrapperModel):
             await super(DBOSModel, self).cancel_suspended_response(response)
 
         self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
+        if getattr(self.wrapped, '_pydantic_ai_websocket_connect', False):
+            raise UserError(
+                'WebSocket mode is not supported with DBOS: model requests run inside steps where a connection opened '
+                'with `connect()` is not available. Remove the `connect()` call to use HTTP.'
+            )
+        return getattr(self.wrapped, 'connect')(*args, **kwargs)
 
     async def request(
         self,

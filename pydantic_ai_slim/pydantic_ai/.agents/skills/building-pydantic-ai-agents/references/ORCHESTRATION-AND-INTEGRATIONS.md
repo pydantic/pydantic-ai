@@ -72,6 +72,31 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
+## Reuse an OpenAI Responses WebSocket Connection
+
+Use `OpenAIResponsesModel.connect()` to reuse one persistent connection for sequential OpenAI Responses requests:
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model)
+
+
+async def main():
+    async with model.connect():
+        result = await agent.run('Summarize these release notes')
+        print(result.output)
+
+
+asyncio.run(main())
+```
+
+Install `openai[realtime]` first. One connection supports one in-flight response, so use a separate `connect()` context for each concurrent run. Requests outside the context use HTTP. Do not combine WebSocket mode with durable execution or `openai_background=True`.
+
 ## Use Durable Execution
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
