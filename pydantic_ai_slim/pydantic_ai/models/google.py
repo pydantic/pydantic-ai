@@ -2099,8 +2099,8 @@ def _extract_file_search_retrieved_contexts(
 
 def _fill_native_tool_return_from_grounding(
     item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None
-) -> bool:
-    """Fill a `NativeToolReturnPart` from `grounding_metadata` in place, returning whether it's grounded.
+) -> None:
+    """Fill a `NativeToolReturnPart` from `grounding_metadata` in place.
 
     On Gemini 3+ the API returns explicit `tool_call`/`tool_response` parts but doesn't put the grounded
     results in the `tool_response`: file_search leaves it empty and web_search fills it with only a
@@ -2110,23 +2110,16 @@ def _fill_native_tool_return_from_grounding(
     the explicit part here. For web_search, the raw API response is preserved in
     `provider_details['raw_tool_response']` so follow-up requests can echo it back unchanged.
 
-    Returns False when the part is still awaiting grounding (so streaming keeps it reserved), True once
-    it's grounded or when the tool has no grounding to wait for.
     """
     grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
     if item.tool_name == FileSearchTool.kind:
         if item.content is None and (retrieved_contexts := _extract_file_search_retrieved_contexts(grounding_chunks)):
             item.content = retrieved_contexts
-        return item.content is not None
     elif item.tool_name == WebSearchTool.kind:
         if sources := _web_search_grounding_chunks(grounding_metadata):
             if 'raw_tool_response' not in (item.provider_details or {}):
                 item.provider_details = {**(item.provider_details or {}), 'raw_tool_response': item.content}
             item.content = sources
-            return True
-        return False
-    else:
-        return True
 
 
 def _map_file_search_grounding_metadata(

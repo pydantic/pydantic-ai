@@ -780,8 +780,8 @@ def test_fill_web_search_return_preserves_raw_tool_response_once_filled():
     )
     grounding = GroundingMetadata.model_validate(_GROUNDING_METADATA)
 
-    assert _fill_native_tool_return_from_grounding(part, grounding)
-    assert _fill_native_tool_return_from_grounding(part, grounding)
+    _fill_native_tool_return_from_grounding(part, grounding)
+    _fill_native_tool_return_from_grounding(part, grounding)
 
     assert part.provider_details == {'raw_tool_response': {'search_suggestions': '<style>chip</style>'}}
     assert part.content == [{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}]
@@ -973,6 +973,12 @@ async def test_gemini_response_reconstructs_web_search_with_explicit_web_fetch_p
     assert web_search_return.content == snapshot(
         [{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}]
     )
+    web_search_call_index = next(
+        index
+        for index, part in enumerate(response.parts)
+        if isinstance(part, NativeToolCallPart) and part.tool_name == WebSearchTool.kind
+    )
+    assert _utils.is_trailing_provider_metadata_native_tool_call(response, web_search_call_index)
 
 
 # On Gemini 3+ File Search runs server-side: the API returns explicit `tool_call`/`tool_response` parts but
