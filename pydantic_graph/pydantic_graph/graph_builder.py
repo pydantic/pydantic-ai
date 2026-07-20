@@ -265,11 +265,28 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             TypeError: If `state` is required (because `state_type` is not `NoneType`)
                 but was not provided.
         """
-        if self.state_type is not NoneType and state is None:
-            raise TypeError(
-                f"A state instance is required when state_type is {self.state_type.__name__}, "
-                "but got None. Did you forget to pass state= to graph.run()?"
-            )
+        if state is None and self.state_type is not NoneType:
+            # Check if state_type is an Optional / Union that explicitly allows None
+            from typing import get_origin, get_args
+
+            origin = get_origin(self.state_type)
+            args = get_args(self.state_type)
+            if origin is not None:
+                # It's a generic type (Union, etc.) — check if NoneType is explicitly included
+                if NoneType not in args:
+                    # state is required
+                    type_name = str(self.state_type)
+                    raise TypeError(
+                        f"A state instance is required when state_type is {type_name}, "
+                        "but got None. Did you forget to pass state= to graph.run()?"
+                    )
+            else:
+                # Plain concrete type — state is required
+                type_name = getattr(self.state_type, '__name__', str(self.state_type))
+                raise TypeError(
+                    f"A state instance is required when state_type is {type_name}, "
+                    "but got None. Did you forget to pass state= to graph.run()?"
+                )
         if infer_name and self.name is None:
             inferred_name = infer_obj_name(self, depth=2)
             if inferred_name is not None:  # pragma: no branch
