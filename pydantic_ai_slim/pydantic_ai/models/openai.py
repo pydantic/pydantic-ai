@@ -3176,7 +3176,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if (
                             from_same_provider
                             and isinstance(item, NativeToolSearchReturnPart)
-                            and not _is_legacy_synthetic_tool_search_return(item)
+                            and not _lacks_tool_search_output_identity(item)
                         ):
                             call_id, status, provider_details = _tool_search_replay_details(item)
                             tool_search_output = _build_tool_search_output_param(
@@ -3859,11 +3859,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         # Added carries the discovered-tools payload. Keep its own item
                         # identity until a terminal response proves a single call/output
                         # association; Done replaces this part with final status and tools.
-                        call_id = chunk.item.call_id or chunk.item.id
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return',
-                            part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
-                        )
+                        # Client-execution outputs are dropped for parity with `_process_response`.
+                        if chunk.item.execution == 'server':
+                            call_id = chunk.item.call_id or chunk.item.id
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-return',
+                                part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
+                            )
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -3987,11 +3989,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        call_id = chunk.item.call_id or chunk.item.id
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return',
-                            part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
-                        )
+                        # Same server-execution gate as the Added handler and `_process_response`.
+                        if chunk.item.execution == 'server':
+                            call_id = chunk.item.call_id or chunk.item.id
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-return',
+                                part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
+                            )
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
@@ -4770,13 +4774,17 @@ def _tool_search_replay_details(
     return call_id, status, details
 
 
-def _is_legacy_synthetic_tool_search_return(part: NativeToolSearchReturnPart) -> bool:
-    """Identify pre-fix empty placeholders that did not come from an output item.
+def _lacks_tool_search_output_identity(part: NativeToolSearchReturnPart) -> bool:
+    """Identify return parts that did not come from a preserved `tool_search_output` item.
 
-    Parts built from a real `tool_search_output` item always carry its `id` in
-    `provider_details` (see `_build_tool_search_return_part`).
+    Parts built from a real output item always carry its `id` in `provider_details`
+    (see `_build_tool_search_return_part`). Parts without it are pre-fix history
+    (only `status` was stashed) or metadata-stripped round-trips. For those, replay
+    falls back to sending the call only, the shape pre-fix code sent and the only
+    one proven against the live API for such histories; fabricating an output item
+    risks colliding with server-side state the call already references.
     """
-    return not part.discovered_tools and 'id' not in (part.provider_details or {})
+    return 'id' not in (part.provider_details or {})
 
 
 def _build_tool_search_output_param(

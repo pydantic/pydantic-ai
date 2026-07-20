@@ -12,7 +12,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
@@ -3211,20 +3211,63 @@ def test_openai_ignores_client_tool_search_output() -> None:
     assert response.parts == []
 
 
+async def test_openai_streaming_ignores_client_tool_search_output(allow_model_requests: None) -> None:
+    """Streaming drops client-execution output items, matching `_process_response`."""
+    from openai.types import responses as resp
+
+    _, outputs = _openai_hosted_tool_search_items()
+    client_output = outputs[0].model_copy(update={'execution': 'client'})
+    final_response = response_message([client_output]).model_copy(update={'status': 'completed'})
+    created_response = response_message([]).model_copy(update={'status': 'in_progress'})
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=client_output.model_copy(update={'status': 'in_progress'}),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=client_output, output_index=0, type='response.output_item.done', sequence_number=2
+        ),
+        resp.ResponseCompletedEvent(response=final_response, type='response.completed', sequence_number=3),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='test')])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
+    ) as streamed_response:
+        async for _ in streamed_response:
+            pass
+
+    assert streamed_response.get().parts == []
+
+
+@pytest.mark.parametrize('terminal_status', ['completed', 'failed', 'incomplete'])
 @pytest.mark.parametrize(
     ('pair_count', 'expected_ids'),
     [(1, ['ts_a', 'ts_a']), (2, ['ts_a', 'tso_a', 'ts_b', 'tso_b'])],
     ids=['singleton', 'ambiguous'],
 )
 async def test_openai_hosted_tool_search_null_id_streaming_parity(
-    allow_model_requests: None, pair_count: int, expected_ids: list[str]
+    allow_model_requests: None,
+    pair_count: int,
+    expected_ids: list[str],
+    terminal_status: Literal['completed', 'failed', 'incomplete'],
 ) -> None:
-    """Single and ambiguous null-ID responses converge to the same history in both modes."""
+    """Single and ambiguous null-ID responses converge to identical parts in both modes.
+
+    Every terminal event variant runs the singleton backfill, so failed and incomplete
+    streams re-key the return part just like completed ones.
+    """
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
     final_items = [item for pair in zip(calls[:pair_count], outputs[:pair_count]) for item in pair]
-    completed_response = response_message(final_items).model_copy(update={'status': 'completed'})
+    completed_response = response_message(final_items).model_copy(update={'status': terminal_status})
     created_response = response_message([]).model_copy(update={'status': 'in_progress'})
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0)
@@ -3249,13 +3292,19 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(
             ]
         )
         sequence_number += 2
-    stream.append(
-        resp.ResponseCompletedEvent(
-            response=completed_response,
-            type='response.completed',
-            sequence_number=sequence_number,
+    if terminal_status == 'completed':
+        terminal: resp.ResponseStreamEvent = resp.ResponseCompletedEvent(
+            response=completed_response, type='response.completed', sequence_number=sequence_number
         )
-    )
+    elif terminal_status == 'failed':
+        terminal = resp.ResponseFailedEvent(
+            response=completed_response, type='response.failed', sequence_number=sequence_number
+        )
+    else:
+        terminal = resp.ResponseIncompleteEvent(
+            response=completed_response, type='response.incomplete', sequence_number=sequence_number
+        )
+    stream.append(terminal)
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
@@ -3276,11 +3325,19 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(
     non_streamed_parts = [
         part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
-    assert (
-        [part.tool_call_id for part in streamed_parts]
-        == [part.tool_call_id for part in non_streamed_parts]
-        == expected_ids
-    )
+    assert [part.tool_call_id for part in streamed_parts] == expected_ids
+
+    def normalized(
+        parts: list[NativeToolSearchCallPart | NativeToolSearchReturnPart],
+    ) -> list[NativeToolSearchCallPart | NativeToolSearchReturnPart]:
+        # Return parts stamp a construction-time timestamp; align it so the equality
+        # check covers every other field.
+        return [
+            replace(part, timestamp=non_streamed.timestamp) if isinstance(part, NativeToolSearchReturnPart) else part
+            for part in parts
+        ]
+
+    assert normalized(streamed_parts) == normalized(non_streamed_parts)
 
 
 @pytest.mark.parametrize('send_item_ids', [False, True])
@@ -3368,10 +3425,20 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
 
 
 @pytest.mark.parametrize('send_item_ids', [False, True])
-async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_item_ids: bool) -> None:
-    """Keep a persisted pre-fix empty return distinct from an authoritative empty output.
+@pytest.mark.parametrize(
+    'discovered_tools',
+    [[], [{'name': 'get_exchange_rate'}]],
+    ids=['empty', 'discovered'],
+)
+async def test_openai_replays_legacy_tool_search_history_call_only(
+    send_item_ids: bool, discovered_tools: list[ToolSearchMatch]
+) -> None:
+    """Pre-fix histories (status-only `provider_details`) replay the call item alone.
 
-    This pins the request payload because cassette matching does not compare request bodies.
+    An empty legacy return cannot be told apart from a missing output, and a non-empty
+    one references server-side state its call already carries, so both degrade to the
+    pre-fix call-only wire shape. This pins the request payload because cassette
+    matching does not compare request bodies.
     """
     legacy_history: list[ModelMessage] = [
         ModelResponse(
@@ -3383,7 +3450,7 @@ async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_i
                     provider_name='openai',
                 ),
                 NativeToolSearchReturnPart(
-                    content={'discovered_tools': []},
+                    content={'discovered_tools': discovered_tools},
                     tool_call_id='ts_old',
                     provider_name='openai',
                     provider_details={'status': 'completed'},
@@ -3401,8 +3468,16 @@ async def test_openai_does_not_replay_legacy_synthetic_tool_search_output(send_i
         ModelRequestParameters(native_tools=[ToolSearchTool()]),
     )
 
-    assert len(openai_messages) == 1
-    assert openai_messages[0].get('type') == 'tool_search_call'
+    expected_call: dict[str, Any] = {
+        'call_id': 'ts_old',
+        'arguments': {'queries': ['get_exchange_rate']},
+        'type': 'tool_search_call',
+        'execution': 'server',
+        'status': 'completed',
+    }
+    if send_item_ids:
+        expected_call['id'] = 'ts_old'
+    assert openai_messages == [expected_call]
 
 
 async def test_openai_replay_falls_back_from_invalid_provider_call_id() -> None:
