@@ -10,6 +10,7 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -25,6 +26,8 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'AdvisorModelName',
+    'AdvisorTool',
     'NATIVE_TOOL_TYPES',
     'SUPPORTED_NATIVE_TOOLS',
     'NATIVE_TOOLS_REQUIRING_CONFIG',
@@ -41,6 +44,23 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
+
+AdvisorModelName = (
+    Literal[
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-sonnet-4-6',
+    ]
+    | str
+)
+"""Known Anthropic advisor model names, or another Anthropic model ID.
+
+These are the models Anthropic currently accepts as the *advisor* — the stronger model an
+executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
+"""
 
 
 @dataclass(kw_only=True)
@@ -606,6 +626,58 @@ class FileSearchTool(AbstractNativeTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
+class AdvisorTool(AbstractNativeTool):
+    """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
+
+    The fields map 1:1 to the parameters of Anthropic's advisor tool definition.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    model: AdvisorModelName
+    """The advisor model to consult, i.e. the `model` field of Anthropic's advisor tool definition.
+
+    The executor/advisor pairing is validated by the Anthropic API, not here.
+    """
+
+    max_uses: int | None = None
+    """If provided, the advisor can be consulted at most this many times. Maps to `max_uses`.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    max_tokens: int | None = None
+    """If provided, caps the advisor's output tokens (minimum 1024). Maps to `max_tokens`.
+
+    When set, the advisor result carries a `stop_reason`.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    caching: Literal['5m', '1h'] | None = None
+    """If provided, caches the advisor context ephemerally with the given TTL. Maps to
+    `caching={'type': 'ephemeral', 'ttl': ...}`.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'advisor'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.max_tokens is not None and self.max_tokens < 1024:
+            raise UserError('AdvisorTool.max_tokens must be at least 1024.')
+
+
 # Imported after the base class is defined — `_tool_search.py` subclasses
 # `AbstractNativeTool`, so the import has to follow. Loading the submodule registers
 # `ToolSearchTool` in `NATIVE_TOOL_TYPES` via `__init_subclass__`. `ToolSearchTool` is
@@ -626,5 +698,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
 """Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
 )
