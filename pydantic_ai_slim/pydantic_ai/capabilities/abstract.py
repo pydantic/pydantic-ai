@@ -751,7 +751,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> Any:
         """Wrap the full tool execution lifecycle.
 
-        `handler()` runs the before, execute, error, and after hooks for the tool.
+        `handler(args)` runs the before, execute, error, and after hooks for the tool.
         """
         return await handler(args)
 

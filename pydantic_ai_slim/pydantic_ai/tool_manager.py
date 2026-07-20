@@ -514,9 +514,12 @@ class ToolManager(Generic[AgentDepsT]):
         if self.root_capability is None:
             return await execute_tool_call_impl()
 
-        return await self.root_capability._wrap_tool_operation(  # pyright: ignore[reportPrivateUsage]
-            validated.ctx, call=validated.call, handler=execute_tool_call_impl
-        )
+        if not validated.args_valid:
+            return await self.root_capability._wrap_tool_operation(  # pyright: ignore[reportPrivateUsage]
+                validated.ctx, call=validated.call, handler=execute_tool_call_impl
+            )
+
+        return await execute_tool_call_impl()
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 

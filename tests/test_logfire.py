@@ -12,7 +12,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1439,34 +1439,64 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('failure_source', ['schema', 'validator', 'unknown'])
+@pytest.mark.parametrize('include_content', [False, True])
+@pytest.mark.parametrize('wrapped_instrumentation', [False, True])
 def test_tool_argument_validation_error_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
+    failure_source: Literal['schema', 'validator', 'unknown'],
+    include_content: bool,
+    wrapped_instrumentation: bool,
 ) -> None:
+    model_calls = 0
+
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-an-int'})])
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls <= 2:
+            x: Any = 'not-an-int' if failure_source == 'schema' and model_calls == 1 else 2
+            tool_name = 'missing' if failure_source == 'unknown' and model_calls == 1 else 'double'
+            return ModelResponse(parts=[ToolCallPart(tool_name, {'x': x})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(
-        FunctionModel(call_tool),
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],
-    )
+    def validate_args(ctx: RunContext[Any], x: int) -> None:
+        if failure_source == 'validator' and ctx.retry == 0:
+            raise ModelRetry(f'reject {x}')
 
-    @agent.tool_plain
+    instrumentation = Instrumentation(settings=InstrumentationSettings(include_content=include_content))
+    capability = WrapperCapability(instrumentation) if wrapped_instrumentation else instrumentation
+    agent = Agent(FunctionModel(call_tool), capabilities=[capability])
+
+    tool_calls: list[int] = []
+
+    @agent.tool_plain(args_validator=validate_args)
     def double(x: int) -> int:
-        return x * 2  # pragma: no cover
+        tool_calls.append(x)
+        return x * 2
 
     agent.run_sync('Use the tool')
 
     summary = get_logfire_summary()
-    [tool_span] = [
+    tool_spans = [
         attributes
         for attributes in summary.attributes.values()
         if attributes.get('gen_ai.operation.name') == 'execute_tool'
     ]
-    assert tool_span['gen_ai.tool.name'] == 'double'
-    assert tool_span['logfire.level_num'] == 17
-    assert 'int_parsing' in tool_span['gen_ai.tool.call.result']
+    assert tool_calls == [2]
+    assert len(tool_spans) == 2
+    expected_names = ['missing', 'double'] if failure_source == 'unknown' else ['double', 'double']
+    assert [tool_span['gen_ai.tool.name'] for tool_span in tool_spans] == expected_names
+    assert tool_spans[0]['logfire.level_num'] == 17
+    if include_content:
+        expected_error = {
+            'schema': 'int_parsing',
+            'validator': 'reject 2',
+            'unknown': "Unknown tool name: 'missing'",
+        }[failure_source]
+        assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
+        assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
+    else:
+        assert all('gen_ai.tool.call.result' not in tool_span for tool_span in tool_spans)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1505,6 +1535,39 @@ def test_tool_span_records_recovered_and_modified_result(
     ]
     assert tool_span.get('logfire.level_num', 0) < 17
     assert tool_span['gen_ai.tool.call.result'] == 'modified recovered'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_tool_span_respects_public_wrapper_order(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class OuterToolSpan(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+        async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            with logfire.span('outer tool wrapper'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return await kwargs['handler'](kwargs['args'])
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[OuterToolSpan(), Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    outer_span = next(span for span in spans if span['name'] == 'outer tool wrapper')
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool double')
+    assert tool_span['parent']['span_id'] == outer_span['context']['span_id']
 
 
 class WeatherInfo(BaseModel):

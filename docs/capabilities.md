@@ -1603,6 +1603,17 @@ To skip validation and provide pre-validated args, raise [`SkipToolValidation(ar
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
 
+For tool execution, `wrap_tool_execute` encloses the complete execution lifecycle:
+
+```text
+wrap_tool_execute(handler)
+  └─ before_tool_execute → tool body
+       ├─ success ─────────→ after_tool_execute
+       └─ failure → on_tool_execute_error
+            ├─ re-raise ───→ error propagates through the wrapper
+            └─ recover ────→ after_tool_execute → result returns through the wrapper
+```
+
 #### Output hooks
 
 Like tool processing, [output](output.md) processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any [output function](output.md#output-functions)). Each phase has its own hooks.
@@ -1730,7 +1741,7 @@ For building web UIs that transform streamed events into protocol-specific forma
 
 #### Error hooks
 
-Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure (after `wrap_*` has had its chance to recover):
+Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure. Most lifecycle points call the error hook after `wrap_*` has had its chance to recover:
 
 ```
 before_X → wrap_X(handler)
@@ -1739,6 +1750,8 @@ before_X → wrap_X(handler)
         ├─ re-raise ──→ (error propagates, after_X not called)
         └─ recover ───→ after_X (modify recovered result)
 ```
+
+Tool execution is the exception: [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] encloses `before_tool_execute`, `on_tool_execute_error`, and `after_tool_execute`, as shown in [Tool hooks](#tool-hooks).
 
 Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
