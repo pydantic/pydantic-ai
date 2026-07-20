@@ -2494,12 +2494,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             cast(OpenAIModelName | None, last.model_name),
         )
 
-    def _build_include(self, model_settings: OpenAIResponsesModelSettings) -> list[responses.ResponseIncludable]:
+    def _build_include(
+        self, model_settings: OpenAIResponsesModelSettings, *, is_retrieve: bool = False
+    ) -> list[responses.ResponseIncludable]:
         """Build the include list for retrieve/create requests."""
         profile = self.profile
         include: list[responses.ResponseIncludable] = []
         if profile.get('openai_supports_encrypted_reasoning_content', False):
-            include.append('reasoning.encrypted_content')
+            # OpenAI rejects `reasoning.encrypted_content` on retrieves of persisted
+            # responses (the default when `openai_store` is not explicitly `False`), so
+            # only request it for non-persisted retrieves; create requests keep it.
+            if not is_retrieve or model_settings.get('openai_store') is False:
+                include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
@@ -2539,7 +2545,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         starting_after: int | None = None,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         """Retrieve a background response by ID, optionally streaming."""
-        include = self._build_include(model_settings)
+        include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name):
             try:

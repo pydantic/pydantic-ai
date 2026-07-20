@@ -4357,6 +4357,61 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+def test_build_include_encrypted_content_create(allow_model_requests: None) -> None:
+    """`_build_include` adds `reasoning.encrypted_content` on create (is_retrieve=False) for reasoning models."""
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_encrypted_reasoning_content=True), openai_model_profile('o3-mini')
+    )
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    # Create requests keep encrypted_content regardless of openai_store.
+    include = model._build_include(  # pyright: ignore[reportPrivateUsage]
+        cast('OpenAIResponsesModelSettings', {}), is_retrieve=False
+    )
+    assert 'reasoning.encrypted_content' in include
+
+    include = model._build_include(  # pyright: ignore[reportPrivateUsage]
+        cast('OpenAIResponsesModelSettings', {'openai_store': False}), is_retrieve=False
+    )
+    assert 'reasoning.encrypted_content' in include
+
+
+def test_build_include_encrypted_content_retrieve_persisted(allow_model_requests: None) -> None:
+    """`_build_include` omits `reasoning.encrypted_content` on retrieve when the response is persisted (default)."""
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_encrypted_reasoning_content=True), openai_model_profile('o3-mini')
+    )
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    # Default openai_store (None -> persisted): encrypted_content must be omitted on retrieve.
+    include = model._build_include(  # pyright: ignore[reportPrivateUsage]
+        cast('OpenAIResponsesModelSettings', {}), is_retrieve=True
+    )
+    assert 'reasoning.encrypted_content' not in include
+
+    # Explicitly persisted (openai_store=True): same as the default.
+    include = model._build_include(  # pyright: ignore[reportPrivateUsage]
+        cast('OpenAIResponsesModelSettings', {'openai_store': True}), is_retrieve=True
+    )
+    assert 'reasoning.encrypted_content' not in include
+
+
+def test_build_include_encrypted_content_retrieve_not_persisted(allow_model_requests: None) -> None:
+    """`_build_include` keeps `reasoning.encrypted_content` on retrieve when openai_store=False (non-persisted)."""
+    profile = merge_profile(
+        OpenAIModelProfile(openai_supports_encrypted_reasoning_content=True), openai_model_profile('o3-mini')
+    )
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    include = model._build_include(  # pyright: ignore[reportPrivateUsage]
+        cast('OpenAIResponsesModelSettings', {'openai_store': False}), is_retrieve=True
+    )
+    assert 'reasoning.encrypted_content' in include
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
