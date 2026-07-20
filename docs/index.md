@@ -96,6 +96,22 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is", assuming you've [installed the `pydantic_ai` package](install.md))_
 
+!!! tip "No API key yet?"
+    You don't need a provider API key to try Pydantic AI. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel), which runs entirely offline without calling an LLM:
+
+    ```python {title="hello_world_test.py"}
+    from pydantic_ai import Agent
+
+    agent = Agent('test')  # (1)!
+    result = agent.run_sync('Where does "hello world" come from?')
+    print(result.output)
+    #> success (no tool calls)
+    ```
+
+    1. [`TestModel`][pydantic_ai.models.test.TestModel] returns canned responses so you can exercise your agent, tools, and outputs without a key.
+
+    When you're ready to use a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
+
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
 Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), [structured outputs](output.md), or composable [capabilities](capabilities.md) to build more powerful agents.

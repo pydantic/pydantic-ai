@@ -32,7 +32,7 @@ from pydantic_ai._utils import (
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -176,6 +176,21 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+async def _with_event_stream_buffer(
+    stream: AsyncIterator[_messages.AgentStreamEvent],
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Drain buffered run events around each event from a node stream, preserving order."""
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+    async for event in stream:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        yield event
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+
+
 async def _cancel_task(task: Task[Any]) -> None:
     # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
     task.cancel()
@@ -266,6 +281,14 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=list[_messages.AgentStreamEvent]
+    )
+    """Internal: run event buffer, shared by reference into every `RunContext` this run (see `build_run_context`)
+    as the private `_event_stream_buffer` field. Framework code appends events to it (e.g.
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]s from
+    [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]);
+    the graph drains it into the agent event stream around node events."""
     mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
         default_factory=dict[str, dict[str, ToolDefinition]]
     )
@@ -324,6 +347,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request_index: int | None
 
     model: models.Model
+    model_selector: ModelSelector[DepsT] | None
+    model_selected_for_step: int | None
+    evaluate_model_selector: Callable[
+        [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[models.Model]
+    ]
+    enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
@@ -909,7 +938,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
             # the handler is parked on `stream_done.wait()`. Setting stream_done lets
             # it exit so cancel_and_drain's gather can complete. Harmless no-op when
-            # the task was actually cancelled — it's already unwinding. See #6422.
+            # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
             raise
@@ -1015,6 +1044,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
+            _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
         )
 
     async def _make_request(  # noqa: C901
@@ -1192,6 +1222,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
+
+        await _select_model(ctx)
 
         _refresh_loaded_capability_ids(ctx)
 
@@ -1552,9 +1584,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncGenerator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        stream = self._run_stream(ctx)
+        stream = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
         yield stream
 
         # Run the stream to completion if it was not finished:
@@ -1942,6 +1974,30 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         return End(self.final_result)
 
 
+async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    selector = ctx.deps.model_selector
+    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+        return
+
+    agent = ctx.deps.agent
+    assert agent is not None
+    selection_ctx = models.ModelSelectionContext(
+        agent=agent,
+        deps=ctx.deps.user_deps,
+        model=ctx.deps.model,
+        run_step=ctx.state.run_step,
+        # The current request has already been appended, but selection describes the model
+        # that will handle it. Expose the history available before this request step, matching
+        # bootstrap selection, and do not let selectors mutate graph state through the context.
+        messages=list(ctx.state.message_history[:-1]),
+        usage=ctx.state.usage,
+    )
+    model = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
+    await ctx.deps.enter_model(model)
+    ctx.deps.model = model
+    ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     run_context = RunContext[DepsT](
@@ -1968,14 +2024,16 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
-    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs caching.
+    # `discovered_tool_names`, `pending_messages`, `_event_stream_buffer`, `_mcp_tool_defs_cache` (see the
+    # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / event delivery /
+    # tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
