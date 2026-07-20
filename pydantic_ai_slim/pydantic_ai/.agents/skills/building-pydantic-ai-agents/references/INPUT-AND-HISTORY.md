@@ -44,6 +44,12 @@ Important distinctions:
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 
+To replay a conversation recorded by OTel instrumentation (e.g. the `gen_ai.input.messages` or
+`pydantic_ai.all_messages` span attributes queried from Logfire), convert it back to messages with
+`otel_messages_to_model_messages()` from `pydantic_ai` and pass the result as `message_history`.
+The conversion is lossy: timestamps, instructions, and content recorded with `include_content=False`
+are not preserved.
+
 ## Manage Context Size
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
