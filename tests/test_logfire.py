@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -12,14 +12,14 @@ from typing_extensions import NotRequired, Self, TypedDict
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import DeferredToolRequests, RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -1439,26 +1439,48 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
+@pytest.mark.parametrize('failure_source', ['schema', 'validator', 'unknown'])
 def test_tool_argument_validation_error_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
-    failure_source: Literal['schema', 'validator'],
+    failure_source: Literal['schema', 'validator', 'unknown'],
 ) -> None:
     model_calls = 0
 
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         nonlocal model_calls
         model_calls += 1
-        if model_calls <= 2:
+        if model_calls == 1:
+            if failure_source == 'unknown':
+                return ModelResponse(parts=[ToolCallPart('missing', {})])
             x: Any = 'not-an-int' if failure_source == 'schema' and model_calls == 1 else 2
             return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
+        if model_calls == 2:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
         return ModelResponse(parts=[TextPart('done')])
 
     def validate_args(ctx: RunContext[Any], x: int) -> None:
         if failure_source == 'validator' and ctx.retry == 0:
             raise ModelRetry(f'reject {x}')
 
-    agent = Agent(FunctionModel(call_tool), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    hooks = Hooks()
+    wrapped_calls: list[tuple[str, dict[str, Any]]] = []
+
+    @hooks.on.tool_execute
+    async def observe_execution(
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        wrapped_calls.append((tool_def.name, args))
+        return await handler(args)
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), hooks],
+    )
 
     tool_calls: list[int] = []
 
@@ -1476,10 +1498,16 @@ def test_tool_argument_validation_error_emits_span(
         if attributes.get('gen_ai.operation.name') == 'execute_tool'
     ]
     assert tool_calls == [2]
+    assert wrapped_calls == [('double', {'x': 2})]
     assert len(tool_spans) == 2
-    assert [tool_span['gen_ai.tool.name'] for tool_span in tool_spans] == ['double', 'double']
+    first_tool_name = 'missing' if failure_source == 'unknown' else 'double'
+    assert [tool_span['gen_ai.tool.name'] for tool_span in tool_spans] == [first_tool_name, 'double']
     assert tool_spans[0]['logfire.level_num'] == 17
-    expected_error = 'int_parsing' if failure_source == 'schema' else 'reject 2'
+    expected_error = {
+        'schema': 'int_parsing',
+        'validator': 'reject 2',
+        'unknown': 'Unknown tool name',
+    }[failure_source]
     assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
     assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
 

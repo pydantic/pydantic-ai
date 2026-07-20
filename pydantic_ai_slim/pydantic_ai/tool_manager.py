@@ -296,7 +296,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with before/after/error tool_execute hooks."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -316,9 +316,9 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            async def execute_lifecycle(args: dict[str, Any]) -> Any:
+            try:
                 # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
 
                 # on_tool_execute_error handles failures from the tool body
                 try:
@@ -333,18 +333,6 @@ class ToolManager(Generic[AgentDepsT]):
                 # after_tool_execute
                 tool_result = await cap.after_tool_execute(
                     ctx, call=call, tool_def=tool_def, args=args, result=tool_result
-                )
-
-                return tool_result
-
-            try:
-                # wrap_tool_execute encloses the complete execute lifecycle
-                tool_result = await cap.wrap_tool_execute(
-                    ctx,
-                    call=call,
-                    tool_def=tool_def,
-                    args=validated.validated_args,
-                    handler=execute_lifecycle,
                 )
             except (ValidationError, ModelRetry) as e:
                 # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
@@ -480,8 +468,8 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call via capability hooks.
 
-        The Instrumentation capability (if present) creates a trace span around this
-        operation, including a stored validation error or the full execution lifecycle.
+        The Instrumentation capability (if present) creates trace spans via its
+        wrap_tool_execute hook.
 
         Args:
             validated: The validation result from validate_tool_call().
@@ -506,16 +494,37 @@ class ToolManager(Generic[AgentDepsT]):
 
         ctx = self.ctx
 
-        async def execute_tool_call_impl() -> Any:
+        async def settle_tool_call(args: dict[str, Any] | None) -> Any:
             return await self._execute_tool_call_impl(
-                validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
+                replace(validated, validated_args=args),
+                usage=ctx.usage,
+                wrap_validation_errors=wrap_validation_errors,
             )
 
-        if self.root_capability is not None:
-            return await self.root_capability._wrap_tool_call(  # pyright: ignore[reportPrivateUsage]
-                validated.ctx, call=validated.call, handler=execute_tool_call_impl
+        cap = self.root_capability
+        tool_def = validated.tool.tool_def if validated.tool is not None else None
+        if cap is None or (tool_def is not None and tool_def.kind in ('output', 'external')):
+            return await settle_tool_call(validated.validated_args)
+
+        try:
+            return await cap.wrap_tool_execute(
+                validated.ctx,
+                call=validated.call,
+                tool_def=tool_def,
+                args=validated.validated_args,
+                handler=settle_tool_call,
             )
-        return await execute_tool_call_impl()
+        except SkipToolExecution as e:
+            ctx.usage.tool_calls += 1
+            return e.result
+        except (ValidationError, ModelRetry) as e:
+            if not wrap_validation_errors:
+                raise
+            name = validated.call.tool_name
+            max_retries = validated.tool.max_retries if validated.tool is not None else self.default_max_retries
+            self._check_max_retries(name, max_retries, e)
+            self.failed_tools.add(name)
+            raise self._wrap_error_as_retry(name, validated.call, e) from e
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 

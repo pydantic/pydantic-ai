@@ -434,19 +434,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
-    async def _wrap_tool_call(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_available_cap(capability, ctx) is not None:
-                chain = _make_tool_call_wrap(capability, ctx, call, chain)
-        return await chain()
-
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -551,9 +538,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: dict[str, Any],
-        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+        tool_def: ToolDefinition | None,
+        args: dict[str, Any] | None,
+        handler: Callable[[dict[str, Any] | None], Awaitable[Any]],
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
@@ -760,20 +747,6 @@ def _make_model_request_wrap(
     return wrapped
 
 
-def _make_tool_call_wrap(
-    cap: AbstractCapability[AgentDepsT],
-    ctx: RunContext[AgentDepsT],
-    call: ToolCallPart,
-    inner: Callable[[], Awaitable[Any]],
-) -> Callable[[], Awaitable[Any]]:
-    async def wrapped() -> Any:
-        return await cap._wrap_tool_call(  # pyright: ignore[reportPrivateUsage]
-            _ctx_for_cap(cap, ctx), call=call, handler=inner
-        )
-
-    return wrapped
-
-
 def _make_tool_validate_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
@@ -812,10 +785,10 @@ def _make_tool_execute_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     call: ToolCallPart,
-    tool_def: ToolDefinition,
-    inner: Callable[[dict[str, Any]], Awaitable[Any]],
-) -> Callable[[dict[str, Any]], Awaitable[Any]]:
-    async def wrapped(args: dict[str, Any]) -> Any:
+    tool_def: ToolDefinition | None,
+    inner: Callable[[dict[str, Any] | None], Awaitable[Any]],
+) -> Callable[[dict[str, Any] | None], Awaitable[Any]]:
+    async def wrapped(args: dict[str, Any] | None) -> Any:
         return await cap.wrap_tool_execute(
             _ctx_for_cap(cap, ctx), call=call, tool_def=tool_def, args=args, handler=inner
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -267,15 +267,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         return await self.wrapped.on_model_request_error(ctx, request_context=request_context, error=error)
 
-    async def _wrap_tool_call(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        handler: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        return await self.wrapped._wrap_tool_call(ctx, call=call, handler=handler)
-
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -348,8 +339,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
+        tool_def: ToolDefinition | None,
+        args: ValidatedToolArgs | None,
         handler: WrapToolExecuteHandler,
     ) -> Any:
         return await self.wrapped.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=handler)
