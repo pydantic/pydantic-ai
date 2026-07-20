@@ -134,8 +134,8 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
-            _instrument_tool_call=self._instrument_tool_call,
         )
+        new_tm._instrument_tool_call = self._instrument_tool_call
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
         # through the standard validation/execution path.

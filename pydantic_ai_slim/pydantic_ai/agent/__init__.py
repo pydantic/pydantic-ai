@@ -1455,18 +1455,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(initial_ctx)
 
-        tool_instrumentations: list[tuple[str, InstrumentationCap]] = []
-        for capability_id, capability in capabilities_dict.items():
-            while isinstance(capability, WrapperCapability):
-                capability = capability.wrapped
-            if isinstance(capability, InstrumentationCap):
-                tool_instrumentations.append((capability_id, capability))
+        tool_instrumentations: list[tuple[frozenset[str], InstrumentationCap]] = []
+
+        def collect_tool_instrumentations(
+            capability: AbstractCapability[Any],
+            required_ids: frozenset[str] = frozenset(),
+            *,
+            check_availability: bool = True,
+        ) -> None:
+            if check_availability and capability.defer_loading:
+                assert capability.id is not None
+                required_ids |= {capability.id}
+
+            if isinstance(capability, WrapperCapability):
+                # The wrapper owns its wrapped node's availability; wrapped containers
+                # still apply their children's availability when they dispatch below.
+                collect_tool_instrumentations(capability.wrapped, required_ids, check_availability=False)
+            elif isinstance(capability, CombinedCapability):
+                for child in capability.capabilities:
+                    collect_tool_instrumentations(child, required_ids)
+            elif isinstance(capability, InstrumentationCap):
+                tool_instrumentations.append((required_ids, capability))
+
+        collect_tool_instrumentations(run_capability)
 
         async def instrument_tool_call(
             ctx: RunContext[Any], call: _messages.ToolCallPart, handler: Callable[[], Awaitable[Any]]
         ) -> Any:
-            for capability_id, instrumentation in reversed(tool_instrumentations):
-                if capability_id in ctx.available_capability_ids:
+            for required_ids, instrumentation in reversed(tool_instrumentations):
+                if required_ids <= ctx.available_capability_ids:
                     handler = functools.partial(
                         instrumentation._instrument_tool_call,  # pyright: ignore[reportPrivateUsage]
                         call,

@@ -12,7 +12,7 @@ from typing_extensions import NotRequired, Self, TypedDict
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1482,6 +1482,44 @@ def test_tool_argument_validation_error_emits_span(
     expected_error = 'int_parsing' if failure_source == 'schema' else 'reject 2'
     assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
     assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(('loaded', 'expected_span_count'), [(False, 0), (True, 2)])
+def test_wrapped_deferred_instrumentation_only_traces_when_loaded(
+    get_logfire_summary: Callable[[], LogfireSummary], loaded: bool, expected_span_count: int
+) -> None:
+    responses = [
+        *([ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'trace'})])] if loaded else []),
+        ModelResponse(parts=[ToolCallPart('double', {'x': 'not-an-int'})]),
+        ModelResponse(parts=[ToolCallPart('double', {'x': 2})]),
+        ModelResponse(parts=[TextPart('done')]),
+    ]
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return responses.pop(0)
+
+    instrumentation = WrapperCapability(
+        CombinedCapability([Instrumentation(settings=InstrumentationSettings())]),
+        id='trace',
+        description='Trace tool calls.',
+        defer_loading=True,
+    )
+    agent = Agent(FunctionModel(call_tool), capabilities=[instrumentation])
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    tool_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert len(tool_spans) == expected_span_count
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
