@@ -125,6 +125,26 @@ with no `reasoning.effort` set, and can be disabled exactly when it accepts `eff
 The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
 
 
+def _normalize_model_name(model_name: str) -> str:
+    """Normalize vendor- or provider-prefixed model names to bare OpenAI model names.
+
+    Handles prefixes like 'openai.gpt-4o', 'openai/gpt-4o', 'azure/gpt-4o',
+    'openrouter/openai/gpt-4o', and fine-tuning prefixes 'ft:gpt-4o:...'.
+    """
+    if model_name.startswith('ft:'):
+        parts = model_name.split(':')
+        if len(parts) >= 2:
+            model_name = parts[1]
+
+    if '/' in model_name:
+        model_name = model_name.rsplit('/', 1)[-1]
+
+    if model_name.startswith('openai.'):
+        model_name = model_name.removeprefix('openai.')
+
+    return model_name
+
+
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
     return next(
         (support for prefix, support in _REASONING_SUPPORT_BY_PREFIX.items() if model_name.startswith(prefix)),
@@ -281,6 +301,7 @@ def validate_openai_profile(profile: ModelProfile) -> None:
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
+    model_name = _normalize_model_name(model_name)
     reasoning = _reasoning_support(model_name)
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6

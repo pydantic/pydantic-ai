@@ -110,6 +110,27 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 
 
+def test_vendor_prefixed_model_profiles():
+    """Verify that vendor- or provider-prefixed model names match their bare equivalents."""
+    cases = [
+        ('gpt-5.6-sol', 'openai.gpt-5.6-sol'),
+        ('gpt-5.6-sol', 'openai/gpt-5.6-sol'),
+        ('gpt-5.6-sol', 'bedrock/openai.gpt-5.6-sol'),
+        ('gpt-4o', 'azure/gpt-4o'),
+        ('gpt-4o', 'vllm/gpt-4o'),
+        ('gpt-4o', 'openrouter/openai/gpt-4o'),
+        ('gpt-4o', 'ft:gpt-4o:my-org:custom-name'),
+        ('gpt-oss-120b', 'openai.gpt-oss-120b'),
+        ('gpt-oss-120b', 'openai/gpt-oss-120b'),
+        ('o3-mini', 'openai.o3-mini'),
+        ('o3-mini', 'openai/o3-mini'),
+    ]
+    for bare_name, prefixed_name in cases:
+        bare_profile = openai_model_profile(bare_name)
+        prefixed_profile = openai_model_profile(prefixed_name)
+        assert bare_profile == prefixed_profile, f'Mismatch for {prefixed_name} vs {bare_name}'
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 
