@@ -22,7 +22,7 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -34,7 +34,6 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
-    WrapToolOperationHandler,
 )
 
 if TYPE_CHECKING:
@@ -352,6 +351,17 @@ class Instrumentation(AbstractCapability[Any]):
         ) as span:
             try:
                 result = await action()
+            except SkipToolExecution as exc:
+                if not handle_tool_control_flow:
+                    span.record_exception(exc, escaped=True)
+                    span.set_status(StatusCode.ERROR)
+                    raise
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        exc.result if isinstance(exc.result, str) else serialize_result(exc.result),
+                    )
+                raise
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
                     span.record_exception(exc, escaped=True)
@@ -414,7 +424,7 @@ class Instrumentation(AbstractCapability[Any]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        handler: WrapToolOperationHandler,
+        handler: Callable[[], Awaitable[Any]],
     ) -> Any:
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),

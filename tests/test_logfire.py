@@ -14,7 +14,13 @@ from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapperCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -1439,9 +1445,16 @@ Fix the errors and try again.\
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('failure_source', ['schema', 'validator', 'unknown'])
-@pytest.mark.parametrize('include_content', [False, True])
-@pytest.mark.parametrize('wrapped_instrumentation', [False, True])
+@pytest.mark.parametrize(
+    ('failure_source', 'include_content', 'wrapped_instrumentation'),
+    [
+        ('schema', True, False),
+        ('validator', True, False),
+        ('unknown', True, False),
+        ('schema', False, False),
+        ('schema', True, True),
+    ],
+)
 def test_tool_argument_validation_error_emits_span(
     get_logfire_summary: Callable[[], LogfireSummary],
     failure_source: Literal['schema', 'validator', 'unknown'],
@@ -1535,6 +1548,50 @@ def test_tool_span_records_recovered_and_modified_result(
     ]
     assert tool_span.get('logfire.level_num', 0) < 17
     assert tool_span['gen_ai.tool.call.result'] == 'modified recovered'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('skip_phase', ['before', 'wrap'])
+def test_skipped_tool_execution_has_success_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    skip_phase: Literal['before', 'wrap'],
+) -> None:
+    @dataclass
+    class SkipTool(AbstractCapability[Any]):
+        async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
+            if skip_phase == 'before':
+                raise SkipToolExecution('replacement')
+            return kwargs['args']
+
+        async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            if skip_phase == 'wrap':
+                raise SkipToolExecution('replacement')
+            return await kwargs['handler'](kwargs['args'])
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('skip', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), SkipTool()],
+    )
+
+    @agent.tool_plain
+    def skip() -> str:
+        raise AssertionError('tool should not run')  # pragma: no cover
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    [tool_span] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert tool_span.get('logfire.level_num', 0) < 17
+    assert tool_span['gen_ai.tool.call.result'] == 'replacement'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

@@ -5745,6 +5745,8 @@ class TestToolExecuteHooks:
 
     async def test_wrap_tool_execute_preserves_capability_onion_order(self):
         events: list[str] = []
+        tool_values: list[str] = []
+        wrapper_outputs: list[str] = []
 
         @dataclass
         class LifecycleCap(AbstractCapability[Any]):
@@ -5752,27 +5754,40 @@ class TestToolExecuteHooks:
 
             async def before_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> dict[str, Any]:
                 events.append(f'before:{self.label}')
-                return kwargs['args']
+                return {'value': f'{kwargs["args"]["value"]}|before:{self.label}'}
 
             async def wrap_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
                 events.append(f'wrap:{self.label}:before')
-                result = await kwargs['handler'](kwargs['args'])
+                args = {'value': f'{kwargs["args"]["value"]}|wrap:{self.label}'}
+                result = await kwargs['handler'](args)
                 events.append(f'wrap:{self.label}:after')
+                result = f'{result}|wrapped:{self.label}'
+                wrapper_outputs.append(result)
                 return result
 
             async def after_tool_execute(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
                 events.append(f'after:{self.label}')
-                return kwargs['result']
+                return f'{kwargs["result"]}|after:{self.label}'
+
+        model_calls = 0
+
+        def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if model_calls == 1:
+                return ModelResponse(parts=[ToolCallPart('my_tool', {'value': 'start'})])
+            return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(
-            FunctionModel(tool_calling_model),
+            FunctionModel(call_tool),
             capabilities=[LifecycleCap('outer'), LifecycleCap('inner')],
         )
 
         @agent.tool_plain
-        def my_tool() -> str:
+        def my_tool(value: str) -> str:
             events.append('tool')
-            return 'tool result'
+            tool_values.append(value)
+            return 'result'
 
         await agent.run('call tool')
         assert events == [
@@ -5785,6 +5800,11 @@ class TestToolExecuteHooks:
             'after:outer',
             'wrap:inner:after',
             'wrap:outer:after',
+        ]
+        assert tool_values == ['start|wrap:outer|wrap:inner|before:outer|before:inner']
+        assert wrapper_outputs == [
+            'result|after:inner|after:outer|wrapped:inner',
+            'result|after:inner|after:outer|wrapped:inner|wrapped:outer',
         ]
 
     @pytest.mark.parametrize('failure_phase', ['before', 'after'])
