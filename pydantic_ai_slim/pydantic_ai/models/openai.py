@@ -3187,7 +3187,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 model_request_parameters,
                                 self._map_tool_definition,
                             )
-                            output_id = provider_details.get('id') if provider_details else None
+                            output_id = provider_details.get('id')
                             if should_send_item_id and isinstance(output_id, str):
                                 tool_search_output['id'] = output_id
                             openai_messages.append(tool_search_output)
@@ -4758,23 +4758,25 @@ def _map_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> N
 
 def _tool_search_replay_details(
     part: NativeToolCallPart | NativeToolSearchReturnPart,
-) -> tuple[str | None, Literal['in_progress', 'completed', 'incomplete'], dict[str, Any] | None]:
+) -> tuple[str | None, Literal['in_progress', 'completed', 'incomplete'], dict[str, Any]]:
     """Read provider-native tool-search identity and status with backward-compatible defaults."""
-    provider_details = part.provider_details
-    call_id = provider_details.get('call_id', part.tool_call_id) if provider_details else part.tool_call_id
+    details = part.provider_details or {}
+    call_id = details.get('call_id', part.tool_call_id)
     if not isinstance(call_id, str | None):
         call_id = part.tool_call_id
-    status = provider_details.get('status') if provider_details else None
+    status = details.get('status')
     if status not in ('in_progress', 'completed', 'incomplete'):
         status = 'completed'
-    return call_id, status, provider_details
+    return call_id, status, details
 
 
 def _is_legacy_synthetic_tool_search_return(part: NativeToolSearchReturnPart) -> bool:
-    """Identify pre-fix empty placeholders that did not come from an output item."""
-    provider_details = part.provider_details or {}
-    has_output_identity = any(key in provider_details for key in ('id', 'call_id', 'execution'))
-    return not part.discovered_tools and not has_output_identity
+    """Identify pre-fix empty placeholders that did not come from an output item.
+
+    Parts built from a real `tool_search_output` item always carry its `id` in
+    `provider_details` (see `_build_tool_search_return_part`).
+    """
+    return not part.discovered_tools and 'id' not in (part.provider_details or {})
 
 
 def _build_tool_search_output_param(
