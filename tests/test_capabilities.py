@@ -621,7 +621,12 @@ def test_model_json_schema_with_capabilities():
                         'model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -1748,7 +1753,12 @@ def test_model_json_schema_with_capabilities():
                         'image_model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -1770,18 +1780,48 @@ def test_model_json_schema_with_capabilities():
                         },
                         'size': {
                             'anyOf': [
-                                {
-                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
-                                    'type': 'string',
-                                },
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'title': 'Size',
                         },
+                        'dimensions': {
+                            'anyOf': [
+                                {
+                                    'maxItems': 2,
+                                    'minItems': 2,
+                                    'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Dimensions',
+                        },
                         'aspect_ratio': {
                             'anyOf': [
                                 {
-                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'enum': [
+                                        '1:1',
+                                        '1:2',
+                                        '1:4',
+                                        '1:8',
+                                        '2:1',
+                                        '2:3',
+                                        '3:2',
+                                        '3:4',
+                                        '4:1',
+                                        '4:3',
+                                        '4:5',
+                                        '5:4',
+                                        '8:1',
+                                        '9:16',
+                                        '9:19.5',
+                                        '9:20',
+                                        '16:9',
+                                        '19.5:9',
+                                        '20:9',
+                                        '21:9',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'null'},
@@ -7417,8 +7457,8 @@ class _MultipleImageGenerationModel(TestImageGenerationModel):
 
 
 class TestImageGenerationCapability:
-    def test_image_gen_init_params_match_builtin_tool(self):
-        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
+    def test_image_gen_init_params_cover_builtin_tool_and_direct_geometry(self):
+        """ImageGeneration adds direct geometry without dropping existing native-tool fields."""
         import dataclasses
         import inspect
 
@@ -7442,7 +7482,7 @@ class TestImageGenerationCapability:
             'defer_loading',
             'description',
         }
-        assert init_params == builtin_fields
+        assert init_params == builtin_fields | {'dimensions'}
 
         # The spec-only constructor deliberately narrows runtime-only values, but must keep the
         # same parameter names so YAML/JSON configuration cannot drift from the Python API.
@@ -7518,8 +7558,7 @@ class TestImageGenerationCapability:
                     output_compression=80,
                     output_format='jpeg',
                     quality='low',
-                    size='1024x1024',
-                    aspect_ratio='1:1',
+                    dimensions=(1024, 1024),
                 )
             ],
         )
@@ -7535,8 +7574,7 @@ class TestImageGenerationCapability:
             'output_compression': 80,
             'output_format': 'jpeg',
             'quality': 'low',
-            'size': '1024x1024',
-            'aspect_ratio': '1:1',
+            'dimensions': (1024, 1024),
             'extra_headers': {'x-test': 'preserved'},
         }
         tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
@@ -7634,6 +7672,15 @@ class TestImageGenerationCapability:
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
 
+    def test_image_generation_fallback_model_warns_for_direct_only_geometry(self):
+        with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
+            cap = ImageGeneration(
+                fallback_model='openai-responses:gpt-5.4',
+                dimensions=(2048, 1152),
+            )
+
+        assert cap.get_toolset() is not None
+
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
         cap = ImageGeneration(
@@ -7662,6 +7709,23 @@ class TestImageGenerationCapability:
         assert tool.quality == 'high'
         assert tool.size == '1024x1024'
         assert tool.aspect_ratio == '16:9'
+
+    @pytest.mark.parametrize(
+        ('kwargs', 'ignored'),
+        [
+            ({'dimensions': (2048, 1152)}, 'dimensions'),
+            ({'size': '2048x1024', 'aspect_ratio': '2:1'}, 'size, aspect_ratio'),
+        ],
+    )
+    def test_image_generation_legacy_ignores_direct_only_geometry(self, kwargs: dict[str, Any], ignored: str):
+        with pytest.warns(UserWarning, match=f'ignored direct-only setting.*{ignored}'):
+            cap = ImageGeneration(image_model='gpt-image-2', **kwargs)
+            builtins = cap.get_native_tools()
+        assert len(builtins) == 1
+        tool = builtins[0]
+        assert isinstance(tool, ImageGenerationTool)
+        assert tool.size is None
+        assert tool.aspect_ratio is None
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """Custom native tool settings are merged with capability-level overrides for the fallback."""

@@ -6,10 +6,18 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
-from pydantic_ai.images import ImageGenerationModel, ImageGenerationSettings, ImageGenerationSize, ImageGenerator
+from pydantic_ai.images import (
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationModel,
+    ImageGenerationSettings,
+    ImageGenerationSize,
+    ImageGenerator,
+)
+from pydantic_ai.images.settings import image_generation_tool_settings
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
+from pydantic_ai.native_tools import ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -82,9 +90,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     Image generation settings are applied to the direct fallback using
     `ImageGenerationSettings`. Each direct provider maps the normalized settings it
-    supports and warns about settings it cannot apply. The same fields continue to configure the
-    [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] used by
-    both the native path and the `fallback_model` subagent.
+    supports and warns about settings it cannot apply. The native path and the legacy
+    `fallback_model` subagent retain the existing `ImageGenerationTool` surface; direct-only
+    geometry settings are ignored there with a migration warning.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -155,14 +163,23 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     size: ImageGenerationSize | None
     """Size of the generated image.
 
-    Supported by: OpenAI Responses (`'auto'`, `'1024x1024'`, `'1024x1536'`, `'1536x1024'`),
-    Google (`'512'`, `'1K'`, `'2K'`, `'4K'`).
+    For direct image models, this is a provider-dependent compatibility setting: OpenAI uses
+    pixel-size strings, while Google and xAI use resolution tiers. Prefer `dimensions` for exact
+    cross-provider pixel semantics. Direct-only values are ignored by the legacy path with a warning.
     """
 
-    aspect_ratio: ImageAspectRatio | None
+    dimensions: ImageDimensions | None
+    """Exact direct-model output dimensions as `(width, height)` in pixels.
+
+    This is mutually exclusive with `aspect_ratio` and `size`. The legacy native/fallback-model
+    path ignores it with a warning.
+    """
+
+    aspect_ratio: ImageGenerationAspectRatio | None
     """Aspect ratio for generated images.
 
-    Supported by: Google (Gemini), OpenAI Responses (maps `'1:1'`, `'2:3'`, `'3:2'` to sizes).
+    Direct adapters map this to a canonical geometry supported by the selected model. Ratios outside
+    the existing native-tool vocabulary are ignored by the legacy path with a warning.
     """
 
     def __init__(
@@ -192,7 +209,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: ImageGenerationSize | None = None,
-        aspect_ratio: ImageAspectRatio | None = None,
+        dimensions: ImageDimensions | None = None,
+        aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -216,6 +234,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.output_format = output_format
         self.quality = quality
         self.size = size
+        self.dimensions = dimensions
         self.aspect_ratio = aspect_ratio
         if isinstance(local, (ImageGenerator, ImageGenerationModel)):
             local = self._direct_local_tool(local)
@@ -238,7 +257,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: ImageGenerationSize | None = None,
-        aspect_ratio: ImageAspectRatio | None = None,
+        dimensions: ImageDimensions | None = None,
+        aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -263,6 +283,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             output_format=output_format,
             quality=quality,
             size=size,
+            dimensions=dimensions,
             aspect_ratio=aspect_ratio,
             id=id,
             defer_loading=defer_loading,
@@ -286,13 +307,25 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             settings['quality'] = self.quality
         if self.size is not None:
             settings['size'] = self.size
+        if self.dimensions is not None:
+            settings['dimensions'] = self.dimensions
         if self.aspect_ratio is not None:
             settings['aspect_ratio'] = self.aspect_ratio
         return settings
 
     def _image_gen_kwargs(self) -> dict[str, Any]:
-        """Collect non-None `ImageGenerationTool` config fields."""
-        kwargs: dict[str, Any] = dict(self._image_settings())
+        """Collect settings supported by the legacy `ImageGenerationTool` path."""
+        settings, ignored = image_generation_tool_settings(self._image_settings())
+        if ignored:
+            warnings.warn(
+                'The legacy `ImageGeneration` native/fallback_model path ignored direct-only '
+                f'setting(s): {", ".join(ignored)}. Use `native=False` with '
+                "`local='provider:image-model'` or an `ImageGenerator` to apply them.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        kwargs: dict[str, Any] = dict(settings)
         if self.action is not None:
             kwargs['action'] = self.action
         if self.image_model is not None:

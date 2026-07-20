@@ -4,17 +4,47 @@ from typing import Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
-from pydantic_ai.native_tools import ImageAspectRatio
+from pydantic_ai.exceptions import UserError
 
 ImageOutputFormat = Literal['png', 'jpeg', 'webp']
 """Common generated image output formats."""
 
-ImageGenerationSize: TypeAlias = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
-"""Provider-dependent image size accepted for compatibility with `ImageGenerationTool`.
+ImageDimensions: TypeAlias = tuple[int, int]
+"""Exact output image dimensions as `(width, height)` in pixels."""
+
+ImageGenerationAspectRatio: TypeAlias = Literal[
+    '1:1',
+    '1:2',
+    '1:4',
+    '1:8',
+    '2:1',
+    '2:3',
+    '3:2',
+    '3:4',
+    '4:1',
+    '4:3',
+    '4:5',
+    '5:4',
+    '8:1',
+    '9:16',
+    '9:19.5',
+    '9:20',
+    '16:9',
+    '19.5:9',
+    '20:9',
+    '21:9',
+]
+"""Portable aspect ratios understood by at least one direct image model adapter."""
+
+ImageGenerationSize: TypeAlias = str
+"""Provider-dependent image size accepted by direct image model adapters.
 
 OpenAI interprets pixel dimensions, while Google and xAI interpret resolution tiers.
 Prefer provider-specific settings when exact provider behavior matters.
 """
+
+_LEGACY_IMAGE_SIZES = frozenset({'auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'})
+_LEGACY_IMAGE_ASPECT_RATIOS = frozenset({'21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'})
 
 
 class ImageGenerationSettings(TypedDict, total=False):
@@ -75,16 +105,22 @@ class ImageGenerationSettings(TypedDict, total=False):
     """The provider-dependent output size.
 
     OpenAI accepts pixel dimensions; Google accepts `512`, `1K`, `2K`, or `4K`;
-    xAI maps `1K` and `2K` to its resolution tiers. This field preserves the
-    existing `ImageGenerationTool` vocabulary and is not an exact cross-provider
-    resolution abstraction.
+    xAI maps `1K` and `2K` to its resolution tiers. This direct-API compatibility
+    field is not an exact cross-provider resolution abstraction.
     """
 
-    aspect_ratio: ImageAspectRatio
+    dimensions: ImageDimensions
+    """The exact output dimensions as `(width, height)` in pixels.
+
+    This is mutually exclusive with `aspect_ratio` and the compatibility `size`
+    setting. The selected provider and model must support the exact dimensions.
+    """
+
+    aspect_ratio: ImageGenerationAspectRatio
     """The requested aspect ratio.
 
-    Supported directly by Google and xAI. OpenAI maps `1:1`, `2:3`, and `3:2`
-    to its corresponding pixel sizes.
+    Provider adapters map this to a canonical model-specific output geometry.
+    Not every ratio is supported by every model.
     """
 
     extra_headers: dict[str, str]
@@ -111,6 +147,49 @@ def merge_image_generation_settings(
         return base | overrides
     else:
         return base or overrides
+
+
+def validate_image_generation_settings(settings: ImageGenerationSettings) -> None:
+    """Validate provider-independent image generation setting invariants."""
+    dimensions = settings.get('dimensions')
+    if dimensions is None:
+        return
+
+    if settings.get('aspect_ratio') is not None:
+        raise UserError('Image generation `dimensions` and `aspect_ratio` are mutually exclusive')
+    if settings.get('size') is not None:
+        raise UserError('Image generation `dimensions` and `size` are mutually exclusive')
+
+    validate_image_dimensions(dimensions)
+
+
+def validate_image_dimensions(dimensions: ImageDimensions) -> None:
+    """Validate the common exact-dimensions value before provider-specific mapping."""
+    if not isinstance(dimensions, tuple):
+        raise UserError('Image generation `dimensions` must be a `(width, height)` tuple of positive integers')
+    if len(dimensions) != 2 or any(
+        not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in dimensions
+    ):
+        raise UserError('Image generation `dimensions` must be a `(width, height)` tuple of positive integers')
+
+
+def image_generation_tool_settings(
+    settings: ImageGenerationSettings,
+) -> tuple[ImageGenerationSettings, list[str]]:
+    """Return the subset supported by the legacy `ImageGenerationTool` surface."""
+    legacy_settings = settings.copy()
+    ignored: list[str] = []
+    if legacy_settings.pop('dimensions', None) is not None:
+        ignored.append('dimensions')
+    if (size := legacy_settings.get('size')) is not None and size not in _LEGACY_IMAGE_SIZES:
+        legacy_settings.pop('size')
+        ignored.append('size')
+    if (
+        aspect_ratio := legacy_settings.get('aspect_ratio')
+    ) is not None and aspect_ratio not in _LEGACY_IMAGE_ASPECT_RATIOS:
+        legacy_settings.pop('aspect_ratio')
+        ignored.append('aspect_ratio')
+    return legacy_settings, ignored
 
 
 def warn_image_generation_settings(

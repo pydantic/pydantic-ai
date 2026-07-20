@@ -12,9 +12,10 @@ from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
+from ._google_geometry import google_supports_image_size, resolve_google_aspect_ratio, resolve_google_dimensions
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, warn_image_generation_settings
+from .settings import ImageGenerationAspectRatio, ImageGenerationSettings, warn_image_generation_settings
 
 try:
     from google.genai import Client, errors
@@ -102,7 +103,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
-        resolved = _resolve_google_settings(google_settings)
+        resolved = _resolve_google_settings(google_settings, model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         contents = await self._map_contents(prompt, images)
 
@@ -206,9 +207,6 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         )
 
 
-_GOOGLE_IMAGE_SIZES = ('512', '1K', '2K', '4K')
-
-
 @dataclass
 class _GoogleResolvedSettings:
     config: GenerateContentConfigDict
@@ -216,7 +214,7 @@ class _GoogleResolvedSettings:
     conflicts: list[str]
 
 
-def _resolve_google_settings(settings: GoogleImageGenerationSettings) -> _GoogleResolvedSettings:
+def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_name: str) -> _GoogleResolvedSettings:
     image_config = ImageConfigDict(**(settings.get('google_image_config') or {}))
     ignored = [
         name
@@ -228,21 +226,7 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings) -> _Google
     if (n := settings.get('n')) is not None and n != 1:
         ignored.append('n')
 
-    if aspect_ratio := settings.get('aspect_ratio'):
-        if (google_aspect_ratio := image_config.get('aspect_ratio')) is not None:
-            if google_aspect_ratio != aspect_ratio:
-                conflicts.append('aspect_ratio')
-        else:
-            image_config['aspect_ratio'] = aspect_ratio
-
-    if size := settings.get('size'):
-        if size not in _GOOGLE_IMAGE_SIZES:
-            ignored.append('size')
-        elif (google_size := image_config.get('image_size')) is not None:
-            if google_size != size:
-                conflicts.append('size')
-        else:
-            image_config['image_size'] = size
+    _apply_google_geometry(settings, image_config, ignored, conflicts, model_name=model_name)
 
     http_options = None
     if extra_headers := settings.get('extra_headers'):
@@ -257,6 +241,74 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings) -> _Google
         ignored=ignored,
         conflicts=conflicts,
     )
+
+
+def _apply_google_geometry(
+    settings: GoogleImageGenerationSettings,
+    image_config: ImageConfigDict,
+    ignored: list[str],
+    conflicts: list[str],
+    *,
+    model_name: str,
+) -> None:
+    if dimensions := settings.get('dimensions'):
+        _apply_google_dimensions(image_config, dimensions, conflicts, model_name=model_name)
+    elif aspect_ratio := settings.get('aspect_ratio'):
+        _apply_google_aspect_ratio(settings, image_config, aspect_ratio, ignored, conflicts, model_name=model_name)
+
+    if size := settings.get('size'):
+        if not google_supports_image_size(model_name, size):
+            ignored.append('size')
+        elif (google_size := image_config.get('image_size')) is not None:
+            if google_size != size:
+                conflicts.append('size')
+        else:
+            image_config['image_size'] = size
+
+
+def _apply_google_dimensions(
+    image_config: ImageConfigDict,
+    dimensions: tuple[int, int],
+    conflicts: list[str],
+    *,
+    model_name: str,
+) -> None:
+    aspect_ratio, image_size = resolve_google_dimensions(model_name, dimensions)
+    if (google_aspect_ratio := image_config.get('aspect_ratio')) is not None:
+        if google_aspect_ratio != aspect_ratio:
+            conflicts.append('dimensions')
+    else:
+        image_config['aspect_ratio'] = aspect_ratio
+    if image_size is not None:
+        if (google_size := image_config.get('image_size')) is not None:
+            if google_size != image_size:
+                conflicts.append('dimensions')
+        else:
+            image_config['image_size'] = image_size
+
+
+def _apply_google_aspect_ratio(
+    settings: GoogleImageGenerationSettings,
+    image_config: ImageConfigDict,
+    aspect_ratio: ImageGenerationAspectRatio,
+    ignored: list[str],
+    conflicts: list[str],
+    *,
+    model_name: str,
+) -> None:
+    mapped_geometry = resolve_google_aspect_ratio(model_name, aspect_ratio)
+    if mapped_geometry is None:
+        ignored.append('aspect_ratio')
+        return
+
+    mapped_aspect_ratio, default_size = mapped_geometry
+    if (google_aspect_ratio := image_config.get('aspect_ratio')) is not None:
+        if google_aspect_ratio != mapped_aspect_ratio:
+            conflicts.append('aspect_ratio')
+    else:
+        image_config['aspect_ratio'] = mapped_aspect_ratio
+    if default_size is not None and 'image_size' not in image_config and 'size' not in settings:
+        image_config['image_size'] = default_size
 
 
 def _output_format_from_media_type(media_type: str) -> str | None:

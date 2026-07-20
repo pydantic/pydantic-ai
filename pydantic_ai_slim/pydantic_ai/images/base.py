@@ -7,7 +7,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 
 from .result import ImageGenerationResult
-from .settings import ImageGenerationSettings, merge_image_generation_settings
+from .settings import ImageGenerationSettings, merge_image_generation_settings, validate_image_generation_settings
 
 ImageGenerationInput = TypeAliasType('ImageGenerationInput', ImageUrl | BinaryImage | UploadedFile)
 """An image input that can be used as a reference for image generation."""
@@ -79,4 +79,5 @@ class ImageGenerationModel(ABC):
                 raise UserError('Image generation `UploadedFile` inputs must have an image media type')
 
         settings = merge_image_generation_settings(self._settings, settings) or {}
+        validate_image_generation_settings(settings)
         return prompt, prepared_images, settings

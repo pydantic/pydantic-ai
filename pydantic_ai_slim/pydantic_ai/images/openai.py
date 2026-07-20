@@ -11,6 +11,12 @@ from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
+from ._openai_geometry import (
+    resolve_openai_aspect_ratio,
+    resolve_openai_compatibility_size,
+    resolve_openai_dimensions,
+    size_matches_aspect_ratio,
+)
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings, warn_image_generation_settings
@@ -115,7 +121,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         openai_settings = cast(OpenAIImageGenerationSettings, settings)
-        resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images))
+        resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images), model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
 
         try:
@@ -247,14 +253,6 @@ def _openai_input_extension(media_type: str) -> str:
     )
 
 
-_OPENAI_IMAGE_SIZES = ('auto', '1024x1024', '1024x1536', '1536x1024')
-_OPENAI_ASPECT_RATIO_TO_SIZE = {
-    '1:1': '1024x1024',
-    '2:3': '1024x1536',
-    '3:2': '1536x1024',
-}
-
-
 @dataclass
 class _OpenAIResolvedSettings:
     size: str | None
@@ -267,7 +265,9 @@ class _OpenAIResolvedSettings:
     conflicts: list[str]
 
 
-def _resolve_openai_settings(settings: OpenAIImageGenerationSettings, *, is_edit: bool) -> _OpenAIResolvedSettings:
+def _resolve_openai_settings(
+    settings: OpenAIImageGenerationSettings, *, is_edit: bool, model_name: str
+) -> _OpenAIResolvedSettings:
     ignored: list[str] = []
     conflicts: list[str] = []
 
@@ -311,7 +311,7 @@ def _resolve_openai_settings(settings: OpenAIImageGenerationSettings, *, is_edit
         ignored.append('input_fidelity')
 
     return _OpenAIResolvedSettings(
-        size=_resolve_openai_size(settings, ignored, conflicts),
+        size=_resolve_openai_size(settings, ignored, conflicts, model_name=model_name),
         quality=quality,
         background=background,
         input_fidelity=input_fidelity,
@@ -326,32 +326,40 @@ def _resolve_openai_size(
     settings: OpenAIImageGenerationSettings,
     ignored: list[str],
     conflicts: list[str],
+    *,
+    model_name: str,
 ) -> str | None:
     provider_size = settings.get('openai_size')
     size = settings.get('size')
+    dimensions = settings.get('dimensions')
     aspect_ratio = settings.get('aspect_ratio')
+    resolved_dimensions = resolve_openai_dimensions(model_name, dimensions) if dimensions is not None else None
 
     if provider_size is not None:
         if size is not None and size != provider_size:
             conflicts.append('size')
-        if aspect_ratio is not None and _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio) != provider_size:
+        if resolved_dimensions is not None and resolved_dimensions != provider_size:
+            conflicts.append('dimensions')
+        if aspect_ratio is not None and not size_matches_aspect_ratio(provider_size, aspect_ratio):
             conflicts.append('aspect_ratio')
         return provider_size
 
+    if resolved_dimensions is not None:
+        return resolved_dimensions
+
     resolved_size: str | None = None
     if size is not None:
-        if size in _OPENAI_IMAGE_SIZES:
-            resolved_size = size
-        else:
+        resolved_size = resolve_openai_compatibility_size(model_name, size)
+        if resolved_size is None:
             ignored.append('size')
 
     if aspect_ratio is not None:
-        mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+        mapped_size = resolve_openai_aspect_ratio(model_name, aspect_ratio)
         if mapped_size is None:
             ignored.append('aspect_ratio')
-        elif resolved_size in (None, 'auto', mapped_size):
+        elif resolved_size in (None, 'auto'):
             resolved_size = mapped_size
-        else:
+        elif not size_matches_aspect_ratio(resolved_size, aspect_ratio):
             ignored.append('aspect_ratio')
 
     return resolved_size

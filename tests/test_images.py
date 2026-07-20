@@ -211,6 +211,44 @@ def test_merge_image_generation_settings():
     assert merge_image_generation_settings(base, None) == base
 
 
+@pytest.mark.parametrize(
+    'settings',
+    [
+        {'dimensions': (1024, 1024), 'aspect_ratio': '1:1'},
+        {'dimensions': (1024, 1024), 'size': '1024x1024'},
+    ],
+)
+async def test_image_generation_dimensions_are_mutually_exclusive(settings: ImageGenerationSettings):
+    with pytest.raises(UserError, match='mutually exclusive'):
+        await TestImageGenerationModel().generate('tiny robot', settings=settings)
+
+
+@pytest.mark.parametrize(
+    'dimensions',
+    [
+        (0, 1024),
+        (1024, -1),
+        cast(tuple[int, int], (1024,)),
+        cast(tuple[int, int], (True, 1024)),
+        cast(tuple[int, int], [1024, 1024]),
+    ],
+)
+async def test_image_generation_dimensions_must_be_positive_integer_tuple(dimensions: tuple[int, int]):
+    with pytest.raises(UserError, match=r'`dimensions` must be a .* tuple of positive integers'):
+        await TestImageGenerationModel().generate('tiny robot', settings={'dimensions': dimensions})
+
+
+def test_known_openai_image_generation_model_names():
+    known_names = get_args(KnownImageGenerationModelName.__value__)
+
+    assert {name for name in known_names if name.startswith('openai:')} == {
+        'openai:gpt-image-1',
+        'openai:gpt-image-1-mini',
+        'openai:gpt-image-1.5',
+        'openai:gpt-image-2',
+    }
+
+
 def test_known_google_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
@@ -453,6 +491,45 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+    try:
+        await model.generate('wide image', settings={'dimensions': (1376, 768)})
+        await model.generate('portrait image', settings={'aspect_ratio': '3:4'})
+        with pytest.raises(UserError, match=r'does not support `dimensions=\(1920, 1080\)`'):
+            await model.generate('unsupported dimensions', settings={'dimensions': (1920, 1080)})
+    finally:
+        await http_client.aclose()
+
+    assert [json.loads(request.content)['generationConfig']['imageConfig'] for request in requests] == [
+        {'aspectRatio': '16:9', 'imageSize': '1K'},
+        {'aspectRatio': '3:4', 'imageSize': '1K'},
+    ]
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(google_images, 'download_item', download_mock)
@@ -570,7 +647,7 @@ async def test_google_image_generation_vcr():
 
     result = await model.generate(
         'A cat with a cowboy hat, dancing in Rome.',
-        settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+        settings=GoogleImageGenerationSettings(dimensions=(1024, 1024)),
     )
 
     assert len(result.images) == 1
@@ -751,6 +828,96 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+@pytest.mark.parametrize('model_name', ['grok-imagine-image', 'grok-imagine-image-quality'])
+@pytest.mark.parametrize(
+    ('dimensions', 'aspect_ratio', 'resolution'),
+    [
+        ((1024, 1024), '1:1', '1k'),
+        ((2048, 2048), '1:1', '2k'),
+        ((864, 1152), '3:4', '1k'),
+        ((1776, 2368), '3:4', '2k'),
+        ((1152, 864), '4:3', '1k'),
+        ((2368, 1776), '4:3', '2k'),
+        ((720, 1280), '9:16', '1k'),
+        ((1584, 2816), '9:16', '2k'),
+        ((1280, 720), '16:9', '1k'),
+        ((2816, 1584), '16:9', '2k'),
+        ((832, 1248), '2:3', '1k'),
+        ((1664, 2496), '2:3', '2k'),
+        ((1248, 832), '3:2', '1k'),
+        ((2496, 1664), '3:2', '2k'),
+        ((576, 1248), '9:19.5', '1k'),
+        ((1344, 2912), '9:19.5', '2k'),
+        ((1248, 576), '19.5:9', '1k'),
+        ((2912, 1344), '19.5:9', '2k'),
+        ((576, 1280), '9:20', '1k'),
+        ((1440, 3200), '9:20', '2k'),
+        ((1280, 576), '20:9', '1k'),
+        ((3200, 1440), '20:9', '2k'),
+        ((704, 1408), '1:2', '1k'),
+        ((1456, 2912), '1:2', '2k'),
+        ((1408, 704), '2:1', '1k'),
+        ((2912, 1456), '2:1', '2k'),
+    ],
+)
+async def test_xai_image_generation_resolves_dimensions(
+    model_name: str, dimensions: tuple[int, int], aspect_ratio: str, resolution: str
+):
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'image')[0]
+    model = XaiImageGenerationModel(
+        model_name,
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    await model.generate('geometric image', settings={'dimensions': dimensions})
+
+    assert mock_client.image.sample.await_args.kwargs['aspect_ratio'] == aspect_ratio
+    assert mock_client.image.sample.await_args.kwargs['resolution'] == resolution
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_rejects_unsupported_dimensions():
+    mock_client = AsyncMock()
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(UserError, match=r"model 'grok-imagine-image' does not support `dimensions=\(1920, 1080\)`"):
+        await model.generate('unsupported dimensions', settings={'dimensions': (1920, 1080)})
+    mock_client.image.sample.assert_not_awaited()
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_maps_common_aspect_ratio_to_canonical_1k_geometry():
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'image')[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    await model.generate('wide image', settings={'aspect_ratio': '16:9'})
+
+    assert mock_client.image.sample.await_args.kwargs['aspect_ratio'] == '16:9'
+    assert mock_client.image.sample.await_args.kwargs['resolution'] == '1k'
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_rejects_dimensions_for_unknown_model():
+    mock_client = AsyncMock()
+    model = XaiImageGenerationModel(
+        'future-image-model',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    with pytest.raises(UserError, match='does not have a known exact-dimensions mapping'):
+        await model.generate('unknown geometry', settings={'dimensions': (1024, 1024)})
+    mock_client.image.sample.assert_not_awaited()
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_single_uploaded_file():
     mock_client = AsyncMock()
     mock_client.image.sample.return_value = _xai_image_responses(b'edited-image')[0]
@@ -877,7 +1044,7 @@ def test_xai_image_generation_vcr(xai_provider: XaiProvider):
 
     result = generator.generate_sync(
         'A cat with a cowboy hat, dancing in Rome.',
-        settings=XaiImageGenerationSettings(xai_aspect_ratio='1:1', xai_resolution='1k'),
+        settings=XaiImageGenerationSettings(dimensions=(1024, 1024)),
     )
 
     assert len(result.images) == 1
@@ -1018,6 +1185,69 @@ async def test_openai_image_generation_response_mapping():
             'conflicting normalized dimensions',
             settings=OpenAIImageGenerationSettings(size='1024x1024', aspect_ratio='3:2'),
         )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json='aGVsbG8=')], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-2',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    await model.generate('wide image', settings={'dimensions': (2048, 1152)})
+    assert mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
+
+    await model.generate('wide ratio', settings={'aspect_ratio': '16:9'})
+    assert mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
+
+    await model.generate('compatibility size', settings={'size': '2048x1152', 'aspect_ratio': '16:9'})
+    assert mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
+
+    mock_client.images.generate.reset_mock()
+    with pytest.raises(UserError, match='height must be multiples of 16'):
+        await model.generate('invalid dimensions', settings={'dimensions': (1920, 1080)})
+    mock_client.images.generate.assert_not_awaited()
+
+    with pytest.raises(UserError, match='height must be multiples of 16'):
+        await model.generate(
+            'invalid overridden dimensions',
+            settings=OpenAIImageGenerationSettings(dimensions=(1920, 1080), openai_size='1920x1080'),
+        )
+    mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr
+async def test_openai_gpt_image_2_generation_vcr(openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIImageGenerationModel('gpt-image-2', provider=provider)
+
+    result = await model.generate(
+        'A cat with a cowboy hat, dancing in Rome.',
+        settings=OpenAIImageGenerationSettings(
+            dimensions=(1280, 720),
+            output_format='jpeg',
+            output_compression=10,
+            quality='low',
+        ),
+    )
+
+    assert len(result.images) == 1
+    generated_image = result.images[0]
+    assert generated_image.content.media_type == 'image/jpeg'
+    assert len(generated_image.content.data) > 100
+    assert generated_image.output_format == 'jpeg'
+    assert generated_image.size == '1280x720'
+    assert result.model_name == 'gpt-image-2'
+    assert result.provider_name == 'openai'
+    assert result.provider_url == 'https://api.openai.com/v1/'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')

@@ -1,6 +1,6 @@
 ---
 name: add-new-model
-description: Add support for a newly-released LLM model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5). Use when a provider ships a new model id and you need to wire literals, profile flags, and tests to recognize it. Handles SDK-lag, gateway list conventions, and capability probing.
+description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry.
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, AskUserQuestion
 ---
@@ -17,6 +17,12 @@ Wire a newly-released provider model into pydantic-ai. Optimized for the common 
 ## Inputs
 
 User invokes with `provider` + `model id` (e.g. `openai gpt-5.6`). If missing, ask via `AskUserQuestion`.
+
+## Image generation models
+
+Image-only models use a separate public surface from conversational models. If the model is consumed by `ImageGenerator`, update `KnownImageGenerationModelName` in `pydantic_ai_slim/pydantic_ai/images/__init__.py`, the relevant direct provider adapter, and its tests; do not also change conversational `KnownModelName`, profiles, gateway aliases, `ImageGenerationTool`, or `models/<provider>.py` unless that surface is explicitly supported and in scope. Add only the public model IDs the project intends to support, and do not infer or automatically add dated snapshots.
+
+Keep common, provider-agnostic controls in `images/settings.py`, but import provider-specific setting types from the official SDK. Put model-specific size and aspect-ratio validation or mapping in the private `images/_<provider>_geometry.py` helper, and update the public support matrix in `docs/capabilities.md`. Verify geometry against official documentation; if the provider does not publish exact output shapes, probe every documented aspect-ratio and resolution combination for every supported model and record the evidence. Prefer deterministic table tests for the full matrix, adding one representative VCR cassette only when the new model or wire behavior needs integration coverage rather than recording every image combination.
 
 ## Step 1 — Verify the model exists at the provider
 

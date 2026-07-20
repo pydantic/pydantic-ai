@@ -28,6 +28,8 @@ try:
         ImageGenerationModel as LatestXaiImageGenerationModelNames,
         ImageResolution,
     )
+
+    from ._xai_geometry import resolve_xai_aspect_ratio, resolve_xai_dimensions, resolve_xai_size
 except ImportError as _import_error:
     raise ImportError(
         'Please install `xai-sdk` to use the xAI image generation model, '
@@ -107,7 +109,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         xai_settings = cast(XaiImageGenerationSettings, settings)
-        resolved = _resolve_xai_settings(xai_settings)
+        resolved = _resolve_xai_settings(xai_settings, model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         image_url, image_file_id, image_urls, image_file_ids = await self._map_input_images(images)
         n = xai_settings.get('n') or 1
@@ -244,12 +246,6 @@ def _decode_data_url(value: str) -> BinaryImage:
     return BinaryImage(data=base64.b64decode(encoded, validate=True), media_type=media_type)
 
 
-_XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {
-    value: value for value in ('1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2')
-}
-_XAI_RESOLUTIONS: dict[str, ImageResolution] = {'1K': '1k', '2K': '2k'}
-
-
 @dataclass
 class _XaiResolvedSettings:
     aspect_ratio: ImageAspectRatio | None
@@ -258,13 +254,35 @@ class _XaiResolvedSettings:
     conflicts: list[str]
 
 
-def _resolve_xai_settings(settings: XaiImageGenerationSettings) -> _XaiResolvedSettings:
+def _resolve_xai_settings(
+    settings: XaiImageGenerationSettings, *, model_name: XaiImageGenerationModelName
+) -> _XaiResolvedSettings:
     ignored = [
         name
         for name in ('background', 'input_fidelity', 'moderation', 'output_compression', 'output_format', 'quality')
         if name in settings
     ]
     conflicts: list[str] = []
+
+    if dimensions := settings.get('dimensions'):
+        mapped_aspect_ratio, mapped_resolution = resolve_xai_dimensions(model_name, dimensions)
+        aspect_ratio = settings.get('xai_aspect_ratio')
+        if aspect_ratio is None:
+            aspect_ratio = mapped_aspect_ratio
+        elif aspect_ratio != mapped_aspect_ratio:
+            conflicts.append('dimensions')
+        resolution = settings.get('xai_resolution')
+        if resolution is None:
+            resolution = mapped_resolution
+        elif resolution != mapped_resolution:
+            conflicts.append('dimensions')
+        return _XaiResolvedSettings(
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            ignored=ignored,
+            conflicts=conflicts,
+        )
+
     return _XaiResolvedSettings(
         aspect_ratio=_resolve_xai_aspect_ratio(settings, ignored, conflicts),
         resolution=_resolve_xai_resolution(settings, ignored, conflicts),
@@ -280,7 +298,7 @@ def _resolve_xai_aspect_ratio(
 ) -> ImageAspectRatio | None:
     provider_aspect_ratio = settings.get('xai_aspect_ratio')
     common_aspect_ratio = settings.get('aspect_ratio')
-    mapped_aspect_ratio = _XAI_ASPECT_RATIOS.get(common_aspect_ratio) if common_aspect_ratio else None
+    mapped_aspect_ratio = resolve_xai_aspect_ratio(common_aspect_ratio) if common_aspect_ratio else None
     if common_aspect_ratio is not None and mapped_aspect_ratio is None:
         ignored.append('aspect_ratio')
     if provider_aspect_ratio is not None:
@@ -297,14 +315,22 @@ def _resolve_xai_resolution(
 ) -> ImageResolution | None:
     provider_resolution = settings.get('xai_resolution')
     common_size = settings.get('size')
-    mapped_resolution = _XAI_RESOLUTIONS.get(common_size) if common_size else None
+    mapped_resolution = resolve_xai_size(common_size) if common_size else None
     if common_size is not None and mapped_resolution is None:
         ignored.append('size')
     if provider_resolution is not None:
         if mapped_resolution is not None and mapped_resolution != provider_resolution:
             conflicts.append('size')
         return provider_resolution
-    return mapped_resolution
+    if mapped_resolution is not None:
+        return mapped_resolution
+
+    # A common ratio promises one canonical model geometry. Pin xAI's documented default tier
+    # instead of relying on a provider default that could change independently.
+    common_aspect_ratio = settings.get('aspect_ratio')
+    if common_aspect_ratio is not None and resolve_xai_aspect_ratio(common_aspect_ratio) is not None:
+        return '1k'
+    return None
 
 
 def _map_usage(usage: usage_pb2.SamplingUsage) -> RequestUsage:

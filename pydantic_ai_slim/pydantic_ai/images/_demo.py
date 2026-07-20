@@ -130,10 +130,15 @@ async def _run_openai_demo() -> None:
     agent.instrument = True
     await agent.run('Say hello from the agent instrumentation test.')
 
-    image_settings = OpenAIImageGenerationSettings(openai_size='1024x1024', openai_quality='low', output_format='png')
-
-    for image_model_name in ['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5']:
+    for image_model_name in ['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5', 'gpt-image-2']:
         image_generator = ImageGenerator(f'openai:{image_model_name}', instrument=True)
+        # `dimensions` is exact on every provider. GPT Image 1.x accepts only its fixed shapes;
+        # GPT Image 2 validates arbitrary dimensions against its documented pixel constraints.
+        image_settings = OpenAIImageGenerationSettings(
+            dimensions=(1280, 720) if image_model_name == 'gpt-image-2' else (1024, 1024),
+            openai_quality='low',
+            output_format='png',
+        )
         image_result = await image_generator.generate(
             _GENERATION_PROMPT,
             settings=image_settings,
@@ -166,7 +171,9 @@ async def _run_google_demo() -> None:
     google_image_generator = ImageGenerator(google_image_model, instrument=True)
     google_image_result = await google_image_generator.generate(
         _GENERATION_PROMPT,
-        settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+        # Gemini receives the native aspect-ratio and image-size pair obtained by reverse-mapping
+        # this exact common pixel shape through the selected model family's published table.
+        settings=GoogleImageGenerationSettings(dimensions=(1024, 1024)),
     )
     google_image_path = _save_first_image(
         google_image_result,
@@ -193,7 +200,7 @@ async def _run_google_demo() -> None:
                     media_type=uploaded_image.mime_type or google_image_result.images[0].content.media_type,
                 )
             ],
-            settings=GoogleImageGenerationSettings(google_image_config={'aspect_ratio': '1:1'}),
+            settings=GoogleImageGenerationSettings(dimensions=(1024, 1024)),
         )
     finally:
         await google_provider.client.aio.files.delete(name=uploaded_image.name)
@@ -213,7 +220,9 @@ async def _run_xai_demo() -> None:
     xai_provider = XaiProvider(api_key=xai_api_key)
     xai_image_model = XaiImageGenerationModel('grok-imagine-image', provider=xai_provider)
     xai_image_generator = ImageGenerator(xai_image_model, instrument=True)
-    xai_settings = XaiImageGenerationSettings(xai_aspect_ratio='1:1', xai_resolution='1k')
+    # xAI does not publish every exact output shape. This common dimension is resolved through the
+    # table observed from real responses for every supported aspect-ratio/resolution combination.
+    xai_settings = XaiImageGenerationSettings(dimensions=(1024, 1024))
     xai_image_result = await xai_image_generator.generate(_GENERATION_PROMPT, settings=xai_settings)
     xai_image_path = _save_first_image(xai_image_result, '_demo_output_grok-imagine-image.jpeg')
 
@@ -249,11 +258,11 @@ async def _run_image_capability_demo() -> None:
     """Compare the compatibility fallback and the direct image-model fallback."""
     print('\n=== ImageGeneration capability bridge ===')
 
-    # Both configurations expose the same `generate_image(prompt)` tool to the outer agent and use
-    # the same normalized settings. The difference being demonstrated is what executes behind that
-    # tool: `fallback_model` starts a conversational subagent, while `local` calls the dedicated
-    # image API directly. Keeping the two calls side by side makes their Logfire traces and output
-    # files directly comparable without coupling this comparison to the OpenAI provider demo.
+    # Both configurations expose the same `generate_image(prompt)` tool to the outer agent. The
+    # compatibility path keeps the existing `ImageGenerationTool` vocabulary and starts a
+    # conversational subagent, while the direct path calls the dedicated image API and can use the
+    # new exact `dimensions` setting. Keeping them side by side makes both the execution model and
+    # the geometry migration visible in their Logfire traces.
     subagent_capability = ImageGeneration(
         native=False,
         fallback_model='openai-responses:gpt-5.4',
@@ -272,7 +281,7 @@ async def _run_image_capability_demo() -> None:
         local='openai:gpt-image-1.5',
         output_format='png',
         quality='low',
-        size='1024x1024',
+        dimensions=(1024, 1024),
     )
     await _run_capability_path(
         direct_capability,
