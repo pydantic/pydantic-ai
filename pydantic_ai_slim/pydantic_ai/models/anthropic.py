@@ -115,6 +115,7 @@ try:
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaAdvisorTool20260301Param,
+        BetaAdvisorToolResultBlock,
         BetaBase64PDFSourceParam,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
@@ -204,6 +205,9 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
         beta_tool_result_block_param,
+    )
+    from anthropic.types.beta.beta_advisor_tool_result_block import (
+        Content as AdvisorToolResultBlockContent,
     )
     from anthropic.types.beta.beta_bash_code_execution_tool_result_block import (
         Content as BashCodeExecutionToolResultBlockContent,
@@ -1073,7 +1077,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaCodeExecutionToolResultBlock
                 | BetaBashCodeExecutionToolResultBlock
                 | BetaTextEditorCodeExecutionToolResultBlock
-                | BetaToolSearchToolResultBlock,
+                | BetaToolSearchToolResultBlock
+                | BetaAdvisorToolResultBlock,
             )
         }
         for item in response.content:
@@ -1097,6 +1102,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 items.append(_map_text_editor_code_execution_tool_result_block(item, self.system))
             elif isinstance(item, BetaWebFetchToolResultBlock):
                 items.append(_map_web_fetch_tool_result_block(item, self.system))
+            elif isinstance(item, BetaAdvisorToolResultBlock):
+                items.append(_map_advisor_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
@@ -2560,6 +2567,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
                         )
+                    elif isinstance(current_block, BetaAdvisorToolResultBlock):
+                        # The advisor result block arrives fully formed in a single `content_block_start`
+                        # (no deltas), same as web search results.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_advisor_tool_result_block(current_block, self.provider_name),
+                        )
                     elif isinstance(current_block, BetaMCPToolUseBlock):
                         call_part = _map_mcp_server_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
@@ -2919,8 +2933,16 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
                 **_anthropic_caller_provider_details(item.caller),
             },
         )
-    if item.name == 'advisor':  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    if item.name == 'advisor':
+        # The advisor `server_tool_use` block always carries an empty `input` ({}), so `tool_args`
+        # is None and `args` stays None on the round-tripped call part.
+        return NativeToolCallPart(
+            provider_name=provider_name,
+            tool_name=AdvisorTool.kind,
+            args=tool_args,
+            tool_call_id=item.id,
+            provider_details=_anthropic_caller_provider_details(item.caller) or None,
+        )
     assert_never(item.name)
 
 
@@ -3086,6 +3108,21 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
         provider_details=_anthropic_caller_provider_details(item.caller) or None,
+    )
+
+
+advisor_tool_result_content_ta: TypeAdapter[AdvisorToolResultBlockContent] = TypeAdapter(AdvisorToolResultBlockContent)
+
+
+def _map_advisor_tool_result_block(item: BetaAdvisorToolResultBlock, provider_name: str) -> NativeToolReturnPart:
+    # Store the discriminated content dict verbatim (plaintext, redacted, or error). Round-tripping it
+    # unchanged is what lets the server decrypt a redacted advisor result on the next turn — the client
+    # can't read it, and no variant needs special-casing.
+    return NativeToolReturnPart(
+        provider_name=provider_name,
+        tool_name=AdvisorTool.kind,
+        content=advisor_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
     )
 
 
