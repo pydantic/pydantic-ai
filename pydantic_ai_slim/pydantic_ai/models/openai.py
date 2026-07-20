@@ -2689,7 +2689,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
                 if tool.files:
                     # Cross-provider files are dropped silently here, not raised via
-                    # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
+                    # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
                     provider_file_ids = [file.file_id for file in tool.files if file.provider_name == self.system]
                     if provider_file_ids:
                         container['file_ids'] = provider_file_ids
@@ -3444,7 +3444,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self._model_name = chunk.model
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
-                # malformed chunks that the openai SDK's loose constructor lets through (#5165).
+                # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -3723,7 +3723,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
-                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
+                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see https://github.com/pydantic/pydantic-ai/issues/5419).
                     for item in chunk.response.output:
                         if (
                             isinstance(item, responses.response_output_item.McpListTools)

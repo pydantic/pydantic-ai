@@ -56,9 +56,12 @@ from .messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -108,7 +111,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     CodeExecutionTool,
@@ -218,8 +221,11 @@ __all__ = (
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -322,6 +328,8 @@ __all__ = (
     'format_as_xml',
     # models
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',
