@@ -139,9 +139,11 @@ _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
 _BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
-def _capture_extra_headers(params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:
-    if extra_headers := params.pop(_EXTRA_HEADERS_PARAM, None):
-        context[_EXTRA_HEADERS_CONTEXT_KEY] = extra_headers
+def _capture_extra_headers(client_id: int, params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:
+    if marker := params.pop(_EXTRA_HEADERS_PARAM, None):
+        intended_client_id, extra_headers = marker
+        if intended_client_id == client_id:
+            context[_EXTRA_HEADERS_CONTEXT_KEY] = extra_headers
 
 
 def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
@@ -172,8 +174,15 @@ def _register_extra_headers(client: BedrockRuntimeClient) -> None:
             # botocore deduplicates unique IDs across all event names, so every operation needs its own ID.
             client.meta.events.register_first(
                 f'provide-client-params.bedrock-runtime.{operation}',
-                _capture_extra_headers,
+                functools.partial(_capture_extra_headers, id(client)),
                 unique_id=f'{_EXTRA_HEADERS_UNIQUE_ID_PREFIX}-capture-{operation}',
+            )
+            # A `provide-client-params` handler may return a replacement dict copied before the capture handler ran.
+            # Capture again from the final dict so the private parameter never reaches botocore validation.
+            client.meta.events.register_first(
+                f'before-parameter-build.bedrock-runtime.{operation}',
+                functools.partial(_capture_extra_headers, id(client)),
+                unique_id=f'{_EXTRA_HEADERS_UNIQUE_ID_PREFIX}-sanitize-{operation}',
             )
             client.meta.events.register_first(
                 f'before-call.bedrock-runtime.{operation}',
@@ -183,10 +192,13 @@ def _register_extra_headers(client: BedrockRuntimeClient) -> None:
 
 
 def _call_with_extra_headers(
-    method: Callable[..., _BedrockCallResult], params: Mapping[str, Any], extra_headers: dict[str, str] | None
+    client: BedrockRuntimeClient,
+    method: Callable[..., _BedrockCallResult],
+    params: Mapping[str, Any],
+    extra_headers: dict[str, str] | None,
 ) -> _BedrockCallResult:
     """Call a botocore method with a private parameter that the capture handler removes before validation."""
-    return method(**params, **{_EXTRA_HEADERS_PARAM: extra_headers or {}})
+    return method(**params, **{_EXTRA_HEADERS_PARAM: (id(client), extra_headers or {})})
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -753,7 +765,9 @@ class BedrockConverseModel(Model[BaseClient]):
         with _map_api_errors(self.model_name):
             _register_extra_headers(client)
             response = await anyio.to_thread.run_sync(
-                functools.partial(_call_with_extra_headers, client.count_tokens, params, settings.get('extra_headers'))
+                functools.partial(
+                    _call_with_extra_headers, client, client.count_tokens, params, settings.get('extra_headers')
+                )
             )
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
@@ -993,12 +1007,18 @@ class BedrockConverseModel(Model[BaseClient]):
             if stream:
                 model_response = await anyio.to_thread.run_sync(
                     functools.partial(
-                        _call_with_extra_headers, client.converse_stream, params, settings.get('extra_headers')
+                        _call_with_extra_headers,
+                        client,
+                        client.converse_stream,
+                        params,
+                        settings.get('extra_headers'),
                     )
                 )
             else:
                 model_response = await anyio.to_thread.run_sync(
-                    functools.partial(_call_with_extra_headers, client.converse, params, settings.get('extra_headers'))
+                    functools.partial(
+                        _call_with_extra_headers, client, client.converse, params, settings.get('extra_headers')
+                    )
                 )
         return model_response
 

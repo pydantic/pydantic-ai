@@ -354,7 +354,11 @@ def _emit_bedrock_events(
     events: HierarchicalEmitter, params: dict[str, Any], headers: dict[str, str] | None = None
 ) -> tuple[dict[str, str], list[tuple[Any, Any]]]:
     context: dict[str, Any] = {}
-    events.emit('provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context)
+    param_responses = events.emit(
+        'provide-client-params.bedrock-runtime.CountTokens', params=params, model=None, context=context
+    )
+    params = next((response for _, response in param_responses if response is not None), params)
+    events.emit('before-parameter-build.bedrock-runtime.CountTokens', params=params, model=None, context=context)
     headers = headers or {}
     responses = cast(
         list[tuple[Any, Any]],
@@ -487,14 +491,11 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
     class NestedBedrockClient:
         def __init__(self, name: str) -> None:
             self.name = name
-            self.nested_client: NestedBedrockClient | None = None
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def count_tokens(self, **params: Any) -> dict[str, int]:
             headers = _emit_bedrock_events(self.meta.events, params)[0]
             results.setdefault(self.name, []).append(headers)
-            if self.nested_client is not None:
-                self.nested_client.count_tokens(**params)
             return {'inputTokens': 1}
 
     def make_model(client: NestedBedrockClient) -> BedrockConverseModel:
@@ -511,7 +512,16 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
     await model_b.count_tokens(messages, BedrockModelSettings(extra_headers={'Setup': 'b'}), request_parameters)
     assert results == {'b': [{'Setup': 'b'}]}
     results.clear()
-    client_a.nested_client = client_b
+
+    nested = False
+
+    def forward_before_capture(params: dict[str, Any], **_: Any) -> None:
+        nonlocal nested
+        if not nested:
+            nested = True
+            client_b.count_tokens(**params)
+
+    client_a.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', forward_before_capture)
     await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
 
     assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
@@ -573,11 +583,14 @@ async def test_bedrock_direct_nested_call_does_not_inherit_outer_headers():
 
     client = NestedBedrockClient()
 
-    def make_nested_call(**_: Any) -> None:
+    def make_nested_call(params: dict[str, Any], **_: Any) -> dict[str, Any]:
         nonlocal nested
         if not nested:
             nested = True
             client.count_tokens()
+        # Botocore accepts a replacement parameter dict from this event. Returning a copy also verifies that the
+        # private header marker is removed from the final dict before parameter validation.
+        return dict(params)
 
     client.meta.events.register_first('provide-client-params.bedrock-runtime.CountTokens', make_nested_call)
     provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
