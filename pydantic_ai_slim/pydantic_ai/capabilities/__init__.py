@@ -34,6 +34,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .advisor import Advisor
 from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
@@ -73,6 +74,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        Advisor,
         RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
@@ -123,6 +125,7 @@ __all__ = [
     'WrapOutputProcessHandler',
     'NativeTool',
     'NativeOrLocalTool',
+    'Advisor',
     'RaiseContentFilterError',
     'Capability',
     'CAPABILITY_TYPES',
