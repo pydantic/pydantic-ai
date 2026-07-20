@@ -388,7 +388,13 @@ class Instrumentation(AbstractCapability[Any]):
 
         return result
 
-    async def _instrument_tool_call(self, call: ToolCallPart, handler: Callable[[], Awaitable[Any]]) -> Any:
+    async def _wrap_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: Callable[[], Awaitable[Any]],
+    ) -> Any:
         """Instrument the operation that raises a stored validation error or executes the tool."""
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),

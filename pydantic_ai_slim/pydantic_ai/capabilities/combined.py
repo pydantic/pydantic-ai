@@ -434,6 +434,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
+    async def _wrap_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        chain = handler
+        for capability in reversed(self.capabilities):
+            if _ctx_for_available_cap(capability, ctx) is not None:
+                chain = _make_tool_call_wrap(capability, ctx, call, chain)
+        return await chain()
+
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -742,6 +755,20 @@ def _make_model_request_wrap(
             _ctx_for_cap(cap, ctx),
             request_context=request_context,
             handler=inner,
+        )
+
+    return wrapped
+
+
+def _make_tool_call_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    call: ToolCallPart,
+    inner: Callable[[], Awaitable[Any]],
+) -> Callable[[], Awaitable[Any]]:
+    async def wrapped() -> Any:
+        return await cap._wrap_tool_call(  # pyright: ignore[reportPrivateUsage]
+            _ctx_for_cap(cap, ctx), call=call, handler=inner
         )
 
     return wrapped

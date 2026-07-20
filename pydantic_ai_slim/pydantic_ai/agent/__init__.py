@@ -57,7 +57,6 @@ from ..capabilities import (
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
-    WrapperCapability,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
@@ -1454,48 +1453,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             max_output_retries=effective_output_toolset_max_retries,
         )
         toolset = await toolset.for_run(initial_ctx)
-
-        tool_instrumentations: list[tuple[frozenset[str], InstrumentationCap]] = []
-
-        def collect_tool_instrumentations(
-            capability: AbstractCapability[Any],
-            required_ids: frozenset[str] = frozenset(),
-            *,
-            check_availability: bool = True,
-        ) -> None:
-            if check_availability and capability.defer_loading:
-                assert capability.id is not None
-                required_ids |= {capability.id}
-
-            if isinstance(capability, WrapperCapability):
-                # The wrapper owns its wrapped node's availability; wrapped containers
-                # still apply their children's availability when they dispatch below.
-                collect_tool_instrumentations(capability.wrapped, required_ids, check_availability=False)
-            elif isinstance(capability, CombinedCapability):
-                for child in capability.capabilities:
-                    collect_tool_instrumentations(child, required_ids)
-            elif isinstance(capability, InstrumentationCap):
-                tool_instrumentations.append((required_ids, capability))
-
-        collect_tool_instrumentations(run_capability)
-
-        async def instrument_tool_call(
-            ctx: RunContext[Any], call: _messages.ToolCallPart, handler: Callable[[], Awaitable[Any]]
-        ) -> Any:
-            for required_ids, instrumentation in reversed(tool_instrumentations):
-                if required_ids <= ctx.available_capability_ids:
-                    handler = functools.partial(
-                        instrumentation._instrument_tool_call,  # pyright: ignore[reportPrivateUsage]
-                        call,
-                        handler,
-                    )
-            return await handler()
-
         tool_manager = ToolManager[AgentDepsT](
-            toolset,
-            root_capability=run_capability,
-            default_max_retries=self._max_tool_retries,
-            _instrument_tool_call=instrument_tool_call if tool_instrumentations else None,
+            toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
         )
 
         # Build instructions with per-run capability contributions

@@ -637,6 +637,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
+    async def _wrap_tool_call(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        handler: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Wrap settling a tool call by raising a stored validation error or executing it."""
+        return await handler()
+
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(

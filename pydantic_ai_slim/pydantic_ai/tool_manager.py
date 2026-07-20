@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -39,10 +39,6 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
-
-
-_ToolCallHandler = Callable[[], Awaitable[Any]]
-_InstrumentToolCall = Callable[[RunContext[Any], ToolCallPart, _ToolCallHandler], Awaitable[Any]]
 
 
 @dataclass
@@ -94,8 +90,6 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
-    _instrument_tool_call: _InstrumentToolCall | None = field(default=None, repr=False)
-    """Run-scoped tool instrumentation assembled by the agent."""
 
     @classmethod
     @contextmanager
@@ -135,7 +129,6 @@ class ToolManager(Generic[AgentDepsT]):
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
         )
-        new_tm._instrument_tool_call = self._instrument_tool_call
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
         # through the standard validation/execution path.
@@ -518,8 +511,10 @@ class ToolManager(Generic[AgentDepsT]):
                 validated, usage=ctx.usage, wrap_validation_errors=wrap_validation_errors
             )
 
-        if self._instrument_tool_call is not None:
-            return await self._instrument_tool_call(validated.ctx, validated.call, execute_tool_call_impl)
+        if self.root_capability is not None:
+            return await self.root_capability._wrap_tool_call(  # pyright: ignore[reportPrivateUsage]
+                validated.ctx, call=validated.call, handler=execute_tool_call_impl
+            )
         return await execute_tool_call_impl()
 
     # --- Output tool methods (output hooks, no tool hooks) ---
