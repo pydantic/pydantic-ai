@@ -1,8 +1,14 @@
+from dataclasses import dataclass
 from fractions import Fraction
 
 from pydantic_ai.exceptions import UserError
 
-from .settings import ImageDimensions, ImageGenerationAspectRatio, validate_image_dimensions
+from .settings import (
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationSettings,
+    validate_image_dimensions,
+)
 
 _LEGACY_SIZES = ('auto', '1024x1024', '1024x1536', '1536x1024')
 _LEGACY_ASPECT_RATIO_TO_SIZE = {
@@ -35,6 +41,57 @@ _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE = {
 
 def is_gpt_image_2(model_name: str | None) -> bool:
     return model_name == 'gpt-image-2' or (model_name is not None and model_name.startswith('gpt-image-2-'))
+
+
+@dataclass
+class _OpenAIGeometry:
+    size: str | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def resolve_openai_geometry(
+    model_name: str,
+    settings: ImageGenerationSettings,
+    *,
+    provider_size: str | None,
+) -> _OpenAIGeometry:
+    """Resolve common and OpenAI-specific geometry to the native `size` field."""
+    ignored: list[str] = []
+    conflicts: list[str] = []
+    size = settings.get('size')
+    dimensions = settings.get('dimensions')
+    aspect_ratio = settings.get('aspect_ratio')
+    resolved_dimensions = resolve_openai_dimensions(model_name, dimensions) if dimensions is not None else None
+
+    if provider_size is not None:
+        if size is not None and size != provider_size:
+            conflicts.append('size')
+        if resolved_dimensions is not None and resolved_dimensions != provider_size:
+            conflicts.append('dimensions')
+        if aspect_ratio is not None and not size_matches_aspect_ratio(provider_size, aspect_ratio):
+            conflicts.append('aspect_ratio')
+        return _OpenAIGeometry(size=provider_size, ignored=ignored, conflicts=conflicts)
+
+    if resolved_dimensions is not None:
+        return _OpenAIGeometry(size=resolved_dimensions, ignored=ignored, conflicts=conflicts)
+
+    resolved_size: str | None = None
+    if size is not None:
+        resolved_size = resolve_openai_compatibility_size(model_name, size)
+        if resolved_size is None:
+            ignored.append('size')
+
+    if aspect_ratio is not None:
+        mapped_size = resolve_openai_aspect_ratio(model_name, aspect_ratio)
+        if mapped_size is None:
+            ignored.append('aspect_ratio')
+        elif resolved_size in (None, 'auto'):
+            resolved_size = mapped_size
+        elif not size_matches_aspect_ratio(resolved_size, aspect_ratio):
+            ignored.append('aspect_ratio')
+
+    return _OpenAIGeometry(size=resolved_size, ignored=ignored, conflicts=conflicts)
 
 
 def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimensions) -> str:

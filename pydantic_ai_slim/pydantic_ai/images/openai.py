@@ -11,12 +11,7 @@ from pydantic_ai.models import download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from ._openai_geometry import (
-    resolve_openai_aspect_ratio,
-    resolve_openai_compatibility_size,
-    resolve_openai_dimensions,
-    size_matches_aspect_ratio,
-)
+from ._openai_geometry import resolve_openai_geometry
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings, warn_image_generation_settings
@@ -310,59 +305,18 @@ def _resolve_openai_settings(
     elif not is_edit and input_fidelity is not None:
         ignored.append('input_fidelity')
 
+    geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
+
     return _OpenAIResolvedSettings(
-        size=_resolve_openai_size(settings, ignored, conflicts, model_name=model_name),
+        size=geometry.size,
         quality=quality,
         background=background,
         input_fidelity=input_fidelity,
         moderation=moderation,
         output_compression=output_compression,
-        ignored=ignored,
-        conflicts=conflicts,
+        ignored=ignored + geometry.ignored,
+        conflicts=conflicts + geometry.conflicts,
     )
-
-
-def _resolve_openai_size(
-    settings: OpenAIImageGenerationSettings,
-    ignored: list[str],
-    conflicts: list[str],
-    *,
-    model_name: str,
-) -> str | None:
-    provider_size = settings.get('openai_size')
-    size = settings.get('size')
-    dimensions = settings.get('dimensions')
-    aspect_ratio = settings.get('aspect_ratio')
-    resolved_dimensions = resolve_openai_dimensions(model_name, dimensions) if dimensions is not None else None
-
-    if provider_size is not None:
-        if size is not None and size != provider_size:
-            conflicts.append('size')
-        if resolved_dimensions is not None and resolved_dimensions != provider_size:
-            conflicts.append('dimensions')
-        if aspect_ratio is not None and not size_matches_aspect_ratio(provider_size, aspect_ratio):
-            conflicts.append('aspect_ratio')
-        return provider_size
-
-    if resolved_dimensions is not None:
-        return resolved_dimensions
-
-    resolved_size: str | None = None
-    if size is not None:
-        resolved_size = resolve_openai_compatibility_size(model_name, size)
-        if resolved_size is None:
-            ignored.append('size')
-
-    if aspect_ratio is not None:
-        mapped_size = resolve_openai_aspect_ratio(model_name, aspect_ratio)
-        if mapped_size is None:
-            ignored.append('aspect_ratio')
-        elif resolved_size in (None, 'auto'):
-            resolved_size = mapped_size
-        elif not size_matches_aspect_ratio(resolved_size, aspect_ratio):
-            ignored.append('aspect_ratio')
-
-    return resolved_size
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:

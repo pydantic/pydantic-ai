@@ -2,7 +2,12 @@ from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
 
-from .settings import ImageDimensions, ImageGenerationAspectRatio, validate_image_dimensions
+from .settings import (
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationSettings,
+    validate_image_dimensions,
+)
 
 _GEMINI_31_512_DIMENSIONS: dict[ImageGenerationAspectRatio, ImageDimensions] = {
     '1:1': (512, 512),
@@ -93,6 +98,74 @@ _GEMINI_25_FLASH_PROFILE = _GoogleImageGeometryProfile(
     dimensions={ratio: {None: dimensions} for ratio, dimensions in _GEMINI_25_DIMENSIONS.items()},
     default_size=None,
 )
+
+
+@dataclass
+class _GoogleGeometry:
+    aspect_ratio: str | None
+    image_size: str | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _prefer_google_value(
+    provider_value: str | None,
+    mapped_value: str | None,
+    *,
+    setting_name: str,
+    conflicts: list[str],
+) -> str | None:
+    if provider_value is None:
+        return mapped_value
+    if mapped_value is not None and provider_value != mapped_value:
+        conflicts.append(setting_name)
+    return provider_value
+
+
+def resolve_google_geometry(
+    model_name: str,
+    settings: ImageGenerationSettings,
+    *,
+    provider_aspect_ratio: str | None,
+    provider_size: str | None,
+    provider_size_is_set: bool,
+) -> _GoogleGeometry:
+    """Resolve common and Google-specific geometry to native image config fields."""
+    aspect_ratio = provider_aspect_ratio
+    image_size = provider_size
+    ignored: list[str] = []
+    conflicts: list[str] = []
+
+    if dimensions := settings.get('dimensions'):
+        mapped_aspect_ratio, mapped_size = resolve_google_dimensions(model_name, dimensions)
+        aspect_ratio = _prefer_google_value(
+            aspect_ratio, mapped_aspect_ratio, setting_name='dimensions', conflicts=conflicts
+        )
+        image_size = _prefer_google_value(image_size, mapped_size, setting_name='dimensions', conflicts=conflicts)
+    elif common_aspect_ratio := settings.get('aspect_ratio'):
+        mapped_geometry = resolve_google_aspect_ratio(model_name, common_aspect_ratio)
+        if mapped_geometry is None:
+            ignored.append('aspect_ratio')
+        else:
+            mapped_aspect_ratio, default_size = mapped_geometry
+            aspect_ratio = _prefer_google_value(
+                aspect_ratio, mapped_aspect_ratio, setting_name='aspect_ratio', conflicts=conflicts
+            )
+            if default_size is not None and not provider_size_is_set and 'size' not in settings:
+                image_size = default_size
+
+    if common_size := settings.get('size'):
+        if not google_supports_image_size(model_name, common_size):
+            ignored.append('size')
+        else:
+            image_size = _prefer_google_value(image_size, common_size, setting_name='size', conflicts=conflicts)
+
+    return _GoogleGeometry(
+        aspect_ratio=aspect_ratio,
+        image_size=image_size,
+        ignored=ignored,
+        conflicts=conflicts,
+    )
 
 
 def resolve_google_dimensions(

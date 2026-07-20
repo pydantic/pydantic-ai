@@ -1,8 +1,15 @@
+from dataclasses import dataclass
+
 from xai_sdk.types import ImageAspectRatio, ImageResolution
 
 from pydantic_ai.exceptions import UserError
 
-from .settings import ImageDimensions, ImageGenerationAspectRatio, validate_image_dimensions
+from .settings import (
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationSettings,
+    validate_image_dimensions,
+)
 
 _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] = {
     '1:1': {'1k': (1024, 1024), '2k': (2048, 2048)},
@@ -22,6 +29,80 @@ _XAI_GEOMETRIES: dict[ImageAspectRatio, dict[ImageResolution, ImageDimensions]] 
 _XAI_GEOMETRY_MODELS = frozenset({'grok-imagine-image', 'grok-imagine-image-quality'})
 _XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {value: value for value in _XAI_GEOMETRIES}
 _XAI_RESOLUTIONS: dict[str, ImageResolution] = {'1K': '1k', '2K': '2k'}
+
+
+@dataclass
+class _XaiGeometry:
+    aspect_ratio: ImageAspectRatio | None
+    resolution: ImageResolution | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def resolve_xai_geometry(
+    model_name: str,
+    settings: ImageGenerationSettings,
+    *,
+    provider_aspect_ratio: ImageAspectRatio | None,
+    provider_resolution: ImageResolution | None,
+) -> _XaiGeometry:
+    """Resolve common and xAI-specific geometry to native SDK fields."""
+    ignored: list[str] = []
+    conflicts: list[str] = []
+
+    if dimensions := settings.get('dimensions'):
+        mapped_aspect_ratio, mapped_resolution = resolve_xai_dimensions(model_name, dimensions)
+        aspect_ratio = provider_aspect_ratio
+        if aspect_ratio is None:
+            aspect_ratio = mapped_aspect_ratio
+        elif aspect_ratio != mapped_aspect_ratio:
+            conflicts.append('dimensions')
+        resolution = provider_resolution
+        if resolution is None:
+            resolution = mapped_resolution
+        elif resolution != mapped_resolution:
+            conflicts.append('dimensions')
+        return _XaiGeometry(
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            ignored=ignored,
+            conflicts=conflicts,
+        )
+
+    common_aspect_ratio = settings.get('aspect_ratio')
+    mapped_aspect_ratio = resolve_xai_aspect_ratio(common_aspect_ratio) if common_aspect_ratio else None
+    if common_aspect_ratio is not None and mapped_aspect_ratio is None:
+        ignored.append('aspect_ratio')
+    if provider_aspect_ratio is not None:
+        if mapped_aspect_ratio is not None and mapped_aspect_ratio != provider_aspect_ratio:
+            conflicts.append('aspect_ratio')
+        aspect_ratio = provider_aspect_ratio
+    else:
+        aspect_ratio = mapped_aspect_ratio
+
+    common_size = settings.get('size')
+    mapped_resolution = resolve_xai_size(common_size) if common_size else None
+    if common_size is not None and mapped_resolution is None:
+        ignored.append('size')
+    if provider_resolution is not None:
+        if mapped_resolution is not None and mapped_resolution != provider_resolution:
+            conflicts.append('size')
+        resolution = provider_resolution
+    elif mapped_resolution is not None:
+        resolution = mapped_resolution
+    elif mapped_aspect_ratio is not None:
+        # A common ratio promises one canonical model geometry. Pin xAI's documented default tier
+        # instead of relying on a provider default that could change independently.
+        resolution = '1k'
+    else:
+        resolution = None
+
+    return _XaiGeometry(
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        ignored=ignored,
+        conflicts=conflicts,
+    )
 
 
 def resolve_xai_dimensions(model_name: str, dimensions: ImageDimensions) -> tuple[ImageAspectRatio, ImageResolution]:
