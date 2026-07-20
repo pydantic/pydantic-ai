@@ -310,7 +310,7 @@ When an MCP server reports a tool error, [`MCPToolset`][pydantic_ai.mcp.MCPTools
 | `'failed'` | Raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is recorded as a tool result with `outcome='failed'`. Use this when the tool call is complete but failed, and the model should decide what to do next. |
 | `'error'` | Propagates the underlying MCP tool exception and fails the agent run. Use this for errors you want application code to handle outside the model loop. |
 
-Structured error content is preserved for both `'retry'` and `'failed'`, so retryability hints and other machine-readable details remain visible to the model. Protocol and transport errors are not reported as completed failed tool calls.
+Structured error content is serialized as JSON in the model-visible message for both `'retry'` and `'failed'`, so retryability hints and other machine-readable details remain available to the model. Protocol and transport errors are not reported as completed failed tool calls.
 
 This is the MCP equivalent of the [tool retry](../tools-advanced.md#tool-retries) vs [failed tool result](../tools-advanced.md#tool-failed) distinction in local tool code.
 

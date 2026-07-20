@@ -2798,6 +2798,7 @@ def test_deferred_tool_results_serializable():
                 tool_call_id='foo',
             ),
             'any': {'foo': 'bar'},
+            'tagged-any': {'kind': 'tool-failed', 'message': 'ordinary result', 'data': 42},
         },
         approvals={
             'true': True,
@@ -2827,6 +2828,7 @@ def test_deferred_tool_results_serializable():
                     'part_kind': 'retry-prompt',
                 },
                 'any': {'foo': 'bar'},
+                'tagged-any': {'kind': 'tool-failed', 'message': 'ordinary result', 'data': 42},
             },
             'approvals': {
                 'true': True,

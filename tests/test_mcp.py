@@ -505,7 +505,12 @@ class TestMCPToolsetIntegration:
         async def call_tool(*args: Any, **kwargs: Any) -> Any:
             assert kwargs['raise_on_error'] is False
             return CallToolResult(
-                content=[mcp_types.TextContent(type='text', text='bad input')],
+                content=[
+                    mcp_types.TextContent(type='text', text='bad input'),
+                    mcp_types.ImageContent(
+                        type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png'
+                    ),
+                ],
                 structured_content=structured_error,
                 meta=None,
                 is_error=True,
@@ -518,6 +523,33 @@ class TestMCPToolsetIntegration:
                 await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
         assert json.loads(exc_info.value.message) == structured_error
+
+    @pytest.mark.parametrize(
+        'content',
+        [
+            pytest.param([], id='empty'),
+            pytest.param(
+                [mcp_types.ImageContent(type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png')],
+                id='non-text',
+            ),
+        ],
+    )
+    async def test_tool_failed_without_text_uses_fallback_message(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        content: list[mcp_types.ContentBlock],
+    ):
+        """An MCP error without text keeps FastMCP's informative fallback instead of an empty message."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(
+                return_value=CallToolResult(content=content, structured_content=None, meta=None, is_error=True)
+            )
+            with pytest.raises(ToolFailed, match="Tool 'echo' returned an error"):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     @pytest.mark.parametrize(
         'leaf_factory',

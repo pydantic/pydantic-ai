@@ -1243,11 +1243,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     error = error.exceptions[0]
                 _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        mapped_result = _map_mcp_call_tool_result(result)
+        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
         if result.is_error:
-            message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
-                wrap_if_error=False
-            )
+            if result.structured_content is None and not result.content:
+                message = f'Tool {name!r} returned an error'
+            else:
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                    wrap_if_error=False
+                )
+                if not message:
+                    message = f'Tool {name!r} returned an error'
             _raise_mcp_tool_error(message, self.tool_error_behavior)
 
         return mapped_result
@@ -1545,13 +1550,15 @@ def _raise_mcp_tool_error(
         assert_never(behavior)
 
 
-def _map_mcp_call_tool_result(result: CallToolResult) -> Any:
+def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:
     """Map a FastMCP result without discarding structured content on the error path."""
     # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
     # structured content for backward compatibility).
     # See https://github.com/modelcontextprotocol/python-sdk#structured-output
     structured = result.structured_content
-    if structured is not None and all(isinstance(part, mcp_types.TextContent) for part in result.content):
+    if structured is not None and (
+        prefer_structured or all(isinstance(part, mcp_types.TextContent) for part in result.content)
+    ):
         # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want
         # the raw value returned by the tool function.
         if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
