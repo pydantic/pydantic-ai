@@ -50,6 +50,7 @@ from .images import (
     ImageGenerationModel,
     ImageGenerationResult,
     ImageGenerationSettings,
+    ImageGenerationSize,
     ImageGenerator,
 )
 from .messages import (
@@ -195,6 +196,7 @@ __all__ = (
     'ImageGenerationInput',
     'ImageGenerationModel',
     'ImageGenerationSettings',
+    'ImageGenerationSize',
     'ImageGenerationResult',
     'GeneratedImage',
     # concurrency

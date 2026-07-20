@@ -53,8 +53,9 @@ def _check_image_only_model(model: str) -> None:
     if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
         raise UserError(
             f'{model_name!r} is a dedicated image generation model that cannot be used as '
-            f'`fallback_model` directly. Use a conversational model with image generation '
-            f'support instead, e.g. {suggestion!r}.'
+            f'`fallback_model` directly. Pass an `ImageGenerator` with a direct image model '
+            f'to `local` instead, or use a conversational model with image generation support, '
+            f'e.g. {suggestion!r}.'
         )
 
 

@@ -5,7 +5,7 @@ import contextvars
 import re
 import threading
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -72,6 +72,13 @@ from pydantic_ai.exceptions import (
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
+)
+from pydantic_ai.images import (
+    ImageGenerationInput,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    ImageGenerator,
+    TestImageGenerationModel,
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -201,6 +208,18 @@ def test_agent_from_spec_image_generation():
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
     assert cap.local is False
+
+
+def test_agent_from_spec_direct_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'ImageGeneration': {'native': False, 'local': 'openai:gpt-image-1.5'}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.get_toolset() is not None
 
 
 def test_agent_from_spec_web_fetch():
@@ -1702,7 +1721,10 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -7382,6 +7404,18 @@ class TestWebFetchCapability:
         assert isinstance(cap.local, Tool)
 
 
+class _MultipleImageGenerationModel(TestImageGenerationModel):
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        forced_settings: ImageGenerationSettings = {**(settings or {}), 'n': 2}
+        return await super().generate(prompt, images=images, settings=forced_settings)
+
+
 class TestImageGenerationCapability:
     def test_image_gen_init_params_match_builtin_tool(self):
         """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
@@ -7410,6 +7444,12 @@ class TestImageGenerationCapability:
         }
         assert init_params == builtin_fields
 
+        # The spec-only constructor deliberately narrows runtime-only values, but must keep the
+        # same parameter names so YAML/JSON configuration cannot drift from the Python API.
+        spec_params = set(inspect.signature(ImageGeneration.from_spec).parameters)
+        runtime_params = set(inspect.signature(ImageGeneration.__init__).parameters) - {'self'}
+        assert spec_params == runtime_params
+
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
@@ -7430,6 +7470,158 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(local=my_gen)
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    def test_image_generation_accepts_direct_image_model(self):
+        """A direct image model is normalized to the local capability tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(local=TestImageGenerationModel())
+
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_accepts_direct_model_name(self):
+        """A direct image model name is resolved as a local capability strategy."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(native=False, local='openai:gpt-image-1.5')
+
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    async def test_image_generation_direct_fallback(self, allow_model_requests: None):
+        """The recommended fallback calls `ImageGenerator` directly and returns one image."""
+        image_model = TestImageGenerationModel(
+            settings={
+                'n': 3,
+                'output_format': 'webp',
+                'extra_headers': {'x-test': 'preserved'},
+            }
+        )
+        generator = ImageGenerator(image_model)
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(
+                    native=False,
+                    local=generator,
+                    background='opaque',
+                    input_fidelity='high',
+                    moderation='low',
+                    output_compression=80,
+                    output_format='jpeg',
+                    quality='low',
+                    size='1024x1024',
+                    aspect_ratio='1:1',
+                )
+            ],
+        )
+
+        result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == {
+            'n': 1,
+            'background': 'opaque',
+            'input_fidelity': 'high',
+            'moderation': 'low',
+            'output_compression': 80,
+            'output_format': 'jpeg',
+            'quality': 'low',
+            'size': '1024x1024',
+            'aspect_ratio': '1:1',
+            'extra_headers': {'x-test': 'preserved'},
+        }
+        tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+        assert len(tool_returns) == 1
+        assert isinstance(tool_returns[0].content, BinaryImage)
+        assert tool_returns[0].content.media_type == 'image/jpeg'
+
+    async def test_image_generation_direct_fallback_rejects_edit_action(self, allow_model_requests: None):
+        """The prompt-only capability tool cannot silently turn a requested edit into generation."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(native=False, local=TestImageGenerationModel(), action='edit')],
+        )
+
+        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
+            await agent.run('Edit an image')
+
+    async def test_image_generation_direct_fallback_warns_for_image_model(self, allow_model_requests: None):
+        """The direct model is selected by `local`, so the legacy model override is explicit about being ignored."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(
+                    native=False,
+                    local=TestImageGenerationModel(),
+                    image_model='gpt-image-1',
+                )
+            ],
+        )
+
+        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+
+    def test_image_generation_rejects_local_true(self):
+        """Unlike named image models, `local=True` is not an image generation strategy."""
+        with pytest.raises(UserError, match=r'`local=True` is not supported'):
+            ImageGeneration(local=True)  # type: ignore[arg-type]
+
+    async def test_image_generation_direct_fallback_rejects_multiple_images(self, allow_model_requests: None):
+        """The single-image capability contract never silently discards direct API outputs."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(native=False, local=_MultipleImageGenerationModel())],
+        )
+
+        with pytest.raises(UnexpectedModelBehavior, match='returned 2 images; expected exactly one'):
+            await agent.run('Generate an image')
+
+    async def test_image_generation_prefers_native_over_direct_fallback(self, allow_model_requests: None):
+        """The existing native-or-local routing suppresses the direct fallback when native is supported."""
+        image_model = TestImageGenerationModel()
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.function_tools == []
+            return ModelResponse(parts=[TextPart(content='native path')])
+
+        outer_model = FunctionModel(
+            outer_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        agent = Agent(outer_model, capabilities=[ImageGeneration(local=ImageGenerator(image_model))])
+
+        result = await agent.run('Generate an image')
+
+        assert result.output == 'native path'
+        assert image_model.last_settings is None
 
     def test_image_generation_with_fallback_model(self):
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""

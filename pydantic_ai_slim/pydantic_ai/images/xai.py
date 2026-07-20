@@ -16,7 +16,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings
+from .settings import ImageGenerationSettings, warn_image_generation_settings
 
 try:
     import grpc
@@ -107,6 +107,8 @@ class XaiImageGenerationModel(ImageGenerationModel):
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         xai_settings = cast(XaiImageGenerationSettings, settings)
+        resolved = _resolve_xai_settings(xai_settings)
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         image_url, image_file_id, image_urls, image_file_ids = await self._map_input_images(images)
         n = xai_settings.get('n') or 1
 
@@ -121,8 +123,8 @@ class XaiImageGenerationModel(ImageGenerationModel):
                     image_file_ids=image_file_ids,
                     user=xai_settings.get('xai_user'),
                     image_format='base64',
-                    aspect_ratio=xai_settings.get('xai_aspect_ratio'),
-                    resolution=xai_settings.get('xai_resolution'),
+                    aspect_ratio=resolved.aspect_ratio,
+                    resolution=resolved.resolution,
                 )
                 responses = [response]
             else:
@@ -137,8 +139,8 @@ class XaiImageGenerationModel(ImageGenerationModel):
                         image_file_ids=image_file_ids,
                         user=xai_settings.get('xai_user'),
                         image_format='base64',
-                        aspect_ratio=xai_settings.get('xai_aspect_ratio'),
-                        resolution=xai_settings.get('xai_resolution'),
+                        aspect_ratio=resolved.aspect_ratio,
+                        resolution=resolved.resolution,
                     )
                 )
 
@@ -240,6 +242,69 @@ def _decode_data_url(value: str) -> BinaryImage:
         raise ValueError('Not a base64 image data URL')
     media_type = header.removeprefix('data:').removesuffix(';base64')
     return BinaryImage(data=base64.b64decode(encoded, validate=True), media_type=media_type)
+
+
+_XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {
+    value: value for value in ('1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2')
+}
+_XAI_RESOLUTIONS: dict[str, ImageResolution] = {'1K': '1k', '2K': '2k'}
+
+
+@dataclass
+class _XaiResolvedSettings:
+    aspect_ratio: ImageAspectRatio | None
+    resolution: ImageResolution | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _resolve_xai_settings(settings: XaiImageGenerationSettings) -> _XaiResolvedSettings:
+    ignored = [
+        name
+        for name in ('background', 'input_fidelity', 'moderation', 'output_compression', 'output_format', 'quality')
+        if name in settings
+    ]
+    conflicts: list[str] = []
+    return _XaiResolvedSettings(
+        aspect_ratio=_resolve_xai_aspect_ratio(settings, ignored, conflicts),
+        resolution=_resolve_xai_resolution(settings, ignored, conflicts),
+        ignored=ignored,
+        conflicts=conflicts,
+    )
+
+
+def _resolve_xai_aspect_ratio(
+    settings: XaiImageGenerationSettings,
+    ignored: list[str],
+    conflicts: list[str],
+) -> ImageAspectRatio | None:
+    provider_aspect_ratio = settings.get('xai_aspect_ratio')
+    common_aspect_ratio = settings.get('aspect_ratio')
+    mapped_aspect_ratio = _XAI_ASPECT_RATIOS.get(common_aspect_ratio) if common_aspect_ratio else None
+    if common_aspect_ratio is not None and mapped_aspect_ratio is None:
+        ignored.append('aspect_ratio')
+    if provider_aspect_ratio is not None:
+        if mapped_aspect_ratio is not None and mapped_aspect_ratio != provider_aspect_ratio:
+            conflicts.append('aspect_ratio')
+        return provider_aspect_ratio
+    return mapped_aspect_ratio
+
+
+def _resolve_xai_resolution(
+    settings: XaiImageGenerationSettings,
+    ignored: list[str],
+    conflicts: list[str],
+) -> ImageResolution | None:
+    provider_resolution = settings.get('xai_resolution')
+    common_size = settings.get('size')
+    mapped_resolution = _XAI_RESOLUTIONS.get(common_size) if common_size else None
+    if common_size is not None and mapped_resolution is None:
+        ignored.append('size')
+    if provider_resolution is not None:
+        if mapped_resolution is not None and mapped_resolution != provider_resolution:
+            conflicts.append('size')
+        return provider_resolution
+    return mapped_resolution
 
 
 def _map_usage(usage: usage_pb2.SamplingUsage) -> RequestUsage:

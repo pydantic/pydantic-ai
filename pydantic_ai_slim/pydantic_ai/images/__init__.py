@@ -14,7 +14,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from .base import ImageGenerationInput, ImageGenerationModel
 from .instrumented import InstrumentedImageGenerationModel, instrument_image_generation_model
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings, merge_image_generation_settings
+from .settings import ImageGenerationSettings, ImageGenerationSize, merge_image_generation_settings
 from .test import TestImageGenerationModel
 from .wrapper import WrapperImageGenerationModel
 
@@ -24,6 +24,7 @@ __all__ = [
     'ImageGenerationModel',
     'ImageGenerationResult',
     'ImageGenerationSettings',
+    'ImageGenerationSize',
     'InstrumentedImageGenerationModel',
     'KnownImageGenerationModelName',
     'TestImageGenerationModel',

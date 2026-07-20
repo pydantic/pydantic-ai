@@ -82,8 +82,9 @@ mapping policy. Provider-prefixed settings such as `openai_size` are safer until
 whether a higher-level layout abstraction is worth adding.
 
 Provider-specific controls such as OpenAI `quality`, `background`, `moderation`, and
-`output_compression` should start as provider-prefixed settings unless multiple providers converge
-on the same semantics.
+`output_compression` remain provider-prefixed. Google Developer API and xAI do not expose an
+equivalent direct compression control, so a common setting would add API surface for an intent that
+is not currently portable.
 
 ### Preserve Provider Metadata
 

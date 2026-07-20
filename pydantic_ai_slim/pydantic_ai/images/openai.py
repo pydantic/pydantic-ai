@@ -13,7 +13,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings
+from .settings import ImageGenerationSettings, warn_image_generation_settings
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -114,8 +114,9 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
-        settings = cast(OpenAIImageGenerationSettings, settings)
-        output_compression = settings.get('openai_output_compression', OMIT)
+        openai_settings = cast(OpenAIImageGenerationSettings, settings)
+        resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images))
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
 
         try:
             if images:
@@ -123,31 +124,35 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     image=await self._map_input_images(images),
                     prompt=prompt,
                     model=self.model_name,
-                    n=settings.get('n') or OMIT,
-                    size=settings.get('openai_size') or OMIT,
-                    output_format=settings.get('output_format') or OMIT,
-                    quality=settings.get('openai_quality') or OMIT,
-                    background=settings.get('openai_background') or OMIT,
-                    input_fidelity=settings.get('openai_input_fidelity') or OMIT,
-                    output_compression=output_compression,
-                    user=settings.get('openai_user') or OMIT,
-                    extra_headers=settings.get('extra_headers'),
-                    extra_body=settings.get('extra_body'),
+                    n=openai_settings.get('n') or OMIT,
+                    size=resolved.size or OMIT,
+                    output_format=openai_settings.get('output_format') or OMIT,
+                    quality=resolved.quality or OMIT,
+                    background=resolved.background or OMIT,
+                    input_fidelity=resolved.input_fidelity or OMIT,
+                    output_compression=(
+                        resolved.output_compression if resolved.output_compression is not None else OMIT
+                    ),
+                    user=openai_settings.get('openai_user') or OMIT,
+                    extra_headers=openai_settings.get('extra_headers'),
+                    extra_body=openai_settings.get('extra_body'),
                 )
             else:
                 response = await self._client.images.generate(
                     prompt=prompt,
                     model=self.model_name,
-                    n=settings.get('n') or OMIT,
-                    size=settings.get('openai_size') or OMIT,
-                    output_format=settings.get('output_format') or OMIT,
-                    quality=settings.get('openai_quality') or OMIT,
-                    background=settings.get('openai_background') or OMIT,
-                    moderation=settings.get('openai_moderation') or OMIT,
-                    output_compression=output_compression,
-                    user=settings.get('openai_user') or OMIT,
-                    extra_headers=settings.get('extra_headers'),
-                    extra_body=settings.get('extra_body'),
+                    n=openai_settings.get('n') or OMIT,
+                    size=resolved.size or OMIT,
+                    output_format=openai_settings.get('output_format') or OMIT,
+                    quality=resolved.quality or OMIT,
+                    background=resolved.background or OMIT,
+                    moderation=resolved.moderation or OMIT,
+                    output_compression=(
+                        resolved.output_compression if resolved.output_compression is not None else OMIT
+                    ),
+                    user=openai_settings.get('openai_user') or OMIT,
+                    extra_headers=openai_settings.get('extra_headers'),
+                    extra_body=openai_settings.get('extra_body'),
                 )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -240,6 +245,116 @@ def _openai_input_extension(media_type: str) -> str:
     raise UserError(
         f'OpenAI image editing only supports PNG, JPEG, or WebP input images, got media type {media_type!r}'
     )
+
+
+_OPENAI_IMAGE_SIZES = ('auto', '1024x1024', '1024x1536', '1536x1024')
+_OPENAI_ASPECT_RATIO_TO_SIZE = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+}
+
+
+@dataclass
+class _OpenAIResolvedSettings:
+    size: str | None
+    quality: Literal['low', 'medium', 'high', 'auto'] | None
+    background: Literal['transparent', 'opaque', 'auto'] | None
+    input_fidelity: Literal['high', 'low'] | None
+    moderation: Literal['low', 'auto'] | None
+    output_compression: int | None
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _resolve_openai_settings(settings: OpenAIImageGenerationSettings, *, is_edit: bool) -> _OpenAIResolvedSettings:
+    ignored: list[str] = []
+    conflicts: list[str] = []
+
+    quality = settings.get('openai_quality')
+    if quality is None:
+        quality = settings.get('quality')
+    elif (common_quality := settings.get('quality')) is not None and common_quality != quality:
+        conflicts.append('quality')
+
+    background = settings.get('openai_background')
+    if background is None:
+        background = settings.get('background')
+    elif (common_background := settings.get('background')) is not None and common_background != background:
+        conflicts.append('background')
+
+    input_fidelity = settings.get('openai_input_fidelity')
+    if input_fidelity is None:
+        input_fidelity = settings.get('input_fidelity')
+    elif (common_input_fidelity := settings.get('input_fidelity')) is not None and (
+        common_input_fidelity != input_fidelity
+    ):
+        conflicts.append('input_fidelity')
+
+    moderation = settings.get('openai_moderation')
+    if moderation is None:
+        moderation = settings.get('moderation')
+    elif (common_moderation := settings.get('moderation')) is not None and common_moderation != moderation:
+        conflicts.append('moderation')
+
+    output_compression = settings.get('openai_output_compression')
+    if output_compression is None:
+        output_compression = settings.get('output_compression')
+    elif (common_compression := settings.get('output_compression')) is not None and (
+        common_compression != output_compression
+    ):
+        conflicts.append('output_compression')
+
+    if is_edit and moderation is not None:
+        ignored.append('moderation')
+    elif not is_edit and input_fidelity is not None:
+        ignored.append('input_fidelity')
+
+    return _OpenAIResolvedSettings(
+        size=_resolve_openai_size(settings, ignored, conflicts),
+        quality=quality,
+        background=background,
+        input_fidelity=input_fidelity,
+        moderation=moderation,
+        output_compression=output_compression,
+        ignored=ignored,
+        conflicts=conflicts,
+    )
+
+
+def _resolve_openai_size(
+    settings: OpenAIImageGenerationSettings,
+    ignored: list[str],
+    conflicts: list[str],
+) -> str | None:
+    provider_size = settings.get('openai_size')
+    size = settings.get('size')
+    aspect_ratio = settings.get('aspect_ratio')
+
+    if provider_size is not None:
+        if size is not None and size != provider_size:
+            conflicts.append('size')
+        if aspect_ratio is not None and _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio) != provider_size:
+            conflicts.append('aspect_ratio')
+        return provider_size
+
+    resolved_size: str | None = None
+    if size is not None:
+        if size in _OPENAI_IMAGE_SIZES:
+            resolved_size = size
+        else:
+            ignored.append('size')
+
+    if aspect_ratio is not None:
+        mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+        if mapped_size is None:
+            ignored.append('aspect_ratio')
+        elif resolved_size in (None, 'auto', mapped_size):
+            resolved_size = mapped_size
+        else:
+            ignored.append('aspect_ratio')
+
+    return resolved_size
 
 
 def _response_provider_details(response: ImagesResponse) -> dict[str, object]:

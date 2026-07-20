@@ -14,7 +14,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .base import ImageGenerationInput, ImageGenerationModel
 from .result import GeneratedImage, ImageGenerationResult
-from .settings import ImageGenerationSettings
+from .settings import ImageGenerationSettings, warn_image_generation_settings
 
 try:
     from google.genai import Client, errors
@@ -102,14 +102,15 @@ class GoogleImageGenerationModel(ImageGenerationModel):
     ) -> ImageGenerationResult:
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
+        resolved = _resolve_google_settings(google_settings)
+        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
         contents = await self._map_contents(prompt, images)
-        config = self._map_config(google_settings)
 
         try:
             response = await self._client.aio.models.generate_content(
                 model=self.model_name,
                 contents=contents,
-                config=config,
+                config=resolved.config,
             )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
@@ -160,18 +161,6 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             part['media_resolution'] = media_resolution
         return part
 
-    def _map_config(self, settings: GoogleImageGenerationSettings) -> GenerateContentConfigDict:
-        image_config = settings.get('google_image_config')
-        http_options = None
-        if extra_headers := settings.get('extra_headers'):
-            http_options = HttpOptionsDict(headers=dict(extra_headers))
-
-        return GenerateContentConfigDict(
-            response_modalities=['TEXT', 'IMAGE'],
-            image_config=ImageConfigDict(**image_config) if image_config is not None else None,
-            http_options=http_options,
-        )
-
     def _map_response(
         self,
         prompt: str,
@@ -215,6 +204,59 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             provider_details=provider_details,
             provider_response_id=response.response_id,
         )
+
+
+_GOOGLE_IMAGE_SIZES = ('512', '1K', '2K', '4K')
+
+
+@dataclass
+class _GoogleResolvedSettings:
+    config: GenerateContentConfigDict
+    ignored: list[str]
+    conflicts: list[str]
+
+
+def _resolve_google_settings(settings: GoogleImageGenerationSettings) -> _GoogleResolvedSettings:
+    image_config = ImageConfigDict(**(settings.get('google_image_config') or {}))
+    ignored = [
+        name
+        for name in ('background', 'input_fidelity', 'moderation', 'output_compression', 'output_format', 'quality')
+        if name in settings
+    ]
+    conflicts: list[str] = []
+
+    if (n := settings.get('n')) is not None and n != 1:
+        ignored.append('n')
+
+    if aspect_ratio := settings.get('aspect_ratio'):
+        if (google_aspect_ratio := image_config.get('aspect_ratio')) is not None:
+            if google_aspect_ratio != aspect_ratio:
+                conflicts.append('aspect_ratio')
+        else:
+            image_config['aspect_ratio'] = aspect_ratio
+
+    if size := settings.get('size'):
+        if size not in _GOOGLE_IMAGE_SIZES:
+            ignored.append('size')
+        elif (google_size := image_config.get('image_size')) is not None:
+            if google_size != size:
+                conflicts.append('size')
+        else:
+            image_config['image_size'] = size
+
+    http_options = None
+    if extra_headers := settings.get('extra_headers'):
+        http_options = HttpOptionsDict(headers=dict(extra_headers))
+
+    return _GoogleResolvedSettings(
+        config=GenerateContentConfigDict(
+            response_modalities=['TEXT', 'IMAGE'],
+            image_config=image_config or None,
+            http_options=http_options,
+        ),
+        ignored=ignored,
+        conflicts=conflicts,
+    )
 
 
 def _output_format_from_media_type(media_type: str) -> str | None:

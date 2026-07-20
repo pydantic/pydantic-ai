@@ -13,6 +13,11 @@ This is a speculative design sketch, not part of the current draft implementatio
 provider tables and constraints below must be verified against current provider docs and recorded
 responses before this becomes an API proposal.
 
+Current decision (DEC-049): retain `size` as an explicitly provider-dependent compatibility field
+and map common `aspect_ratio` on a best-effort basis. Exact `resolution` remains a separate,
+deferred proposal because it would promise cross-provider pixel semantics and require model-specific
+tables and constraints.
+
 ## Goal
 
 Give users a provider-independent way to ask for a concrete output resolution while avoiding silent
