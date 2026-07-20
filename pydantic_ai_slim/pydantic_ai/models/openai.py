@@ -4784,7 +4784,8 @@ def _lacks_tool_search_output_identity(part: NativeToolSearchReturnPart) -> bool
     one proven against the live API for such histories; fabricating an output item
     risks colliding with server-side state the call already references.
     """
-    return 'id' not in (part.provider_details or {})
+    output_id = (part.provider_details or {}).get('id')
+    return not (isinstance(output_id, str) and output_id)
 
 
 def _build_tool_search_output_param(

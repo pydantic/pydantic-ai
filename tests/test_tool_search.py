@@ -3430,15 +3430,21 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
     [[], [{'name': 'get_exchange_rate'}]],
     ids=['empty', 'discovered'],
 )
+@pytest.mark.parametrize(
+    'return_details',
+    [{'status': 'completed'}, {'id': None, 'status': 'completed'}, {'id': 1, 'status': 'completed'}],
+    ids=['status-only', 'null-id', 'non-str-id'],
+)
 async def test_openai_replays_legacy_tool_search_history_call_only(
-    send_item_ids: bool, discovered_tools: list[ToolSearchMatch]
+    send_item_ids: bool, discovered_tools: list[ToolSearchMatch], return_details: dict[str, Any]
 ) -> None:
-    """Pre-fix histories (status-only `provider_details`) replay the call item alone.
+    """Returns without a real preserved output identity replay the call item alone.
 
-    An empty legacy return cannot be told apart from a missing output, and a non-empty
-    one references server-side state its call already carries, so both degrade to the
-    pre-fix call-only wire shape. This pins the request payload because cassette
-    matching does not compare request bodies.
+    Pre-fix histories stashed only `status`; mangled round-trips can carry a null or
+    non-string `id`. An empty such return cannot be told apart from a missing output,
+    and a non-empty one references server-side state its call already carries, so all
+    degrade to the pre-fix call-only wire shape. This pins the request payload because
+    cassette matching does not compare request bodies.
     """
     legacy_history: list[ModelMessage] = [
         ModelResponse(
@@ -3453,7 +3459,7 @@ async def test_openai_replays_legacy_tool_search_history_call_only(
                     content={'discovered_tools': discovered_tools},
                     tool_call_id='ts_old',
                     provider_name='openai',
-                    provider_details={'status': 'completed'},
+                    provider_details=return_details,
                 ),
             ],
             provider_name='openai',
