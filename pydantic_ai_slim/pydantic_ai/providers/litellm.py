@@ -74,12 +74,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             provider_prefix, model_suffix = model_name.split('/', 1)
             if provider_prefix in provider_to_profile:
                 profile = provider_to_profile[provider_prefix](model_suffix)
-                if profile is not None and provider_prefix in ('mistral', 'mistralai'):
-                    # Mistral profiles carry only thinking flags. Without the OpenAI baseline
-                    # underneath, a non-None Mistral profile would drop the structured output
-                    # and inline system prompt support these routes get from the OpenAI
-                    # fallback below when the profile is None.
-                    profile = merge_profile(openai_model_profile(model_suffix), profile)
 
         # If no profile found, default to OpenAI profile
         if profile is None:
