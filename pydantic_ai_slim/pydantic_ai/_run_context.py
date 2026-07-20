@@ -284,7 +284,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the drain.
 
         Args:
-            *content: One or more `EnqueueContent` items.
+            *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
                 content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each

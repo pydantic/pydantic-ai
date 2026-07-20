@@ -576,7 +576,7 @@ class ToolDefinition:
     A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
     completing first and tools emitted after it starting only once it finishes. Other tools still run
     in parallel around it. To run an entire run's tools serially, use
-    the internal `ToolManager.parallel_execution_mode('sequential')`
+    [`ToolManager.parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
     instead.
     """
 
