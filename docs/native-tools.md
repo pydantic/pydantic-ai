@@ -797,7 +797,7 @@ See Anthropic's [Advisor tool](https://platform.claude.com/docs/en/agents-and-to
 ### Usage
 
 ```py {title="advisor_anthropic.py" test="skip"}
-from pydantic_ai import Agent, AdvisorTool
+from pydantic_ai import AdvisorTool, Agent
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
