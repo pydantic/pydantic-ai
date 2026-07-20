@@ -42,9 +42,10 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 
 
 def _record_tool_validation_error(
-    root_capability: AbstractCapability[Any], call: ToolCallPart, error: ToolRetryError
+    root_capability: AbstractCapability[Any], ctx: RunContext[Any], call: ToolCallPart, error: ToolRetryError
 ) -> None:
     """Ask active instrumentation capabilities to record a stored validation failure."""
+    from .capabilities.combined import CombinedCapability
     from .capabilities.instrumentation import Instrumentation
     from .capabilities.wrapper import WrapperCapability
 
@@ -52,13 +53,18 @@ def _record_tool_validation_error(
     seen: set[int] = set()
 
     def collect(capability: AbstractCapability[Any]) -> None:
+        if capability.defer_loading and (capability.id is None or capability.id not in ctx.available_capability_ids):
+            return
         while isinstance(capability, WrapperCapability):
             capability = capability.wrapped
-        if isinstance(capability, Instrumentation) and id(capability) not in seen:
+        if isinstance(capability, CombinedCapability):
+            for child in capability.capabilities:
+                collect(child)
+        elif isinstance(capability, Instrumentation) and id(capability) not in seen:
             seen.add(id(capability))
             instrumentations.append(capability)
 
-    root_capability.apply(collect)
+    collect(root_capability)
     for instrumentation in instrumentations:
         instrumentation._record_tool_validation_error(call, error)  # pyright: ignore[reportPrivateUsage]
 
@@ -528,7 +534,9 @@ class ToolManager(Generic[AgentDepsT]):
 
         if not validated.args_valid and self.root_capability is not None:
             assert validated.validation_error is not None
-            _record_tool_validation_error(self.root_capability, validated.call, validated.validation_error)
+            _record_tool_validation_error(
+                self.root_capability, validated.ctx, validated.call, validated.validation_error
+            )
 
         return await self._execute_tool_call_impl(
             validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors

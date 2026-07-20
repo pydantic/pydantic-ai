@@ -1513,6 +1513,52 @@ def test_tool_argument_validation_error_emits_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('wrapped_instrumentation', [False, True])
+@pytest.mark.parametrize('load_instrumentation', [False, True])
+def test_deferred_instrumentation_only_records_validation_span_when_loaded(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    wrapped_instrumentation: bool,
+    load_instrumentation: bool,
+) -> None:
+    model_calls = 0
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if load_instrumentation and model_calls == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'tracing'})])
+        if model_calls == 1 + int(load_instrumentation):
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-an-int'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    instrumentation = Instrumentation(
+        id='tracing',
+        description='Trace agent activity.',
+        defer_loading=True,
+        settings=InstrumentationSettings(),
+    )
+    capability = WrapperCapability(instrumentation) if wrapped_instrumentation else instrumentation
+    agent = Agent(FunctionModel(call_tool), capabilities=[capability])
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    summary = get_logfire_summary()
+    tool_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert len(tool_spans) == int(load_instrumentation)
+    if load_instrumentation:
+        assert tool_spans[0]['gen_ai.tool.name'] == 'double'
+        assert tool_spans[0]['logfire.level_num'] == 17
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_tool_span_records_recovered_and_modified_result(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
