@@ -15,6 +15,9 @@ leaves it empty and web_search holds only a `search_suggestions` widget, with th
 contexts/source URLs delivered in `grounding_metadata.grounding_chunks`. These tests pin
 that grounding chunks populate the `NativeToolReturnPart` content in both the streamed
 and non-streamed paths, including the streaming cross-chunk deferral.
+
+These unit tests pin request and response payload shapes that VCR matching does not
+validate, including defensive variants that the live API does not reliably produce.
 """
 
 from __future__ import annotations as _annotations
@@ -80,6 +83,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
 ]
+
+_TOOL_TYPES = list(_TOOL_TYPE_TO_NATIVE_TOOL_NAME) if imports_successful() else []
 
 
 def test_content_model_response_pre_gemini_3_drops_native_tool_parts():
@@ -1019,7 +1024,7 @@ def test_web_search_none_tool_response_round_trips_unchanged():
     assert cast(Any, mapped)['parts'][1]['tool_response']['response'] is None
 
 
-@pytest.mark.parametrize('tool_type', list(_TOOL_TYPE_TO_NATIVE_TOOL_NAME))
+@pytest.mark.parametrize('tool_type', _TOOL_TYPES)
 @pytest.mark.parametrize('response', [None, {'payload': 'from-google'}], ids=['empty', 'populated'])
 def test_raw_tool_response_is_preserved_for_web_search_only(tool_type: ToolType, response: dict[str, Any] | None):
     """`raw_tool_response` wins over `content` on the echo, so only web_search may set it.
@@ -1031,6 +1036,7 @@ def test_raw_tool_response_is_preserved_for_web_search_only(tool_type: ToolType,
     Parametrized off `_TOOL_TYPE_TO_NATIVE_TOOL_NAME` so a newly mapped tool type must make this choice
     deliberately, and over an empty response because that is the shape that regressed file_search: it
     arrives empty and is filled later, so keying the preserve off emptiness pins the wrong value.
+    A VCR test would not pin this private mapping rule or the exact follow-up request payload.
     """
     item = _map_tool_response(
         ToolResponse.model_validate({'id': 'c1', 'tool_type': tool_type, 'response': response}), 'google-gla'
@@ -1040,13 +1046,14 @@ def test_raw_tool_response_is_preserved_for_web_search_only(tool_type: ToolType,
     assert preserves_raw == (item.tool_name == WebSearchTool.kind)
 
 
-@pytest.mark.parametrize('tool_type', list(_TOOL_TYPE_TO_NATIVE_TOOL_NAME))
+@pytest.mark.parametrize('tool_type', _TOOL_TYPES)
 def test_grounded_content_survives_the_echo_for_non_web_search_tools(tool_type: ToolType):
     """Whatever grounding recovers into `content` must reach Gemini on the follow-up request.
 
     The echo is the only consumer of a filled return, so a tool that recovers content but echoes
     something that no longer carries it has silently lost the data (see the file_search regression,
     where the contexts were filled but `response: None` went out on the wire).
+    A VCR test would not pin this private mapping rule or the exact follow-up request payload.
     """
     item = _map_tool_response(ToolResponse.model_validate({'id': 'c1', 'tool_type': tool_type}), 'google-gla')
     if item.tool_name == WebSearchTool.kind:
@@ -1056,7 +1063,9 @@ def test_grounded_content_survives_the_echo_for_non_web_search_tools(tool_type: 
     echoed = _native_tool_return_part_dict(item, frozenset({'google-gla'}), None, supports_tool_combination=True)
 
     assert echoed is not None
-    assert 'recovered-from-grounding' in repr(cast(Any, echoed)['tool_response']['response'])
+    tool_response = echoed.get('tool_response')
+    assert tool_response is not None
+    assert tool_response.get('response') == snapshot({'result': ['recovered-from-grounding']})
 
 
 def test_file_search_grounding_fills_empty_tool_response():
