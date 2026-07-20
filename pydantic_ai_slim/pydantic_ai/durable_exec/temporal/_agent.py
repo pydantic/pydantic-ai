@@ -60,12 +60,12 @@ class _EventStreamHandlerParams:
 
 
 @deprecated(
-    """`TemporalAgent` is deprecated. Migrate each constructor argument as follows:
+    """`TemporalAgent` is deprecated in favor of the `TemporalDurability` capability. Migrate each constructor argument as follows:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
-- `name=` → set `name=` on `Agent`.
+- `name=` → set `name=` on `Agent`, or `name=` on `TemporalDurability`.
 - `models=` → set `models=` on `TemporalDurability`.
 - `provider_factory=` → use a deps-aware `ResolveModelId` capability.
-- `event_stream_handler=` → pass `event_stream_handler=` to `TemporalDurability`; it runs inside activities, exactly like before.
+- `event_stream_handler=` → pass `event_stream_handler=` to `TemporalDurability`; it runs inside activities, exactly like before; for streams that don't need to run inside activities, register a `ProcessEventStream` capability instead.
 - `activity_config=` → set `activity_config=` on `TemporalDurability`.
 - `model_activity_config=` → set `model_activity_config=` on `TemporalDurability`.
 - `toolset_activity_config=` → set `toolset_activity_config=` on `TemporalDurability`.
@@ -1097,7 +1097,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Non-executing toolsets like `ExternalToolset` can be added per-run; executing ones need
             # their activities registered with the worker before the workflow runs.
             reject_unsupported_runtime_toolsets(
-                toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
+                toolsets,
+                unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+                engine='Temporal',
+                tool_config_key='temporal',
             )
 
             resolved_model = None

@@ -2428,7 +2428,8 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
                 'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
                 'toolsets that execute their own tools or resolve dynamically must be registered for durable '
                 'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
+                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -5219,6 +5220,23 @@ def test_durability_requires_agent_name():
         Agent(_durability_fn_model, capabilities=[durability])
 
 
+def test_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent():
+    named_agent = Agent(_durability_fn_model, name='agent-name', capabilities=[TemporalDurability(name='custom')])
+    bound = TemporalDurability.from_agent(named_agent)
+    assert bound is not None
+    assert bound.name == 'custom'
+    activity_names = [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in bound.temporal_activities
+    ]
+    assert all(name is not None and name.startswith('agent__custom__') for name in activity_names)
+
+    unnamed_agent = Agent(_durability_fn_model, capabilities=[TemporalDurability(name='unnamed-custom')])
+    unnamed_bound = TemporalDurability.from_agent(unnamed_agent)
+    assert unnamed_bound is not None
+    assert unnamed_bound.name == 'unnamed-custom'
+
+
 def test_durability_requires_model():
     """TemporalDurability raises UserError when the agent has no model at all."""
     durability = TemporalDurability()
@@ -5411,7 +5429,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UnexpectedModelBehavior',
     ]
 
-    toolset_wrapper = bound._temporal_toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
+    toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
     assert isinstance(toolset_wrapper, TemporalFunctionToolset)
     toolset_retry = toolset_wrapper.activity_config.get('retry_policy')
     assert toolset_retry is not None
@@ -5882,16 +5900,16 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
 # --- Toolset without ID raises UserError ---
 
 
-def test_durability_toolset_without_id_raises():
-    """TemporalDurability raises UserError for leaf toolsets without an ID."""
+def test_durability_unwrapped_toolset_without_id_is_allowed():
+    """An unwrapped leaf toolset doesn't need an ID because it isn't registered as an activity."""
     durability = TemporalDurability()
-    with pytest.raises(UserError, match='unique `id`'):
-        Agent(
-            _durability_fn_model,
-            name='no_id_test',
-            toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')])],
-            capabilities=[durability],
-        )
+    agent = Agent(
+        _durability_fn_model,
+        name='no_id_test',
+        toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')])],
+        capabilities=[durability],
+    )
+    assert TemporalDurability.from_agent(agent) is not None
 
 
 # --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
@@ -5908,20 +5926,20 @@ def test_durability_non_temporal_wrapper_toolset_not_in_registry():
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
     # ExternalToolset is not wrapped into a TemporalWrapperToolset by the default
-    # temporalize_toolset, so 'ext' should not appear in _temporal_toolsets_by_id.
-    assert 'ext' not in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    # temporalize_toolset, so 'ext' should not appear in _toolsets_by_id.
+    assert 'ext' not in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
     # The agent's built-in <agent> FunctionToolset IS wrapped.
-    assert '<agent>' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert '<agent>' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_wrapper_toolset returns None when no temporal toolsets ---
 
 
 def test_durability_get_wrapper_toolset_returns_none():
-    """get_wrapper_toolset returns None when _temporal_toolsets_by_id is empty."""
+    """get_wrapper_toolset returns None when `_toolsets_by_id` is empty."""
     # An unbound capability has an empty registry — `for_agent` is what populates it.
     durability = TemporalDurability()
-    assert len(durability._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
+    assert len(durability._toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
 
     dummy_toolset = FunctionToolset[object](id='dummy')
     assert durability.get_wrapper_toolset(dummy_toolset) is None
@@ -6150,7 +6168,7 @@ def test_durability_tool_metadata_disables_activity():
 
     # Should have wrapped the toolset (capability discovered it at for_agent time);
     # the per-tool skip is applied at call time via resolve_tool_activity_config.
-    assert 'meta_toolset' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'meta_toolset' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 def test_resolve_tool_activity_config_reads_metadata():
@@ -7509,6 +7527,72 @@ async def test_durability_uploaded_file_serialization_preserves_media_type(allow
 # --- Toolsets at runtime ---
 
 
+def _runtime_tool_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+
+_runtime_tool_agent = Agent(
+    FunctionModel(_runtime_tool_model),
+    name='runtime_tool_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+async def _opted_out_runtime_tool() -> str:
+    return 'tool-result'
+
+
+async def _not_opted_out_runtime_tool() -> str:
+    return 'other-result'
+
+
+@workflow.defn
+class DurabilityOptedOutRuntimeFunctionToolsetWorkflow:
+    @workflow.run
+    async def run(self, partially_opted_out: bool) -> str:
+        toolset = FunctionToolset(id='runtime')
+        toolset.add_function(_opted_out_runtime_tool, name='runtime_tool', metadata={'temporal': False})
+        if partially_opted_out:
+            toolset.add_function(_not_opted_out_runtime_tool)
+        return (await _runtime_tool_agent.run('use the tool', toolsets=[toolset])).output
+
+
+async def test_durability_runtime_function_toolset_opt_out(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityOptedOutRuntimeFunctionToolsetWorkflow],
+        plugins=[AgentPlugin(_runtime_tool_agent)],
+    ):
+        assert (
+            await client.execute_workflow(
+                DurabilityOptedOutRuntimeFunctionToolsetWorkflow.run,
+                args=[False],
+                id=f'{DurabilityOptedOutRuntimeFunctionToolsetWorkflow.__name__}-full',
+                task_queue=TASK_QUEUE,
+            )
+            == 'done'
+        )
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
+                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
+                'execution when the agent is constructed. Pass them to the agent constructor instead. '
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
+                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+            ),
+        ):
+            await client.execute_workflow(
+                DurabilityOptedOutRuntimeFunctionToolsetWorkflow.run,
+                args=[True],
+                id=f'{DurabilityOptedOutRuntimeFunctionToolsetWorkflow.__name__}-partial',
+                task_queue=TASK_QUEUE,
+            )
+
+
 @workflow.defn
 class DurabilityRuntimeFunctionToolsetWorkflow:
     @workflow.run
@@ -7535,7 +7619,8 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
                 'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
                 'toolsets that execute their own tools or resolve dynamically must be registered for durable '
                 'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
+                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(

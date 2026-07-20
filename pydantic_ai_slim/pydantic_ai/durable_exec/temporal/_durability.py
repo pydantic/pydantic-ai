@@ -23,9 +23,9 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
-    CapabilityOrdering,
     WrapModelRequestHandler,
     WrapRunHandler,
+    leaf_capabilities,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
@@ -165,7 +165,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         from pydantic_ai.durable_exec.temporal import TemporalDurability
 
         durability = TemporalDurability()
-        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
+        agent = Agent('openai:gpt-5.6-sol', name='my_agent', capabilities=[durability])
         ```
     """
 
@@ -174,8 +174,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         {'function', 'mcp', 'dynamic'}
     )
 
-    name: str
-    """Unique agent name used as a prefix for Temporal activity names."""
+    _durable_unit_noun = 'activity'
+    _durable_container_noun = 'workflow'
+    _tool_config_key = 'temporal'
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""
@@ -188,6 +189,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
         deps_type: type[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -217,6 +219,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
                 per-event activities.
+            name: Unique agent name used in the Temporal activity names. Defaults to the agent's
+                `name` when the capability is bound.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters. Defaults to the agent's own
                 `deps_type`, discovered when the capability binds via `for_agent()`.
@@ -244,7 +248,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             Setting the `'temporal'` key to `False` skips activity wrapping
             (only valid for async tool functions).
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler)
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
@@ -280,56 +284,29 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._toolset_activity_config = toolset_activity_config or {}
 
         # These are populated by for_agent()
-        self.name = ''
-        self._temporal_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
-        self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
+        self._bound_capability_classes: frozenset[type[AbstractCapability[AgentDepsT]]] = frozenset()
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> TemporalDurability[AgentDepsT]:
-        """Bind to the agent: discover model, name, toolsets and register Temporal activities.
-
-        Returns a new bound instance; the original capability is left pristine so the
-        same instance can be passed to multiple agents. Use
-        `TemporalDurability.from_agent(agent)` to retrieve the bound copy.
-        """
-        if workflow.in_workflow():
+    def _check_bindable(self) -> None:
+        if self.in_durable_context:
             raise UserError(
                 'An agent with `TemporalDurability` must be constructed outside of a Temporal workflow, '
                 'so its activities can be registered with the worker before the workflow runs. '
                 'Construct the agent at module level (or in worker setup code) and reference it from the workflow.'
             )
-        if not agent.name:
-            raise UserError(
-                'An agent needs to have a unique `name` in order to be used with Temporal. '
-                "The name will be used to identify the agent's activities within the workflow."
-            )
-        bound = copy.copy(self)
-        bound.name = agent.name
-        bound._agent = agent
 
-        # Build model registry (shared with the other durability capabilities)
-        bound._bind_models(agent)
-
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Snapshot the leaf capability classes registered with the agent so we can
         # detect runtime additions (which would bypass activity registration).
-        bound_classes: set[type[AbstractCapability[Any]]] = set()
-
-        def _collect_class(cap: AbstractCapability[Any]) -> None:
-            bound_classes.add(type(cap))
-
-        agent.root_capability.apply(_collect_class)
-        bound._bound_capability_classes = frozenset(bound_classes)
+        self._bound_capability_classes = frozenset(type(cap) for cap in leaf_capabilities(agent.root_capability))
 
         # Discover the deps type from the agent unless explicitly configured.
-        if bound._deps_type is None:
-            bound._deps_type = cast('type[AgentDepsT]', agent.deps_type)
+        if self._deps_type is None:
+            self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
         # Register activities on the bound copy
-        bound._temporal_toolsets_by_id = {}
-        bound._temporal_activities = []
-        bound._register_activities(agent)
-
-        return bound
+        self._temporal_activities = []
+        self._register_activities(agent)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Register all Temporal activities for model requests, event streaming, and toolsets."""
@@ -418,73 +395,32 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         activities.append(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
-        for toolset in agent.toolsets:
-            self._temporalize_leaf_toolsets(
-                toolset,
-                activity_name_prefix=activity_name_prefix,
-                activities=activities,
-                deps_type=deps_type,
-            )
+        self._register_toolsets(agent)
+        for wrapped in self._toolsets_by_id.values():
+            assert isinstance(wrapped, TemporalWrapperToolset)
+            activities.extend(wrapped.temporal_activities)
 
         self._temporal_activities = activities
 
-    def _temporalize_leaf_toolsets(
-        self,
-        toolset: AbstractToolset[AgentDepsT],
-        *,
-        activity_name_prefix: str,
-        activities: list[Callable[..., Any]],
-        deps_type: type[AgentDepsT],
-    ) -> None:
-        """Wrap each leaf toolset in a Temporal wrapper and collect activities."""
-
-        def temporalize(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
-            if ts_id is None:
-                raise UserError(
-                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
-                    'need to have a unique `id` in order to be used with Temporal. '
-                    "The ID will be used to identify the toolset's activities within the workflow."
-                )
-
-            existing = self._temporal_toolsets_by_id.get(ts_id)
-            if existing is not None:
-                if existing.wrapped is ts:
-                    # The same toolset instance can appear in more than one place in the
-                    # tree; reuse its wrapper so its activities register exactly once.
-                    return existing
-                # A distinct toolset under an already-registered `id` would silently
-                # replace it in the registry and route both toolsets' calls to one wrapper.
-                raise UserError(
-                    f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
-                    "toolsets registered with the same agent, as they identify the toolset's activities "
-                    'within the workflow.'
-                )
-
-            toolset_activity_config: ActivityConfig = {
-                **self.activity_config,
-                **self._toolset_activity_config.get(ts_id, {}),
-            }
-            # A `retry_policy` in the per-toolset config would otherwise replace the
-            # normalized base policy and drop the non-retryable entries.
-            toolset_activity_config['retry_policy'] = _with_non_retryable_errors(
-                toolset_activity_config.get('retry_policy')
-            )
-            wrapped = _default_temporalize_toolset(
-                ts,
-                activity_name_prefix,
-                toolset_activity_config,
-                {},  # per-tool config comes from tool metadata on the capability path
-                deps_type,
-                self.run_context_type,
-                self._agent,
-            )
-            if isinstance(wrapped, TemporalWrapperToolset):
-                activities.extend(wrapped.temporal_activities)
-                self._temporal_toolsets_by_id[ts_id] = wrapped
-            return wrapped
-
-        toolset.visit_and_replace(temporalize)
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        ts_id = ts.id
+        toolset_activity_config = self.activity_config.copy()
+        if ts_id is not None:
+            toolset_activity_config.update(self._toolset_activity_config.get(ts_id, {}))
+        toolset_activity_config['retry_policy'] = _with_non_retryable_errors(
+            toolset_activity_config.get('retry_policy')
+        )
+        assert self._deps_type is not None
+        wrapped = _default_temporalize_toolset(
+            ts,
+            f'agent__{self.name}',
+            toolset_activity_config,
+            {},
+            self._deps_type,
+            self.run_context_type,
+            self._agent,
+        )
+        return wrapped if isinstance(wrapped, TemporalWrapperToolset) else None
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -497,7 +433,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     # --- Capability hooks ---
 
-    def _in_durable_context(self) -> bool:
+    @property
+    def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
@@ -522,7 +459,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
         """Disable threads and catch serialization errors inside Temporal workflows."""
-        if not workflow.in_workflow():
+        if not self.in_durable_context:
             return await handler()
 
         self._validate_per_run_capabilities(ctx)
@@ -560,14 +497,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert ctx.root_capability is not None
 
         if any(issubclass(cls, DynamicCapability) for cls in self._bound_capability_classes):
+            # A `DynamicCapability`'s factory result *replaces* it in the run-time tree, so any
+            # factory-produced class would look like an unauthorized runtime addition and be
+            # falsely rejected; skip the check entirely for such agents until #5253 lands.
             return
 
-        runtime_classes: set[type[AbstractCapability[Any]]] = set()
-
-        def _collect(cap: AbstractCapability[Any]) -> None:
-            runtime_classes.add(type(cap))
-
-        ctx.root_capability.apply(_collect)
+        runtime_classes = {type(cap) for cap in leaf_capabilities(ctx.root_capability)}
         # Capabilities that opt in via `_safe_at_runtime = True` (e.g. `Instrumentation`,
         # auto-injected per-run by `Agent.iter()` when `instrument=…` / `LogfirePlugin` is
         # used) don't introduce new toolsets, native tools, or model wrapping, so they
@@ -590,7 +525,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Route model requests through Temporal activities when inside a workflow."""
-        if not workflow.in_workflow():
+        if not self.in_durable_context:
             return await handler(request_context)
 
         self._validate_model_request_parameters(request_context.model_request_parameters)
@@ -604,36 +539,28 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         model_name = model_id or request_context.model.model_id
         deps = ctx.deps
 
-        def params(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> _RequestParams:
+        def params(request: ModelRequestContext) -> _RequestParams:
             return _RequestParams(
-                messages, cast(dict[str, Any] | None, settings), parameters, serialized_run_context, model_id
+                request.messages,
+                cast(dict[str, Any] | None, request.model_settings),
+                request.model_request_parameters,
+                serialized_run_context,
+                model_id,
             )
 
-        async def request_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> ModelResponse:
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
             return await workflow.execute_activity(
-                activity=self.request_activity, args=[params(messages, settings, parameters), deps], **config
+                activity=self.request_activity, args=[params(request), deps], **config
             )
 
-        async def request_stream_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> StreamedActivityResult:
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
             return await workflow.execute_activity(
-                activity=self.request_stream_activity, args=[params(messages, settings, parameters), deps], **config
+                activity=self.request_stream_activity, args=[params(request), deps], **config
             )
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
@@ -658,25 +585,3 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
-
-    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        """Replace leaf toolsets with their Temporal-wrapped versions."""
-        self._reject_runtime_toolsets(toolset)
-
-        if not self._temporal_toolsets_by_id:
-            return None
-
-        def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
-            if ts_id is not None and ts_id in self._temporal_toolsets_by_id:
-                return self._temporal_toolsets_by_id[ts_id]
-            return ts
-
-        return toolset.visit_and_replace(swap)
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None

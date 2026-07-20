@@ -44,7 +44,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -203,7 +202,7 @@ class ModelRequestContext:
     model_id: str | None = field(default=None, init=False)
     """The model-name string this request's model was selected/resolved from, if any.
 
-    This is the *selection* token — e.g. `'openai:gpt-4o'`, or an alias like `'tenant-x'` that a
+    This is the *selection* token — e.g. `'openai:gpt-5.6-sol'`, or an alias like `'tenant-x'` that a
     [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] capability
     turned into a concrete model — so it can differ from the resolved model's own
     [`model_id`][pydantic_ai.models.Model.model_id]. `None` when the model was supplied as an
@@ -218,11 +217,12 @@ class ModelRequestContext:
     streaming: bool = field(default=False, init=False)
     """Whether the agent loop expects to iterate the model response as a stream.
 
-    Set when an `event_stream_handler` was passed or the capability chain overrides
-    `wrap_run_event_stream`. There is no separate `before_model_request_stream` hook —
-    streaming and non-streaming requests share the same hooks — so this field is how a
-    hook can tell them apart. Read-only from hooks: reassigning it doesn't change how
-    the loop consumes the response.
+    Set for streamed runs — `run_stream()`, `run_stream_events()`, `iter()`'s node streaming — and
+    for `run()` when an `event_stream_handler` is set or a capability overrides
+    `wrap_run_event_stream` (e.g. `ProcessEventStream`, or a durability capability's
+    `event_stream_handler=`). There is no separate `before_model_request_stream` hook — streaming
+    and non-streaming requests share the same hooks — so this field is how a hook can tell them
+    apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
 
@@ -1091,11 +1091,7 @@ class CompletedStreamedResponse(StreamedResponse):
 
     async def _iter_buffered(self, events: list[ModelResponseStreamEvent]) -> AsyncIterator[ModelResponseStreamEvent]:
         for event in events:
-            if isinstance(event, PartStartEvent):
-                self._parts_manager.handle_part(vendor_part_id=event.index, part=event.part)
-            elif isinstance(event, PartDeltaEvent):
-                part = self._parts_manager.get_parts()[event.index]
-                self._parts_manager.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+            self._parts_manager.apply_event(event)
             yield event
         self._finished = True
 

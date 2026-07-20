@@ -172,8 +172,7 @@ class PydanticAIPlugin(SimplePlugin):
                     if durability is None:
                         raise UserError(
                             f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
-                            '`TemporalDurability` capability; either add one to `capabilities=[...]` '
-                            'or wrap the agent with `TemporalAgent` instead.'
+                            '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
                     activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 else:

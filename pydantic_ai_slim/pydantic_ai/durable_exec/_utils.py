@@ -19,7 +19,7 @@ from typing import Any, TypeAlias, TypeVar
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -69,10 +69,12 @@ class StreamedActivityResult:
 
 _ResultT = TypeVar('_ResultT')
 
-SegmentExecutor: TypeAlias = Callable[
-    [list[ModelMessage], 'ModelSettings | None', ModelRequestParameters], Awaitable[_ResultT]
-]
-"""Executes one model-request segment inside an engine's durable unit (activity/step/task)."""
+SegmentExecutor: TypeAlias = Callable[[ModelRequestContext], Awaitable[_ResultT]]
+"""Executes one model-request segment inside an engine's durable unit (activity/step/task).
+
+Receives a fresh `ModelRequestContext` carrying the segment's messages/settings/parameters
+(each continuation segment of a suspended response differs from the original request).
+"""
 
 
 class DurableModel(WrapperModel):
@@ -107,7 +109,13 @@ class DurableModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        return await self._request_segment(messages, model_settings, model_request_parameters)
+        segment_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
+        return await self._request_segment(segment_context)
 
     @asynccontextmanager
     async def request_stream(
@@ -117,7 +125,13 @@ class DurableModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[CompletedStreamedResponse]:
-        result = await self._request_stream_segment(messages, model_settings, model_request_parameters)
+        segment_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
+        result = await self._request_stream_segment(segment_context)
         yield CompletedStreamedResponse(
             result.response,
             model_request_parameters=model_request_parameters,

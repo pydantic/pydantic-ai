@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -12,10 +11,7 @@ from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import (
-    CapabilityOrdering,
-    WrapModelRequestHandler,
-)
+from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
@@ -23,13 +19,13 @@ from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     capture_event_stream,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._toolset import PrefectWrapperToolset, prefectify_toolset as _default_prefectify_toolset
 from ._types import TaskConfig, default_task_config
 
@@ -53,7 +49,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         from pydantic_ai.durable_exec.prefect import PrefectDurability
 
         durability = PrefectDurability()
-        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
+        agent = Agent('openai:gpt-5.6-sol', name='my_agent', capabilities=[durability])
         ```
     """
 
@@ -62,14 +58,16 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         {'function', 'mcp', 'dynamic'}
     )
 
-    name: str
-    """Unique agent name used as a prefix for Prefect task names."""
+    _durable_unit_noun = 'task'
+    _durable_container_noun = 'flow'
+    _tool_config_key = 'prefect'
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
@@ -95,6 +93,8 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request tasks, and tool events are handled in per-event tasks.
+            name: Unique agent name used in the Prefect task names. Defaults to the agent's
+                `name` when the capability is bound.
             event_stream_handler_task_config: Prefect task config for event stream handler tasks.
             model_task_config: Prefect task config for model request tasks.
             mcp_task_config: Prefect task config for MCP server tasks.
@@ -104,38 +104,19 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 task wrapping), or via the
                 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler)
-        self.name = ''
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
 
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
-        self._prefect_toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
         # Populated by for_agent when the capability is attached to an agent.
         self._request_task: Any = None
         self._request_stream_task: Any = None
         self._cancel_suspended_response_task: Any = None
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> PrefectDurability[AgentDepsT]:
-        """Bind to the agent: discover model, name, toolsets and register Prefect tasks.
-
-        Returns a new bound instance; the original capability is left pristine so the
-        same instance can be passed to multiple agents.
-        """
-        if not agent.name:
-            raise UserError('An agent needs to have a unique `name` in order to be used with Prefect.')
-
-        bound = copy.copy(self)
-        bound.name = agent.name
-        bound._agent = agent
-
-        bound._prefect_toolsets_by_id = {}
-
-        # Build model registry (shared with the other durability capabilities)
-        bound._bind_models(agent)
-
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # --- Model request tasks ---
 
         @task
@@ -146,11 +127,13 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
-                return await model.request(messages, model_settings, model_request_parameters)
+                response = await model.request(messages, model_settings, model_request_parameters)
+            _stamp_response_provenance(response, messages)
+            return response
 
-        bound._request_task = request_task
+        self._request_task = request_task
 
         @task
         async def request_stream_task(
@@ -160,7 +143,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, run_context
@@ -168,29 +151,29 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                     events = await capture_event_stream(
                         run_context=run_context,
                         stream=streamed_response,
-                        handler=bound._event_stream_handler,
+                        handler=self._event_stream_handler,
                     )
-            return StreamedActivityResult(response=streamed_response.get(), events=events)
+            response = streamed_response.get()
+            _stamp_response_provenance(response, messages)
+            return StreamedActivityResult(response=response, events=events)
 
-        bound._request_stream_task = request_stream_task
+        self._request_stream_task = request_stream_task
 
         @task
         async def cancel_suspended_response_task(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 await model.cancel_suspended_response(response)
 
-        bound._cancel_suspended_response_task = cancel_suspended_response_task
+        self._cancel_suspended_response_task = cancel_suspended_response_task
 
         # --- Toolset wrapping ---
-        for toolset in agent.toolsets:
-            bound._prefectify_leaf_toolsets(toolset)
+        self._register_toolsets(agent)
 
-        return bound
-
-    def _in_durable_context(self) -> bool:
+    @property
+    def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
@@ -203,42 +186,9 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
         await event_stream_handler_task(event)
 
-    def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Wrap leaf toolsets as Prefect tasks."""
-
-        def prefectify(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            if ts.id is not None and (existing := self._prefect_toolsets_by_id.get(ts.id)) is not None:
-                if existing.wrapped is ts:
-                    # The same toolset instance can appear in more than one place in the
-                    # tree; reuse its wrapper.
-                    return existing
-                # A distinct toolset under an already-registered `id` would silently
-                # replace it in the registry and route both toolsets' calls to one wrapper.
-                raise UserError(
-                    f'Two toolsets have the same `id` {ts.id!r}. Toolset `id`s must be unique among all '
-                    "toolsets registered with the same agent, as they identify the toolset's tasks "
-                    'within the flow.'
-                )
-            wrapped = _default_prefectify_toolset(
-                ts,
-                self._mcp_task_config,
-                self._tool_task_config,
-                {},  # per-tool config comes from tool metadata on the capability path
-            )
-            if isinstance(wrapped, PrefectWrapperToolset):
-                # Without an ID the wrapper can't be swapped in at run time (see
-                # `get_wrapper_toolset`), so the toolset's calls would silently run
-                # untracked inside the Prefect flow and re-execute on retries.
-                if ts.id is None:
-                    raise UserError(
-                        "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
-                        'need to have a unique `id` in order to be used with Prefect. '
-                        "The ID will be used to identify the toolset's tasks within the flow."
-                    )
-                self._prefect_toolsets_by_id[ts.id] = wrapped
-            return wrapped
-
-        toolset.visit_and_replace(prefectify)
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        wrapped = _default_prefectify_toolset(ts, self._mcp_task_config, self._tool_task_config, {})
+        return wrapped if isinstance(wrapped, PrefectWrapperToolset) else None
 
     # --- Capability hooks ---
 
@@ -250,7 +200,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Route model requests through Prefect tasks when inside a flow."""
-        if FlowRunContext.get() is None:
+        if not self.in_durable_context:
             return await handler(request_context)
 
         # A `Model` instance can't be serialized across the task boundary, so the
@@ -262,23 +212,15 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
 
-        async def request_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> ModelResponse:
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await self._request_task.with_options(
                 name=f'Model Request: {model_name}', **self._model_task_config
-            )(model_id, messages, settings, parameters, ctx)
+            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
 
-        async def request_stream_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> StreamedActivityResult:
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             return await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
-            )(model_id, messages, settings, parameters, ctx)
+            )(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await self._cancel_suspended_response_task.with_options(
@@ -292,27 +234,3 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         return await handler(request_context)
-
-    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        """Replace leaf toolsets with their Prefect-wrapped versions."""
-        self._reject_runtime_toolsets(toolset)
-
-        if not self._prefect_toolsets_by_id:  # pragma: no cover
-            # An agent always has its built-in `<agent>` `FunctionToolset`, which is registered
-            # here, so this is never empty at run time; the guard mirrors DBOS/Temporal for parity.
-            return None
-
-        def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
-            if ts_id is not None and ts_id in self._prefect_toolsets_by_id:
-                return self._prefect_toolsets_by_id[ts_id]
-            return ts
-
-        return toolset.visit_and_replace(swap)
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None

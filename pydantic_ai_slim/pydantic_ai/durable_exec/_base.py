@@ -1,29 +1,27 @@
 from __future__ import annotations
 
+import copy
 from abc import abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
+from pydantic_ai._utils import get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, leaf_capabilities
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    FinalResultEvent,
-    PartDeltaEvent,
-    PartEndEvent,
-    PartStartEvent,
-)
+from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
 from ._utils import unwrap_model
+
+_MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -46,18 +44,51 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     """Human-readable engine name used in error messages (e.g. `'Temporal'`)."""
 
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]]
+    _durable_unit_noun: ClassVar[str]
+    _durable_container_noun: ClassVar[str]
+    _tool_config_key: ClassVar[str | None] = None
+
+    name: str
+    """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
     ) -> None:
+        self.name: str = name or ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
+        self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
+        """Bind to the agent and register this engine's durable units on a new copy."""
+        self._check_bindable()
+        if not (self.name or agent.name):
+            raise UserError(
+                f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
+                f'(or pass `name=` to `{type(self).__name__}`). The name is used to identify the '
+                f"agent's durable {self._durable_unit_noun}s."
+            )
+        bound = copy.copy(self)
+        bound.name = self.name or agent.name or ''
+        bound._agent = agent
+        bound._bind_models(agent)
+        bound._toolsets_by_id = {}
+        bound._bind_to_agent(agent)
+        return bound
+
+    def _check_bindable(self) -> None:
+        """Validate that the capability can be bound in the current context."""
+
+    @abstractmethod
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Register engine-specific durable units on this bound capability."""
 
     @classmethod
     def from_agent(cls, agent: AbstractAgent[Any, Any]) -> Self | None:
@@ -69,13 +100,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
-        found: list[Self] = []
-
-        def visitor(cap: Any) -> None:
-            if isinstance(cap, cls):
-                found.append(cap)
-
-        agent.root_capability.apply(visitor)
+        found = [cap for cap in leaf_capabilities(agent.root_capability) if isinstance(cap, cls)]
         if len(found) > 1:
             raise UserError(f'Multiple {cls.__name__} capabilities are attached to this agent; attach at most one.')
         return found[0] if found else None
@@ -88,7 +113,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         and could re-execute on recovery, while non-executing toolsets can pass through.
         Outside a durable context the capability remains transparent.
         """
-        if not self._in_durable_context():
+        if not self.in_durable_context:
             return
 
         construction_leaves: set[int] = set()
@@ -107,6 +132,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             runtime_leaves,
             unsupported_kinds=self._unsupported_runtime_toolset_kinds,
             engine=self.engine_name,
+            tool_config_key=self._tool_config_key,
         )
 
     @property
@@ -123,23 +149,87 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             async for event in stream:
                 yield event
             return
-        if not self._in_durable_context():
+        if not self.in_durable_context:
             assert self._process_event_stream is not None
             async for event in self._process_event_stream.wrap_run_event_stream(ctx, stream=stream):
                 yield event
             return
 
         async for event in stream:
-            # `ModelResponseStreamEvent`s (exactly the types below) were already delivered
+            # `ModelResponseStreamEvent`s were already delivered
             # live to the handler inside the model-request boundary; workflow-side they're
             # the replay, so only `HandleResponseEvent`s are dispatched to the handler here.
-            if not isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent, FinalResultEvent)):
+            if not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
                 await self._dispatch_event_stream_event(ctx, event)
             yield event
 
+    @property
     @abstractmethod
-    def _in_durable_context(self) -> bool:
-        """Whether execution is currently inside this engine's workflow or flow."""
+    def in_durable_context(self) -> bool:
+        """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""
+        for toolset in agent.toolsets:
+            toolset.visit_and_replace(self._wrap_and_register_leaf)
+
+    def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        ts_id = ts.id
+        if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
+            if existing.wrapped is ts:
+                # The same toolset instance can appear in more than one place in the tree;
+                # reuse its wrapper so its durable units register exactly once.
+                return existing
+            # A distinct toolset under an already-registered `id` would silently replace it
+            # in the registry and route both toolsets' calls to one wrapper.
+            raise UserError(
+                f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
+                f"toolsets registered with the same agent, as they identify the toolset's "
+                f'{self._durable_unit_noun}s within the {self._durable_container_noun}.'
+            )
+        wrapped = self._wrap_leaf_toolset(ts)
+        if wrapped is None:
+            return ts
+        if ts_id is None:
+            raise UserError(
+                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                f'need to have a unique `id` in order to be used with {self.engine_name}. '
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f'{self._durable_container_noun}.'
+            )
+        self._toolsets_by_id[ts_id] = wrapped
+        return wrapped
+
+    @abstractmethod
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        """Wrap one leaf toolset in this engine's durable wrapper, or `None` to pass it through unwrapped."""
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        """Replace leaf toolsets with their durable-wrapped versions."""
+        self._reject_runtime_toolsets(toolset)
+        if not self._toolsets_by_id:
+            return None
+
+        def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            ts_id = ts.id
+            if ts_id is not None and ts_id in self._toolsets_by_id:
+                return self._toolsets_by_id[ts_id]
+            return ts
+
+        return toolset.visit_and_replace(swap)
+
+    def get_ordering(self) -> CapabilityOrdering:
+        # Innermost: durable dispatch must be the last wrapper around the model handler so every
+        # other capability's contribution is already applied inside the durable unit.
+        return CapabilityOrdering(position='innermost')
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        # Not spec-loadable: the useful configuration (`models=` Model instances, `event_stream_handler`
+        # callables, run-context classes, activity/step/task configs holding timedeltas and retry-policy
+        # objects) is not spec-serializable, and a durable agent additionally has to be constructed in
+        # worker-setup code for its durable units to be registered.
+        return None
 
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:

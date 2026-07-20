@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -11,11 +10,7 @@ from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import (
-    CapabilityOrdering,
-    WrapModelRequestHandler,
-    WrapRunHandler,
-)
+from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._utils import (
@@ -23,7 +18,6 @@ from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     capture_event_stream,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
@@ -54,21 +48,22 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         from pydantic_ai.durable_exec.dbos import DBOSDurability
 
         durability = DBOSDurability()
-        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
+        agent = Agent('openai:gpt-5.6-sol', name='my_agent', capabilities=[durability])
         ```
     """
 
     engine_name = 'DBOS'
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
 
-    name: str
-    """Unique agent name used as a prefix for DBOS step names."""
+    _durable_unit_noun = 'step'
+    _durable_container_noun = 'workflow'
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
         model_step_config: StepConfig | None = None,
         event_stream_handler_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
@@ -95,6 +90,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
                 event-handler step.
+            name: Unique agent name used in the DBOS step names. Defaults to the agent's
+                `name` when the capability is bound.
             model_step_config: DBOS step config for model request steps.
             event_stream_handler_step_config: DBOS step config for event stream handler steps.
             mcp_step_config: DBOS step config for MCP server steps.
@@ -102,40 +99,21 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
         """
-        super().__init__(models=models, event_stream_handler=event_stream_handler)
-        self.name = ''
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._model_step_config = model_step_config or {}
         self._event_stream_handler_step_config = event_stream_handler_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
-        self._dbos_toolsets_by_id: dict[str, WrapperToolset[Any]] = {}
         # Populated by for_agent when the capability is attached to an agent.
         self._request_step: Any = None
         self._request_stream_step: Any = None
         self._cancel_suspended_response_step: Any = None
         self._event_stream_handler_step: Any = None
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> DBOSDurability[AgentDepsT]:
-        """Bind to the agent: discover model, name, toolsets and register DBOS steps.
-
-        Returns a new bound instance; the original capability is left pristine so the
-        same instance can be passed to multiple agents.
-        """
-        if not agent.name:
-            raise UserError('An agent needs to have a unique `name` in order to be used with DBOS.')
-
-        bound = copy.copy(self)
-        bound.name = agent.name
-        bound._agent = agent
-
-        bound._dbos_toolsets_by_id = {}
-
-        # Build model registry (shared with the other durability capabilities)
-        bound._bind_models(agent)
-
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # --- Model request steps ---
 
-        @DBOS.step(name=f'{bound.name}__model.request', **bound._model_step_config)
+        @DBOS.step(name=f'{self.name}__model.request', **self._model_step_config)
         async def request_step(
             model_id: str | None,
             messages: list[_messages.ModelMessage],
@@ -143,13 +121,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 return await model.request(messages, model_settings, model_request_parameters)
 
-        bound._request_step = request_step
+        self._request_step = request_step
 
-        @DBOS.step(name=f'{bound.name}__model.request_stream', **bound._model_step_config)
+        @DBOS.step(name=f'{self.name}__model.request_stream', **self._model_step_config)
         async def request_stream_step(
             model_id: str | None,
             messages: list[_messages.ModelMessage],
@@ -157,7 +135,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, run_context
@@ -165,40 +143,38 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                     events = await capture_event_stream(
                         run_context=run_context,
                         stream=streamed_response,
-                        handler=bound._event_stream_handler,
+                        handler=self._event_stream_handler,
                     )
             return StreamedActivityResult(response=streamed_response.get(), events=events)
 
-        bound._request_stream_step = request_stream_step
+        self._request_stream_step = request_stream_step
 
-        @DBOS.step(name=f'{bound.name}__model.cancel_suspended_response', **bound._model_step_config)
+        @DBOS.step(name=f'{self.name}__model.cancel_suspended_response', **self._model_step_config)
         async def cancel_suspended_response_step(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await bound._resolve_model_for_request(model_id, run_context)
+            model = await self._resolve_model_for_request(model_id, run_context)
             with set_current_run_context(run_context):
                 await model.cancel_suspended_response(response)
 
-        bound._cancel_suspended_response_step = cancel_suspended_response_step
+        self._cancel_suspended_response_step = cancel_suspended_response_step
 
-        if bound._event_stream_handler is not None:
-            handler = bound._event_stream_handler
+        if self._event_stream_handler is not None:
+            handler = self._event_stream_handler
 
-            @DBOS.step(name=f'{bound.name}__event_stream_handler', **bound._event_stream_handler_step_config)
+            @DBOS.step(name=f'{self.name}__event_stream_handler', **self._event_stream_handler_step_config)
             async def event_stream_handler_step(
                 event: _messages.AgentStreamEvent, run_context: RunContext[Any]
             ) -> None:
-                await handler(run_context, bound._single_event_stream(event))
+                await handler(run_context, self._single_event_stream(event))
 
-            bound._event_stream_handler_step = event_stream_handler_step
+            self._event_stream_handler_step = event_stream_handler_step
 
         # --- MCP toolset wrapping ---
-        for toolset in agent.toolsets:
-            bound._dbosify_leaf_toolsets(toolset)
+        self._register_toolsets(agent)
 
-        return bound
-
-    def _in_durable_context(self) -> bool:
+    @property
+    def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
@@ -207,50 +183,16 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._event_stream_handler_step is not None
         await self._event_stream_handler_step(event, ctx)
 
-    def _dbosify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
-        """Wrap MCP leaf toolsets as DBOS steps."""
+    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        try:
+            from pydantic_ai.mcp import MCPToolset
 
-        def dbosify(ts: AbstractToolset[Any]) -> AbstractToolset[Any]:
-            try:
-                from pydantic_ai.mcp import MCPToolset
-
-                from ._mcp_toolset import DBOSMCPToolset
-            except ImportError:
-                pass
-            else:
-                if isinstance(ts, MCPToolset):
-                    # Without an ID the wrapper can't be swapped in at run time (see
-                    # `get_wrapper_toolset`), so the toolset's I/O would silently run
-                    # un-checkpointed inside the DBOS workflow and re-execute on recovery.
-                    if ts.id is None:
-                        raise UserError(
-                            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-                            "The ID will be used to identify the toolset's steps within the workflow."
-                        )
-                    existing = self._dbos_toolsets_by_id.get(ts.id)
-                    if existing is not None:
-                        if existing.wrapped is ts:
-                            # The same toolset instance can appear in more than one place
-                            # in the tree; reuse its wrapper.
-                            return existing
-                        # A distinct toolset under an already-registered `id` would silently
-                        # replace it in the registry and route both toolsets' calls to one wrapper.
-                        raise UserError(
-                            f'Two toolsets have the same `id` {ts.id!r}. Toolset `id`s must be unique among all '
-                            "toolsets registered with the same agent, as they identify the toolset's steps "
-                            'within the workflow.'
-                        )
-                    wrapped = DBOSMCPToolset(
-                        wrapped=ts,
-                        step_name_prefix=self.name,
-                        step_config=self._mcp_step_config,
-                    )
-                    self._dbos_toolsets_by_id[ts.id] = wrapped
-                    return wrapped
-
-            return ts
-
-        toolset.visit_and_replace(dbosify)
+            from ._mcp_toolset import DBOSMCPToolset
+        except ImportError:
+            return None
+        if isinstance(ts, MCPToolset):
+            return DBOSMCPToolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
+        return None
 
     # --- Capability hooks ---
 
@@ -275,7 +217,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Route model requests through DBOS steps when inside a workflow."""
-        if DBOS.workflow_id is None or DBOS.step_id is not None:
+        if not self.in_durable_context:
             return await handler(request_context)
 
         # A `Model` instance can't be serialized across the step boundary, so the
@@ -286,19 +228,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # round-trips via `_find_model_id` on `request_context.model`.
         model_id = self._model_id_for_request(ctx, request_context)
 
-        async def request_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> ModelResponse:
-            return await self._request_step(model_id, messages, settings, parameters, ctx)
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            return await self._request_step(
+                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
+            )
 
-        async def request_stream_segment(
-            messages: list[_messages.ModelMessage],
-            settings: ModelSettings | None,
-            parameters: ModelRequestParameters,
-        ) -> StreamedActivityResult:
-            return await self._request_stream_step(model_id, messages, settings, parameters, ctx)
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            return await self._request_stream_step(
+                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
+            )
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await self._cancel_suspended_response_step(model_id, response, ctx)
@@ -310,25 +248,3 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         return await handler(request_context)
-
-    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        """Replace MCP leaf toolsets with their DBOS-wrapped versions."""
-        self._reject_runtime_toolsets(toolset)
-
-        if not self._dbos_toolsets_by_id:
-            return None
-
-        def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
-            if ts_id is not None and ts_id in self._dbos_toolsets_by_id:
-                return self._dbos_toolsets_by_id[ts_id]
-            return ts  # pragma: lax no cover
-
-        return toolset.visit_and_replace(swap)
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None

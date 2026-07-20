@@ -46,10 +46,10 @@ from ._types import TaskConfig, default_task_config
 
 
 @deprecated(
-    """`PrefectAgent` is deprecated. Migrate each constructor argument as follows:
+    """`PrefectAgent` is deprecated in favor of the `PrefectDurability` capability. Migrate each constructor argument as follows:
 - With the capability, call `agent.run()` inside a `@flow`; the wrapper did this automatically.
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[PrefectDurability(...)])`.
-- `name=` → set `name=` on `Agent`.
+- `name=` → set `name=` on `Agent`, or `name=` on `PrefectDurability`.
 - `event_stream_handler=` → pass `event_stream_handler=` to `PrefectDurability`; it runs inside tasks, exactly like before.
 - `mcp_task_config=` → set `mcp_task_config=` on `PrefectDurability`.
 - `model_task_config=` → set `model_task_config=` on `PrefectDurability`.
@@ -208,7 +208,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # ones are supported: Prefect wraps both function tools and MCP servers in tasks registered up
         # front, and dynamic toolsets can't be introspected ahead of time.
         reject_unsupported_runtime_toolsets(
-            additional_toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
+            additional_toolsets,
+            unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+            engine='Prefect',
+            tool_config_key='prefect',
         )
         token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
         merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]

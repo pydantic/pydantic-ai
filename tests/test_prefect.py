@@ -39,6 +39,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
@@ -1554,6 +1555,39 @@ async def test_repeated_run_hits_cache():
     assert request2.run_id != response2.run_id
 
 
+async def test_durability_repeated_run_hits_cache_preserves_provenance():
+    """The capability path stamps cached responses with their producing run and conversation."""
+    call_count = 0
+
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(
+        FunctionModel(counting_model),
+        name='durability_cache_test_agent',
+        capabilities=[PrefectDurability(model_task_config=TaskConfig(cache_policy=PrefectAgentInputs()))],
+    )
+
+    @flow
+    async def run_agent(prompt: str) -> AgentRunResult[str]:
+        return await agent.run(prompt)
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    result1 = await run_agent(prompt)
+    result2 = await run_agent(prompt)
+    assert call_count == 1
+    response1, response2 = result1.all_messages()[-1], result2.all_messages()[-1]
+    assert [response1.run_id, response1.conversation_id, response2.run_id, response2.conversation_id] == [
+        (producing_run_id := IsSameStr()),
+        (producing_conversation_id := IsSameStr()),
+        producing_run_id,
+        producing_conversation_id,
+    ]
+    assert result2.all_messages()[0].run_id != response2.run_id
+
+
 # Test custom model settings
 class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
@@ -1755,7 +1789,7 @@ def test_prefect_durability_wraps_capability_contributed_toolsets() -> None:
     )
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
-    assert 'cap_tools' in bound._prefect_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'cap_tools' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
@@ -1775,6 +1809,46 @@ async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) 
         await agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
     with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await run_agent()
+
+
+async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolset() -> None:
+    def model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+    async def runtime_tool() -> str:
+        return 'tool-result'
+
+    toolset = FunctionToolset(id='runtime')
+    toolset.add_function(runtime_tool, metadata={'prefect': False})
+    agent = Agent(FunctionModel(model), name='runtime_opt_out', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello', toolsets=[toolset])).output
+
+    assert await run_agent() == 'done'
+
+
+async def test_prefect_durability_rejects_partially_opted_out_runtime_function_toolset() -> None:
+    async def opted_out() -> str:
+        return 'ok'
+
+    async def wrapped() -> str:
+        return 'no'
+
+    toolset = FunctionToolset(id='runtime')
+    toolset.add_function(opted_out, metadata={'prefect': False})
+    toolset.add_function(wrapped)
+    agent = Agent(TestModel(), name='runtime_partial_opt_out', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('Hello', toolsets=[toolset])
+
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed'):
         await run_agent()
 
 
@@ -1838,7 +1912,7 @@ def test_prefect_durability_same_toolset_instance_reused() -> None:
     )
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
-    assert sorted(bound._prefect_toolsets_by_id) == ['<agent>', 'shared_fn']  # pyright: ignore[reportPrivateUsage]
+    assert sorted(bound._toolsets_by_id) == ['<agent>', 'shared_fn']  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_prefect_durability_outside_flow() -> None:
@@ -1853,6 +1927,18 @@ def test_prefect_durability_requires_agent_name() -> None:
     """PrefectDurability raises UserError when the agent has no name."""
     with pytest.raises(UserError, match='unique `name`'):
         Agent(_durability_fn_model, capabilities=[PrefectDurability()])
+
+
+def test_prefect_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent() -> None:
+    named_agent = Agent(_durability_fn_model, name='agent-name', capabilities=[PrefectDurability(name='custom')])
+    bound = PrefectDurability.from_agent(named_agent)
+    assert bound is not None
+    assert bound.name == 'custom'
+
+    unnamed_agent = Agent(_durability_fn_model, capabilities=[PrefectDurability(name='unnamed-custom')])
+    unnamed_bound = PrefectDurability.from_agent(unnamed_agent)
+    assert unnamed_bound is not None
+    assert unnamed_bound.name == 'unnamed-custom'
 
 
 def test_prefect_durability_requires_model() -> None:
@@ -2034,7 +2120,7 @@ async def test_prefect_durability_passes_through_non_wrappable_leaf() -> None:
     )
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
-    assert 'ext' not in bound._prefect_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'ext' not in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
     result = await agent.run('Hello external')
     assert result.output == 'Echo: Hello external'

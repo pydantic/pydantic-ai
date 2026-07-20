@@ -79,7 +79,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectDurability
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai:gpt-5.6-sol',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
     capabilities=[PrefectDurability()],  # (2)!
@@ -113,16 +113,29 @@ For more information on how to use Prefect in Python applications, see their [Py
 !!! warning "Deprecated"
     [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] is the original wrapper-agent path for Prefect integration and will be removed in v3. New code should use the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability shown above.
 
-Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant. `PrefectAgent` wraps `Agent.run` / `Agent.run_sync` as Prefect flows automatically and routes model requests, tool calls, and MCP communication through Prefect tasks. [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] also routes model requests, tool calls, and MCP communication through tasks, but does not wrap the run: call `agent.run()` inside your own `@flow`.
+    **When migrating, you must wrap the run in a flow yourself.** `PrefectAgent` wrapped `run` / `run_sync` as a Prefect flow automatically; `PrefectDurability` deliberately does not — a run is only durable when `agent.run()` is called inside your own `@flow`. Porting the constructor arguments but calling `agent.run()` directly produces a run that works but is **not durable**.
 
-When migrating from `PrefectAgent` to `PrefectDurability`, wrap the `agent.run()` call in a `@flow`.
+Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get a durable agent variant that routes model requests, tool calls, and MCP communication through Prefect tasks:
 
 ```python {title="prefect_agent.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
-agent = Agent('openai:gpt-5.2', name='geography')
+agent = Agent('openai:gpt-5.6-sol', name='geography')
 prefect_agent = PrefectAgent(agent)  # Use `prefect_agent` in place of `agent`.
+```
+
+Migrating to the capability means attaching `PrefectDurability` and adding the flow decorator that `PrefectAgent` used to apply for you:
+
+```diff
+-prefect_agent = PrefectAgent(agent)
+-result = await prefect_agent.run(prompt)
++agent = Agent(..., capabilities=[PrefectDurability()])
++
++@flow
++async def answer(prompt: str) -> str:
++    result = await agent.run(prompt)
++    return result.output
 ```
 
 ## Prefect Integration Considerations
@@ -137,7 +150,7 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.2'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, so it's sent as its `model_id` string and rebuilt inside the task. That faithfully reproduces model-name strings and models with standard providers, but not an instance whose exact behavior depends on a custom provider, client, or settings — pre-register those by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference them by key (or pass the registered instance). The agent's own model, set at construction, is always available as the default.
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities.md#resolvemodelid) capability before `PrefectDurability`: it gets first crack at every string, and the resolver runs again inside the task with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
@@ -169,7 +182,7 @@ def simple_tool() -> str: ...
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai:gpt-5.6-sol',
     name='research',
     toolsets=[toolset],
     capabilities=[
@@ -207,11 +220,11 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)` (on both the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and `PrefectAgent` paths), but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
 
 ## Task Configuration
 
-You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] (or deprecated [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent]) constructor:
+You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] constructor:
 
 - `mcp_task_config`: Configuration for MCP server communication tasks
 - `model_task_config`: Configuration for model request tasks
@@ -235,7 +248,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai:gpt-5.6-sol',
     instructions="You're an expert in geography.",
     name='geography',
     capabilities=[
@@ -313,7 +326,7 @@ from pydantic_ai.durable_exec.prefect import PrefectDurability
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
     agent = Agent(  # (1)!
-        'openai:gpt-5.2',
+        'openai:gpt-5.6-sol',
         name='daily_report_agent',
         instructions='Generate a daily summary report.',
         capabilities=[PrefectDurability()],

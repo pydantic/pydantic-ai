@@ -2131,6 +2131,18 @@ def test_dbos_durability_requires_agent_name() -> None:
         Agent(_durability_fn_model, capabilities=[DBOSDurability()])
 
 
+def test_dbos_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent() -> None:
+    named_agent = Agent(_durability_fn_model, name='agent-name', capabilities=[DBOSDurability(name='custom')])
+    bound = DBOSDurability.from_agent(named_agent)
+    assert bound is not None
+    assert bound.name == 'custom'
+
+    unnamed_agent = Agent(_durability_fn_model, capabilities=[DBOSDurability(name='unnamed-custom')])
+    unnamed_bound = DBOSDurability.from_agent(unnamed_agent)
+    assert unnamed_bound is not None
+    assert unnamed_bound.name == 'unnamed-custom'
+
+
 def test_dbos_durability_requires_model() -> None:
     """DBOSDurability raises UserError when the agent has no model at all."""
     with pytest.raises(UserError, match='needs to have a `model`'):
@@ -2617,8 +2629,8 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     assert bound is not None
 
     # The capability should have stored a DBOS wrapper keyed by the toolset id
-    assert 'my_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
+    assert 'my_mcp' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._toolsets_by_id['my_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
@@ -2629,7 +2641,7 @@ async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:
     re-execute on recovery. Temporal raises the equivalent error for id-less leaves.
     """
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), init_timeout=20)
-    with pytest.raises(UserError, match='MCP toolsets need to have a unique `id` in order to be used with DBOS'):
+    with pytest.raises(UserError, match=r"Toolsets that are 'leaves'.*unique `id`.*DBOS"):
         Agent(
             _durability_fn_model,
             name='durability_idless_mcp',
@@ -2659,8 +2671,8 @@ async def test_dbos_durability_wraps_capability_contributed_mcp_toolset(dbos: DB
     bound = DBOSDurability.from_agent(agent)
     assert bound is not None
 
-    assert 'cap_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(bound._dbos_toolsets_by_id['cap_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
+    assert 'cap_mcp' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._toolsets_by_id['cap_mcp'], DBOSMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
@@ -2679,7 +2691,7 @@ async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
     bound = DBOSDurability.from_agent(agent)
     assert bound is not None
 
-    assert 'swap_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'swap_mcp' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
     # get_wrapper_toolset should replace the original MCP toolset with the DBOS wrapper
     replaced = bound.get_wrapper_toolset(mcp_toolset)
@@ -2807,7 +2819,7 @@ async def test_dbos_durability_same_toolset_instance_reused(dbos: DBOS) -> None:
     )
     bound = DBOSDurability.from_agent(agent)
     assert bound is not None
-    assert list(bound._dbos_toolsets_by_id) == ['shared_mcp']  # pyright: ignore[reportPrivateUsage]
+    assert list(bound._toolsets_by_id) == ['shared_mcp']  # pyright: ignore[reportPrivateUsage]
 
 
 # --- Continuation chains (suspended → complete) run one step per segment ---
