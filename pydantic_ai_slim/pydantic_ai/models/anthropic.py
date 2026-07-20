@@ -53,6 +53,7 @@ from ..messages import (
 from ..native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
@@ -113,6 +114,7 @@ try:
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
+        BetaAdvisorTool20260301Param,
         BetaBase64PDFSourceParam,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
@@ -252,6 +254,11 @@ _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
+# (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
+# Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
+# isinstance tuple keeps it supported.
+_ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -562,6 +569,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebSearchTool}
         if isinstance(client, _WEB_FETCH_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {WebFetchTool}
+        if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {AdvisorTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -577,7 +586,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
+        )
 
     async def request(
         self,
@@ -1282,7 +1293,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'web-fetch-2025-09-10',
         )
 
-    def _add_native_tools(
+    def _add_native_tools(  # noqa: C901
         self,
         tools: list[BetaToolUnionParam],
         model_request_parameters: ModelRequestParameters,
@@ -1334,6 +1345,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                 # No `beta_features.add(...)`: tool search is GA on Sonnet/Opus/Haiku 4.5+ and the
                 # provisional `tool-search-tool-2025-11-19` beta header is rejected by the API.
+            elif isinstance(tool, AdvisorTool):  # pragma: no branch
+                tools.append(_map_advisor_tool(tool))
+                beta_features.add('advisor-tool-2026-03-01')
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',
@@ -2840,6 +2854,17 @@ def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> Beta
             return BetaCodeExecutionTool20260120Param(name='code_execution', type='code_execution_20260120')
         case _:
             assert_never(version)
+
+
+def _map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:
+    param = BetaAdvisorTool20260301Param(type='advisor_20260301', name='advisor', model=tool.model)
+    if tool.max_uses is not None:
+        param['max_uses'] = tool.max_uses
+    if tool.max_tokens is not None:
+        param['max_tokens'] = tool.max_tokens
+    if tool.caching is not None:
+        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=tool.caching)
+    return param
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> NativeToolCallPart:
