@@ -3374,6 +3374,35 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+run_id_test_agent = Agent(TestModel(custom_output_text='ok'), name='run_id_test_agent')
+run_id_temporal_agent = TemporalAgent(run_id_test_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class RunIdAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, run_id: str) -> str:
+        result = await run_id_temporal_agent.run(prompt, run_id=run_id)
+        return result.run_id
+
+
+async def test_temporal_agent_explicit_run_id(client: Client):
+    """A pre-minted `run_id=` survives Temporal activity serialization."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunIdAgentWorkflow],
+        plugins=[AgentPlugin(run_id_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunIdAgentWorkflow.run,
+            args=['Hello', 'run-from-temporal'],
+            id=RunIdAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'run-from-temporal'
+
+
 def test_temporal_run_context_serializes_metadata():
     ctx = RunContext(
         deps=None,

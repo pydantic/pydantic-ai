@@ -474,6 +474,24 @@ def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[st
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_explicit_run_id(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    """An explicit `run_id=` is emitted as `gen_ai.agent.call.id` on the agent run span."""
+    agent = Agent(
+        model=TestModel(custom_output_text='ok'),
+        name='run_id_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    result = agent.run_sync('Hello', run_id='run-from-api-42')
+    assert result.run_id == 'run-from-api-42'
+
+    summary = get_logfire_summary()
+    agent_run_attrs = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name') == 'invoke_agent'
+    )
+    assert agent_run_attrs['gen_ai.agent.call.id'] == 'run-from-api-42'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     ('metadata', 'expected'),
     [
