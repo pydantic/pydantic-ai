@@ -136,14 +136,19 @@ _EXTRA_HEADERS_UNIQUE_ID_PREFIX = 'pydantic-ai-extra-headers'
 _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 _EXTRA_HEADERS_PARAM = '__pydantic_ai_extra_headers'
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
+_EXTRA_HEADERS_BY_TOKEN: dict[object, tuple[int, dict[str, str]]] = {}
+_EXTRA_HEADERS_TOKEN_LOCK = Lock()
 _BedrockCallResult = TypeVar('_BedrockCallResult')
 
 
 def _capture_extra_headers(client_id: int, params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:
-    if marker := params.pop(_EXTRA_HEADERS_PARAM, None):
-        intended_client_id, extra_headers = marker
-        if intended_client_id == client_id:
-            context[_EXTRA_HEADERS_CONTEXT_KEY] = extra_headers
+    if token := params.pop(_EXTRA_HEADERS_PARAM, None):
+        with _EXTRA_HEADERS_TOKEN_LOCK:
+            marker = _EXTRA_HEADERS_BY_TOKEN.get(token)
+        if marker is not None:
+            intended_client_id, extra_headers = marker
+            if intended_client_id == client_id:
+                context[_EXTRA_HEADERS_CONTEXT_KEY] = extra_headers
 
 
 def _inject_extra_headers(params: _BotocoreRequestParams, context: dict[str, Any], **_: Any) -> None:
@@ -198,7 +203,15 @@ def _call_with_extra_headers(
     extra_headers: dict[str, str] | None,
 ) -> _BedrockCallResult:
     """Call a botocore method with a private parameter that the capture handler removes before validation."""
-    return method(**params, **{_EXTRA_HEADERS_PARAM: (id(client), extra_headers or {})})
+    token = object()
+    with _EXTRA_HEADERS_TOKEN_LOCK:
+        _EXTRA_HEADERS_BY_TOKEN[token] = (id(client), extra_headers or {})
+    try:
+        # Only the opaque token reaches botocore's history recorder; header values remain in the private registry.
+        return method(**params, **{_EXTRA_HEADERS_PARAM: token})
+    finally:
+        with _EXTRA_HEADERS_TOKEN_LOCK:
+            _EXTRA_HEADERS_BY_TOKEN.pop(token, None)
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')

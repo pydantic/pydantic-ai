@@ -304,7 +304,7 @@ async def test_bedrock_model_stream_with_extra_headers(allow_model_requests: Non
     )
 
 
-async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv):
+async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv, mocker: MockerFixture):
     """The real botocore pipeline signs extra headers for every Bedrock operation we use.
 
     Not a VCR test: requests are aborted at `before-send` to inspect real SigV4 signing across three operations
@@ -319,6 +319,13 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv)
     client = cast(BedrockRuntimeClient, provider.client)
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
     captured: dict[str, dict[str, str | bytes]] = {}
+    recorded_api_params: list[dict[str, Any]] = []
+
+    def record_history(event_type: str, payload: dict[str, Any], source: str = 'BOTOCORE') -> None:
+        if event_type == 'API_CALL':
+            recorded_api_params.append(payload['params'].copy())
+
+    mocker.patch('botocore.client.history_recorder.record', side_effect=record_history)
 
     class RequestCaptured(Exception):
         pass
@@ -331,7 +338,7 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv)
         client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', capture)
 
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
-    settings = BedrockModelSettings(extra_headers={'Custom-Header': 'value'})
+    settings = BedrockModelSettings(extra_headers={'Custom-Header': 'secret-header-value'})
     request_parameters = ModelRequestParameters()
     try:
         with pytest.raises(RequestCaptured):
@@ -346,8 +353,10 @@ async def test_bedrock_extra_headers_are_signed_for_all_operations(env: TestEnv)
 
     assert set(captured) == {'Converse', 'ConverseStream', 'CountTokens'}
     for headers in captured.values():
-        assert _decode_header(headers['Custom-Header']) == 'value'
+        assert _decode_header(headers['Custom-Header']) == 'secret-header-value'
         assert 'custom-header' in _decode_header(headers['Authorization'])
+    assert len(recorded_api_params) == 3
+    assert all('secret-header-value' not in repr(params) for params in recorded_api_params)
 
 
 def _emit_bedrock_events(
@@ -359,6 +368,7 @@ def _emit_bedrock_events(
     )
     params = next((response for _, response in param_responses if response is not None), params)
     events.emit('before-parameter-build.bedrock-runtime.CountTokens', params=params, model=None, context=context)
+    assert '__pydantic_ai_extra_headers' not in params
     headers = headers or {}
     responses = cast(
         list[tuple[Any, Any]],
