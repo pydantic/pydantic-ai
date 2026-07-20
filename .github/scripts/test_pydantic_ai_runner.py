@@ -676,10 +676,47 @@ def test_attention_dynamic_workflow_is_bounded_to_specialists():
     workflow = shim.attention_dynamic_workflow(TestModel())
     assert workflow.max_agent_calls == 2
     assert workflow.max_retries == 1
+    assert workflow.forward_usage is False
     assert workflow.inherit_model is True
     assert workflow.sub_agent_usage_limits is not None
-    assert workflow.sub_agent_usage_limits.request_limit == 8
-    assert {agent.name for agent in workflow.agents} == {'issue_evidence', 'pr_evidence'}
+    assert workflow.sub_agent_usage_limits.request_limit == 2
+    assert {agent.name for agent in workflow.agents} == {'attention_classifier', 'false_positive_skeptic'}
+
+
+def test_attention_dynamic_workflow_runs_bounded_fanout():
+    """Exercise the actual Monty script path, including concurrent specialist calls."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.usage import UsageLimits
+
+    script = """
+import asyncio
+import json
+candidate = {"number": 1}
+results = await asyncio.gather(
+    attention_classifier(task=json.dumps(candidate)),
+    false_positive_skeptic(task=json.dumps(candidate)),
+)
+results
+"""
+    specialist_calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal specialist_calls
+        if 'run_workflow' not in {tool.name for tool in info.function_tools}:
+            specialist_calls += 1
+            return ModelResponse(parts=[TextPart('specialist evidence')])
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': script})])
+
+    model = FunctionModel(respond)
+    agent = Agent(model, capabilities=[shim.attention_dynamic_workflow(model)])
+    result = asyncio.run(agent.run('go', usage_limits=UsageLimits(request_limit=5)))
+
+    assert result.output == 'done'
+    assert specialist_calls == 2
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):

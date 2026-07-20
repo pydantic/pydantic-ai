@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
-"""Prepare attention advice and enforce maintainer-approved reminder policy.
-
-The model can only recommend items in a fixed Slack report. A maintainer opts an
-item into deterministic assignment and reminders by applying the action label.
-"""
+"""Classify stale issues and PRs, then apply a bounded reminder policy."""
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -24,41 +21,21 @@ from typing_extensions import TypedDict
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
-_CANDIDATE_WINDOW = dt.timedelta(hours=12)
-_CANDIDATE_LIMIT = 20
-_CANDIDATE_HYDRATION_LIMIT = 40
-_MAX_REMINDERS = 10
-_MAX_RECONCILE_ITEMS = 25
-_MAX_LABELED_ITEMS = 100
-_MAX_ACTIVITY_PAGES = 2
-_MAX_PARTICIPANTS = 50
-_DEFAULT_OWNER = 'adtyavrdhn'
-_FINAL_RECIPIENT = 'DouweM'
+_CANDIDATE_LIMIT = 10
+_RECONCILE_LIMIT = 25
+_RESPONSE_LIMIT = 5_000_000
+_SNAPSHOT_LIMIT = 80_000
+_OWNER = 'adtyavrdhn'
+_ESCALATION_OWNER = 'DouweM'
 _ACTION_LABEL = 'needs-maintainer-action'
-_MAINTAINER_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
-_MARKER = re.compile(
-    r'<!-- pydantic-ai-attention-monitor stage=(?P<stage>[123]) '
-    r'recipients=(?P<recipients>[A-Za-z0-9,-]+) -->'
-)
-
-
-class Activity(TypedDict):
-    """One timeline event relevant to ownership or reminder state."""
-
-    kind: str
-    author: str
-    created_at: str
-    body: str
-    label: str
-    assignee: str
-    is_maintainer: bool
-
-
-class Reminder(TypedDict):
-    """A reminder that is due now."""
-
-    stage: Literal[1, 2, 3]
-    recipients: list[str]
+_PINGED_LABEL = 'attention-pinged'
+_ESCALATED_LABEL = 'attention-escalated'
+_STAGE_LABELS = (_PINGED_LABEL, _ESCALATED_LABEL)
+_LABELS = {
+    _ACTION_LABEL: ('d4c5f9', 'The next meaningful action must come from a maintainer'),
+    _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
+    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request has been escalated after one reminder'),
+}
 
 
 class Decision(TypedDict):
@@ -69,127 +46,20 @@ class Decision(TypedDict):
     confidence: Literal['high', 'medium', 'low']
 
 
-def _parse_time(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+class Candidate(TypedDict):
+    """Trusted snapshot fields needed to revalidate a model decision."""
 
-
-def _is_bot(login: str) -> bool:
-    return login.endswith('[bot]') or login in {'github-actions', 'github-actions[bot]'}
-
-
-def _labels(item: Mapping[str, Any]) -> set[str]:
-    return {str(label['name']) for label in item.get('labels', [])}
-
-
-def _marker_body(stage: int, recipients: Sequence[str]) -> str:
-    return f'<!-- pydantic-ai-attention-monitor stage={stage} recipients={",".join(recipients)} -->'
-
-
-def _current_recipients(assignees: Iterable[str], permissions: Mapping[str, str | None]) -> list[str]:
-    maintainers = sorted(login for login in assignees if permissions.get(login) in _MAINTAINER_PERMISSIONS)
-    return maintainers or [_DEFAULT_OWNER]
-
-
-def _active_label_since(activities: Sequence[Activity]) -> dt.datetime | None:
-    active_since: dt.datetime | None = None
-    for activity in sorted(activities, key=lambda value: _parse_time(value['created_at'])):
-        if activity['label'] != _ACTION_LABEL:
-            continue
-        if activity['kind'] == 'labeled':
-            active_since = _parse_time(activity['created_at'])
-        elif activity['kind'] == 'unlabeled':
-            active_since = None
-    return active_since
-
-
-def _resets_clock(activity: Activity) -> bool:
-    if activity['is_maintainer'] and activity['kind'] in {'comment', 'review', 'review_comment'}:
-        return True
-    return (
-        activity['kind'] in {'assigned', 'unassigned'} and not _is_bot(activity['author']) and activity['is_maintainer']
-    )
-
-
-def _trusted_marker(activity: Activity) -> tuple[int, list[str]] | None:
-    if activity['author'] != 'github-actions[bot]':
-        return None
-    matches = list(_MARKER.finditer(activity['body']))
-    if not matches:
-        return None
-    match = matches[-1]
-    return int(match.group('stage')), match.group('recipients').split(',')
-
-
-def next_reminder(
-    *,
-    activities: Sequence[Activity],
-    assignees: Iterable[str],
-    permissions: Mapping[str, str | None],
-    now: dt.datetime,
-) -> Reminder | None:
-    """Return the next reminder after three quiet days, or None."""
-    label_since = _active_label_since(activities)
-    if label_since is None:
-        return None
-
-    reset_at = label_since
-    reset_after_label = False
-    latest_marker: tuple[dt.datetime, int, list[str]] | None = None
-    for activity in sorted(activities, key=lambda value: _parse_time(value['created_at'])):
-        created_at = _parse_time(activity['created_at'])
-        if created_at < label_since:
-            continue
-        if _resets_clock(activity):
-            reset_at = created_at
-            reset_after_label = True
-            latest_marker = None
-        marker = _trusted_marker(activity)
-        if marker:
-            latest_marker = created_at, marker[0], marker[1]
-
-    recipients = _current_recipients(assignees, permissions)
-    if latest_marker is None:
-        due_at = reset_at + _SLA if reset_after_label else label_since
-        return Reminder(stage=1, recipients=recipients) if now >= due_at else None
-
-    marker_at, stage, previous_recipients = latest_marker
-    if stage == 3:
-        return None
-    if {login.casefold() for login in previous_recipients} != {login.casefold() for login in recipients}:
-        return Reminder(stage=1, recipients=recipients) if now >= marker_at + _SLA else None
-    if now < marker_at + _SLA:
-        return None
-    if stage == 1:
-        return Reminder(stage=2, recipients=recipients)
-    if any(login.casefold() == _FINAL_RECIPIENT.casefold() for login in recipients):
-        return None
-    return Reminder(stage=3, recipients=[_FINAL_RECIPIENT])
-
-
-def render_comment(reminder: Reminder, primary_recipients: Sequence[str]) -> str:
-    """Render a concise fixed reminder; no model text reaches GitHub."""
-    mentions = ' '.join(f'@{login}' for login in reminder['recipients'])
-    if reminder['stage'] == 1:
-        message = f'{mentions} This needs an eye — could you please take a call on what should be done here?'
-    elif reminder['stage'] == 2:
-        message = f'{mentions} A second nudge on this — it still needs a maintainer call.'
-    else:
-        owners = ' '.join(f'@{login}' for login in primary_recipients)
-        message = (
-            f'@{_FINAL_RECIPIENT} This still needs an eye after two pings to {owners} — '
-            'could you please take a call on the next step?'
-        )
-    return f'{message}\n\n{_marker_body(reminder["stage"], reminder["recipients"])}'
+    number: int
+    updated_at: str
 
 
 class GitHubClient:
-    """Small authenticated GitHub REST client."""
+    """Small GitHub REST client with bounded response parsing."""
 
     def __init__(self, token: str) -> None:
         self._token = token
-        self._permission_cache: dict[tuple[str, str], str | None] = {}
 
-    def request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> Any:
+    def _request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> tuple[Any, str | None]:
         data = json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(
             f'{_API}{path}',
@@ -204,7 +74,15 @@ class GitHubClient:
             },
         )
         with urllib.request.urlopen(request, timeout=30) as response:
-            return None if response.status == 204 else json.load(response)
+            if response.status == 204:
+                return None, response.headers.get('Link')
+            body = response.read(_RESPONSE_LIMIT + 1)
+            if len(body) > _RESPONSE_LIMIT:
+                raise RuntimeError(f'GitHub response exceeds {_RESPONSE_LIMIT} bytes')
+            return json.loads(body), response.headers.get('Link')
+
+    def request(self, method: str, path: str, payload: Mapping[str, object] | None = None) -> Any:
+        return self._request(method, path, payload)[0]
 
     def get(self, path: str) -> Any:
         return self.request('GET', path)
@@ -215,164 +93,224 @@ class GitHubClient:
     def delete(self, path: str) -> Any:
         return self.request('DELETE', path)
 
-    def permission(self, repo: str, login: str) -> str | None:
-        if not login or _is_bot(login):
-            return None
-        key = repo, login.casefold()
-        if key not in self._permission_cache:
-            try:
-                value = self.get(f'/repos/{repo}/collaborators/{login}/permission')
-                self._permission_cache[key] = str(value['permission'])
-            except urllib.error.HTTPError as exc:
-                if exc.code not in {403, 404}:
-                    raise
-                self._permission_cache[key] = None
-        return self._permission_cache[key]
-
-    def paginate(self, path: str, *, max_pages: int = _MAX_ACTIVITY_PAGES) -> list[dict[str, Any]]:
+    def last_pages(self, path: str, *, count: int = 1) -> list[dict[str, Any]]:
+        """Return up to `count` newest pages for an ascending GitHub collection."""
         separator = '&' if '?' in path else '?'
-        page = 1
-        items: list[dict[str, Any]] = []
-        while page <= max_pages:
-            batch = cast(list[dict[str, Any]], self.get(f'{path}{separator}per_page=100&page={page}'))
-            items.extend(batch)
-            if len(batch) < 100:
-                return items
-            if page == max_pages:
-                raise RuntimeError(f'GitHub activity exceeds the {max_pages * 100}-event safety limit')
-            page += 1
-        return items
+        first_path = f'{path}{separator}per_page=100&page=1'
+        first, links = self._request('GET', first_path)
+        last_path = _link_path(links, 'last')
+        if not last_path:
+            return cast(list[dict[str, Any]], first)
+        parsed = urllib.parse.urlparse(last_path)
+        query = urllib.parse.parse_qs(parsed.query)
+        last = int(query['page'][0])
+        pages: list[dict[str, Any]] = []
+        for page in range(max(1, last - count + 1), last + 1):
+            query['page'] = [str(page)]
+            page_path = f'{parsed.path}?{urllib.parse.urlencode(query, doseq=True)}'
+            pages.extend(cast(list[dict[str, Any]], self.get(page_path)))
+        return pages
+
+    def last_page(self, path: str) -> list[dict[str, Any]]:
+        return self.last_pages(path)
 
 
-def _actor(entry: Mapping[str, Any]) -> str:
-    user = entry.get('user') or entry.get('actor')
+def _parse_time(value: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+
+def _link_path(links: str | None, relation: str) -> str:
+    if not links:
+        return ''
+    for entry in links.split(','):
+        if f'rel="{relation}"' in entry:
+            url = entry[entry.index('<') + 1 : entry.index('>')]
+            parsed = urllib.parse.urlparse(url)
+            return f'{parsed.path}?{parsed.query}'
+    return ''
+
+
+def _labels(item: Mapping[str, Any]) -> set[str]:
+    return {str(label['name']) for label in item.get('labels', [])}
+
+
+def _login(entry: Mapping[str, Any]) -> str:
+    user = entry.get('user')
     return str(cast(Mapping[str, object], user).get('login') or '') if isinstance(user, Mapping) else ''
 
 
-def _activity(kind: str, entry: Mapping[str, Any], *, created_key: str = 'created_at') -> Activity:
-    label = entry.get('label')
-    assignee = entry.get('assignee')
-    return Activity(
-        kind=kind,
-        author=_actor(entry),
-        created_at=str(entry[created_key]),
-        body=str(entry.get('body') or ''),
-        label=str(cast(Mapping[str, object], label).get('name') or '') if isinstance(label, Mapping) else '',
-        assignee=(
-            str(cast(Mapping[str, object], assignee).get('login') or '') if isinstance(assignee, Mapping) else ''
+def _last_page(total: int, page_size: int) -> int:
+    return max(1, math.ceil(total / page_size))
+
+
+def _candidate_context(
+    client: GitHubClient, repo: str, item: Mapping[str, Any]
+) -> tuple[list[dict[str, str]], dict[str, object] | None]:
+    """Return bounded conversation and PR state without walking full history."""
+    number = int(item['number'])
+    page_size = 8
+    comments = cast(
+        list[dict[str, Any]],
+        client.get(
+            f'/repos/{repo}/issues/{number}/comments?per_page={page_size}'
+            f'&page={_last_page(int(item.get("comments") or 0), page_size)}'
         ),
-        is_maintainer=False,
     )
-
-
-def hydrate(
-    client: GitHubClient, repo: str, number: int
-) -> tuple[dict[str, Any], list[Activity], dict[str, str | None]]:
-    """Load authoritative item, activity, and maintainer permissions."""
-    item = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
-    timeline = [
-        _activity(str(event.get('event') or ''), event)
-        for event in client.paginate(f'/repos/{repo}/issues/{number}/timeline')
-        if event.get('created_at')
-    ]
-    comments = [_activity('comment', entry) for entry in client.paginate(f'/repos/{repo}/issues/{number}/comments')]
-    reviews: list[Activity] = []
-    review_comments: list[Activity] = []
+    entries: list[tuple[str, dict[str, Any]]] = [('comment', comment) for comment in comments]
+    pr_context: dict[str, object] | None = None
     if 'pull_request' in item:
-        reviews = [
-            _activity('review', entry, created_key='submitted_at')
-            for entry in client.paginate(f'/repos/{repo}/pulls/{number}/reviews')
-            if entry.get('submitted_at')
-        ]
-        review_comments = [
-            _activity('review_comment', entry) for entry in client.paginate(f'/repos/{repo}/pulls/{number}/comments')
-        ]
-    activities = [*timeline, *comments, *reviews, *review_comments]
-    logins = {
-        *[str(assignee['login']) for assignee in item.get('assignees', [])],
-        *[activity['author'] for activity in activities if activity['author']],
-        *[activity['assignee'] for activity in activities if activity['assignee']],
-    }
-    if len(logins) > _MAX_PARTICIPANTS:
-        raise RuntimeError(f'GitHub activity exceeds the {_MAX_PARTICIPANTS}-participant safety limit')
-    permissions = {login: client.permission(repo, login) for login in sorted(logins)}
-    for activity in activities:
-        activity['is_maintainer'] = permissions.get(activity['author']) in _MAINTAINER_PERMISSIONS
-    return item, activities, permissions
-
-
-def _assign(client: GitHubClient, repo: str, number: int, login: str) -> None:
-    client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [login]})
-
-
-def _remove_label(client: GitHubClient, repo: str, number: int) -> None:
-    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
-    try:
-        client.delete(f'/repos/{repo}/issues/{number}/labels/{encoded}')
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:  # A concurrent event may have removed it already.
-            raise
-
-
-def ensure_label(client: GitHubClient, repo: str) -> None:
-    """Create the single policy label if it does not exist."""
-    encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
-    try:
-        client.get(f'/repos/{repo}/labels/{encoded}')
-        return
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:
-            raise
-    try:
-        client.post(
-            f'/repos/{repo}/labels',
-            {
-                'name': _ACTION_LABEL,
-                'color': 'd4c5f9',
-                'description': 'The next meaningful action must come from a maintainer',
-            },
+        pull = cast(dict[str, Any], client.get(f'/repos/{repo}/pulls/{number}'))
+        review_count = int(pull.get('review_comments') or 0)
+        review_comments = cast(
+            list[dict[str, Any]],
+            client.get(
+                f'/repos/{repo}/pulls/{number}/comments?per_page={page_size}&page={_last_page(review_count, page_size)}'
+            ),
         )
-    except urllib.error.HTTPError as exc:
-        if exc.code != 422:  # A concurrent run may have created it.
-            raise
+        entries.extend(('review_comment', comment) for comment in review_comments)
+        reviews = client.last_page(f'/repos/{repo}/pulls/{number}/reviews')
+        entries.extend(('review', review) for review in reviews if review.get('submitted_at'))
+        head = cast(Mapping[str, object], pull['head'])
+        sha = str(head['sha'])
+        checks = cast(dict[str, Any], client.get(f'/repos/{repo}/commits/{sha}/check-runs?per_page=100')).get(
+            'check_runs', []
+        )
+        check_runs = cast(list[dict[str, Any]], checks)
+        pr_context = {
+            'draft': bool(pull.get('draft')),
+            'mergeable_state': str(pull.get('mergeable_state') or 'unknown'),
+            'requested_reviewers': [str(value['login']) for value in pull.get('requested_reviewers', [])],
+            'checks': [
+                {
+                    'name': str(check.get('name') or '')[:100],
+                    'status': str(check.get('status') or ''),
+                    'conclusion': str(check.get('conclusion') or ''),
+                }
+                for check in check_runs[:10]
+            ],
+        }
+    recent = sorted(entries, key=lambda entry: str(entry[1].get('created_at') or entry[1].get('submitted_at') or ''))[
+        -page_size:
+    ]
+    return [
+        {
+            'kind': kind,
+            'author': _login(entry),
+            'author_association': str(entry.get('author_association') or ''),
+            'created_at': str(entry.get('created_at') or entry.get('submitted_at') or ''),
+            'body': str(entry.get('body') or '')[:500],
+            'state': str(entry.get('state') or '') if kind == 'review' else '',
+        }
+        for kind, entry in recent
+    ], pr_context
 
 
-def _latest_maintainer_label_event(activities: Sequence[Activity]) -> Activity | None:
-    events = [activity for activity in activities if activity['label'] == _ACTION_LABEL and activity['is_maintainer']]
-    return max(events, key=lambda value: _parse_time(value['created_at']), default=None)
+def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
+    before = (now - _SLA).date().isoformat()
+    excluded = f'-label:"{_ACTION_LABEL}"'
+    query = urllib.parse.quote_plus(f'repo:{repo} is:open updated:<{before} {excluded}')
+    first = cast(dict[str, Any], client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page=1'))
+    total = min(int(first.get('total_count') or 0), 1_000)
+    if not total:
+        return []
+    pages = math.ceil(total / _CANDIDATE_LIMIT)
+    slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
+    page = slot % pages + 1
+    result = cast(
+        dict[str, Any],
+        client.get(f'/search/issues?q={query}&sort=updated&order=asc&per_page={_CANDIDATE_LIMIT}&page={page}'),
+    )
+    return cast(list[dict[str, Any]], result.get('items') or [])
 
 
-def _action_label_is_authorized(activities: Sequence[Activity]) -> bool:
-    """Require the current label addition to come from a maintainer."""
-    events = [activity for activity in activities if activity['label'] == _ACTION_LABEL]
-    latest = max(events, key=lambda value: _parse_time(value['created_at']), default=None)
-    return bool(latest and latest['kind'] == 'labeled' and latest['is_maintainer'])
+def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict[str, object]:
+    """Build the bounded public input consumed by the sandboxed agent."""
+    cutoff = now - _SLA
+    candidates: list[dict[str, object]] = []
+    for result in _candidate_page(client, repo, now=now):
+        number = int(result['number'])
+        current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        labels = _labels(current)
+        updated_at = str(current['updated_at'])
+        if current.get('state') != 'open' or _parse_time(updated_at) > cutoff or _ACTION_LABEL in labels:
+            continue
+        recent_activity, pr_context = _candidate_context(client, repo, current)
+        candidates.append(
+            {
+                'number': number,
+                'kind': 'pull_request' if 'pull_request' in current else 'issue',
+                'title': str(current.get('title') or '')[:300],
+                'body': str(current.get('body') or '')[:2_000],
+                'updated_at': updated_at,
+                'assignees': [str(value['login']) for value in current.get('assignees', [])],
+                'labels': sorted(labels),
+                'recent_activity': recent_activity,
+                'pr': pr_context,
+            }
+        )
+    snapshot: dict[str, object] = {'generated_at': now.isoformat(), 'candidates': candidates}
+    if len(json.dumps(snapshot, indent=2).encode()) > _SNAPSHOT_LIMIT:
+        raise RuntimeError(f'Attention snapshot exceeds {_SNAPSHOT_LIMIT} bytes')
+    return snapshot
+
+
+def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.datetime) -> list[str]:
+    """Write one immutable, size-bounded candidate snapshot."""
+    snapshot = build_snapshot(client, repo, now=now)
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(snapshot, indent=2), encoding='utf-8')
+    candidates = cast(list[object], snapshot['candidates'])
+    return [f'wrote {len(candidates)} attention candidate(s)']
+
+
+def _snapshot_candidates(path: str) -> dict[int, Candidate]:
+    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(loaded, Mapping):
+        raise ValueError('Snapshot must contain a candidates list')
+    data = cast(Mapping[str, object], loaded)
+    raw_candidates = data.get('candidates')
+    if not isinstance(raw_candidates, list):
+        raise ValueError('Snapshot must contain a candidates list')
+    candidates: dict[int, Candidate] = {}
+    for value in cast(list[object], raw_candidates):
+        if not isinstance(value, Mapping):
+            raise ValueError('Snapshot candidate must be an object')
+        candidate = cast(Mapping[str, object], value)
+        number = candidate.get('number')
+        updated_at = candidate.get('updated_at')
+        if not isinstance(number, int) or number < 1 or number in candidates or not isinstance(updated_at, str):
+            raise ValueError('Snapshot candidates must have unique positive numbers and timestamps')
+        candidates[number] = Candidate(number=number, updated_at=updated_at)
+    if len(candidates) > _CANDIDATE_LIMIT:
+        raise ValueError('Snapshot exceeds the candidate limit')
+    return candidates
 
 
 def _parse_decisions(path: str) -> list[Decision]:
     loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(loaded, Mapping):
-        raise ValueError('Agent output must contain an `items` list')
+        raise ValueError('Agent output must contain an items list')
     data = cast(Mapping[str, object], loaded)
     raw_items = data.get('items')
     if not isinstance(raw_items, list):
-        raise ValueError('Agent output must contain an `items` list')
+        raise ValueError('Agent output must contain an items list')
     decisions: list[Decision] = []
     for value in cast(list[object], raw_items):
         if not isinstance(value, Mapping):
             continue
-        raw = cast(Mapping[str, object], value)
-        if raw.get('type') != 'record_attention_decision':
+        decision = cast(Mapping[str, object], value)
+        if decision.get('type') != 'record_attention_decision':
             continue
-        number = raw.get('item_number')
-        actor = raw.get('next_actor')
-        confidence = raw.get('confidence')
+        number = decision.get('item_number')
+        actor = decision.get('next_actor')
+        confidence = decision.get('confidence')
         if not isinstance(number, str) or re.fullmatch(r'[1-9][0-9]*', number) is None:
-            raise ValueError('Decision `item_number` must be a positive decimal string')
+            raise ValueError('Decision item_number must be a positive decimal string')
         if actor not in {'maintainer', 'contributor', 'automation', 'none', 'uncertain'}:
-            raise ValueError(f'Invalid `next_actor`: {actor!r}')
+            raise ValueError(f'Invalid next_actor: {actor!r}')
         if confidence not in {'high', 'medium', 'low'}:
-            raise ValueError(f'Invalid `confidence`: {confidence!r}')
+            raise ValueError(f'Invalid confidence: {confidence!r}')
         decisions.append(
             Decision(
                 item_number=int(number),
@@ -380,290 +318,270 @@ def _parse_decisions(path: str) -> list[Decision]:
                 confidence=cast(Literal['high', 'medium', 'low'], confidence),
             )
         )
-    if len(decisions) > _CANDIDATE_LIMIT:
-        raise ValueError(f'Agent output exceeds the {_CANDIDATE_LIMIT}-item limit')
+    numbers = [decision['item_number'] for decision in decisions]
+    if len(numbers) > _CANDIDATE_LIMIT or len(numbers) != len(set(numbers)):
+        raise ValueError('Agent output contains too many or duplicate decisions')
     return decisions
 
 
-def _rotated(values: Sequence[dict[str, Any]], *, now: dt.datetime, stride: int) -> list[dict[str, Any]]:
-    if not values:
-        return []
-    six_hour_slot = int(now.timestamp()) // (6 * 60 * 60)
-    offset = (six_hour_slot * stride) % len(values)
-    return [*values[offset:], *values[:offset]]
-
-
-def build_candidates(client: GitHubClient, repo: str, *, now: dt.datetime) -> tuple[list[dict[str, Any]], int, int]:
-    """Build a bounded snapshot of items crossing the three-day threshold."""
-    earliest = now - _SLA - _CANDIDATE_WINDOW
-    latest = now - _SLA
-    since = urllib.parse.quote(earliest.isoformat(), safe='')
-    items = client.paginate(
-        f'/repos/{repo}/issues?state=open&since={since}&sort=updated&direction=asc',
-        max_pages=2,
-    )
-    eligible_items = [
-        item
-        for item in items
-        if earliest <= _parse_time(str(item['updated_at'])) <= latest and _ACTION_LABEL not in _labels(item)
-    ]
-    candidates: list[dict[str, Any]] = []
-    attempts = 0
-    skipped_count = 0
-    for item in _rotated(eligible_items, now=now, stride=_CANDIDATE_LIMIT):
-        if attempts >= _CANDIDATE_HYDRATION_LIMIT or len(candidates) >= _CANDIDATE_LIMIT:
-            break
-        attempts += 1
-        number = int(item['number'])
+def ensure_labels(client: GitHubClient, repo: str) -> None:
+    """Create the fixed workflow labels if they are absent."""
+    for name, (color, description) in _LABELS.items():
+        encoded = urllib.parse.quote(name, safe='')
         try:
-            current, activities, _ = hydrate(client, repo, number)
-        except (RuntimeError, urllib.error.HTTPError):
-            skipped_count += 1
+            client.get(f'/repos/{repo}/labels/{encoded}')
             continue
-        current_updated_at = _parse_time(str(current['updated_at']))
-        if (
-            current.get('state') != 'open'
-            or not earliest <= current_updated_at <= latest
-            or _ACTION_LABEL in _labels(current)
-        ):
-            continue
-        latest_label = _latest_maintainer_label_event(activities)
-        if latest_label and latest_label['kind'] == 'unlabeled':
-            continue
-        recent = sorted(activities, key=lambda value: _parse_time(value['created_at']))[-30:]
-        candidates.append(
-            {
-                'number': number,
-                'kind': 'pull_request' if 'pull_request' in current else 'issue',
-                'url': str(current['html_url']),
-                'title': str(current.get('title') or '')[:500],
-                'body': str(current.get('body') or '')[:4_000],
-                'updated_at': str(current['updated_at']),
-                'assignees': [str(value['login']) for value in current.get('assignees', [])],
-                'labels': sorted(_labels(current)),
-                'recent_activity': [
-                    {
-                        'kind': activity['kind'],
-                        'author': activity['author'],
-                        'created_at': activity['created_at'],
-                        'body': activity['body'][:1_000],
-                        'is_maintainer': activity['is_maintainer'],
-                    }
-                    for activity in recent
-                ],
-            }
-        )
-    deferred_count = max(0, len(eligible_items) - attempts)
-    return candidates, deferred_count, skipped_count
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if exc.code != 404:
+                raise
+        try:
+            client.post(f'/repos/{repo}/labels', {'name': name, 'color': color, 'description': description})
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if exc.code != 422:
+                raise
 
 
-def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.datetime) -> list[str]:
-    """Write public candidate data for the sandboxed advisory agent."""
-    candidates, deferred_count, skipped_count = build_candidates(client, repo, now=now)
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps(
-            {
-                'generated_at': now.isoformat(),
-                'candidates': candidates,
-                'deferred_count': deferred_count,
-                'skipped_count': skipped_count,
-            },
-            indent=2,
-        ),
-        encoding='utf-8',
-    )
-    lines = [f'wrote {len(candidates)} advisory candidate(s)']
-    if deferred_count:
-        lines.append(f'deferred {deferred_count} candidate(s) beyond the safety limit')
-    if skipped_count:
-        lines.append(f'skipped {skipped_count} candidate(s) that could not be safely hydrated')
-    if (deferred_count or skipped_count) and not candidates:
-        raise RuntimeError('No advisory candidates could be safely hydrated')
+def _add_labels(client: GitHubClient, repo: str, number: int, labels: Sequence[str]) -> None:
+    client.post(f'/repos/{repo}/issues/{number}/labels', {'labels': list(labels)})
+
+
+def _remove_label(client: GitHubClient, repo: str, number: int, label: str) -> None:
+    encoded = urllib.parse.quote(label, safe='')
+    try:
+        client.delete(f'/repos/{repo}/issues/{number}/labels/{encoded}')
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        if exc.code != 404:
+            raise
+
+
+def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_path: str) -> list[str]:
+    """Revalidate allowlisted model decisions, then assign and label them."""
+    candidates = _snapshot_candidates(snapshot_path)
+    decisions = _parse_decisions(output_path)
+    unknown = {decision['item_number'] for decision in decisions} - candidates.keys()
+    if unknown:
+        raise ValueError(f'Agent output contains numbers outside the snapshot: {sorted(unknown)}')
+    if {decision['item_number'] for decision in decisions} != candidates.keys():
+        raise ValueError('Agent output must classify every snapshot candidate exactly once')
+    ensure_labels(client, repo)
+    lines: list[str] = []
+    failures: list[str] = []
+    for decision in decisions:
+        number = decision['item_number']
+        try:
+            current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+            labels = _labels(current)
+            if (
+                current.get('state') != 'open'
+                or str(current.get('updated_at')) != candidates[number]['updated_at']
+                or _ACTION_LABEL in labels
+            ):
+                lines.append(f'#{number}: skipped because the item changed after classification')
+                continue
+            if decision['confidence'] != 'high' or decision['next_actor'] == 'uncertain':
+                lines.append(f'#{number}: left unclassified for a future run')
+                continue
+            if decision['next_actor'] != 'maintainer':
+                lines.append(f'#{number}: did not request maintainer attention')
+                continue
+            for label in labels.intersection(_STAGE_LABELS):
+                _remove_label(client, repo, number, label)
+            _add_labels(client, repo, number, [_ACTION_LABEL])
+            _ensure_owner(client, repo, number, current)
+            lines.append(f'#{number}: assigned @{_OWNER} and requested maintainer attention')
+        except (urllib.error.HTTPError, RuntimeError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'#{number}: {type(exc).__name__}: {exc}')
+    if failures:
+        raise RuntimeError('Failed to apply attention: ' + '; '.join(failures))
     return lines
 
 
-def _snapshot_allowlist(path: str) -> tuple[set[int], int, int]:
-    loaded: object = json.loads(Path(path).read_text(encoding='utf-8'))
-    if not isinstance(loaded, Mapping):
-        raise ValueError('Snapshot must be an object')
-    data = cast(Mapping[str, object], loaded)
-    raw_candidates = data.get('candidates')
-    deferred_count = data.get('deferred_count', 0)
-    skipped_count = data.get('skipped_count', 0)
-    if (
-        not isinstance(raw_candidates, list)
-        or not isinstance(deferred_count, int)
-        or deferred_count < 0
-        or not isinstance(skipped_count, int)
-        or skipped_count < 0
-    ):
-        raise ValueError('Snapshot has invalid candidates or warning counts')
-    numbers: set[int] = set()
-    for candidate in cast(list[object], raw_candidates):
-        if not isinstance(candidate, Mapping):
-            raise ValueError('Snapshot candidate must be an object')
-        number = cast(Mapping[str, object], candidate).get('number')
-        if not isinstance(number, int) or number < 1 or number in numbers:
-            raise ValueError('Snapshot candidate number must be unique and positive')
-        numbers.add(number)
-    if len(numbers) > _CANDIDATE_LIMIT:
-        raise ValueError('Snapshot exceeds the candidate limit')
-    return numbers, deferred_count, skipped_count
+def _ensure_owner(client: GitHubClient, repo: str, number: int, item: Mapping[str, Any]) -> None:
+    assignees = {str(value['login']).casefold() for value in item.get('assignees', [])}
+    if _OWNER.casefold() in assignees:
+        return
+    assigned = cast(dict[str, Any], client.post(f'/repos/{repo}/issues/{number}/assignees', {'assignees': [_OWNER]}))
+    if _OWNER.casefold() not in {str(value['login']).casefold() for value in assigned.get('assignees', [])}:
+        raise RuntimeError(f'GitHub did not assign @{_OWNER}')
 
 
-def render_advisory(repo: str, path: str, snapshot_path: str) -> tuple[bool, str]:
-    """Validate model recommendations and render fixed Slack text."""
-    decisions = _parse_decisions(path)
-    numbers = [decision['item_number'] for decision in decisions]
-    if len(numbers) != len(set(numbers)):
-        raise ValueError('Agent output contains duplicate item numbers')
-    eligible, deferred_count, skipped_count = _snapshot_allowlist(snapshot_path)
-    if set(numbers) != eligible:
-        raise ValueError('Agent output must contain exactly one decision for every candidate')
-    recommended = sorted(
-        decision['item_number']
-        for decision in decisions
-        if decision['next_actor'] == 'maintainer' and decision['confidence'] == 'high'
-    )
-    if not recommended and not deferred_count and not skipped_count:
-        return False, ''
-    lines: list[str] = []
-    if recommended:
-        links = '\n'.join(f'• <https://github.com/{repo}/issues/{number}|#{number}>' for number in recommended)
-        lines.append(
-            ':eyes: Attention triage found items that may need a maintainer call. '
-            f'Apply `{_ACTION_LABEL}` to approve:\n{links}'
-        )
-    if deferred_count:
-        lines.append(
-            f':warning: Attention triage deferred {deferred_count} additional candidate(s); '
-            'the review limit was reached.'
-        )
-    if skipped_count:
-        lines.append(f':warning: Attention triage skipped {skipped_count} candidate(s) that could not be read safely.')
-    return True, '\n'.join(lines)
+def _stage(labels: set[str]) -> Literal[0, 1, 2]:
+    if _ESCALATED_LABEL in labels:
+        return 2
+    if _PINGED_LABEL in labels:
+        return 1
+    return 0
 
 
-def _first_maintainer_responder(activities: Sequence[Activity]) -> str | None:
-    responses = [
-        activity
-        for activity in activities
-        if activity['kind'] in {'comment', 'review', 'review_comment'}
-        and activity['is_maintainer']
-        and not _is_bot(activity['author'])
+def _advance_stage(client: GitHubClient, repo: str, number: int, labels: set[str], stage: Literal[1, 2]) -> None:
+    next_label = _STAGE_LABELS[stage - 1]
+    _add_labels(client, repo, number, [next_label])
+    for label in labels.intersection(_STAGE_LABELS):
+        if label != next_label:
+            _remove_label(client, repo, number, label)
+
+
+def _reminder(stage: Literal[1, 2]) -> str:
+    if stage == 1:
+        return f'@{_OWNER} this still needs a maintainer decision. Could you take a look?'
+    return f'@{_ESCALATION_OWNER} this still needs a decision after a reminder to @{_OWNER}.'
+
+
+def _event_time(event: Mapping[str, Any]) -> dt.datetime | None:
+    value = event.get('created_at') or event.get('submitted_at')
+    return _parse_time(str(value)) if value else None
+
+
+def _transition(
+    timeline: Sequence[dict[str, Any]], stage: Literal[0, 1, 2]
+) -> tuple[dt.datetime, dict[str, Any]] | None:
+    label = _ACTION_LABEL if stage == 0 else _STAGE_LABELS[stage - 1]
+    transitions = [
+        (time, event)
+        for event in timeline
+        if event.get('event') == 'labeled'
+        and isinstance(event.get('label'), Mapping)
+        and cast(Mapping[str, object], event['label']).get('name') == label
+        and (time := _event_time(event)) is not None
     ]
-    first = min(responses, key=lambda value: _parse_time(value['created_at']), default=None)
-    return first['author'] if first else None
+    return max(transitions, key=lambda value: value[0], default=None)
 
 
-def run_reminders(client: GitHubClient, repo: str, *, staged: bool, now: dt.datetime) -> list[str]:
-    """Post at most a bounded number of due reminders on labeled open items."""
-    if not staged:
-        ensure_label(client, repo)
+def _actor(event: Mapping[str, Any]) -> str:
+    value = event.get('actor') or event.get('user')
+    return str(cast(Mapping[str, object], value).get('login') or '') if isinstance(value, Mapping) else ''
+
+
+def _acknowledged(timeline: Sequence[dict[str, Any]], since: dt.datetime) -> bool:
+    owners = {_OWNER.casefold(), _ESCALATION_OWNER.casefold()}
+    return any(
+        (_actor(event).casefold() in owners or event.get('author_association') in {'MEMBER', 'OWNER'})
+        and event.get('event') in {'commented', 'reviewed'}
+        and (event_time := _event_time(event)) is not None
+        and event_time >= since
+        for event in timeline
+    )
+
+
+def _fixed_comment_exists(timeline: Sequence[dict[str, Any]], body: str, since: dt.datetime) -> bool:
+    return any(
+        _actor(event) == 'github-actions[bot]'
+        and event.get('event') == 'commented'
+        and event.get('body') == body
+        and (event_time := _event_time(event)) is not None
+        and event_time >= since
+        for event in timeline
+    )
+
+
+def _complete(client: GitHubClient, repo: str, number: int, labels: set[str]) -> None:
+    _remove_label(client, repo, number, _ACTION_LABEL)
+    for label in labels.intersection(_STAGE_LABELS):
+        _remove_label(client, repo, number, label)
+
+
+def _reconcile_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
+    current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+    labels = _labels(current)
+    if current.get('state') != 'open' or _ACTION_LABEL not in labels:
+        return None
+    current_stage = _stage(labels)
+    events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=3)
+    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    transition = _transition(events, current_stage)
+    if transition is None:
+        raise RuntimeError('Could not find the current attention transition')
+    transition_at, transition_event = transition
+    if _actor(transition_event) != 'github-actions[bot]':
+        _complete(client, repo, number, labels)
+        return f'#{number}: removed a foreign attention transition'
+    _ensure_owner(client, repo, number, current)
+    if _acknowledged(timeline, transition_at):
+        _complete(client, repo, number, labels)
+        return f'#{number}: maintainer acknowledged the request'
+    if current_stage > 0:
+        current_body = _reminder(cast(Literal[1, 2], current_stage))
+        if not _fixed_comment_exists(timeline, current_body, transition_at):
+            client.post(f'/repos/{repo}/issues/{number}/comments', {'body': current_body})
+            if current_stage == 2:
+                _remove_label(client, repo, number, _ACTION_LABEL)
+            return f'#{number}: restored reminder {current_stage}'
+    if current_stage == 2:
+        _remove_label(client, repo, number, _ACTION_LABEL)
+        return f'#{number}: completed terminal escalation'
+    if now - transition_at < _SLA:
+        return None
+    next_stage = current_stage + 1
+    _advance_stage(client, repo, number, labels, next_stage)
+    client.post(f'/repos/{repo}/issues/{number}/comments', {'body': _reminder(next_stage)})
+    if next_stage == 2:
+        _remove_label(client, repo, number, _ACTION_LABEL)
+    return f'#{number}: posted reminder {next_stage}'
+
+
+def reconcile(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+    """Advance a bounded batch of active attention requests."""
+    ensure_labels(client, repo)
     encoded = urllib.parse.quote(_ACTION_LABEL, safe='')
     items = cast(
         list[dict[str, Any]],
         client.get(
-            f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc&per_page={_MAX_LABELED_ITEMS}'
+            f'/repos/{repo}/issues?state=open&labels={encoded}&sort=updated&direction=asc&per_page={_RECONCILE_LIMIT}'
         ),
     )
-    if len(items) == _MAX_LABELED_ITEMS:
-        raise RuntimeError(f'Attention label backlog reached the {_MAX_LABELED_ITEMS}-item safety limit')
     lines: list[str] = []
-    failures = 0
-    deferred_reminders = 0
-    posted_reminders = 0
-    stable_items = sorted(items, key=lambda value: int(value['number']))
-    for item in _rotated(stable_items, now=now, stride=_MAX_RECONCILE_ITEMS)[:_MAX_RECONCILE_ITEMS]:
+    failures: list[str] = []
+    for item in items:
         number = int(item['number'])
         try:
-            current, activities, permissions = hydrate(client, repo, number)
-        except (RuntimeError, urllib.error.HTTPError):
-            failures += 1
-            continue
-        if _ACTION_LABEL not in _labels(current):
-            continue
-        if not _action_label_is_authorized(activities):
-            if not staged:
-                _remove_label(client, repo, number)
-            lines.append(f'#{number}: {"would remove" if staged else "removed"} unauthorized {_ACTION_LABEL}')
-            continue
-        if current.get('state') != 'open':
-            continue
-        assignees = [str(value['login']) for value in current.get('assignees', [])]
-        has_owner = any(permissions.get(login) in _MAINTAINER_PERMISSIONS for login in assignees)
-        if not has_owner:
-            owner = _first_maintainer_responder(activities) or _DEFAULT_OWNER
-            if not staged:
-                _assign(client, repo, number, owner)
-            assignees.append(owner)
-            permissions = {**permissions, owner: client.permission(repo, owner)}
-            lines.append(f'#{number}: {"would assign" if staged else "assigned"} @{owner}')
-        primary = _current_recipients(assignees, permissions)
-        reminder = next_reminder(activities=activities, assignees=assignees, permissions=permissions, now=now)
-        if reminder is None:
-            continue
-        if posted_reminders >= _MAX_REMINDERS:
-            deferred_reminders += 1
-            continue
-        body = render_comment(reminder, primary)
-        if not staged:
-            client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
-        lines.append(f'#{number}: {"would post" if staged else "posted"} reminder {reminder["stage"]}')
-        posted_reminders += 1
-    if failures or deferred_reminders:
-        raise RuntimeError(
-            f'Could not reconcile {failures} unsafe item(s); deferred {deferred_reminders} due reminder(s)'
-        )
+            if line := _reconcile_item(client, repo, number, now=now):
+                lines.append(line)
+        except (urllib.error.HTTPError, RuntimeError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'#{number}: {type(exc).__name__}: {exc}')
+    if len(items) == _RECONCILE_LIMIT:
+        lines.append('additional attention items remain for a later rotated batch')
+    if failures:
+        raise RuntimeError('Failed to reconcile attention: ' + '; '.join(failures))
     return lines
 
 
 def _write_summary(lines: Sequence[str]) -> None:
-    path = os.environ.get('GITHUB_STEP_SUMMARY')
-    if path:
+    if path := os.environ.get('GITHUB_STEP_SUMMARY'):
         with Path(path).open('a', encoding='utf-8') as summary:
             summary.write('## Issue and PR attention monitor\n\n')
             summary.write('\n'.join(f'- {line}' for line in lines) or '- No changes')
             summary.write('\n')
 
 
-def _write_action_output(name: str, value: str) -> None:
-    path = os.environ.get('GITHUB_OUTPUT')
-    if not path:
-        return
-    with Path(path).open('a', encoding='utf-8') as output:
-        output.write(f'{name}<<PYDANTIC_AI_ATTENTION_EOF\n{value}\nPYDANTIC_AI_ATTENTION_EOF\n')
-
-
 def main() -> int:
-    """Build advisory input, render its report, or reconcile reminders."""
+    """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'report', 'reconcile'])
-    parser.add_argument('--snapshot-path', default='/tmp/gh-aw/agent/attention-candidates.json')
+    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile'])
+    parser.add_argument('--snapshot-path', default='attention-candidates.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
+    token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+    if not token:
+        print('GITHUB_TOKEN or GH_TOKEN is required', file=sys.stderr)
+        return 1
+    client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    staged = os.environ.get('ATTENTION_TRIAGE_STAGED', 'true').casefold() != 'false'
     now = dt.datetime.now(dt.timezone.utc)
-    if args.mode == 'report':
+    if args.mode == 'snapshot':
+        lines = write_snapshot(client, repo, args.snapshot_path, now=now)
+    elif args.mode == 'apply':
         if not args.agent_output:
             parser.error('--agent-output is required')
-        has_report, report_text = render_advisory(repo, args.agent_output, args.snapshot_path)
-        _write_action_output('has_report', str(has_report).lower())
-        _write_action_output('report_text', report_text)
-        lines = ['prepared advisory Slack report' if has_report else 'no advisory Slack report needed']
+        lines = apply_decisions(client, repo, args.agent_output, args.snapshot_path)
     else:
-        token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
-        if not token:
-            print('GITHUB_TOKEN or GH_TOKEN is required', file=sys.stderr)
-            return 1
-        client = GitHubClient(token)
-        if args.mode == 'snapshot':
-            lines = write_snapshot(client, repo, args.snapshot_path, now=now)
-        else:
-            lines = run_reminders(client, repo, staged=staged, now=now)
+        lines = reconcile(client, repo, now=now)
     _write_summary(lines)
     for line in lines:
         print(line)
