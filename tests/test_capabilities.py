@@ -5650,9 +5650,7 @@ class TestToolExecuteHooks:
             async def before_tool_execute(
                 self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
             ) -> dict[str, Any]:
-                if skip_phase == 'before':
-                    raise SkipToolExecution('denied')
-                return args
+                raise SkipToolExecution('denied')
 
             async def wrap_tool_execute(
                 self,
