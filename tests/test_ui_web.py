@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.capabilities import ResolveModelId
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -173,6 +175,36 @@ def test_chat_app_configure_endpoint_empty():
         assert response.json() == snapshot(
             {'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': []}], 'builtinTools': []}
         )
+
+
+def test_chat_app_preserves_capability_resolved_model_id():
+    """Custom resolver IDs stay unresolved while standard IDs retain inferred metadata."""
+    agent = Agent(
+        'tenant-model',
+        capabilities=[ResolveModelId(lambda ctx, model_id: TestModel() if model_id == 'tenant-model' else None)],
+    )
+    app = create_web_app(agent, models=['test'], native_tools=[WebSearchTool()])
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        assert response.json() == snapshot(
+            {
+                'models': [
+                    {'id': 'tenant-model', 'name': 'tenant-model', 'builtinTools': []},
+                    {'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']},
+                ],
+                'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
+            }
+        )
+
+
+def test_chat_app_rejects_unknown_model_without_capability_resolver():
+    """Unknown model errors are not hidden when no capability can resolve the ID."""
+    agent = Agent('test')
+
+    with pytest.raises(UserError, match='Unknown model'):
+        create_web_app(agent, models=['tenant-model'])
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')

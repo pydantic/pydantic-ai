@@ -73,9 +73,10 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -2604,7 +2605,7 @@ Fix the errors and try again.\
             },
             {
                 'type': 'error',
-                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1",
+                'errorText': "Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries",
             },
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
@@ -2768,6 +2769,216 @@ async def test_run_stream_output_tool_error():
             'tool-input-delta',
             'tool-input-available',
             'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_text():
+    """A mid-stream `UsageLimitExceeded` while a text part is open must emit `text-end` before `error`.
+
+    The AI SDK v6 client aborts at the `error` chunk, so a missing `text-end` leaves the text part
+    stuck in `state: 'streaming'`. See #6546, mirroring #4963 for dangling tool calls.
+    """
+
+    async def stream_text(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield 'lots of streamed text '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_text))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `text-end` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'text-end'
+    # ...and it must carry the same `id` as its `text-start`, or the client can't mark the part done.
+    text_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-start')
+    text_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'text-end')
+    assert text_end['id'] == text_start['id']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-delta',
+            'text-end',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_thinking():
+    """A mid-stream `UsageLimitExceeded` while a thinking part is open must emit `reasoning-end` before `error`."""
+
+    async def stream_thinking(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {0: DeltaThinkingPart(content='lots of thinking ')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_thinking))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types[event_types.index('error') - 1] == 'reasoning-end'
+    # The `reasoning-end` must carry the same `id` as its `reasoning-start`, or the client can't mark the part done.
+    reasoning_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-start')
+    reasoning_end = next(e for e in events if not isinstance(e, str) and e['type'] == 'reasoning-end')
+    assert reasoning_end['id'] == reasoning_start['id']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'reasoning-start',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-delta',
+            'reasoning-end',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_native_tool_call():
+    """A mid-stream `UsageLimitExceeded` while a native tool call is open must emit `tool-input-available` before `error`.
+
+    Same defect class as #6546 (text/thinking), one part kind over: a `NativeToolCallPart` lands outside
+    `_pending_tool_calls` (which only holds already-dispatched calls), so without an explicit close the AI SDK v6
+    client aborts at the `error` chunk leaving the call stuck in an input-streaming state.
+    """
+
+    async def stream_native_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns]:
+        # A native tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='call_1', args={'query': 'hi'}
+            )
+        }
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the run
+        # errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='call_2',
+                    args={'query': ' '.join(f'word{i}' for i in range(40))},
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_native_tool_call))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
+    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
+    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
+    assert tool_available['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_closes_open_tool_call():
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+
+    A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
+    open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
+    an explicit close the AI SDK v6 client aborts at the `error` chunk leaving the call stuck in an
+    input-streaming state.
+    """
+
+    async def stream_tool_call(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+        yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
+        # run errors before `call_1` is closed.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {
+                1: DeltaToolCall(
+                    name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2'
+                )
+            }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_tool_call))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
+    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
+    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
+    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
+    assert tool_available['toolCallId'] == tool_start['toolCallId']
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
             'error',
             'finish-step',
             'finish',
@@ -4294,9 +4505,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     assert tool_part.output == expected_output
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
@@ -4348,9 +4557,7 @@ async def test_stream_tool_return_files_roundtrip_to_history():
             ),
         ]
     )
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -4403,9 +4610,7 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     content = tool_returns[0].content
     assert isinstance(content, BinaryContent)
@@ -4454,9 +4659,7 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     # The malformed shape is preserved verbatim (not coerced, not dropped), so nothing crashes downstream.
     assert tool_returns[0].content == {'kind': 'binary', 'data': data_payload, 'media_type': 'application/pdf'}
@@ -4484,9 +4687,7 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
     ]
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert len(tool_returns) == 1
     assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
@@ -4506,9 +4707,7 @@ async def test_adapter_tool_return_text_only_unchanged():
     assert tool_part.output == 'just a string'
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content == 'just a string'
 
 
@@ -4533,9 +4732,7 @@ async def test_adapter_tool_return_none_serializes_as_null():
     assert tool_part.output is None
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns[0].content is None
 
 
@@ -4563,9 +4760,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    returns = [
-        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
-    ]
+    returns = list(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert returns == snapshot(
         [
             NativeToolReturnPart(
@@ -4625,9 +4820,7 @@ async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: Bina
     )
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
+    tool_returns = list(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
@@ -8746,6 +8939,111 @@ async def test_event_stream_function_tool_return_error():
                 'type': 'tool-output-error',
                 'toolCallId': 'tc_err',
                 'errorText': 'Something went wrong',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` dumps as neutral output, not an error,
+    and the outcome claim in the metadata channel survives a dump/load round-trip.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_int'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='tc_int',
+                    outcome='interrupted',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant_parts = [msg.model_dump() for msg in ui_messages if msg.role == 'assistant'][0]['parts']
+    assert assistant_parts == snapshot(
+        [
+            {
+                'type': 'tool-my_tool',
+                'tool_call_id': 'tc_int',
+                'title': None,
+                'state': 'output-available',
+                'input': {'x': 1},
+                'output': 'The tool call was interrupted before a result was produced.',
+                'provider_executed': False,
+                'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'preliminary': None,
+                'approval': None,
+            }
+        ]
+    )
+
+    # Round-trip: the metadata claim restores the interrupted outcome on load instead of
+    # upgrading it to 'success'.
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert reloaded_return.outcome == 'interrupted'
+    assert reloaded_return.tool_kind is None
+
+
+async def test_event_stream_function_tool_return_interrupted_is_neutral():
+    """A synthesized `ToolReturnPart(outcome='interrupted')` streams as neutral output, not an error.
+
+    Not VCR-backed: this pins a local event-stream transformation and makes no model request.
+    """
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name='my_tool',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='tc_int',
+                outcome='interrupted',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Do something')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'tc_int',
+                'output': 'The tool call was interrupted before a result was produced.',
             },
             {'type': 'finish-step'},
             {'type': 'finish'},

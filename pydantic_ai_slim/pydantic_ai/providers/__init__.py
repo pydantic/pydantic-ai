@@ -15,9 +15,25 @@ import anyio
 import httpx
 from typing_extensions import Self, TypeVar
 
+from ..exceptions import UserError
 from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
+
+_KEYLESS_HINT = (
+    "To try Pydantic AI without an API key, use the built-in test model: `Agent('test')`. "
+    'See https://ai.pydantic.dev/testing/'
+)
+
+
+def missing_api_key_error(message: str) -> UserError:
+    """Build a [`UserError`][pydantic_ai.exceptions.UserError] for missing provider credentials.
+
+    The provider-specific `message` (which environment variable to set or how to pass the key) is followed by a
+    hint pointing newcomers to the keyless [test model](https://ai.pydantic.dev/testing/), so a missing key never
+    dead-ends the getting-started experience.
+    """
+    return UserError(f'{message} {_KEYLESS_HINT}')
 
 
 class Provider(ABC, Generic[InterfaceClient]):
