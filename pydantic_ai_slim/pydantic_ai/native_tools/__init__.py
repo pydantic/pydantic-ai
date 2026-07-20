@@ -10,7 +10,6 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 __all__ = (
@@ -675,7 +674,7 @@ class AdvisorTool(AbstractNativeTool):
 
     def __post_init__(self) -> None:
         if self.max_tokens is not None and self.max_tokens < 1024:
-            raise UserError('AdvisorTool.max_tokens must be at least 1024.')
+            raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 
 
 # Imported after the base class is defined — `_tool_search.py` subclasses

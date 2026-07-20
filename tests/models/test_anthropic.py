@@ -7063,8 +7063,8 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
 
 
 def test_advisor_tool_max_tokens_validation():
-    """`AdvisorTool.max_tokens` below Anthropic's 1024 floor is a `UserError`; at/above is fine."""
-    with pytest.raises(UserError, match='max_tokens must be at least 1024'):
+    """`AdvisorTool.max_tokens` below Anthropic's 1024 floor is a `ValueError`; at/above is fine."""
+    with pytest.raises(ValueError, match='max_tokens must be at least 1024'):
         AdvisorTool(model='claude-opus-4-8', max_tokens=512)
     assert AdvisorTool(model='claude-opus-4-8', max_tokens=1024).max_tokens == 1024
     assert AdvisorTool(model='claude-opus-4-8').max_tokens is None
@@ -7102,10 +7102,18 @@ def test_anthropic_advisor_tool_request_shape():
 def test_anthropic_advisor_tool_profile_gating():
     """The advisor tool is gated by both executor model and client/platform."""
     # Executor gating: valid executors expose the tool, older/other models don't.
-    assert AdvisorTool in (anthropic_model_profile('claude-sonnet-5') or {}).get('supported_native_tools', frozenset[Any]())
-    assert AdvisorTool in (anthropic_model_profile('claude-opus-4-8') or {}).get('supported_native_tools', frozenset[Any]())
-    assert AdvisorTool not in (anthropic_model_profile('claude-sonnet-4-5') or {}).get('supported_native_tools', frozenset[Any]())
-    assert AdvisorTool not in (anthropic_model_profile('claude-opus-4-1') or {}).get('supported_native_tools', frozenset[Any]())
+    assert AdvisorTool in (anthropic_model_profile('claude-sonnet-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool in (anthropic_model_profile('claude-opus-4-8') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-sonnet-4-5') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
+    assert AdvisorTool not in (anthropic_model_profile('claude-opus-4-1') or {}).get(
+        'supported_native_tools', frozenset[Any]()
+    )
 
     # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
     pytest.importorskip('botocore')
