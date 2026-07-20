@@ -50,6 +50,7 @@ with try_import() as groq_imports:
 
 with try_import() as bedrock_imports:
     from botocore.exceptions import ClientError
+    from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -58,7 +59,7 @@ with try_import() as bedrock_imports:
     class _StubBedrockClient:
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def converse(self, **_: Any) -> None:  # pragma: lax no cover
             raise self._error
@@ -97,7 +98,7 @@ with try_import() as bedrock_imports:
 
         def __init__(self, error: ClientError):
             self._error = error
-            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
         def converse_stream(self, **_: Any) -> dict[str, Any]:
             def _stream():

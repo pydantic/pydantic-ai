@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from itertools import count
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -137,6 +138,7 @@ _EXTRA_HEADERS: ContextVar[tuple[weakref.ReferenceType[BedrockRuntimeClient], di
 )
 # botocore dedups `unique_id` per emitter across ALL event names, so this id must not be reused for another event.
 _EXTRA_HEADERS_UNIQUE_ID = 'pydantic-ai-extra-headers'
+_EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 
 
 def _inject_extra_headers(
@@ -165,16 +167,17 @@ def _bedrock_extra_headers(client: BedrockRuntimeClient, extra_headers: dict[str
     `unique_id` makes re-registration a no-op inside botocore. Direct boto3 calls on a shared client can still race
     the first registration; boto3 documents such event mutation on a shared client as unsafe.
     """
-    client.meta.events.register(
-        'before-call.bedrock-runtime',
-        functools.partial(_inject_extra_headers, weakref.ref(client)),
-        unique_id=_EXTRA_HEADERS_UNIQUE_ID,
-    )
-    if not extra_headers:
-        yield
-        return
+    # botocore records the `unique_id` before invalidating its handler lookup cache. Serializing this short mutation
+    # prevents another pydantic-ai request from seeing the id and emitting against the stale cache in between.
+    with _EXTRA_HEADERS_REGISTRATION_LOCK:
+        client.meta.events.register(
+            'before-call.bedrock-runtime',
+            functools.partial(_inject_extra_headers, weakref.ref(client)),
+            unique_id=_EXTRA_HEADERS_UNIQUE_ID,
+        )
 
-    token = _EXTRA_HEADERS.set((weakref.ref(client), extra_headers))
+    # Bind empty headers too, so a nested request on the same client masks the outer request's headers.
+    token = _EXTRA_HEADERS.set((weakref.ref(client), extra_headers or {}))
     try:
         yield
     finally:

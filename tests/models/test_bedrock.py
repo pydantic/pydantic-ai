@@ -6,11 +6,14 @@ from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from itertools import count
-from threading import Barrier
+from threading import Barrier, Lock
+from time import sleep
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -400,6 +403,69 @@ async def test_bedrock_extra_headers_isolated_across_concurrent_requests():
     }
 
 
+async def test_bedrock_extra_headers_registration_is_serialized_across_threads():
+    """Concurrent synchronous callers must not overlap botocore event registration.
+
+    Not a VCR test: it exercises the thread safety of local botocore handler registration, which no recorded request
+    can observe.
+    """
+    start_barrier = Barrier(2, timeout=5)
+    calls: dict[str, dict[str, str]] = {}
+
+    class ObservedEmitter(HierarchicalEmitter):
+        def __init__(self) -> None:
+            super().__init__()
+            self._state_lock = Lock()
+            self._active_registrations = 0
+            self.overlapped = False
+
+        def register(self, *args: Any, **kwargs: Any) -> None:
+            with self._state_lock:
+                self._active_registrations += 1
+                self.overlapped |= self._active_registrations > 1
+            try:
+                sleep(0.1)
+                super().register(*args, **kwargs)
+            finally:
+                with self._state_lock:
+                    self._active_registrations -= 1
+
+    class ConcurrentBedrockClient:
+        def __init__(self) -> None:
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=ObservedEmitter())
+
+        def count_tokens(self, **params: Any) -> dict[str, int]:
+            prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
+            headers: dict[str, str] = {}
+            self.meta.events.emit(
+                'before-call.bedrock-runtime.CountTokens', model=None, params={'headers': headers}, request_signer=None
+            )
+            calls[prompt] = headers
+            return {'inputTokens': 1}
+
+    client = ConcurrentBedrockClient()
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+
+    async def make_request(name: str) -> None:
+        await model.count_tokens(
+            [ModelRequest.user_text_prompt(name)],
+            BedrockModelSettings(extra_headers={'Tenant': name}),
+            ModelRequestParameters(),
+        )
+
+    def run_request(name: str) -> None:
+        start_barrier.wait()
+        anyio.run(make_request, name)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(anyio.to_thread.run_sync, run_request, 'a')
+        tg.start_soon(anyio.to_thread.run_sync, run_request, 'b')
+
+    assert client.meta.events.overlapped is False
+    assert calls == {'a': {'Tenant': 'a'}, 'b': {'Tenant': 'b'}}
+
+
 async def test_bedrock_extra_headers_are_bound_to_the_request_client():
     """A nested request on another registered client must not inherit the outer client's headers.
 
@@ -445,6 +511,45 @@ async def test_bedrock_extra_headers_are_bound_to_the_request_client():
     await model_a.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'a'}), request_parameters)
 
     assert results == {'a': [{'Tenant': 'a'}], 'b': [{}]}
+
+
+async def test_bedrock_nested_request_without_extra_headers_masks_outer_headers():
+    """A nested request on the same client must not inherit the outer request's headers.
+
+    Not a VCR test: a stub client deterministically re-enters the public `count_tokens()` path from its worker thread,
+    which a recorded response cannot reproduce.
+    """
+    calls: list[dict[str, str]] = []
+    nested = False
+
+    class NestedBedrockClient:
+        def __init__(self) -> None:
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+        def count_tokens(self, **_: Any) -> dict[str, int]:
+            nonlocal nested
+            headers: dict[str, str] = {}
+            self.meta.events.emit(
+                'before-call.bedrock-runtime.CountTokens', model=None, params={'headers': headers}, request_signer=None
+            )
+            calls.append(headers)
+            if not nested:
+                nested = True
+                anyio.from_thread.run(make_nested_request)
+            return {'inputTokens': 1}
+
+    client = NestedBedrockClient()
+    provider = BedrockProvider(bedrock_client=cast(BaseClient, client))
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=provider)
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello!')]
+    request_parameters = ModelRequestParameters()
+
+    async def make_nested_request() -> None:
+        await model.count_tokens(messages, BedrockModelSettings(), request_parameters)
+
+    await model.count_tokens(messages, BedrockModelSettings(extra_headers={'Tenant': 'outer'}), request_parameters)
+
+    assert calls == [{'Tenant': 'outer'}, {}]
 
 
 async def test_bedrock_extra_headers_do_not_leak_into_later_requests():

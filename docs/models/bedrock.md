@@ -74,6 +74,27 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Custom HTTP headers
+
+Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to
+`Converse`, `ConverseStream`, and `CountTokens` requests. This is useful for routing requests through an API gateway
+or proxy that requires custom headers:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockModelSettings
+
+agent = Agent(
+    'bedrock:us.amazon.nova-micro-v1:0',
+    model_settings=BedrockModelSettings(
+        extra_headers={'X-Tenant-ID': 'example-tenant'},
+    ),
+)
+```
+
+Custom headers are included in AWS Signature Version 4 signing. Headers computed by boto3, such as
+`Authorization`, `User-Agent`, and `X-Amz-Date`, take precedence over values in `extra_headers`.
+
 ## Service tier
 
 Bedrock supports controlling the [service tier](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) to manage throughput and cost.
