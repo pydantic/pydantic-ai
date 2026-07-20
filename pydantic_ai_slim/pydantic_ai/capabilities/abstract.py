@@ -171,7 +171,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
 
-    See the [capabilities documentation](capabilities.md) for built-in capabilities.
+    See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
@@ -333,7 +333,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
         where the first resolver to return a model wins.
 
-        See [Selecting the model](../capabilities.md#selecting-the-model) for precedence,
+        See [Selecting the model](../capabilities/custom.md#selecting-the-model) for precedence,
         bootstrap, and deferred-capability semantics.
         """
         return None

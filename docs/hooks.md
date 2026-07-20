@@ -3,7 +3,7 @@
 
 Hooks let you intercept and modify agent behavior at every stage of a run — model requests, tool calls, streaming events — using simple decorators or constructor arguments. No subclassing needed.
 
-The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way to add [lifecycle hooks](capabilities.md#hooking-into-the-lifecycle) for application-level concerns like logging, metrics, and lightweight validation. For reusable capabilities that combine hooks with tools, instructions, or model settings, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] instead — see [Building custom capabilities](capabilities.md#building-custom-capabilities).
+The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way to add [lifecycle hooks](capabilities/custom.md#hooking-into-the-lifecycle) for application-level concerns like logging, metrics, and lightweight validation. For reusable capabilities that combine hooks with tools, instructions, or model settings, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] instead — see [Building custom capabilities](capabilities/custom.md).
 
 ## Quick start
 
@@ -200,7 +200,7 @@ Output validation hooks fire when structured output is parsed against the output
 
 Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators.
 
-See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
+See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
 
 ### Tool preparation
 
@@ -384,7 +384,7 @@ Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.R
 
 For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
 
-See [Composition and middleware semantics](capabilities.md#composition-and-middleware-semantics) for details on how hooks from multiple capabilities interact.
+See [Composition and middleware semantics](capabilities/custom.md#composition-and-middleware-semantics) for details on how hooks from multiple capabilities interact.
 
 ## Error hooks
 
@@ -394,7 +394,7 @@ Error hooks (`*_error` in the `hooks.on` namespace, `on_*_error` on `AbstractCap
 - **Raise a different exception** — transforms the error
 - **Return a result** — suppresses the error
 
-See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery types.
+See [Error hooks](capabilities/custom.md#error-hooks) for the full pattern and recovery types.
 
 ## Triggering retries with `ModelRetry`
 

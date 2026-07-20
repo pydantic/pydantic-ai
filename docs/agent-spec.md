@@ -1,6 +1,6 @@
 # Agent Specs
 
-Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities.md), and all. One line to load, no Python agent construction code required.
+Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities/overview.md), and all. One line to load, no Python agent construction code required.
 
 This is useful for:
 
@@ -114,7 +114,7 @@ Capabilities in specs support three forms:
 
 ## Custom capabilities in specs
 
-See [Publishing capabilities](capabilities.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
+See [Publishing capabilities](capabilities/custom.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
 
 ## `AgentSpec` reference
 
@@ -127,7 +127,7 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
 | `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
 | `model_settings` | `dict \| None` | [Model settings](agent.md#model-run-settings) |
-| `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
+| `capabilities` | `list` | [Capabilities](capabilities/overview.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
 | `retries` | `int \| AgentRetries \| None` | Retry budgets for [tools](tools-advanced.md#tool-retries) and [output validation](output.md#output-validator-functions). Pass an integer to use the same budget for both, or [`AgentRetries`][pydantic_ai.agent.AgentRetries] to configure them separately. |
